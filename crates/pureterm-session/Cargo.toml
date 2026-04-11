@@ -1,0 +1,21 @@
+[package]
+name = "pureterm-session"
+version = "0.1.0"
+edition = "2021"
+description = "Session management for PureTerm (Local, SSH, Serial, Telnet)"
+
+[dependencies]
+pureterm-core = { workspace = true }
+
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+russh = { workspace = true }
+serialport = { workspace = true }
+portable-pty = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+bytes = "1"

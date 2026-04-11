@@ -1,0 +1,23 @@
+[package]
+name = "pureterm"
+version = "0.1.0"
+edition = "2021"
+description = "PureTerm - A pure Rust terminal emulator"
+
+[dependencies]
+pureterm-core = { workspace = true }
+pureterm-terminal = { workspace = true }
+pureterm-session = { workspace = true }
+pureterm-ui = { workspace = true }
+pureterm-gui = { workspace = true }
+
+winit = { workspace = true }
+wgpu = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }
+tokio = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+anyhow = { workspace = true }
+pollster = "0.4"

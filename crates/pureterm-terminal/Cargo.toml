@@ -1,0 +1,14 @@
+[package]
+name = "pureterm-terminal"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal emulation engine for PureTerm"
+
+[dependencies]
+vte = { workspace = true }
+unicode-width = { workspace = true }
+unicode-segmentation = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }

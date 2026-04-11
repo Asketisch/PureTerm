@@ -1,0 +1,20 @@
+[package]
+name = "pureterm-gui"
+version = "0.1.0"
+edition = "2021"
+description = "GPU rendering for PureTerm using wgpu"
+
+[dependencies]
+pureterm-core = { workspace = true }
+pureterm-terminal = { workspace = true }
+
+wgpu = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+fontdue = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+bytemuck = "1"
+image = "0.25"

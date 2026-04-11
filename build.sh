@@ -1,0 +1,356 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# =============================================================================
+# PureTerm Build Script
+# 用法: ./build.sh [OPTIONS] <MODE>
+# =============================================================================
+
+readonly PROJECT_NAME="PureTerm"
+readonly BINARY_NAME="pureterm"
+readonly DIST_DIR="./dist"
+readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# 从 Cargo.toml 提取版本号
+extract_version() {
+    grep '^version' "$SCRIPT_DIR/crates/pureterm/Cargo.toml" \
+        | head -1 \
+        | sed 's/.*"\([^"]*\)".*/\1/'
+}
+
+readonly VERSION="$(extract_version)"
+
+# =============================================================================
+# 彩色输出
+# =============================================================================
+
+# 检测是否支持颜色
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    readonly RED='\033[0;31m'
+    readonly GREEN='\033[0;32m'
+    readonly YELLOW='\033[0;33m'
+    readonly BLUE='\033[0;34m'
+    readonly BOLD='\033[1m'
+    readonly RESET='\033[0m'
+else
+    readonly RED='' readonly GREEN='' readonly YELLOW='' readonly BLUE=''
+    readonly BOLD='' readonly RESET=''
+fi
+
+info()    { printf "${GREEN}[INFO]${RESET}  %s\n" "$*"; }
+warn()    { printf "${YELLOW}[WARN]${RESET}  %s\n" "$*" >&2; }
+error()   { printf "${RED}[ERROR]${RESET} %s\n" "$*" >&2; }
+step()    { printf "${BLUE}==>${RESET}     %s\n" "$*"; }
+success() { printf "${GREEN}  ✓${RESET}    %s\n" "$*"; }
+
+# =============================================================================
+# 帮助信息
+# =============================================================================
+
+usage() {
+    cat <<EOF
+${BOLD}用法${RESET}: $(basename "$0") [OPTIONS] <MODE>
+
+${BOLD}模式${RESET}:
+  debug     开发构建（dev profile）
+  release   发布构建（LTO + strip 优化）
+  app       发布构建 + 打包为平台应用包
+
+${BOLD}选项${RESET}:
+  --target <triple>   指定交叉编译目标（如 aarch64-apple-darwin）
+  -h, --help          显示此帮助信息
+
+${BOLD}示例${RESET}:
+  ./build.sh debug
+  ./build.sh release
+  ./build.sh app
+  ./build.sh --target aarch64-apple-darwin release
+
+EOF
+}
+
+# =============================================================================
+# 平台检测
+# =============================================================================
+
+detect_platform() {
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        case "$TARGET_TRIPLE" in
+            *-apple-darwin*)  echo "macos" ;;
+            *-linux-*)        echo "linux" ;;
+            *-windows-*)      echo "windows" ;;
+            *)                echo "unknown" ;;
+        esac
+    else
+        case "$(uname -s)" in
+            Darwin)   echo "macos" ;;
+            Linux)    echo "linux" ;;
+            MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+            *)        echo "unknown" ;;
+        esac
+    fi
+}
+
+# =============================================================================
+# 构建函数
+# =============================================================================
+
+get_binary_path() {
+    local profile="$1"
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        echo "target/${TARGET_TRIPLE}/${profile}/${BINARY_NAME}"
+    else
+        echo "target/${profile}/${BINARY_NAME}"
+    fi
+}
+
+build_debug() {
+    step "构建 debug 版本 (dev profile)..."
+    local cmd="cargo build --bin ${BINARY_NAME}"
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        cmd="${cmd} --target ${TARGET_TRIPLE}"
+    fi
+
+    if $cmd; then
+        local bin
+        bin="$(get_binary_path debug)"
+        local size
+        size="$(du -h "$bin" | cut -f1)"
+        success "debug 构建完成"
+        info "二进制文件: ${bin} (${size})"
+    else
+        error "debug 构建失败"
+        return 1
+    fi
+}
+
+build_release() {
+    step "构建 release 版本 (LTO + strip 优化)..."
+    local cmd="cargo build --release --bin ${BINARY_NAME}"
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        cmd="${cmd} --target ${TARGET_TRIPLE}"
+    fi
+
+    if $cmd; then
+        local bin
+        bin="$(get_binary_path release)"
+        local size
+        size="$(du -h "$bin" | cut -f1)"
+        success "release 构建完成"
+        info "二进制文件: ${bin} (${size})"
+    else
+        error "release 构建失败"
+        return 1
+    fi
+}
+
+# =============================================================================
+# App 打包
+# =============================================================================
+
+build_app() {
+    # 先执行 release 构建
+    build_release || return 1
+
+    local bin
+    bin="$(get_binary_path release)"
+
+    # 验证二进制文件存在
+    if [ ! -f "$bin" ]; then
+        error "找不到构建产物: ${bin}"
+        return 1
+    fi
+
+    local platform
+    platform="$(detect_platform)"
+
+    step "打包应用 (${platform})..."
+
+    case "$platform" in
+        macos)  bundle_macos "$bin" ;;
+        linux)  bundle_linux "$bin" ;;
+        windows)
+            error "Windows 应用打包暂不支持（缺少平台字体路径定义）"
+            info "请使用 './build.sh release' 获取独立二进制文件"
+            return 1
+            ;;
+        *)
+            error "未知平台，无法打包"
+            return 1
+            ;;
+    esac
+}
+
+# macOS: 创建 .app 包
+bundle_macos() {
+    local bin="$1"
+    local app_dir="${DIST_DIR}/${PROJECT_NAME}.app"
+    local contents_dir="${app_dir}/Contents"
+
+    step "创建 macOS 应用包..."
+
+    # 清理旧的构建产物
+    rm -rf "$app_dir"
+
+    # 创建目录结构
+    mkdir -p "${contents_dir}/MacOS"
+    mkdir -p "${contents_dir}/Resources"
+    mkdir -p "${contents_dir}/Frameworks"
+
+    # 复制二进制文件
+    cp "$bin" "${contents_dir}/MacOS/${BINARY_NAME}"
+    chmod +x "${contents_dir}/MacOS/${BINARY_NAME}"
+
+    # 生成 Info.plist
+    cat > "${contents_dir}/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleExecutable</key>
+    <string>${BINARY_NAME}</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.pureterm.app</string>
+    <key>CFBundleName</key>
+    <string>${PROJECT_NAME}</string>
+    <key>CFBundleDisplayName</key>
+    <string>${PROJECT_NAME}</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${VERSION}</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundleIconFile</key>
+    <string>${PROJECT_NAME}</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSHumanReadableCopyright</key>
+    <string>Copyright $(date +%Y) ${PROJECT_NAME}. All rights reserved.</string>
+</dict>
+</plist>
+EOF
+
+    # 如果 assets 目录下有图标文件，复制到 Resources
+    if [ -f "${SCRIPT_DIR}/assets/${PROJECT_NAME}.icns" ]; then
+        cp "${SCRIPT_DIR}/assets/${PROJECT_NAME}.icns" "${contents_dir}/Resources/"
+        step "已复制应用图标"
+    fi
+
+    local app_size
+    app_size="$(du -sh "$app_dir" | cut -f1)"
+    success "macOS 应用包创建完成"
+    info "应用路径: ${app_dir} (${app_size})"
+    info "运行: open ${app_dir}"
+    info "安装: cp -r ${app_dir} /Applications/"
+}
+
+# Linux: 安装到用户目录
+bundle_linux() {
+    local bin="$1"
+    local install_dir="${HOME}/.local/bin"
+    local desktop_dir="${HOME}/.local/share/applications"
+
+    step "安装到 Linux 用户目录..."
+
+    # 安装二进制文件
+    mkdir -p "$install_dir"
+    cp "$bin" "${install_dir}/${BINARY_NAME}"
+    chmod +x "${install_dir}/${BINARY_NAME}"
+    success "二进制文件已安装到 ${install_dir}/${BINARY_NAME}"
+
+    # 创建桌面入口
+    mkdir -p "$desktop_dir"
+    cat > "${desktop_dir}/${BINARY_NAME}.desktop" <<EOF
+[Desktop Entry]
+Name=${PROJECT_NAME}
+Comment=GPU-accelerated terminal emulator
+Exec=${install_dir}/${BINARY_NAME}
+Icon=utilities-terminal
+Type=Application
+Categories=System;TerminalEmulator;
+Keywords=terminal;shell;
+StartupNotify=true
+EOF
+
+    # 更新桌面数据库
+    if command -v update-desktop-database &>/dev/null; then
+        update-desktop-database "$desktop_dir" 2>/dev/null || true
+    fi
+
+    success "桌面入口已创建: ${desktop_dir}/${BINARY_NAME}.desktop"
+
+    # 检查 PATH
+    if [[ ":${PATH}:" != *":${install_dir}:"* ]]; then
+        warn "请将 ${install_dir} 添加到 PATH:"
+        info "  echo 'export PATH=\"${install_dir}:\$PATH\"' >> ~/.bashrc"
+    fi
+}
+
+# =============================================================================
+# 参数解析
+# =============================================================================
+
+TARGET_TRIPLE=""
+MODE=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        debug|release|app)
+            if [ -n "$MODE" ]; then
+                error "只能指定一个模式"
+                usage
+                exit 1
+            fi
+            MODE="$1"
+            shift
+            ;;
+        --target)
+            if [ -z "${2:-}" ]; then
+                error "--target 需要指定目标三元组"
+                exit 1
+            fi
+            TARGET_TRIPLE="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            error "未知参数: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
+
+# =============================================================================
+# 主流程
+# =============================================================================
+
+if [ -z "$MODE" ]; then
+    error "请指定构建模式"
+    usage
+    exit 1
+fi
+
+# 验证目标平台
+if [ -n "$TARGET_TRIPLE" ]; then
+    step "目标平台: ${TARGET_TRIPLE}"
+fi
+
+local_platform="$(detect_platform)"
+step "当前平台: ${local_platform}"
+info "${PROJECT_NAME} v${VERSION}"
+
+case "$MODE" in
+    debug)   build_debug   ;;
+    release) build_release ;;
+    app)     build_app     ;;
+esac
