@@ -1,7 +1,7 @@
 # PureTerm: 纯 Rust 终端模拟器 - 完整技术规划
 
 > 使用纯 Rust 完整重写 Tabby 终端模拟器
-> 参考项目: Alacritty, WezTerm, Rio
+> 参考项目: Alacritty, WezTerm, Rio, Ghostty, kitty, iTerm2, WindTerm
 
 ---
 
@@ -26,6 +26,8 @@
 17. [文件结构](#17-文件结构)
 18. [开发阶段规划](#18-开发阶段规划)
 19. [风险与备选方案](#19-风险与备选方案)
+20. [附录 A: 参考项目](#附录-a-参考项目)
+21. [附录 B: 终端图形协议参考](#附录-b-终端图形协议参考)
 
 ---
 
@@ -753,6 +755,40 @@ impl SystemTray {
 | 多窗口 | MultipleWindows | pureterm |
 | 标签页恢复 | TabRecovery | pureterm-ui/tabs |
 | 配置加密 | VaultService | pureterm-core |
+| 内联图片 (Kitty 协议) | ImageProtocol | pureterm-terminal |
+| 即时回放 | InstantReplay | pureterm-terminal |
+| 超链接 OSC 8 | Hyperlink | pureterm-terminal |
+| 多剪贴板缓冲区 | ClipboardBuffers | pureterm-core |
+| 标记系统 | Marks | pureterm-ui |
+| 触发器系统 | Triggers | pureterm-core |
+| 命令面板 | CommandPalette | pureterm-ui |
+| Sync Input | SyncInput | pureterm-session |
+| Explorer 面板 | Explorer | pureterm-ui |
+| Quick Bar | QuickBar | pureterm-ui |
+| Focus Mode | FocusMode | pureterm-ui |
+| 锁屏保护 | LockScreen | pureterm-ui |
+| 窗口透明度/模糊 | Transparency | pureterm-gui |
+| 背景图片 | BackgroundImage | pureterm-gui |
+| 自动配置切换 | AutoProfileSwitch | pureterm-core |
+| 明暗主题自动切换 | ThemeAutoSwitch | pureterm-core |
+| Zmodem 传输 | Zmodem | pureterm-session |
+| XModem/YModem | Xmodem | pureterm-session |
+| HTTP/SOCKS5 代理 | Proxy | pureterm-session |
+| Jump Host | JumpHost | pureterm-session |
+| SSH ControlMaster | ControlMaster | pureterm-session |
+| 命令提示标记 | PromptMark | pureterm-terminal |
+| 跳转到提示符 | JumpToPrompt | pureterm-ui |
+| Clone Shell | CloneShell | pureterm-session |
+| 目录频率统计 | DirFrequency | pureterm-core |
+| 命令自动补全 | AutoComplete | pureterm-ui |
+| 在线搜索 | OnlineSearch | pureterm-ui |
+| 会话日志 | SessionLog | pureterm-session |
+| AI 聊天集成 | AIChat | pureterm-ui |
+| Single Instance | SingleInstance | pureterm |
+| 远程控制协议 | RemoteControl | pureterm-core |
+| 多线程架构 | MultiThread | pureterm-terminal |
+| SIMD 优化 | SimdOptimize | pureterm-terminal |
+| 动态内存压缩 | MemCompression | pureterm-terminal |
 
 ---
 
@@ -991,15 +1027,77 @@ PureTerm/
 | 28 | 多窗口 | MultipleWindows |
 | 28 | 完整测试 | Test Suite |
 
+### 阶段 8: 高级终端功能 (5 周)
+
+| 周 | 任务 | 交付物 |
+|----|------|--------|
+| 29 | Kitty 图形协议 | 内联图片/视频支持 |
+| 29 | 即时回放 | 历史画面回放 |
+| 30 | OSC 8 超链接 | 可点击链接+悬停预览 |
+| 30 | 多剪贴板缓冲区 | 命名剪贴板 |
+| 31 | 标记系统 | 正则表达式标记 |
+| 31 | 触发器系统 | 正则触发动作 |
+| 32 | 命令提示标记 | PromptMark |
+| 32 | 跳转到提示符 | JumpToPrompt |
+| 33 | SIMD 解析优化 | 终端解析性能提升 |
+
+### 阶段 9: SSH 增强功能 (3 周)
+
+| 周 | 任务 | 交付物 |
+|----|------|--------|
+| 34 | Zmodem 传输 | 文件上传/下载 |
+| 34 | XModem/YModem | 串口文件传输 |
+| 35 | Jump Host | 跳板机管理 |
+| 35 | HTTP/SOCKS5 代理 | 代理支持 |
+| 36 | SSH ControlMaster | 连接复用 |
+| 36 | Clone Shell | 克隆会话到新窗口 |
+
+### 阶段 10: UI/UX 增强 (4 周)
+
+| 周 | 任务 | 交付物 |
+|----|------|--------|
+| 37 | 命令面板 | CommandPalette |
+| 37 | Quick Bar | 快速操作栏 |
+| 38 | Sync Input | 同步输入到多会话 |
+| 38 | Explorer 面板 | 文件浏览器 |
+| 39 | Focus Mode | 专注模式 |
+| 39 | 锁屏保护 | LockScreen |
+| 40 | 自动配置切换 | 根据环境自动切换主题 |
+| 40 | 明暗主题自动切换 | 系统主题跟随 |
+
+### 阶段 11: 平台高级特性 (3 周)
+
+| 周 | 任务 | 交付物 |
+|----|------|--------|
+| 41 | 窗口透明度/模糊 | Transparency |
+| 41 | 背景图片 | BackgroundImage |
+| 42 | 目录频率统计 | DirFrequency |
+| 42 | 命令自动补全 | AutoComplete |
+| 43 | 在线搜索 | OnlineSearch |
+| 43 | 会话日志 | SessionLog |
+
+### 阶段 12: AI 集成与最终完善 (3 周)
+
+| 周 | 任务 | 交付物 |
+|----|------|--------|
+| 44 | AI 聊天集成 | AIChat |
+| 44 | 远程控制协议 | RemoteControl |
+| 45 | Single Instance | 单实例运行 |
+| 45 | 多线程架构 | 读/写/渲染线程分离 |
+| 46 | 动态内存压缩 | MemCompression |
+| 46 | 性能优化 | 完整测试与调优 |
+
 ---
 
-### 总工期: ~28 周 (~7 个月)
+### 总工期: ~46 周 (~12 个月)
 
 **里程碑**:
 - Week 11: MVP - 本地 Shell 可用
 - Week 19: Alpha - SSH + 分屏 + 标签页
-- Week 25: Beta - 完整功能
-- Week 28: 1.0 Release
+- Week 28: Beta - 完整基础功能
+- Week 33: Gamma - 高级终端功能可用
+- Week 40: Delta - UI/UX 完善
+- Week 46: 1.0 Release
 
 ---
 
@@ -1030,6 +1128,10 @@ Tabby 的 Angular 依赖注入系统无法直接迁移。
 | Alacritty | github.com/alacritty/alacritty | Apache 2.0 | vte + OpenGL 渲染参考 |
 | WezTerm | github.com/wez/wezterm | Apache 2.0 | wgpu + 复杂功能参考 |
 | Rio | github.com/raphamorim/rio | MIT | vte + wgpu 简单参考 |
+| Ghostty | github.com/ghostty-org/ghostty | MIT | 多线程 + Metal 渲染 + Shell 集成 |
+| kitty | github.com/kovidgoyal/kitty | GPL 3.0 | GPU 渲染 + Kittens 扩展框架 |
+| iTerm2 | github.com/gnachman/iterm2 | GPL 2.0 | 丰富的 UI 功能 + tmux 集成 |
+| WindTerm | github.com/kingToolbox/WindTerm | Apache 2.0 | SSH 高级功能 + 性能优化 |
 | Tabby | github.com/Eugeny/tabby | MIT | 功能对齐目标 |
 | vte | github.com/alacritty/vte | MIT | 终端解析器 |
 | russh | github.com/warpdotoff/russh | BSD-3 | SSH 客户端 |
@@ -1038,7 +1140,26 @@ Tabby 的 Angular 依赖注入系统无法直接迁移。
 | egui | github.com/emilk/egui | Apache 2.0 | UI 框架 |
 | wgpu | github.com/gfx-rs/wgpu | Apache 2.0 | GPU 渲染 |
 
+## 附录 B: 终端图形协议参考
+
+### Kitty 图形协议 (Kitty Graphics Protocol)
+- 任意像素图形渲染
+- 文字与图形叠加（支持透明度）
+- 图形随文字滚动
+- alpha 混合、背景/前景绘制
+
+### OSC 8 超链接
+- 支持超链接显示
+- 悬停预览
+- Ctrl/Cmd + 点击打开
+
+### 即时回放 (Instant Replay)
+- 可向后滚动查看终端历史任意时刻的画面
+- 带时间戳
+- 适合捕捉稍纵即逝的错误
+
 ---
 
-**文档版本**: 1.0
+**文档版本**: 2.0
 **最后更新**: 2026-04-11
+**更新内容**: 新增高级终端功能、SSH 增强、UI/UX 增强、AI 集成等 11 个新阶段
