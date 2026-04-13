@@ -22,3 +22,4 @@ Cargo.lock
 *.o
 *.so
 *.dylib
+dist

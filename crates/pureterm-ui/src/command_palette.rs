@@ -67,7 +67,55 @@ impl CommandPalette {
 
         let mut result = None;
 
-        let screen_rect = ui.ctx().screen_rect();
+        // Compute filtered commands first (outside the Area closure)
+        let query_lower = self.query.to_lowercase();
+        let filtered: Vec<&CommandEntry> = self.commands
+            .iter()
+            .filter(|cmd| {
+                query_lower.is_empty()
+                    || cmd.label.to_lowercase().contains(&query_lower)
+                    || cmd.category.to_lowercase().contains(&query_lower)
+            })
+            .collect();
+
+        // Handle keyboard input (Tab, arrows, Escape)
+        let ctx = ui.ctx();
+
+        // Close on Escape
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.visible = false;
+            self.query.clear();
+            return None;
+        }
+
+        // Tab key: select the currently highlighted command
+        if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
+            if !filtered.is_empty() {
+                result = Some(filtered[self.selected_index].id.clone());
+                self.visible = false;
+                self.query.clear();
+                return result;
+            }
+        }
+
+        // Arrow key navigation
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if !filtered.is_empty() {
+                self.selected_index = (self.selected_index + 1).min(filtered.len() - 1);
+            }
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if self.selected_index > 0 {
+                self.selected_index -= 1;
+            }
+        }
+
+        // Auto-select first match when typing
+        if !query_lower.is_empty() && !filtered.is_empty() && self.selected_index >= filtered.len() {
+            self.selected_index = 0;
+        }
+
+        let screen_rect = ctx.screen_rect();
         let palette_width = 400.0;
         let palette_height = 300.0;
         let x = (screen_rect.width() - palette_width) / 2.0;
@@ -76,7 +124,7 @@ impl CommandPalette {
         egui::Area::new(Id::new("command_palette"))
             .fixed_pos(egui::Pos2::new(x, y))
             .order(egui::Order::Foreground)
-            .show(ui.ctx(), |ui| {
+            .show(ctx, |ui| {
                 ui.set_width(palette_width);
 
                 egui::Frame::window(ui.style()).show(ui, |ui| {
@@ -90,17 +138,6 @@ impl CommandPalette {
                     response.request_focus();
 
                     ui.separator();
-
-                    // Filtered commands
-                    let query_lower = self.query.to_lowercase();
-                    let filtered: Vec<&CommandEntry> = self.commands
-                        .iter()
-                        .filter(|cmd| {
-                            query_lower.is_empty()
-                                || cmd.label.to_lowercase().contains(&query_lower)
-                                || cmd.category.to_lowercase().contains(&query_lower)
-                        })
-                        .collect();
 
                     egui::ScrollArea::vertical()
                         .max_height(palette_height - 60.0)
@@ -132,12 +169,6 @@ impl CommandPalette {
                         });
                 });
             });
-
-        // Close on Escape
-        if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.visible = false;
-            self.query.clear();
-        }
 
         if result.is_some() {
             self.visible = false;

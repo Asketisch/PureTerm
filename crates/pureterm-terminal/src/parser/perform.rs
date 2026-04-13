@@ -53,7 +53,11 @@ impl VtePerform {
             scroll_bottom: rows,
             grid,
             cursor: Cursor::new(),
-            mode: TermMode::default(),
+            mode: {
+                let mut m = TermMode::default();
+                m.insert(TermMode::SHOW_CURSOR);
+                m
+            },
             fg: Color::Named(NamedColor::Foreground),
             bg: Color::Named(NamedColor::Background),
             attrs: CellAttrs::default(),

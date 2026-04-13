@@ -1,3 +1,3 @@
 pub mod pane;
 
-pub use pane::TerminalPane;
+pub use pane::{TerminalPane, Selection};

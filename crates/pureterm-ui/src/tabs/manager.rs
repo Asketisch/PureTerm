@@ -199,6 +199,13 @@ impl TabManager {
         }
     }
 
+    /// Set the color of a tab.
+    pub fn set_color(&mut self, id: u64, color: Option<String>) {
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
+            tab.color = color;
+        }
+    }
+
     /// Mark a tab as having activity.
     pub fn mark_activity(&mut self, id: u64) {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {

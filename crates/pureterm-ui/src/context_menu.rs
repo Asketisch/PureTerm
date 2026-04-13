@@ -1,14 +1,5 @@
 //! Context menu (right-click) for PureTerm.
-
-use egui::{Id, Pos2, RichText, Ui};
-
-/// Context menu item.
-#[derive(Debug, Clone)]
-pub struct MenuItem {
-    pub label: String,
-    pub action: MenuAction,
-    pub enabled: bool,
-}
+//! Native implementation without egui dependency.
 
 /// Actions available from the context menu.
 #[derive(Debug, Clone)]
@@ -27,95 +18,192 @@ pub enum MenuAction {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    EditTabTitle,
+    EditTabColor,
 }
 
-/// Context menu state.
-pub struct ContextMenu {
+/// A single item in the context menu.
+#[derive(Debug, Clone)]
+pub struct MenuItem {
+    pub label: String,
+    pub action: MenuAction,
+    pub enabled: bool,
+    pub separator_before: bool,
+}
+
+/// Context menu state for native rendering (no egui).
+pub struct ContextMenuState {
     pub visible: bool,
-    pub position: Pos2,
+    pub position: (f32, f32),
+    pub hovered_index: Option<usize>,
+    pub items: Vec<MenuItem>,
+    /// Which pane was right-clicked (for context-dependent actions).
+    pub target_pane_id: Option<u64>,
 }
 
-impl Default for ContextMenu {
+/// Menu layout constants.
+pub const MENU_ITEM_HEIGHT: f32 = 24.0;
+pub const MENU_MIN_WIDTH: f32 = 200.0;
+pub const MENU_PADDING: f32 = 6.0;
+pub const MENU_SEPARATOR_HEIGHT: f32 = 6.0;
+
+impl Default for ContextMenuState {
     fn default() -> Self {
         Self {
             visible: false,
-            position: Pos2::ZERO,
+            position: (0.0, 0.0),
+            hovered_index: None,
+            items: Self::default_items(),
+            target_pane_id: None,
         }
     }
 }
 
-impl ContextMenu {
+impl ContextMenuState {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Show the context menu at the given position.
-    pub fn show(&mut self, ui: &mut Ui) -> Option<MenuAction> {
-        if !self.visible {
+    fn default_items() -> Vec<MenuItem> {
+        vec![
+            MenuItem { label: "Copy  (Ctrl+Shift+C)".into(), action: MenuAction::Copy, enabled: true, separator_before: false },
+            MenuItem { label: "Paste  (Ctrl+Shift+V)".into(), action: MenuAction::Paste, enabled: true, separator_before: false },
+            MenuItem { label: "Select All".into(), action: MenuAction::SelectAll, enabled: true, separator_before: false },
+            MenuItem { label: "Search  (Ctrl+F)".into(), action: MenuAction::Search, enabled: true, separator_before: true },
+            MenuItem { label: "Clear".into(), action: MenuAction::Clear, enabled: true, separator_before: false },
+            MenuItem { label: "Split Vertical  (Ctrl+Shift+D)".into(), action: MenuAction::SplitVertical, enabled: true, separator_before: true },
+            MenuItem { label: "Split Horizontal  (Ctrl+D)".into(), action: MenuAction::SplitHorizontal, enabled: true, separator_before: false },
+            MenuItem { label: "Close Pane".into(), action: MenuAction::ClosePane, enabled: true, separator_before: true },
+            MenuItem { label: "New Tab  (Ctrl+Shift+T)".into(), action: MenuAction::NewTab, enabled: true, separator_before: true },
+            MenuItem { label: "Close Tab".into(), action: MenuAction::CloseTab, enabled: true, separator_before: false },
+            MenuItem { label: "Rename Tab".into(), action: MenuAction::EditTabTitle, enabled: true, separator_before: true },
+            MenuItem { label: "Tab Color".into(), action: MenuAction::EditTabColor, enabled: true, separator_before: false },
+            MenuItem { label: "Zoom In  (Ctrl++)".into(), action: MenuAction::ZoomIn, enabled: true, separator_before: true },
+            MenuItem { label: "Zoom Out  (Ctrl+-)".into(), action: MenuAction::ZoomOut, enabled: true, separator_before: false },
+            MenuItem { label: "Zoom Reset  (Ctrl+0)".into(), action: MenuAction::ZoomReset, enabled: true, separator_before: false },
+            MenuItem { label: "Settings...".into(), action: MenuAction::OpenSettings, enabled: true, separator_before: true },
+        ]
+    }
+
+    /// Show the menu at the given position.
+    pub fn show_at(&mut self, x: f32, y: f32, target_pane_id: u64) {
+        self.visible = true;
+        self.position = (x, y);
+        self.hovered_index = None;
+        self.target_pane_id = Some(target_pane_id);
+    }
+
+    /// Hide the menu.
+    pub fn hide(&mut self) {
+        self.visible = false;
+        self.hovered_index = None;
+    }
+
+    /// Compute the bounding rectangle of the entire menu.
+    pub fn menu_rect(&self) -> (f32, f32, f32, f32) {
+        // x, y, width, height
+        let total_h = self.total_height();
+        (self.position.0, self.position.1, MENU_MIN_WIDTH, total_h)
+    }
+
+    /// Total height of the menu including separators and padding.
+    pub fn total_height(&self) -> f32 {
+        let mut h = MENU_PADDING * 2.0; // top + bottom padding
+        for item in &self.items {
+            if item.separator_before {
+                h += MENU_SEPARATOR_HEIGHT;
+            }
+            h += MENU_ITEM_HEIGHT;
+        }
+        h
+    }
+
+    /// Get the rectangle for a specific menu item.
+    pub fn item_rect(&self, index: usize) -> Option<(f32, f32, f32, f32)> {
+        if index >= self.items.len() {
             return None;
         }
 
-        let mut action = None;
-
-        let pos = self.position;
-        egui::Area::new(Id::new("context_menu"))
-            .fixed_pos(pos)
-            .order(egui::Order::Foreground)
-            .show(ui.ctx(), |ui| {
-                ui.set_min_width(180.0);
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    if ui.button("Copy  (Ctrl+Shift+C)").clicked() {
-                        action = Some(MenuAction::Copy);
-                    }
-                    if ui.button("Paste  (Ctrl+Shift+V)").clicked() {
-                        action = Some(MenuAction::Paste);
-                    }
-                    if ui.button("Select All").clicked() {
-                        action = Some(MenuAction::SelectAll);
-                    }
-                    ui.separator();
-                    if ui.button("Search  (Ctrl+F)").clicked() {
-                        action = Some(MenuAction::Search);
-                    }
-                    if ui.button("Clear").clicked() {
-                        action = Some(MenuAction::Clear);
-                    }
-                    ui.separator();
-                    if ui.button("Split Vertical").clicked() {
-                        action = Some(MenuAction::SplitVertical);
-                    }
-                    if ui.button("Split Horizontal").clicked() {
-                        action = Some(MenuAction::SplitHorizontal);
-                    }
-                    ui.separator();
-                    if ui.button("New Tab  (Ctrl+Shift+T)").clicked() {
-                        action = Some(MenuAction::NewTab);
-                    }
-                    if ui.button("Close Tab").clicked() {
-                        action = Some(MenuAction::CloseTab);
-                    }
-                    ui.separator();
-                    if ui.button("Zoom In  (Ctrl++)").clicked() {
-                        action = Some(MenuAction::ZoomIn);
-                    }
-                    if ui.button("Zoom Out  (Ctrl+-)").clicked() {
-                        action = Some(MenuAction::ZoomOut);
-                    }
-                    if ui.button("Zoom Reset  (Ctrl+0)").clicked() {
-                        action = Some(MenuAction::ZoomReset);
-                    }
-                    ui.separator();
-                    if ui.button("Settings...").clicked() {
-                        action = Some(MenuAction::OpenSettings);
-                    }
-                });
-            });
-
-        // Close menu when an action is taken
-        if action.is_some() {
-            self.visible = false;
+        let mut y = self.position.1 + MENU_PADDING;
+        for (i, item) in self.items.iter().enumerate() {
+            if item.separator_before {
+                y += MENU_SEPARATOR_HEIGHT;
+            }
+            if i == index {
+                return Some((
+                    self.position.0 + MENU_PADDING,
+                    y,
+                    MENU_MIN_WIDTH - MENU_PADDING * 2.0,
+                    MENU_ITEM_HEIGHT,
+                ));
+            }
+            y += MENU_ITEM_HEIGHT;
         }
+        None
+    }
 
-        action
+    /// Test if a point hits a menu item, return its action.
+    pub fn hit_test(&self, px: f32, py: f32) -> Option<MenuAction> {
+        if !self.visible {
+            return None;
+        }
+        let (mx, my, _mw, mh) = self.menu_rect();
+        if px < mx || px > mx + MENU_MIN_WIDTH || py < my || py > my + mh {
+            return None;
+        }
+        for (i, item) in self.items.iter().enumerate() {
+            if let Some((ix, iy, iw, ih)) = self.item_rect(i) {
+                if px >= ix && px <= ix + iw && py >= iy && py <= iy + ih {
+                    if item.enabled {
+                        return Some(item.action.clone());
+                    }
+                    return None;
+                }
+            }
+        }
+        None
+    }
+
+    /// Check if the point is within the menu bounds.
+    pub fn contains_point(&self, px: f32, py: f32) -> bool {
+        if !self.visible {
+            return false;
+        }
+        let (mx, my, _mw, mh) = self.menu_rect();
+        px >= mx && px <= mx + MENU_MIN_WIDTH && py >= my && py <= my + mh
+    }
+
+    /// Update hovered index based on mouse position.
+    pub fn update_hover(&mut self, px: f32, py: f32) {
+        if !self.visible {
+            self.hovered_index = None;
+            return;
+        }
+        for (i, item) in self.items.iter().enumerate() {
+            if let Some((ix, iy, iw, ih)) = self.item_rect(i) {
+                if px >= ix && px <= ix + iw && py >= iy && py <= iy + ih && item.enabled {
+                    self.hovered_index = Some(i);
+                    return;
+                }
+            }
+        }
+        self.hovered_index = None;
+    }
+
+    /// Iterate over items with their positions for rendering.
+    pub fn items_with_positions(&self) -> Vec<(usize, &MenuItem, f32, f32)> {
+        let mut result = Vec::new();
+        let mut y = self.position.1 + MENU_PADDING;
+        for (i, item) in self.items.iter().enumerate() {
+            if item.separator_before {
+                y += MENU_SEPARATOR_HEIGHT;
+            }
+            result.push((i, item, self.position.0 + MENU_PADDING, y));
+            y += MENU_ITEM_HEIGHT;
+        }
+        result
     }
 }
+
+/// Legacy ContextMenu type alias for backwards compatibility.
+pub type ContextMenu = ContextMenuState;

@@ -1,3 +1,3 @@
 pub mod manager;
 
-pub use manager::{Tab, TabManager, TabContent, ClosedTab};
+pub use manager::{Tab, TabManager, TabContent, ClosedTab, SplitRef};

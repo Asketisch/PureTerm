@@ -20,9 +20,10 @@ pub mod terminal;
 pub use app::App;
 pub use clipboard::ClipboardManager;
 pub use command_palette::CommandPalette;
-pub use context_menu::{ContextMenu, MenuAction};
+pub use context_menu::{ContextMenu, ContextMenuState, MenuAction, MenuItem,
+    MENU_ITEM_HEIGHT, MENU_MIN_WIDTH, MENU_PADDING, MENU_SEPARATOR_HEIGHT};
 pub use settings::SettingsPanel;
-pub use split::SplitContainer;
+pub use split::{SplitContainer, PaneRect, compute_pane_rects, pane_at_point, compute_divider_rects};
 pub use tabs::TabManager;
 pub use tab_recovery::{TabRecovery, SavedTab, SavedWindowState};
 pub use terminal::TerminalPane;
