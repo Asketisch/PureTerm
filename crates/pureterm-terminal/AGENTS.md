@@ -1,6 +1,6 @@
 # pureterm-terminal — VTE 解析器、屏幕网格、终端模拟
 
-终端模拟引擎的核心实现：VTE 转义序列解析、字符网格管理、光标操作。
+终端模拟引擎的核心实现：VTE 转义序列解析、字符网格管理、光标操作、超链接、图片支持。
 
 ## 关键依赖
 
@@ -12,18 +12,25 @@
 
 ```
 src/
-├── lib.rs           # 模块导出 + pub use
-├── term.rs          # Terminal 结构体（顶层接口）
-├── mode.rs          # TermMode 位标志
+├── lib.rs              # 模块导出 + pub use
+├── term.rs            # Terminal 结构体（顶层接口）
+├── mode.rs            # TermMode 位标志
+├── hyperlink.rs       # 超链接支持（ OSC 8 ）
+├── mark.rs            # 终端标记（书签）
+├── image.rs           # 内联图片支持（ITerm2 协议）
+├── bracketed_paste.rs # 括号粘贴模式
+├── replay.rs          # 终端回放功能
 ├── parser/
-│   ├── mod.rs       # VteParser 包装
-│   └── perform.rs   # VtePerform（vte::Perform 实现）+ ScreenSnapshot
+│   ├── mod.rs          # VteParser 包装
+│   └── perform.rs      # VtePerform（vte::Perform 实现）+ ScreenSnapshot
 └── screen/
     ├── mod.rs
-    ├── cell.rs      # Cell、CellAttrs、Color、NamedColor
-    ├── color.rs     # 重导出 Color
-    ├── cursor.rs    # Cursor、CursorStyle
-    └── grid.rs      # Grid（回滚缓冲区 + 可见视口）
+    ├── cell.rs         # Cell、CellAttrs、Color、NamedColor
+    ├── color.rs        # 重导出 Color
+    ├── cursor.rs       # Cursor、CursorStyle
+    ├── grid.rs         # Grid（回滚缓冲区 + 可见视口）
+    ├── selection.rs    # 选择区域 + 鼠标事件
+    └── history.rs      # 回滚历史管理
 ```
 
 ## 数据流
@@ -49,6 +56,7 @@ Session 字节 → VteParser::parse() → VtePerform（vte::Perform）→ Grid/C
 | `scroll_up/down(lines)` / `scroll_to_bottom()` | 视口滚动 |
 | `get_text(start_row, start_col, end_row, end_col)` | 提取文本（用于复制） |
 | `get_visible_text()` | 获取全部可见文本 |
+| `url_at(row, col)` | 获取指定位置的 URL（超链接） |
 
 ### mode.rs — 终端模式标志
 
@@ -85,6 +93,36 @@ Session 字节 → VteParser::parse() → VtePerform（vte::Perform）→ Grid/C
 | `visible_cells()` | 返回可见部分 `Vec<&[Cell]>` |
 | `history()` | 返回回滚行数 |
 
+### screen/selection.rs — 选择区域和鼠标事件
+
+| 类型 | 说明 |
+|------|------|
+| `Selection` | start/end row/col、is_block、is_empty |
+| `TerminalMouseEvent` | Down/Up/Move/Scroll + 行列和修饰键 |
+| `MouseButton` | Left/Middle/Right |
+| `MouseModifiers` | ctrl、alt、shift |
+
+### hyperlink.rs — 超链接支持
+
+支持 OSC 8 超链接协议：
+- `Hyperlink` 结构：id、uri、start/end 位置
+- 自动识别终端输出中的超链接
+- 可点击打开 URL
+
+### image.rs — 内联图片支持
+
+支持 iTerm2 内联图片协议（DECORATION 57685）：
+- 接收 base64 编码图片数据
+- 存储在图片缓存中
+- 在终端相应位置渲染
+
+### bracketed_paste.rs — 括号粘贴
+
+| 类型 | 说明 |
+|------|------|
+| `BracketedPaste` | 粘贴状态追踪 |
+| `BracketedPasteMode` | 是否启用括号粘贴模式 |
+
 ### parser/perform.rs — VTE 执行器
 
 `VtePerform` 实现 `vte::Perform` trait，是最复杂的模块：
@@ -95,7 +133,7 @@ Session 字节 → VteParser::parse() → VtePerform（vte::Perform）→ Grid/C
 - `print(c)` — 字符放置，处理 unicode 宽度、自动换行、双宽字符
 - `execute(byte)` — BS(0x08)、HT(0x09)、LF(0x0A 含滚动区域)、CR(0x0D)
 - `csi_dispatch` — CSI 指令分发：CUU(A)、CUD(B)、CUF(C)、CUB(D)、CUP(H/f)、ED(J)、EL(K)、IL(L)、DL(M)、DCH(P)、SU(S)、SD(T)、ECH(X)、SGR(m)、SM(h)、RM(l)、SCP(s)、RCP(u)、DECSTBM(r)、CHA(G)、VPA(d)
-- `osc_dispatch` — OSC 0/2（标题）、OSC 7（当前目录）
+- `osc_dispatch` — OSC 0/2（标题）、OSC 7（当前目录）、OSC 8（超链接）
 
 **SGR（m）处理**：支持 bold、dim、italic、underline、inverse、hidden、strikethrough、标准 8 色、256 色、truecolor RGB、aixterm 亮色。
 
@@ -120,3 +158,9 @@ Session 字节 → VteParser::parse() → VtePerform（vte::Perform）→ Grid/C
 1. 检查 `print()` 中的 unicode 宽度处理
 2. 检查 `AUTO_WRAP` 模式下的换行逻辑
 3. 验证双宽字符的占位处理
+
+### 处理超链接点击
+使用 `Terminal::url_at(row, col)` 获取点击位置的 URL。
+
+### 鼠标事件处理
+使用 `screen/selection.rs` 中的类型处理鼠标事件，包括按钮、修饰键和坐标转换。

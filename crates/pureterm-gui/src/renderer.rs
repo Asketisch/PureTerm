@@ -122,12 +122,24 @@ impl TerminalRenderer {
         }
     }
 
-    /// Render a terminal snapshot.
+    /// Render a terminal snapshot with optional selection highlighting.
     pub fn render(
         &mut self,
         surface: &wgpu::Surface<'static>,
         snapshot: &ScreenSnapshot,
         color_scheme: &ColorScheme,
+    ) {
+        self.render_with_selection(surface, snapshot, color_scheme, None);
+    }
+
+    /// Render a terminal snapshot with selection highlighting.
+    /// The selection callback returns true for cells that are selected.
+    pub fn render_with_selection(
+        &mut self,
+        surface: &wgpu::Surface<'static>,
+        snapshot: &ScreenSnapshot,
+        color_scheme: &ColorScheme,
+        selection: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         let Some(config) = &self.surface_config else { return };
         let Some(pipeline) = &mut self.text_pipeline else { return };
@@ -157,6 +169,8 @@ impl TerminalRenderer {
         let ascent = self.atlas.ascent();
         let bg = ColorScheme::parse_color(&color_scheme.background);
         let fg = ColorScheme::parse_color(&color_scheme.foreground);
+        let sel_bg = ColorScheme::parse_color(&color_scheme.selection_background);
+        let sel_fg = ColorScheme::parse_color(&color_scheme.selection_foreground);
 
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
@@ -175,16 +189,38 @@ impl TerminalRenderer {
                 let x1 = ((x + cell_w) / screen_w) * 2.0 - 1.0;
                 let y1 = 1.0 - ((y + cell_h) / screen_h) * 2.0;
 
-                // Background quad
-                let bg_color = match cell.bg {
-                    pureterm_terminal::Color::Rgb(r, g, b) => {
-                        [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+                // Background quad (apply selection highlight if selected)
+                let is_selected = selection.map_or(false, |s| s(row_idx, col_idx));
+                let bg_color = if is_selected {
+                    // Use selection background color for selected cells
+                    if cell.bg == pureterm_terminal::Color::Named(pureterm_terminal::NamedColor::Background) {
+                        [sel_bg[0] as f32 / 255.0, sel_bg[1] as f32 / 255.0, sel_bg[2] as f32 / 255.0, 1.0]
+                    } else {
+                        // Blend selection color with cell background
+                        let c = match cell.bg {
+                            pureterm_terminal::Color::Rgb(r, g, b) => [r, g, b],
+                            pureterm_terminal::Color::Palette(idx) => color_scheme.color_rgb(idx as usize),
+                            _ => bg,
+                        };
+                        let blend = 0.6;
+                        [
+                            (sel_bg[0] as f32 * (1.0 - blend) + c[0] as f32 * blend) / 255.0,
+                            (sel_bg[1] as f32 * (1.0 - blend) + c[1] as f32 * blend) / 255.0,
+                            (sel_bg[2] as f32 * (1.0 - blend) + c[2] as f32 * blend) / 255.0,
+                            1.0,
+                        ]
                     }
-                    pureterm_terminal::Color::Palette(idx) => {
-                        let c = color_scheme.color_rgb(idx as usize);
-                        [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
+                } else {
+                    match cell.bg {
+                        pureterm_terminal::Color::Rgb(r, g, b) => {
+                            [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+                        }
+                        pureterm_terminal::Color::Palette(idx) => {
+                            let c = color_scheme.color_rgb(idx as usize);
+                            [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
+                        }
+                        _ => [bg[0] as f32 / 255.0, bg[1] as f32 / 255.0, bg[2] as f32 / 255.0, 1.0],
                     }
-                    _ => [bg[0] as f32 / 255.0, bg[1] as f32 / 255.0, bg[2] as f32 / 255.0, 1.0],
                 };
 
                 let base = vertices.len() as u32;
@@ -206,15 +242,19 @@ impl TerminalRenderer {
                         let tx1 = (glyph.x + glyph.width) as f32 / atlas_w as f32;
                         let ty1 = (glyph.y + glyph.height) as f32 / atlas_h as f32;
 
-                        let fg_color = match cell.fg {
-                            pureterm_terminal::Color::Rgb(r, g, b) => {
-                                [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+                        let fg_color = if is_selected {
+                            [sel_fg[0] as f32 / 255.0, sel_fg[1] as f32 / 255.0, sel_fg[2] as f32 / 255.0, 1.0]
+                        } else {
+                            match cell.fg {
+                                pureterm_terminal::Color::Rgb(r, g, b) => {
+                                    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
+                                }
+                                pureterm_terminal::Color::Palette(idx) => {
+                                    let c = color_scheme.color_rgb(idx as usize);
+                                    [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
+                                }
+                                _ => [fg[0] as f32 / 255.0, fg[1] as f32 / 255.0, fg[2] as f32 / 255.0, 1.0],
                             }
-                            pureterm_terminal::Color::Palette(idx) => {
-                                let c = color_scheme.color_rgb(idx as usize);
-                                [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
-                            }
-                            _ => [fg[0] as f32 / 255.0, fg[1] as f32 / 255.0, fg[2] as f32 / 255.0, 1.0],
                         };
 
                         // Position glyph within cell using font metrics
@@ -242,16 +282,11 @@ impl TerminalRenderer {
             }
         }
 
-        // Render cursor
+        // Render cursor with style support (block/underline/beam)
         if snapshot.cursor_visible {
             let cx = snapshot.cursor_col as f32 * cell_w;
             let cy = snapshot.cursor_row as f32 * cell_h;
             let cursor_color = ColorScheme::parse_color(&color_scheme.cursor);
-
-            let x0 = (cx / screen_w) * 2.0 - 1.0;
-            let y0 = 1.0 - (cy / screen_h) * 2.0;
-            let x1 = ((cx + cell_w) / screen_w) * 2.0 - 1.0;
-            let y1 = 1.0 - ((cy + cell_h) / screen_h) * 2.0;
 
             let cursor_rgba = [
                 cursor_color[0] as f32 / 255.0,
@@ -260,13 +295,44 @@ impl TerminalRenderer {
                 0.8,
             ];
 
+            let (cx0, cy0, cx1, cy1) = match snapshot.cursor_style {
+                pureterm_terminal::CursorStyle::Block => {
+                    // Full cell block
+                    (
+                        (cx / screen_w) * 2.0 - 1.0,
+                        1.0 - (cy / screen_h) * 2.0,
+                        ((cx + cell_w) / screen_w) * 2.0 - 1.0,
+                        1.0 - ((cy + cell_h) / screen_h) * 2.0,
+                    )
+                }
+                pureterm_terminal::CursorStyle::Underline => {
+                    // Bottom 2 pixels of the cell
+                    let underline_h = 2.0;
+                    (
+                        (cx / screen_w) * 2.0 - 1.0,
+                        1.0 - ((cy + cell_h - underline_h) / screen_h) * 2.0,
+                        ((cx + cell_w) / screen_w) * 2.0 - 1.0,
+                        1.0 - ((cy + cell_h) / screen_h) * 2.0,
+                    )
+                }
+                pureterm_terminal::CursorStyle::Beam => {
+                    // Thin vertical line (2px wide)
+                    let beam_w = 2.0;
+                    (
+                        (cx / screen_w) * 2.0 - 1.0,
+                        1.0 - (cy / screen_h) * 2.0,
+                        ((cx + beam_w) / screen_w) * 2.0 - 1.0,
+                        1.0 - ((cy + cell_h) / screen_h) * 2.0,
+                    )
+                }
+            };
+
             let base = vertices.len() as u32;
-            // Cursor quad samples atlas pixel (0,0) which is reserved as white (alpha=1.0)
             vertices.extend_from_slice(&[
-                Vertex { position: [x0, y0], tex_coords: [0.0, 0.0], color: cursor_rgba },
-                Vertex { position: [x1, y0], tex_coords: [0.0, 0.0], color: cursor_rgba },
-                Vertex { position: [x0, y1], tex_coords: [0.0, 0.0], color: cursor_rgba },
-                Vertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: cursor_rgba },
+                Vertex { position: [cx0, cy0], tex_coords: [0.0, 0.0], color: cursor_rgba },
+                Vertex { position: [cx1, cy0], tex_coords: [0.0, 0.0], color: cursor_rgba },
+                Vertex { position: [cx0, cy1], tex_coords: [0.0, 0.0], color: cursor_rgba },
+                Vertex { position: [cx1, cy1], tex_coords: [0.0, 0.0], color: cursor_rgba },
             ]);
             indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
         }
@@ -327,5 +393,40 @@ impl TerminalRenderer {
         let cols = (width as f32 / cell_w).floor() as usize;
         let rows = (height as f32 / cell_h).floor() as usize;
         (cols.max(1), rows.max(1))
+    }
+
+    /// Get a reference to the wgpu queue.
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+
+    /// Get a reference to the adapter.
+    pub fn adapter(&self) -> &wgpu::Adapter {
+        &self.adapter
+    }
+
+    /// Get mutable access to the glyph atlas.
+    pub fn atlas_mut(&mut self) -> &mut GlyphAtlas {
+        &mut self.atlas
+    }
+
+    /// Get the glyph atlas.
+    pub fn atlas(&self) -> &GlyphAtlas {
+        &self.atlas
+    }
+
+    /// Get the atlas texture (for egui paint callback integration).
+    pub fn atlas_texture(&self) -> Option<&wgpu::Texture> {
+        self.atlas_texture.as_ref()
+    }
+
+    /// Get the text pipeline.
+    pub fn text_pipeline(&self) -> Option<&TextPipeline> {
+        self.text_pipeline.as_ref()
+    }
+
+    /// Get the surface configuration.
+    pub fn surface_config(&self) -> Option<&wgpu::SurfaceConfiguration> {
+        self.surface_config.as_ref()
     }
 }

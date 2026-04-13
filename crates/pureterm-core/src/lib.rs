@@ -1,6 +1,15 @@
+pub mod ai;
+pub mod auto_profile;
+pub mod clipboard;
 pub mod config;
+pub mod dirfreq;
 pub mod error;
 pub mod hotkey;
+pub mod notification;
 pub mod plugin;
 pub mod profile;
+pub mod remote;
 pub mod theme;
+pub mod theme_auto;
+pub mod trigger;
+pub mod vault;

@@ -11,10 +11,13 @@ pureterm-terminal = { workspace = true }
 wgpu = { workspace = true }
 egui = { workspace = true }
 egui-wgpu = { workspace = true }
+egui-winit = { workspace = true }
+winit = { workspace = true }
 fontdue = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
+serde = { workspace = true }
 bytemuck = "1"
 image = "0.25"

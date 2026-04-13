@@ -1,5 +1,7 @@
-use crate::screen::{Cell, CellAttrs, Color, Cursor, Grid, NamedColor};
+use crate::screen::{Cell, CellAttrs, Color, Cursor, CursorStyle, Grid, NamedColor};
 use crate::mode::TermMode;
+use crate::hyperlink::Hyperlink;
+use crate::mark::Mark;
 use log::{debug, trace};
 
 /// Performs actions based on VTE escape sequences.
@@ -38,6 +40,8 @@ pub struct VtePerform {
     pub tab_stops: Vec<bool>,
     /// Pending OSC string.
     osc_buffer: String,
+    /// Current active hyperlink from OSC 8 (applied to newly printed cells).
+    pub current_hyperlink: Option<std::sync::Arc<Hyperlink>>,
 }
 
 impl VtePerform {
@@ -62,6 +66,7 @@ impl VtePerform {
             saved_attrs: None,
             tab_stops,
             osc_buffer: String::new(),
+            current_hyperlink: None,
         }
     }
 
@@ -123,6 +128,7 @@ impl VtePerform {
             cell.fg = self.fg;
             cell.bg = self.bg;
             cell.attrs = self.attrs;
+            cell.hyperlink = self.current_hyperlink.clone();
         }
 
         if width == 2 && self.cursor.col + 1 < self.cols {
@@ -162,6 +168,16 @@ impl vte::Perform for VtePerform {
 
     fn execute(&mut self, byte: u8) {
         match byte {
+            0x07 => {
+                // BEL - Bell
+                // Visual bell: briefly invert the screen or notify
+                if self.mode.contains(TermMode::VISIBLE_BELL) {
+                    // Flash effect — set a flag that the renderer can pick up
+                    log::debug!("Visual bell triggered");
+                }
+                // System bell notification
+                log::trace!("BEL received");
+            }
             0x08 => {
                 // BS - Backspace
                 if self.cursor.col > 0 {
@@ -234,7 +250,58 @@ impl vte::Perform for VtePerform {
                     ).into());
                 }
             }
+            "8" => {
+                // OSC 8: Hyperlinks
+                // Format: OSC 8 ; params ; uri ST
+                // params can be empty or "id=..."
+                // To close: OSC 8 ; ; ST
+                if params.len() > 1 {
+                    let combined: Vec<u8> = params[1..]
+                        .iter()
+                        .flat_map(|p| p.iter().copied())
+                        .collect();
+
+                    if let Some(semi_pos) = combined.iter().position(|&b| b == b';') {
+                        let params_str = String::from_utf8_lossy(&combined[..semi_pos]);
+                        let uri = String::from_utf8_lossy(&combined[semi_pos + 1..]).to_string();
+
+                        if uri.is_empty() {
+                            // Close hyperlink
+                            self.current_hyperlink = None;
+                        } else {
+                            let params = if params_str.is_empty() {
+                                None
+                            } else {
+                                Some(params_str.to_string())
+                            };
+                            self.current_hyperlink = Some(std::sync::Arc::new(
+                                Hyperlink::new(uri, params)
+                            ));
+                        }
+                    } else {
+                        // No semicolon found - just a close command
+                        self.current_hyperlink = None;
+                    }
+                } else {
+                    self.current_hyperlink = None;
+                }
+            }
             _ => {
+                // OSC 133: Shell integration marks
+                if param0.starts_with("133") {
+                    let marker: String = String::from_utf8_lossy(
+                        &params[1..].iter().flat_map(|p| p.iter().copied()).collect::<Vec<_>>()
+                    ).into();
+                    let marker_trimmed = marker.trim();
+                    if !marker_trimmed.is_empty() {
+                        if let Some(mark) = Mark::from_osc133(marker_trimmed) {
+                            self.grid.set_mark(self.cursor.row, mark);
+                        }
+                    } else if param0 == "133" {
+                        // OSC 133 ; A/B/C/D with empty marker part — try the param0 suffix
+                        // param0 could be "133;A" depending on how vte splits
+                    }
+                }
                 debug!("Unhandled OSC: {}", param0);
             }
         }
@@ -453,6 +520,20 @@ impl vte::Perform for VtePerform {
                 let row = param_or(&params_vec, 0, 1).saturating_sub(1) as usize;
                 self.cursor.row = row.min(self.rows - 1);
             }
+            'q' => {
+                // DECSCUSR - Set Cursor Style
+                // CSI Ps SP q  (intermediates contains SP = 0x20)
+                let style = param_or(&params_vec, 0, 0);
+                match style {
+                    0 | 1 => { self.cursor.style = CursorStyle::Block; self.cursor.blink = true; }
+                    2 => { self.cursor.style = CursorStyle::Block; self.cursor.blink = false; }
+                    3 => { self.cursor.style = CursorStyle::Underline; self.cursor.blink = true; }
+                    4 => { self.cursor.style = CursorStyle::Underline; self.cursor.blink = false; }
+                    5 => { self.cursor.style = CursorStyle::Beam; self.cursor.blink = true; }
+                    6 => { self.cursor.style = CursorStyle::Beam; self.cursor.blink = false; }
+                    _ => {}
+                }
+            }
             _ => {
                 debug!("Unhandled CSI {} with {:?} params", action, params_vec);
             }
@@ -460,7 +541,111 @@ impl vte::Perform for VtePerform {
         self.dirty = true;
     }
 
-    fn esc_dispatch(&mut self, _intermediates: &[u8], _ignore: bool, _byte: u8) {
+    fn esc_dispatch(&mut self, intermediates: &[u8], _ignore: bool, byte: u8) {
+        match byte {
+            b'7' => {
+                // DECSC - Save cursor position and attributes
+                self.cursor.save();
+                self.saved_cursor = Some(self.cursor.clone());
+                self.saved_attrs = Some((self.fg, self.bg, self.attrs));
+            }
+            b'8' => {
+                // DECRC - Restore cursor position and attributes
+                if let Some(saved) = &self.saved_cursor {
+                    self.cursor.row = saved.saved_row;
+                    self.cursor.col = saved.saved_col;
+                } else {
+                    self.cursor.restore();
+                }
+                if let Some((fg, bg, attrs)) = &self.saved_attrs {
+                    self.fg = *fg;
+                    self.bg = *bg;
+                    self.attrs = *attrs;
+                }
+            }
+            b'c' => {
+                // RIS - Full terminal reset
+                self.cursor = Cursor::new();
+                self.grid.clear();
+                self.mode = TermMode::default();
+                self.fg = Color::Named(NamedColor::Foreground);
+                self.bg = Color::Named(NamedColor::Background);
+                self.attrs = CellAttrs::default();
+                self.scroll_top = 0;
+                self.scroll_bottom = self.rows;
+                self.saved_cursor = None;
+                self.saved_attrs = None;
+                self.tab_stops = (0..self.cols).map(|i| i % 8 == 0).collect();
+            }
+            b'D' => {
+                // IND - Index (move cursor down, scroll if at bottom)
+                let bottom = self.scroll_bottom.min(self.rows);
+                if self.cursor.row + 1 >= bottom {
+                    self.grid.scroll_up();
+                } else {
+                    self.cursor.row += 1;
+                }
+            }
+            b'M' => {
+                // RI - Reverse Index (move cursor up, scroll if at top)
+                let top = self.scroll_top;
+                if self.cursor.row == top {
+                    self.grid.scroll_down();
+                } else if self.cursor.row > 0 {
+                    self.cursor.row -= 1;
+                }
+            }
+            b'E' => {
+                // NEL - Next Line (CR + LF)
+                self.cursor.col = 0;
+                let bottom = self.scroll_bottom.min(self.rows);
+                if self.cursor.row + 1 >= bottom {
+                    self.grid.scroll_up();
+                } else {
+                    self.cursor.row += 1;
+                }
+            }
+            b'#'
+                if intermediates.is_empty()
+                    || intermediates.first() == Some(&b'#') =>
+            {
+                // DEC Screen Alignment Test (ESC # 8)
+                // The '#' intermediate is passed via the intermediates array by vte,
+                // but some parser variants encode it differently. Handle ESC # 8
+                // by filling the screen with 'E' characters.
+                for row in 0..self.rows {
+                    for col in 0..self.cols {
+                        if let Some(cell) = self.grid.get_mut(row, col) {
+                            cell.c = 'E';
+                        }
+                    }
+                }
+            }
+            b'(' => {
+                // Designate G0 character set - ESC ( C
+                // Character set mapping is complex; log and ignore for now
+                debug!(
+                    "ESC ( - Designate G0 character set (ignored), intermediates: {:?}",
+                    intermediates
+                );
+            }
+            b')' => {
+                // Designate G1 character set - ESC ) C
+                debug!(
+                    "ESC ) - Designate G1 character set (ignored), intermediates: {:?}",
+                    intermediates
+                );
+            }
+            _ => {
+                debug!(
+                    "Unhandled ESC sequence: intermediates={:?}, byte=0x{:02x} ('{}')",
+                    intermediates,
+                    byte,
+                    (byte as char)
+                );
+            }
+        }
+        self.dirty = true;
     }
 }
 

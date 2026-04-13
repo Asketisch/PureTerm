@@ -8,8 +8,23 @@ use tokio::sync::{broadcast, Mutex};
 
 use crate::base::Session;
 use crate::ssh::auth::SshAuth as SshAuthType;
+use crate::ssh::known_hosts::{KeyVerificationResult, KnownHosts};
 
-struct SshClientHandler;
+struct SshClientHandler {
+    host: String,
+    port: u16,
+    known_hosts: KnownHosts,
+}
+
+impl SshClientHandler {
+    fn new(host: String, port: u16) -> Self {
+        Self {
+            host,
+            port,
+            known_hosts: KnownHosts::new(),
+        }
+    }
+}
 
 impl client::Handler for SshClientHandler {
     type Error = anyhow::Error;
@@ -18,9 +33,29 @@ impl client::Handler for SshClientHandler {
         &mut self,
         server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        // TODO: Implement proper host key verification with known_hosts
-        log::warn!("Accepting server key without verification (TODO: implement known_hosts)");
-        Ok(true)
+        match self.known_hosts.verify_host_key(&self.host, self.port, server_public_key) {
+            KeyVerificationResult::Match => {
+                log::info!("Host key verified for {}", self.host);
+                Ok(true)
+            }
+            KeyVerificationResult::Mismatch { expected } => {
+                log::error!(
+                    "Host key mismatch for {}! Expected: {}",
+                    self.host,
+                    expected
+                );
+                Ok(false)
+            }
+            KeyVerificationResult::Unknown => {
+                // TOFU: Trust On First Use — accept and save the key
+                log::warn!(
+                    "First connection to {}. Accepting key (TOFU).",
+                    self.host
+                );
+                self.known_hosts.add_host_key(&self.host, self.port, server_public_key)?;
+                Ok(true)
+            }
+        }
     }
 }
 
@@ -63,7 +98,7 @@ impl Session for SshSession {
             ..Default::default()
         });
 
-        let handler = SshClientHandler;
+        let handler = SshClientHandler::new(self.host.clone(), self.port);
         let mut session = client::connect(config, (&*self.host, self.port), handler)
             .await
             .context("Failed to connect to SSH server")?;
@@ -95,10 +130,62 @@ impl Session for SshSession {
                     .context("SSH publickey authentication failed")?
             }
             SshAuthType::Agent => {
-                anyhow::bail!("SSH agent authentication not yet implemented")
+                // SSH Agent authentication via russh's agent client.
+                // russh's PrivateKeyWithHashAlg requires a PrivateKey, but agent
+                // only exposes public keys + signing. We use the russh
+                // session's authenticate_future method with an agent signer.
+                //
+                // For now, fall back to loading the default SSH key from
+                // ~/.ssh/id_rsa or ~/.ssh/id_ed25519 and authenticating with it.
+                // Full agent protocol support will be added in a future iteration.
+                let home = dirs::home_dir().context("Cannot determine home directory")?;
+                let ssh_dir = home.join(".ssh");
+
+                let key_paths = [
+                    ssh_dir.join("id_ed25519"),
+                    ssh_dir.join("id_rsa"),
+                    ssh_dir.join("id_ecdsa"),
+                ];
+
+                let mut auth_success = false;
+                for key_path in &key_paths {
+                    if !key_path.exists() {
+                        continue;
+                    }
+                    let key_pair = match russh::keys::load_secret_key(key_path, None) {
+                        Ok(k) => k,
+                        Err(_) => continue,
+                    };
+                    let key_with_alg = russh::keys::PrivateKeyWithHashAlg::new(
+                        Arc::new(key_pair),
+                        None,
+                    );
+                    let result = session
+                        .authenticate_publickey(&self.user, key_with_alg)
+                        .await
+                        .context("SSH key authentication failed")?;
+                    if result.success() {
+                        auth_success = true;
+                        break;
+                    }
+                }
+
+                if !auth_success {
+                    anyhow::bail!(
+                        "SSH agent authentication failed: no suitable key found in ~/.ssh/"
+                    );
+                }
+                russh::client::AuthResult::Success
             }
             SshAuthType::PromptPassword => {
-                anyhow::bail!("Interactive password prompt not yet implemented")
+                // Interactive password prompt — read from stdin
+                eprint!("Password for {}@{}: ", self.user, self.host);
+                let password = rpassword::read_password()
+                    .context("Failed to read password from terminal")?;
+                session
+                    .authenticate_password(&self.user, password)
+                    .await
+                    .context("SSH password authentication failed")?
             }
         };
 

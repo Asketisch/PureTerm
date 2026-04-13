@@ -13,6 +13,8 @@ tokio = { workspace = true }
 egui = { workspace = true }
 epaint = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
+regex = { workspace = true }

@@ -1,3 +1,4 @@
+use crate::mark::Mark;
 use crate::screen::cell::Cell;
 
 /// A 2D grid of terminal cells with scrollback history.
@@ -5,6 +6,8 @@ use crate::screen::cell::Cell;
 pub struct Grid {
     /// Visible rows + scrollback
     rows: Vec<Vec<Cell>>,
+    /// Per-row marks (indexed same as `rows`).
+    marks: Vec<Option<Mark>>,
     /// Number of visible columns
     cols: usize,
     /// Number of visible rows
@@ -22,9 +25,11 @@ impl Grid {
         let grid_rows = (0..total_rows)
             .map(|_| (0..cols).map(|_| Cell::blank()).collect())
             .collect();
+        let grid_marks = vec![None; total_rows];
 
         Self {
             rows: grid_rows,
+            marks: grid_marks,
             cols,
             visible_rows,
             scrollback_limit: scrollback,
@@ -74,8 +79,10 @@ impl Grid {
         // If we're at the scrollback limit, remove the oldest row
         if self.rows.len() > self.visible_rows + self.scrollback_limit {
             self.rows.remove(0);
+            self.marks.remove(0);
         }
         self.rows.push(new_row);
+        self.marks.push(None);
     }
 
     /// Scroll down by one line.
@@ -85,6 +92,7 @@ impl Grid {
         let start = total.saturating_sub(self.visible_rows);
         if start > 0 {
             self.rows.insert(start, new_row);
+            self.marks.insert(start, None);
         }
     }
 
@@ -103,6 +111,7 @@ impl Grid {
             for _ in 0..extra {
                 let new_row = (0..self.cols).map(|_| Cell::blank()).collect();
                 self.rows.push(new_row);
+                self.marks.push(None);
             }
         }
         self.visible_rows = new_rows;
@@ -173,5 +182,54 @@ impl Grid {
     pub fn history(&self) -> usize {
         let total = self.rows.len();
         total.saturating_sub(self.visible_rows)
+    }
+
+    /// Set a mark on a visible row.
+    pub fn set_mark(&mut self, row: usize, mark: Mark) {
+        if row >= self.visible_rows {
+            return;
+        }
+        let idx = self.visible_start() + row;
+        if let Some(m) = self.marks.get_mut(idx) {
+            *m = Some(mark);
+        }
+    }
+
+    /// Get the mark on a visible row.
+    pub fn get_mark(&self, row: usize) -> Option<&Mark> {
+        if row >= self.visible_rows {
+            return None;
+        }
+        let idx = self.visible_start() + row;
+        self.marks.get(idx).and_then(|m| m.as_ref())
+    }
+
+    /// Find the previous row with a mark of the given kind (searching upward).
+    /// Returns the visible row index, or None if not found.
+    pub fn find_prev_mark(&self, from_row: usize, kind: crate::mark::MarkKind) -> Option<usize> {
+        let start = self.visible_start();
+        for row in (0..from_row).rev() {
+            let idx = start + row;
+            if let Some(Some(m)) = self.marks.get(idx) {
+                if m.kind == kind {
+                    return Some(row);
+                }
+            }
+        }
+        None
+    }
+
+    /// Find the next row with a mark of the given kind (searching downward).
+    pub fn find_next_mark(&self, from_row: usize, kind: crate::mark::MarkKind) -> Option<usize> {
+        let start = self.visible_start();
+        for row in (from_row + 1)..self.visible_rows {
+            let idx = start + row;
+            if let Some(Some(m)) = self.marks.get(idx) {
+                if m.kind == kind {
+                    return Some(row);
+                }
+            }
+        }
+        None
     }
 }

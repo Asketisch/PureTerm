@@ -30,6 +30,8 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 | `terminal_pane` | `Option<TerminalPane>` | 终端面板 |
 | `color_scheme` | `ColorScheme` | 当前配色 |
 | `modifiers` | `ModifiersState` | 修饰键状态 |
+| `mouse_pos` | `(f32, f32)` | 最后已知鼠标位置（像素） |
+| `clipboard_text` | `String` | 剪贴板内容 |
 
 ## 核心流程
 
@@ -51,6 +53,21 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 ### 键盘处理（`handle_key_input`）
 将 winit `NamedKey` 映射为字符串名称（Escape、Enter、Tab、Backspace、方向键、Home/End、PageUp/PageDown、Insert、Delete、F1-F12），连同 Ctrl+字母和文本输入一起转发给 `TerminalPane`。
 
+### 鼠标事件处理
+- `CursorMoved` → 像素转单元格坐标 → `TerminalPane::handle_mouse_event(Move)`
+- `MouseInput` → 像素转单元格坐标 → `TerminalPane::handle_mouse_event(Down/Up)`，Ctrl+点击打开 URL
+- `MouseWheel` → 像素转单元格坐标 → `TerminalPane::handle_mouse_event(Scroll)`
+
+### 文件拖放
+- `DroppedFile` → 传递给 `TerminalPane::handle_dropped_file()`
+
+### PaneAction 处理
+`handle_pane_action` 处理来自 `TerminalPane` 的动作：
+- `CopyText` → 更新剪贴板
+- `PasteFromClipboard` → 从剪贴板粘贴
+- `ShowContextMenu` → 显示上下文菜单
+- `OpenUrl` → 打开 URL（平台特定）
+
 ## 常见任务
 
 ### 添加新的窗口事件处理
@@ -61,3 +78,9 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 
 ### 调试渲染不刷新问题
 检查 `RedrawRequested` 中 `pane.drain_output()` 是否被调用、`is_dirty()` 是否返回 true、`snapshot()` 数据是否正确。
+
+### 修改鼠标处理
+编辑鼠标事件处理逻辑。注意 `pixel_to_cell()` 方法用于坐标转换。
+
+### 添加平台特定功能
+使用 `#[cfg(target_os = "...")]` 条件编译。现有实现支持 macOS、Linux、Windows。

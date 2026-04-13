@@ -1,3 +1,4 @@
+use crate::hyperlink::Hyperlink;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -56,6 +57,13 @@ pub struct Cell {
     pub fg: Color,
     pub bg: Color,
     pub attrs: CellAttrs,
+    /// Optional hyperlink (OSC 8). Stored as Arc for cheap cloning across cells.
+    #[serde(
+        default,
+        skip_serializing,
+        skip_deserializing
+    )]
+    pub hyperlink: Option<std::sync::Arc<Hyperlink>>,
 }
 
 impl Cell {
@@ -65,6 +73,7 @@ impl Cell {
             fg: Color::Named(NamedColor::Foreground),
             bg: Color::Named(NamedColor::Background),
             attrs: CellAttrs::default(),
+            hyperlink: None,
         }
     }
 
@@ -75,6 +84,7 @@ impl Cell {
     pub fn is_blank(&self) -> bool {
         self.c == ' ' && self.fg == Color::Named(NamedColor::Foreground)
             && self.bg == Color::Named(NamedColor::Background)
+            && self.hyperlink.is_none()
     }
 
     pub fn reset(&mut self) {
@@ -82,6 +92,7 @@ impl Cell {
         self.fg = Color::Named(NamedColor::Foreground);
         self.bg = Color::Named(NamedColor::Background);
         self.attrs = CellAttrs::default();
+        self.hyperlink = None;
     }
 }
 

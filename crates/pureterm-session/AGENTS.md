@@ -1,30 +1,42 @@
 # pureterm-session — 连接会话管理
 
-提供统一的 `Session` trait 和四种实现：本地 PTY、SSH、串口、Telnet。包含中间件系统用于处理数据流。
+提供统一的 `Session` trait 和四种实现：本地 PTY、SSH、串口、Telnet。包含中间件系统用于处理数据流，以及跳板机、日志、同步输入等功能。
 
 ## 关键依赖
 
 内部依赖：`pureterm-core`
 
-外部依赖：`tokio` + `async-trait` + `futures`（异步）、`russh`（SSH）、`serialport`（串口）、`portable-pty`（PTY）、`serde`、`thiserror`、`anyhow`、`bytes 1`。
+外部依赖：`tokio` + `async-trait` + `futures`（异步）、`russh`（SSH）、`serialport`（串口）、`portable-pty`（PTY）、`serde`、`thiserror`、`anyhow`、`bytes 1`、`regex`、`base64`、`dirs`、`rpassword`。
 
 ## 文件结构
 
 ```
 src/
-├── lib.rs           # 模块导出
-├── base.rs          # Session trait + ConnectParams + SessionType + SshAuth
-├── local.rs         # LocalSession（PTY）
-├── middleware.rs    # SessionMiddleware trait + MiddlewareStack
-├── osc_processor.rs # OSC 处理中间件
+├── lib.rs              # 模块导出
+├── base.rs             # Session trait + ConnectParams + SessionType + SshAuth
+├── local.rs            # LocalSession（PTY）
+├── local_provider.rs   # Local ProfileProvider
+├── middleware.rs       # SessionMiddleware trait + MiddlewareStack
+├── osc_processor.rs    # OSC 处理中间件
+├── proxy.rs            # 代理支持
+├── jump_host.rs        # SSH 跳板机（bastion）支持
+├── session_log.rs      # 会话日志记录
+├── sync_input.rs       # 同步输入管理
+├── clone_shell.rs      # 克隆 shell 会话
+├── login_script.rs     # 登录脚本中间件
 ├── ssh/
-│   ├── mod.rs       # 重导出
-│   ├── auth.rs      # SshAuth 枚举
-│   └── client.rs    # SshSession（russh）
+│   ├── mod.rs          # 重导出
+│   ├── auth.rs         # SshAuth 枚举
+│   └── client.rs       # SshSession（russh）
+├── ssh_provider.rs     # Ssh ProfileProvider
 ├── serial/
-│   └── mod.rs       # SerialSession（serialport）
-└── telnet/
-    └── mod.rs       # TelnetSession（TCP）
+│   └── mod.rs          # SerialSession（serialport）
+├── serial_provider.rs  # Serial ProfileProvider
+├── telnet/
+│   └── mod.rs          # TelnetSession（TCP）
+├── telnet_provider.rs  # Telnet ProfileProvider
+├── xmodem.rs           # Xmodem 文件传输
+└── zmodem.rs            # Zmodem 文件传输
 ```
 
 ## 核心接口
@@ -63,7 +75,7 @@ trait Session: Send {
 - `start()` — 创建 PTY，读取 `$SHELL`（默认 `/bin/sh`），启动 reader 线程广播输出
 - `resize()` — 调用 `master.resize(PtySize)`
 - `write()` — 写入 PTY writer
-- 额外方法：`child_id()` 获取子进程 ID
+- 额外方法：`child_id()` 获取子进程 Id
 - 注意：`portable-pty 0.8` 使用 `take_writer()` 而非旧版的 `try_clone_writer()`
 
 ### SshSession（ssh/client.rs）
@@ -104,6 +116,62 @@ trait SessionMiddleware: Send {
 
 `MiddlewareStack` 链式调用所有中间件。目前 `OscProcessorMiddleware` 为透传实现（OSC 由 VTE 解析器处理）。
 
+### JumpHostManager（jump_host.rs）
+
+SSH 跳板机（bastion/proxy host）支持：
+
+| 类型 | 说明 |
+|------|------|
+| `JumpHostConfig` | 跳板机配置：host、port、user、hops（多跳） |
+| `JumpHop` | 单跳配置 |
+| `JumpHostManager` | 管理跳板机规则，按目标主机名模式匹配 |
+
+支持多跳 SSH 隧道连接。
+
+### SessionLog（session_log.rs）
+
+会话日志记录功能：
+
+| 类型 | 说明 |
+|------|------|
+| `SessionLogConfig` | 日志配置：enabled、log_dir、log_input、max_file_size |
+| `SessionLog` | 日志写入器，带时间戳和文件轮转 |
+
+支持输出记录、可选输入记录、文件大小限制和自动轮转。
+
+### LoginScriptMiddleware（login_script.rs）
+
+登录脚本中间件，在会话启动时自动发送预定义脚本。
+
+### SyncInputManager（sync_input.rs）
+
+同步输入管理，用于多终端同步输入：
+
+| 类型 | 说明 |
+|------|------|
+| `SyncInputManager` | 管理同步输入会话 |
+| `SyncInputResult` | 同步结果 |
+| `SyncSessionHandle` | 同步会话句柄 |
+
+### CloneShell（clone_shell.rs）
+
+克隆现有 shell 会话，创建新的 PTY 链接到同一个 shell 进程。
+
+### ZmodemMiddleware / Xmodem（zmodem.rs / xmodem.rs）
+
+文件传输中间件，支持 Zmodem 和 Xmodem 协议。
+
+### Profile Providers
+
+提供从 Profile 配置创建会话的工厂：
+
+| Provider | 说明 |
+|----------|------|
+| `LocalProfileProvider` | 从 Local 类型 Profile 创建 LocalSession |
+| `SshProfileProvider` | 从 Ssh 类型 Profile 创建 SshSession |
+| `SerialProfileProvider` | 从 Serial 类型 Profile 创建 SerialSession |
+| `TelnetProfileProvider` | 从 Telnet 类型 Profile 创建 TelnetSession |
+
 ## 常见任务
 
 ### 添加新的会话类型
@@ -120,6 +188,9 @@ trait SessionMiddleware: Send {
 1. 实现 `SessionMiddleware` trait
 2. 在 `MiddlewareStack` 中注册
 3. 在 `TerminalPane` 初始化时配置中间件栈
+
+### 配置跳板机连接
+使用 `JumpHostManager::register()` 注册跳板机规则，匹配目标主机模式。
 
 ### 版本兼容性注意
 - `russh` 和 `russh-keys` 有严格的版本耦合 — 使用 workspace.dependencies 中的版本

@@ -9,10 +9,11 @@ use pureterm_session::Session;
 use pureterm_session::LocalSession;
 use pureterm_ui::app::App;
 use pureterm_ui::tabs::TabContent;
-use pureterm_ui::terminal::pane::TerminalPane;
+use pureterm_ui::terminal::pane::{TerminalPane, PaneAction};
+use pureterm_terminal::screen::selection::{TerminalMouseEvent, MouseButton, MouseModifiers};
 
 use winit::application::ApplicationHandler;
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, WindowEvent, MouseButton as WinitMouseButton, MouseScrollDelta};
 use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
@@ -26,6 +27,10 @@ struct PureTermApp {
     terminal_pane: Option<TerminalPane>,
     color_scheme: pureterm_core::theme::ColorScheme,
     modifiers: ModifiersState,
+    /// Last known mouse position in pixels.
+    mouse_pos: (f32, f32),
+    /// Clipboard content for copy/paste.
+    clipboard_text: String,
 }
 
 impl PureTermApp {
@@ -37,6 +42,45 @@ impl PureTermApp {
         if let Some(ref window) = self.window {
             window.request_redraw();
         }
+    }
+
+    fn handle_pane_action(&mut self, action: PaneAction) {
+        match action {
+            PaneAction::CopyText(text) => {
+                self.clipboard_text = text;
+                log::debug!("Copied {} chars to clipboard", self.clipboard_text.len());
+            }
+            PaneAction::PasteFromClipboard => {
+                if let Some(ref mut pane) = self.terminal_pane {
+                    if !self.clipboard_text.is_empty() {
+                        pane.paste(&self.clipboard_text);
+                    }
+                }
+            }
+            PaneAction::ShowContextMenu => {
+                log::debug!("Context menu requested");
+                // Context menu would be shown here via egui overlay
+            }
+            PaneAction::OpenUrl(url) => {
+                log::info!("Opening URL: {}", url);
+                #[cfg(target_os = "macos")]
+                let _ = std::process::Command::new("open").arg(&url).spawn();
+                #[cfg(target_os = "linux")]
+                let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                #[cfg(target_os = "windows")]
+                let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn();
+            }
+        }
+    }
+
+    fn pixel_to_cell(&self, px: f32, py: f32) -> (usize, usize) {
+        if let Some(ref renderer) = self.renderer {
+            if let Some(ref pane) = self.terminal_pane {
+                let (cell_w, cell_h) = renderer.cell_size();
+                return pane.pixel_to_cell(px, py, cell_w, cell_h);
+            }
+        }
+        (0, 0)
     }
 }
 
@@ -72,7 +116,6 @@ impl ApplicationHandler for PureTermApp {
             }).expect("Failed to create local session");
 
             // Subscribe to output BEFORE starting session to avoid losing early data
-            // (broadcast channel only delivers to existing subscribers)
             let output_receiver = session.output_stream();
 
             // Now start the session (PTY reader thread sends to broadcast)
@@ -218,6 +261,150 @@ impl ApplicationHandler for PureTermApp {
                     }
                 }
             }
+
+            // ── Mouse events ──
+
+            WindowEvent::CursorMoved { position, .. } => {
+                self.mouse_pos = (position.x as f32, position.y as f32);
+
+                let (row, col) = self.pixel_to_cell(self.mouse_pos.0, self.mouse_pos.1);
+                let modifiers = MouseModifiers {
+                    ctrl: self.modifiers.control_key(),
+                    alt: self.modifiers.alt_key(),
+                    shift: self.modifiers.shift_key(),
+                };
+
+                let mut actions = Vec::new();
+                if let Some(ref mut pane) = self.terminal_pane {
+                    let event = TerminalMouseEvent::Move { row, col, modifiers };
+                    let (to_send, action) = pane.handle_mouse_event(event);
+                    if let Some(data) = to_send {
+                        pane.write_input(&data);
+                    }
+                    if let Some(action) = action {
+                        actions.push(action);
+                    }
+                    if pane.is_dirty() {
+                        if let Some(ref window) = self.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+                for action in actions {
+                    self.handle_pane_action(action);
+                }
+            }
+
+            WindowEvent::MouseInput { state, button, .. } => {
+                let (row, col) = self.pixel_to_cell(self.mouse_pos.0, self.mouse_pos.1);
+                let modifiers = MouseModifiers {
+                    ctrl: self.modifiers.control_key(),
+                    alt: self.modifiers.alt_key(),
+                    shift: self.modifiers.shift_key(),
+                };
+
+                let mouse_button = match button {
+                    WinitMouseButton::Left => MouseButton::Left,
+                    WinitMouseButton::Middle => MouseButton::Middle,
+                    WinitMouseButton::Right => MouseButton::Right,
+                    _ => return,
+                };
+
+                let mut actions = Vec::new();
+                if let Some(ref mut pane) = self.terminal_pane {
+                    let event = match state {
+                        ElementState::Pressed => {
+                            pane.terminal.scroll_to_bottom();
+                            TerminalMouseEvent::Down { button: mouse_button, row, col, modifiers }
+                        }
+                        ElementState::Released => {
+                            TerminalMouseEvent::Up { button: mouse_button, row, col, modifiers }
+                        }
+                    };
+
+                    let (to_send, action) = pane.handle_mouse_event(event);
+                    if let Some(data) = to_send {
+                        pane.write_input(&data);
+                    }
+                    if let Some(action) = action {
+                        actions.push(action);
+                    }
+
+                    // Handle Ctrl+Click on URL/hyperlink
+                    if state == ElementState::Pressed
+                        && mouse_button == MouseButton::Left
+                        && modifiers.ctrl
+                    {
+                        if let Some(url) = pane.url_at(row, col) {
+                            actions.push(PaneAction::OpenUrl(url));
+                        }
+                    }
+
+                    if pane.is_dirty() {
+                        if let Some(ref window) = self.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+                for action in actions {
+                    self.handle_pane_action(action);
+                }
+            }
+
+            WindowEvent::MouseWheel { delta, .. } => {
+                let (row, col) = self.pixel_to_cell(self.mouse_pos.0, self.mouse_pos.1);
+                let delta_rows = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => -y as i32,
+                    MouseScrollDelta::PixelDelta(pos) => {
+                        -(pos.y / 40.0) as i32
+                    }
+                };
+
+                if delta_rows == 0 {
+                    return;
+                }
+
+                let modifiers = MouseModifiers {
+                    ctrl: self.modifiers.control_key(),
+                    alt: self.modifiers.alt_key(),
+                    shift: self.modifiers.shift_key(),
+                };
+
+                let mut actions = Vec::new();
+                if let Some(ref mut pane) = self.terminal_pane {
+                    let event = TerminalMouseEvent::Scroll { delta_rows, row, col, modifiers };
+                    let (to_send, action) = pane.handle_mouse_event(event);
+                    if let Some(data) = to_send {
+                        pane.write_input(&data);
+                    }
+                    if let Some(action) = action {
+                        actions.push(action);
+                    }
+                    if pane.is_dirty() {
+                        if let Some(ref window) = self.window {
+                            window.request_redraw();
+                        }
+                    }
+                }
+                for action in actions {
+                    self.handle_pane_action(action);
+                }
+            }
+
+            // ── Drag and drop ──
+
+            WindowEvent::DroppedFile(path) => {
+                let path_str = path.to_string_lossy().to_string();
+                log::info!("File dropped: {}", path_str);
+                if let Some(ref mut pane) = self.terminal_pane {
+                    pane.handle_dropped_file(&path_str);
+                }
+            }
+
+            WindowEvent::HoveredFile(path) => {
+                log::debug!("File hovered: {:?}", path);
+            }
+
             _ => {}
         }
     }
@@ -262,6 +449,8 @@ fn main() -> Result<()> {
         terminal_pane: None,
         color_scheme,
         modifiers: ModifiersState::default(),
+        mouse_pos: (0.0, 0.0),
+        clipboard_text: String::new(),
     };
 
     event_loop.run_app(&mut app)?;

@@ -1,22 +1,31 @@
-# pureterm-core — 配置、主题、快捷键、插件（无 UI 依赖）
+# pureterm-core — 配置、主题、快捷键、插件、AI、加密、触发器
 
-工作区的基础 crate，提供配置管理、配色方案、快捷键绑定、配置文件和插件系统。
+工作区的基础 crate，提供配置管理、配色方案、快捷键绑定、配置文件、插件系统、AI 集成、加密存储、触发器和通知。
 
 ## 关键依赖
 
-`serde` + `serde_json` + `toml`（序列化）、`dirs`（路径）、`uuid`（ID）、`thiserror`（错误）、`parking_lot`（并发）。
+`serde` + `serde_json` + `toml`（序列化）、`dirs`（路径）、`uuid`（ID）、`thiserror`（错误）、`parking_lot`（并发）、`sha2` + `aes-gcm` + `base64`（加密）、`regex`（正则）。
 
 ## 文件结构
 
 ```
 src/
 ├── lib.rs           # 模块导出
+├── ai.rs            # AI 集成（OpenAI/Claude/Ollama）
+├── auto_profile.rs  # 自动配置文件选择
+├── clipboard.rs     # 剪贴板管理
 ├── config.rs        # AppConfig + ConfigService
+├── dirfreq.rs       # 目录频率统计
 ├── error.rs         # CoreError 枚举
 ├── hotkey.rs        # 快捷键系统
+├── notification.rs  # 桌面通知
 ├── plugin.rs        # 插件框架（预留）
 ├── profile.rs       # 连接配置文件
-└── theme.rs         # 配色方案 + ThemeService
+├── remote.rs        # 远程管理
+├── theme.rs         # 配色方案 + ThemeService
+├── theme_auto.rs    # 自动主题切换
+├── trigger.rs       # 输出触发器（通知/高亮/命令）
+└── vault.rs         # 敏感信息加密存储（AES-256-GCM）
 ```
 
 ## 模块详情
@@ -47,6 +56,10 @@ src/
 
 `ColorScheme` 颜色方法：`foreground_rgb()`、`background_rgb()`、`cursor_rgb()`、`color_rgb(index)` — 都返回 `[u8; 3]`。
 
+### theme_auto.rs — 自动主题切换
+
+根据系统主题（深色/浅色）自动切换配色方案。
+
 ### hotkey.rs — 快捷键
 
 | 类型 | 说明 |
@@ -67,6 +80,57 @@ src/
 | `ProfileOptions` | 所有会话类型的配置参数集合 |
 | `ProfileProvider` | trait：提供配置到 tab 参数的转换 |
 | `ProfileManager` | 注册和管理 ProfileProvider |
+
+### ai.rs — AI 集成
+
+| 类型 | 说明 |
+|------|------|
+| `AiConfig` | AI 后端配置：backend、api_key、model、base_url、max_tokens、temperature |
+| `AiBackend` | 枚举：OpenAi、Claude、Ollama、Disabled |
+| `AiMessage` | 消息结构：role（System/User/Assistant）、content |
+
+支持 OpenAI、Claude（Anthropic）、Ollama（本地模型）后端。用于命令建议和 AI 聊天集成。
+
+### vault.rs — 加密存储
+
+| 类型 | 说明 |
+|------|------|
+| `VaultService` | 基于 AES-256-GCM 的加密服务 |
+| `EncryptedValue` | 加密值：ciphertext、nonce、version |
+| `VaultError` | 错误类型 |
+
+使用 SHA-256 从主密码派生 32 字节密钥，用于加密敏感配置（如 SSH 密码）。
+
+### trigger.rs — 输出触发器
+
+| 类型 | 说明 |
+|------|------|
+| `Trigger` | 触发器规则：id、name、pattern、action、enabled、case_sensitive |
+| `TriggerAction` | 动作枚举：Notify、PlaySound、Highlight、RunCommand、CopyMatch、Bell |
+| `TriggerMatch` | 匹配结果：trigger_id、matched_text、start、end |
+| `TriggerService` | 触发器服务，管理规则和匹配 |
+
+当终端输出匹配正则模式时执行相应动作（桌面通知、声音、高亮、命令、剪贴板复制）。
+
+### clipboard.rs — 剪贴板管理
+
+提供系统剪贴板读写接口。
+
+### notification.rs — 桌面通知
+
+集成系统桌面通知（Notification）。
+
+### remote.rs — 远程管理
+
+提供远程管理功能接口。
+
+### auto_profile.rs — 自动配置文件选择
+
+根据主机名/规则自动选择合适的连接配置文件。
+
+### dirfreq.rs — 目录频率统计
+
+跟踪用户访问目录的频率，用于智能排序。
 
 ### error.rs — 错误类型
 
@@ -103,3 +167,9 @@ enum CoreError {
 1. 在 `ProfileType` 枚举中添加变体
 2. 在 `ProfileOptions` 中添加对应字段
 3. 实现 `ProfileProvider` trait 并注册到 `ProfileManager`
+
+### 使用 vault 加密敏感数据
+1. 使用 `VaultService::new(master_password)` 创建实例
+2. 调用 `encrypt()` 加密敏感字符串
+3. 将 `EncryptedValue` 存入配置
+4. 需要解密时调用 `decrypt()`

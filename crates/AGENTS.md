@@ -7,11 +7,11 @@
 | Crate | 说明 | 详细指南 |
 |-------|------|----------|
 | [pureterm](pureterm/AGENTS.md) | 二进制入口点，事件循环和窗口管理 | [pureterm/AGENTS.md](pureterm/AGENTS.md) |
-| [pureterm-core](pureterm-core/AGENTS.md) | 配置、主题、快捷键、配置文件、插件 | [pureterm-core/AGENTS.md](pureterm-core/AGENTS.md) |
+| [pureterm-core](pureterm-core/AGENTS.md) | 配置、主题、快捷键、插件、AI、加密、触发器 | [pureterm-core/AGENTS.md](pureterm-core/AGENTS.md) |
 | [pureterm-terminal](pureterm-terminal/AGENTS.md) | VTE 解析器、屏幕网格、终端模拟 | [pureterm-terminal/AGENTS.md](pureterm-terminal/AGENTS.md) |
-| [pureterm-session](pureterm-session/AGENTS.md) | Session trait + Local/SSH/Serial/Telnet | [pureterm-session/AGENTS.md](pureterm-session/AGENTS.md) |
+| [pureterm-session](pureterm-session/AGENTS.md) | Session trait + Local/SSH/Serial/Telnet + 跳板机/日志/同步输入 | [pureterm-session/AGENTS.md](pureterm-session/AGENTS.md) |
 | [pureterm-ui](pureterm-ui/AGENTS.md) | egui 组件：标签页、分割面板、终端面板 | [pureterm-ui/AGENTS.md](pureterm-ui/AGENTS.md) |
-| [pureterm-gui](pureterm-gui/AGENTS.md) | wgpu GPU 渲染、字形图集、着色器 | [pureterm-gui/AGENTS.md](pureterm-gui/AGENTS.md) |
+| [pureterm-gui](pureterm-gui/AGENTS.md) | wgpu GPU 渲染、字形图集、着色器、egui 集成 | [pureterm-gui/AGENTS.md](pureterm-gui/AGENTS.md) |
 
 ## 依赖关系
 

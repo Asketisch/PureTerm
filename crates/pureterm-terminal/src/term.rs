@@ -82,6 +82,11 @@ impl Terminal {
         self.perform.grid.scroll_offset()
     }
 
+    /// Get the terminal mode flags (for checking mouse mode, bracketed paste, etc.)
+    pub fn mode(&self) -> &crate::mode::TermMode {
+        &self.perform.mode
+    }
+
     /// Get the history (scrollback) size.
     pub fn history(&self) -> usize {
         self.perform.grid.history()

@@ -1,10 +1,15 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use tokio::sync::broadcast;
 
 use pureterm_session::Session;
 use pureterm_terminal::Terminal;
+use pureterm_terminal::screen::selection::{
+    self, ClickCount, MouseButton, MouseModifiers, TerminalMouseEvent,
+};
+use pureterm_terminal::mode::TermMode;
 
 /// Selection state within a terminal pane.
 #[derive(Debug, Clone)]
@@ -14,6 +19,34 @@ pub struct Selection {
     pub end_row: usize,
     pub end_col: usize,
     pub is_block: bool,
+}
+
+impl Selection {
+    /// Check if a cell at (row, col) is within the selection.
+    pub fn contains(&self, row: usize, col: usize) -> bool {
+        if self.is_block {
+            let min_col = self.start_col.min(self.end_col);
+            let max_col = self.start_col.max(self.end_col);
+            let min_row = self.start_row.min(self.end_row);
+            let max_row = self.start_row.max(self.end_row);
+            row >= min_row && row <= max_row && col >= min_col && col <= max_col
+        } else {
+            // Normal selection: start and end can be in any order
+            let (sr, sc) = (self.start_row, self.start_col);
+            let (er, ec) = (self.end_row, self.end_col);
+            if sr == er {
+                row == sr && col >= sc.min(ec) && col <= sc.max(ec)
+            } else if sr < er {
+                (row == sr && col >= sc)
+                    || (row > sr && row < er)
+                    || (row == er && col <= ec)
+            } else {
+                (row == er && col >= ec)
+                    || (row > er && row < sr)
+                    || (row == sr && col <= sc)
+            }
+        }
+    }
 }
 
 /// Search state.
@@ -38,6 +71,32 @@ impl Default for SearchState {
     }
 }
 
+/// Internal mouse state tracking.
+struct MouseState {
+    /// Whether a mouse button is currently held down (for drag selection).
+    left_down: bool,
+    /// Start position of the current drag.
+    drag_start: Option<(usize, usize)>,
+    /// Time of last click for double/triple click detection.
+    last_click_time: Option<Instant>,
+    /// Position of last click.
+    last_click_pos: Option<(usize, usize)>,
+    /// Click count (1=single, 2=double, 3=triple).
+    click_count: u8,
+}
+
+impl Default for MouseState {
+    fn default() -> Self {
+        Self {
+            left_down: false,
+            drag_start: None,
+            last_click_time: None,
+            last_click_pos: None,
+            click_count: 0,
+        }
+    }
+}
+
 /// A terminal pane that combines a Terminal with a Session.
 pub struct TerminalPane {
     pub id: u64,
@@ -49,8 +108,16 @@ pub struct TerminalPane {
     pub title: String,
     pub has_focus: bool,
     pub has_activity: bool,
+    pub visual_bell_active: bool,
     dirty: bool,
     output_buffer: Arc<Mutex<Vec<u8>>>,
+    mouse_state: MouseState,
+    /// Pending files dropped onto the terminal.
+    pub dropped_files: Vec<String>,
+    /// Whether copy-on-select is enabled.
+    pub copy_on_select: bool,
+    /// Callback for clipboard copy (set by the application).
+    pub on_copy: Option<Box<dyn FnMut(&str) + Send>>,
 }
 
 static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
@@ -71,8 +138,13 @@ impl TerminalPane {
             title: String::from("Terminal"),
             has_focus: false,
             has_activity: false,
+            visual_bell_active: false,
             dirty: true,
             output_buffer: Arc::new(Mutex::new(Vec::new())),
+            mouse_state: MouseState::default(),
+            dropped_files: Vec::new(),
+            copy_on_select: true,
+            on_copy: None,
         }
     }
 
@@ -119,6 +191,12 @@ impl TerminalPane {
                 log::debug!("drain_output: {} bytes from session", buffer.len());
                 self.terminal.write(&buffer);
                 self.dirty = true;
+
+                // Scroll to bottom on new output if user is at the bottom
+                if self.terminal.scroll_offset() == 0 {
+                    // Already at bottom — stay at bottom
+                }
+                // If user scrolled up, don't force scroll down
                 buffer.clear();
             }
         }
@@ -258,11 +336,18 @@ impl TerminalPane {
         })
     }
 
-    /// Paste text into the terminal.
+    /// Paste text into the terminal, respecting bracketed paste mode.
     pub fn paste(&mut self, text: &str) {
-        // Handle bracketed paste mode
-        // TODO: Check if bracketed paste mode is enabled
-        self.write_input(text.as_bytes());
+        let bracketed = self.terminal.mode().contains(TermMode::BRACKETED_PASTE);
+        if bracketed {
+            let mut data = Vec::with_capacity(text.len() + 12);
+            data.extend_from_slice(b"\x1b[200~");
+            data.extend_from_slice(text.as_bytes());
+            data.extend_from_slice(b"\x1b[201~");
+            self.write_input(&data);
+        } else {
+            self.write_input(text.as_bytes());
+        }
     }
 
     /// Zoom in.
@@ -294,6 +379,269 @@ impl TerminalPane {
         self.terminal.clear_dirty();
     }
 
+    // ── Mouse event handling ──
+
+    /// Convert pixel coordinates to terminal grid (row, col).
+    pub fn pixel_to_cell(&self, px: f32, py: f32, cell_w: f32, cell_h: f32) -> (usize, usize) {
+        let col = (px / cell_w).floor() as usize;
+        let row = (py / cell_h).floor() as usize;
+        let col = col.min(self.terminal.cols().saturating_sub(1));
+        let row = row.min(self.terminal.rows().saturating_sub(1));
+        (row, col)
+    }
+
+    /// Handle a mouse event.
+    /// Returns bytes to send to the child process (for mouse mode) and any action to take.
+    pub fn handle_mouse_event(
+        &mut self,
+        event: TerminalMouseEvent,
+    ) -> (Option<Vec<u8>>, Option<PaneAction>) {
+        let mode = self.terminal.mode();
+        let mouse_active = mode.contains(TermMode::MOUSE_REPORT_CLICK)
+            || mode.contains(TermMode::MOUSE_DRAG)
+            || mode.contains(TermMode::MOUSE_MOTION);
+
+        match event {
+            TerminalMouseEvent::Down { button, row, col, modifiers } => {
+                if mouse_active && button == MouseButton::Left && !modifiers.shift {
+                    // Forward to application
+                    let bytes = self.encode_mouse_event(button, true, row, col, modifiers);
+                    return (Some(bytes), None);
+                }
+
+                match button {
+                    MouseButton::Left => {
+                        return (None, self.handle_left_click(row, col, modifiers));
+                    }
+                    MouseButton::Middle => {
+                        // Middle-click paste
+                        return (None, Some(PaneAction::PasteFromClipboard));
+                    }
+                    MouseButton::Right => {
+                        // Right-click: extend selection to click position
+                        if let Some(ref mut sel) = self.selection {
+                            sel.end_row = row;
+                            sel.end_col = col;
+                        }
+                        return (None, Some(PaneAction::ShowContextMenu));
+                    }
+                }
+            }
+            TerminalMouseEvent::Up { button, row, col, modifiers } => {
+                if mouse_active && button == MouseButton::Left && !modifiers.shift {
+                    let bytes = self.encode_mouse_event(button, false, row, col, modifiers);
+                    return (Some(bytes), None);
+                }
+
+                if button == MouseButton::Left && self.mouse_state.left_down {
+                    self.mouse_state.left_down = false;
+                    // Finalize selection
+                    if let Some(ref sel) = self.selection {
+                        let text = self.terminal.get_text(
+                            sel.start_row, sel.start_col,
+                            sel.end_row, sel.end_col,
+                        );
+                        if !text.trim().is_empty() && self.copy_on_select {
+                            return (None, Some(PaneAction::CopyText(text)));
+                        }
+                    }
+                }
+                (None, None)
+            }
+            TerminalMouseEvent::Move { row, col, modifiers } => {
+                if mouse_active && self.mouse_state.left_down && !modifiers.shift {
+                    let report_drag = mode.contains(TermMode::MOUSE_DRAG)
+                        || mode.contains(TermMode::MOUSE_MOTION);
+                    if report_drag {
+                        let bytes = self.encode_mouse_event(MouseButton::Left, false, row, col, modifiers);
+                        return (Some(bytes), None);
+                    }
+                }
+
+                // Extend selection during drag
+                if self.mouse_state.left_down {
+                    if let Some(ref mut sel) = self.selection {
+                        sel.end_row = row;
+                        sel.end_col = col;
+                        self.dirty = true;
+                    }
+                }
+                (None, None)
+            }
+            TerminalMouseEvent::Scroll { delta_rows, row, col, modifiers } => {
+                if mouse_active {
+                    let button = if delta_rows > 0 { MouseButton::Middle } else { MouseButton::Middle };
+                    // Mouse wheel events are encoded as button 64 (up) / 65 (down)
+                    let code = if delta_rows > 0 { 64 } else { 65 };
+                    if mode.contains(TermMode::MOUSE_SGR) {
+                        let mut bytes = format!("\x1b[<{};{};{}M", code, col + 1, row + 1).into_bytes();
+                        return (Some(bytes), None);
+                    }
+                    return (None, None);
+                }
+
+                // Normal scroll
+                if delta_rows > 0 {
+                    self.terminal.scroll_up(delta_rows as usize);
+                } else {
+                    self.terminal.scroll_down((-delta_rows) as usize);
+                }
+                self.dirty = true;
+                (None, None)
+            }
+        }
+    }
+
+    fn handle_left_click(&mut self, row: usize, col: usize, modifiers: MouseModifiers) -> Option<PaneAction> {
+        let now = Instant::now();
+        let click_count = if let Some(last_time) = self.mouse_state.last_click_time {
+            if now.duration_since(last_time) < std::time::Duration::from_millis(500) {
+                if let Some((lr, lc)) = self.mouse_state.last_click_pos {
+                    if lr == row && lc == col {
+                        self.mouse_state.click_count + 1
+                    } else {
+                        1
+                    }
+                } else {
+                    1
+                }
+            } else {
+                1
+            }
+        } else {
+            1
+        };
+
+        self.mouse_state.click_count = click_count;
+        self.mouse_state.last_click_time = Some(now);
+        self.mouse_state.last_click_pos = Some((row, col));
+        self.mouse_state.left_down = true;
+        self.mouse_state.drag_start = Some((row, col));
+
+        match ClickCount::from_count(click_count) {
+            ClickCount::Single => {
+                // Start new selection (or clear if no shift)
+                if !modifiers.shift {
+                    self.selection = None;
+                }
+                // Place selection start at click position
+                if modifiers.shift {
+                    // Extend existing selection
+                    if let Some(ref mut sel) = self.selection {
+                        sel.end_row = row;
+                        sel.end_col = col;
+                    } else {
+                        self.selection = Some(Selection {
+                            start_row: row,
+                            start_col: col,
+                            end_row: row,
+                            end_col: col,
+                            is_block: modifiers.alt,
+                        });
+                    }
+                } else {
+                    self.selection = Some(Selection {
+                        start_row: row,
+                        start_col: col,
+                        end_row: row,
+                        end_col: col,
+                        is_block: modifiers.alt,
+                    });
+                }
+            }
+            ClickCount::Double => {
+                // Select word at position
+                let line_chars: Vec<char> = if let Some(row_cells) = self.terminal.snapshot().rows.get(row) {
+                    row_cells.iter().map(|c| c.c).collect()
+                } else {
+                    vec![]
+                };
+                let (start, end) = selection::find_word_bounds(&line_chars, col);
+                self.selection = Some(Selection {
+                    start_row: row,
+                    start_col: start,
+                    end_row: row,
+                    end_col: end,
+                    is_block: false,
+                });
+                let text = self.terminal.get_text(row, start, row, end);
+                if !text.trim().is_empty() && self.copy_on_select {
+                    return Some(PaneAction::CopyText(text));
+                }
+            }
+            ClickCount::Triple => {
+                // Select entire line
+                let line_end = self.terminal.cols().saturating_sub(1);
+                self.selection = Some(Selection {
+                    start_row: row,
+                    start_col: 0,
+                    end_row: row,
+                    end_col: line_end,
+                    is_block: false,
+                });
+                let text = self.terminal.get_text(row, 0, row, line_end);
+                if !text.trim().is_empty() && self.copy_on_select {
+                    return Some(PaneAction::CopyText(text));
+                }
+            }
+        }
+
+        self.dirty = true;
+        None
+    }
+
+    /// Encode a mouse event for forwarding to the child process.
+    fn encode_mouse_event(&self, button: MouseButton, pressed: bool, row: usize, col: usize, modifiers: MouseModifiers) -> Vec<u8> {
+        let mode = self.terminal.mode();
+        if mode.contains(TermMode::MOUSE_SGR) {
+            selection::encode_mouse_sgr(button, pressed, row, col, modifiers)
+        } else {
+            selection::encode_mouse_x10(button, pressed, row, col, modifiers)
+        }
+    }
+
+    /// Handle a dropped file event.
+    pub fn handle_dropped_file(&mut self, path: &str) {
+        // Quote the path and send it as input
+        let escaped = if path.contains(' ') || path.contains('\'') || path.contains('"') {
+            format!("'{}'", path.replace("'", "'\\''"))
+        } else {
+            path.to_string()
+        };
+        self.write_input(escaped.as_bytes());
+        self.write_input(b" ");
+    }
+
+    /// Handle dropped files.
+    pub fn handle_dropped_files(&mut self, paths: Vec<String>) {
+        for path in &paths {
+            self.handle_dropped_file(path);
+        }
+    }
+
+    /// Get the hyperlink at a given cell position, if any.
+    pub fn hyperlink_at(&self, row: usize, col: usize) -> Option<std::sync::Arc<pureterm_terminal::Hyperlink>> {
+        let snapshot = self.terminal.snapshot();
+        snapshot.rows.get(row)
+            .and_then(|r| r.get(col))
+            .and_then(|cell| cell.hyperlink.clone())
+    }
+
+    /// Check if the cell at (row, col) contains a URL-like text (heuristic detection).
+    pub fn url_at(&self, row: usize, col: usize) -> Option<String> {
+        // First check OSC 8 hyperlink
+        if let Some(link) = self.hyperlink_at(row, col) {
+            return Some(link.uri.clone());
+        }
+
+        // Then try URL detection in the text
+        let snapshot = self.terminal.snapshot();
+        let row_cells = snapshot.rows.get(row)?;
+        let line: String = row_cells.iter().map(|c| c.c).collect();
+
+        detect_url_in_line(&line, col)
+    }
+
     /// Update the search state.
     pub fn update_search(&mut self) {
         if self.search.query.is_empty() {
@@ -320,4 +668,40 @@ impl TerminalPane {
             Some(0)
         };
     }
+}
+
+/// Detect a URL in a line of text that includes the given column position.
+fn detect_url_in_line(line: &str, col: usize) -> Option<String> {
+    // Simple URL detection: find http/https/ftp/file/www patterns
+    let url_pattern = regex::Regex::new(
+        r"(?:https?://|ftp://|file://|www\.)\S+"
+    ).ok()?;
+
+    for m in url_pattern.find_iter(line) {
+        if col >= m.start() && col <= m.end() {
+            let mut url = m.as_str().to_string();
+            // Clean trailing punctuation
+            while url.ends_with(&['.', ',', ';', ':', '!', '?', ')', ']', '}'][..]) {
+                url.pop();
+            }
+            if !url.starts_with("http") && !url.starts_with("ftp") && !url.starts_with("file") {
+                url = format!("https://{}", url);
+            }
+            return Some(url);
+        }
+    }
+    None
+}
+
+/// Actions that the pane requests from the application.
+#[derive(Debug, Clone)]
+pub enum PaneAction {
+    /// Copy the given text to the clipboard.
+    CopyText(String),
+    /// Paste from the system clipboard.
+    PasteFromClipboard,
+    /// Show the context menu.
+    ShowContextMenu,
+    /// Open a URL in the default browser.
+    OpenUrl(String),
 }

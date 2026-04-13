@@ -1,21 +1,24 @@
 # pureterm-gui — wgpu GPU 渲染
 
-使用 wgpu 实现 GPU 加速的终端文本渲染：字形图集、文本管线、WGSL 着色器。
+使用 wgpu 实现 GPU 加速的终端文本渲染：字形图集、文本管线、WGSL 着色器。提供 egui 集成层和透明背景支持。
 
 ## 关键依赖
 
 内部依赖：`pureterm-core`、`pureterm-terminal`
 
-外部依赖：`wgpu`（GPU）、`fontdue`（字体光栅化）、`egui` + `egui-wgpu`（UI 集成）、`bytemuck 1`（顶点数据转换）、`image 0.25`。
+外部依赖：`wgpu`（GPU）、`fontdue`（字体光栅化）、`egui` + `egui-wgpu` + `egui-winit`（UI 集成）、`bytemuck 1`（顶点数据转换）、`image 0.25`。
 
 ## 文件结构
 
 ```
 src/
-├── lib.rs           # 模块导出
-├── renderer.rs      # TerminalRenderer（主渲染器）
-├── pipeline.rs      # TextPipeline + Vertex（渲染管线）
-├── fonts.rs         # GlyphAtlas（字形图集）
+├── lib.rs             # 模块导出
+├── renderer.rs        # TerminalRenderer（主渲染器）
+├── pipeline.rs        # TextPipeline + Vertex（渲染管线）
+├── fonts.rs           # GlyphAtlas（字形图集）
+├── egui_int.rs        # egui 集成层（TerminalWidget）
+├── transparency.rs    # 透明背景支持
+├── background.rs      # 背景渲染
 └── shaders/
     └── terminal.wgsl # WGSL 着色器
 ```
@@ -104,6 +107,24 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 
 `cell_size()` — 用 'M' 宽度 × 1.2 行高计算。
 
+### egui_int.rs — egui 集成层
+
+提供 egui widget 用于在 egui UI 中嵌入终端：
+
+| 类型 | 说明 |
+|------|------|
+| `TerminalWidget` | egui Widget，显示终端内容并处理鼠标事件 |
+
+`TerminalWidget` 实现 `egui::Widget` trait，在 egui 布局中预留空间并处理点击/拖拽事件。实际渲染仍由 wgpu 文本管线完成。
+
+### transparency.rs — 透明背景支持
+
+支持终端窗口透明背景渲染，配置窗口透明度级别。
+
+### background.rs — 背景渲染
+
+终端背景渲染模块，支持纹理背景或纯色背景。
+
 ### shaders/terminal.wgsl — 着色器
 
 - **顶点着色器**（`vs_main`）：直接传递 position、tex_coords、color
@@ -131,3 +152,6 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 
 ### 修改管线配置
 编辑 `pipeline.rs`。注意 alpha blending 设置和预分配缓冲区大小。
+
+### 集成 egui UI
+使用 `TerminalWidget::new()` 创建 widget，传入 `ScreenSnapshot` 和 `ColorScheme`。
