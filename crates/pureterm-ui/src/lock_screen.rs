@@ -93,7 +93,7 @@ impl LockScreen {
             }
         }
 
-        let screen_rect = ui.ctx().screen_rect();
+        let screen_rect = ui.ctx().content_rect();
         let offset = self.shake_offset * (if self.failed_attempts % 2 == 0 { 1.0 } else { -1.0 });
 
         egui::Area::new(egui::Id::new("lock_screen"))

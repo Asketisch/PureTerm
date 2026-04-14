@@ -21,3 +21,5 @@ env_logger = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
 pollster = "0.4"
+clap = { version = "4", features = ["derive"] }
+uuid = { workspace = true }

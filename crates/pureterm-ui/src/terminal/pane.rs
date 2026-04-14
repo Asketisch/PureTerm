@@ -704,10 +704,14 @@ pub enum PaneAction {
     ShowContextMenu,
     /// Open a URL in the default browser.
     OpenUrl(String),
-    /// Split the pane vertically (left/right).
-    SplitVertical,
-    /// Split the pane horizontally (up/down).
-    SplitHorizontal,
+    /// Split the pane to the right.
+    SplitRight,
+    /// Split the pane to the left.
+    SplitLeft,
+    /// Split the pane downward.
+    SplitDown,
+    /// Split the pane upward.
+    SplitUp,
     /// Edit the tab title.
     EditTabTitle,
     /// Edit the tab color.

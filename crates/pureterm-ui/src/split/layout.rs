@@ -12,7 +12,26 @@ pub struct PaneRect {
 }
 
 /// Width of the divider between panes in pixels.
-pub const DIVIDER_WIDTH: f32 = 2.0;
+pub const DIVIDER_WIDTH: f32 = 4.0;
+
+/// Width of the hit-test area for divider dragging (larger for easier grabbing).
+pub const DIVIDER_HIT_WIDTH: f32 = 8.0;
+
+/// Information about a divider found during hit-testing.
+#[derive(Debug, Clone, Copy)]
+pub struct DividerInfo {
+    /// The container ID that owns this divider.
+    pub container_id: u64,
+    /// The index of the left/top child whose right/bottom edge is the divider.
+    pub child_index: usize,
+    /// Whether the divider is in a Vertical (left-right) or Horizontal (top-bottom) direction.
+    pub direction: Direction,
+    /// The visible divider rectangle.
+    pub rect: PaneRect,
+    /// The total usable size (in pixels) of the owning container in the split direction.
+    /// Used for computing ratio adjustments during drag.
+    pub container_size: f32,
+}
 
 /// Recursively compute the pixel rectangle for each pane in a split container.
 ///
@@ -183,4 +202,110 @@ pub fn compute_divider_rects(
     }
 
     dividers
+}
+
+/// Find which divider (if any) is at the given point.
+/// Returns information about the divider for use in drag-to-resize.
+pub fn divider_at_point(
+    container: &SplitContainer,
+    px: f32,
+    py: f32,
+    x: f32,
+    y: f32,
+    total_w: f32,
+    total_h: f32,
+) -> Option<DividerInfo> {
+    if container.children.len() < 2 {
+        return None;
+    }
+
+    let num_gaps = container.children.len().saturating_sub(1);
+    let divider_total = DIVIDER_WIDTH * num_gaps as f32;
+    let half_hit = (DIVIDER_HIT_WIDTH - DIVIDER_WIDTH) / 2.0;
+
+    let container_size = match container.direction {
+        Direction::Vertical => total_w - divider_total,
+        Direction::Horizontal => total_h - divider_total,
+    };
+
+    match container.direction {
+        Direction::Vertical => {
+            let usable_w = container_size;
+            let mut cursor_x = x;
+            for i in 0..container.children.len() {
+                let child_w = usable_w * container.ratios[i];
+                cursor_x += child_w;
+                if i < container.children.len() - 1 {
+                    // Check hit on this divider (expanded hit area)
+                    let hit_x = cursor_x - half_hit;
+                    let hit_w = DIVIDER_HIT_WIDTH;
+                    if px >= hit_x && px < hit_x + hit_w && py >= y && py < y + total_h {
+                        return Some(DividerInfo {
+                            container_id: container.id,
+                            child_index: i,
+                            direction: Direction::Vertical,
+                            rect: PaneRect {
+                                x: cursor_x,
+                                y,
+                                w: DIVIDER_WIDTH,
+                                h: total_h,
+                            },
+                            container_size,
+                        });
+                    }
+                    cursor_x += DIVIDER_WIDTH;
+                }
+            }
+        }
+        Direction::Horizontal => {
+            let usable_h = container_size;
+            let mut cursor_y = y;
+            for i in 0..container.children.len() {
+                let child_h = usable_h * container.ratios[i];
+                cursor_y += child_h;
+                if i < container.children.len() - 1 {
+                    let hit_y = cursor_y - half_hit;
+                    let hit_h = DIVIDER_HIT_WIDTH;
+                    if py >= hit_y && py < hit_y + hit_h && px >= x && px < x + total_w {
+                        return Some(DividerInfo {
+                            container_id: container.id,
+                            child_index: i,
+                            direction: Direction::Horizontal,
+                            rect: PaneRect {
+                                x,
+                                y: cursor_y,
+                                w: total_w,
+                                h: DIVIDER_WIDTH,
+                            },
+                            container_size,
+                        });
+                    }
+                    cursor_y += DIVIDER_WIDTH;
+                }
+            }
+        }
+    }
+
+    // Recurse into nested containers
+    let usable_size = match container.direction {
+        Direction::Vertical => total_w - divider_total,
+        Direction::Horizontal => total_h - divider_total,
+    };
+
+    let mut cursor = 0.0f32;
+    for (i, child) in container.children.iter().enumerate() {
+        let child_size = usable_size * container.ratios[i];
+        if let SplitChild::Container(nested) = child {
+            let (nx, ny, nw, nh) = match container.direction {
+                Direction::Vertical => (x + cursor, y, child_size, total_h),
+                Direction::Horizontal => (x, y + cursor, total_w, child_size),
+            };
+            if let Some(info) = divider_at_point(nested, px, py, nx, ny, nw, nh) {
+                return Some(info);
+            }
+        }
+        cursor += child_size + DIVIDER_WIDTH;
+    }
+
+    None
 }

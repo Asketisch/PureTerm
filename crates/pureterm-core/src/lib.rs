@@ -5,6 +5,7 @@ pub mod config;
 pub mod dirfreq;
 pub mod error;
 pub mod hotkey;
+pub mod i18n;
 pub mod notification;
 pub mod plugin;
 pub mod profile;

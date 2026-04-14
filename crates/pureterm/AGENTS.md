@@ -27,11 +27,28 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 | `renderer` | `Option<TerminalRenderer>` | wgpu 渲染器 |
 | `surface` | `Option<wgpu::Surface>` | 渲染表面 |
 | `app` | `Option<App>` | UI 应用状态 |
-| `terminal_pane` | `Option<TerminalPane>` | 终端面板 |
+| `panes` | `HashMap<u64, TerminalPane>` | 窗格注册表（ID → TerminalPane） |
+| `split_root` | `Option<SplitContainer>` | 当前标签页的分屏树根 |
+| `focused_pane_id` | `Option<u64>` | 当前聚焦窗格 ID |
+| `context_menu` | `ContextMenuState` | 右键菜单状态 |
 | `color_scheme` | `ColorScheme` | 当前配色 |
 | `modifiers` | `ModifiersState` | 修饰键状态 |
 | `mouse_pos` | `(f32, f32)` | 最后已知鼠标位置（像素） |
 | `clipboard_text` | `String` | 剪贴板内容 |
+| `divider_drag` | `Option<DividerDrag>` | 活跃的分隔线拖拽状态 |
+| `hovered_divider` | `Option<DividerInfo>` | 悬浮的分隔线（用于光标高亮） |
+| `egui_backend` | `Option<EguiBackend>` | egui-wgpu 后端（设置面板） |
+| `settings_panel` | `SettingsPanel` | 设置面板状态 |
+
+### `DividerDrag`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `container_id` | `u64` | 被拖拽分隔线所属的容器 ID |
+| `child_index` | `usize` | 分隔线左侧/上方子元素索引 |
+| `direction` | `Direction` | Vertical（左右）或 Horizontal（上下） |
+| `start_pos` | `(f32, f32)` | 拖拽起始像素位置 |
+| `total_size` | `f32` | 容器在拖拽方向上的总可用尺寸 |
 
 ## 核心流程
 
@@ -39,27 +56,38 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 1. 创建 winit `Window`
 2. 异步初始化 `TerminalRenderer`（wgpu instance/adapter/device/queue）
 3. 配置 surface
-4. 创建 `LocalSession` 并启动
-5. 创建 `TerminalPane`（终端 + session）
+4. 初始化 `EguiBackend`（用 device、surface format、window）
+5. 创建初始 `TerminalPane`，注册到 `panes` HashMap
 6. 通过 `ConfigService` 加载配置，打开初始标签页
 
 ### 事件循环（`window_event`）
 - `CloseRequested` → 退出
-- `Resized` → 重新配置 surface + 调整终端/pane 尺寸
-- `RedrawRequested` → drain_output → is_dirty → snapshot → render
+- `Resized` → 重新配置 surface + `resize_all_panes()`
+- `RedrawRequested` → drain 所有窗格 → dirty check → 多窗格 snapshot/render → 可选 egui 覆盖
 - `ModifiersChanged` → 记录修饰键状态
-- `KeyboardInput` → 转发给 `handle_key_input`
+- `KeyboardInput` → 设置面板可见时路由给 egui，否则转发给 `handle_key_input`
+
+### 多窗格渲染（`RedrawRequested`）
+1. `drain_output()` 所有窗格
+2. `compute_layout()` 获取所有窗格的 `PaneRect`
+3. 对每个窗格 `build_vertices(snapshot, ..., viewport)` 生成背景+字形顶点
+4. 合并所有窗格顶点/索引，添加分隔线、焦点边框、上下文菜单顶点
+5. `draw_to_surface()` 渲染终端内容（返回 frame 不 present）
+6. 若设置面板可见 → `egui_backend.run()` + `render()` 用 `LoadOp::Load` 覆盖 → `frame.present()`
+7. 否则直接 `frame.present()`
 
 ### 键盘处理（`handle_key_input`）
-将 winit `NamedKey` 映射为字符串名称（Escape、Enter、Tab、Backspace、方向键、Home/End、PageUp/PageDown、Insert、Delete、F1-F12），连同 Ctrl+字母和文本输入一起转发给 `TerminalPane`。
+将 winit `NamedKey` 映射为字符串名称（Escape、Enter、Tab、Backspace、方向键、Home/End、PageUp/PageDown、Insert、Delete、F1-F12），连同 Ctrl+字母和文本输入一起转发给聚焦窗格。
 
 ### 鼠标事件处理
-- `CursorMoved` → 像素转单元格坐标 → `TerminalPane::handle_mouse_event(Move)`
-- `MouseInput` → 像素转单元格坐标 → `TerminalPane::handle_mouse_event(Down/Up)`，Ctrl+点击打开 URL
-- `MouseWheel` → 像素转单元格坐标 → `TerminalPane::handle_mouse_event(Scroll)`
+- `CursorMoved` → 分隔线拖拽（增量 `adjust_ratio`）→ 上下文菜单悬浮 → 分隔线悬浮检测 → 窗格鼠标事件
+- `MouseInput::Pressed(Left)` → 上下文菜单点击 → 分隔线命中检测（`divider_at_point`）→ 窗格点击
+- `MouseInput::Pressed(Right)` → 聚焦窗格 → 显示上下文菜单
+- `MouseInput::Released` → 清除分隔线拖拽状态 → 窗格释放
+- `MouseWheel` → 窗格滚动
 
-### 文件拖放
-- `DroppedFile` → 传递给 `TerminalPane::handle_dropped_file()`
+### 分屏操作（`handle_split`）
+接受 `SplitSide`（Right/Left/Down/Up），推导 `Direction`，调用 `split_pane_directional()`，然后 `equalize()` 等分，最后 `resize_all_panes()`。
 
 ### PaneAction 处理
 `handle_pane_action` 处理来自 `TerminalPane` 的动作：
@@ -67,20 +95,30 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 - `PasteFromClipboard` → 从剪贴板粘贴
 - `ShowContextMenu` → 显示上下文菜单
 - `OpenUrl` → 打开 URL（平台特定）
+- `SplitRight/Left/Down/Up` → 调用 `handle_split`
+- `EditTabTitle/EditTabColor` → TODO
+
+### MenuAction 处理
+`handle_menu_action` 处理来自上下文菜单的动作，包括 Copy、Paste、SelectAll、Clear、Search、4 方向分屏、关闭窗格/标签页、缩放、OpenSettings（切换 `settings_panel.visible`）。
 
 ## 常见任务
 
 ### 添加新的窗口事件处理
-在 `window_event` 方法中添加 match 分支。修改 `RedrawRequested` 逻辑时注意保持 drain_output → dirty check → snapshot → render 的顺序。
+在 `window_event` 方法中添加 match 分支。修改 `RedrawRequested` 逻辑时注意保持 drain_output → dirty check → multi-pane snapshot → render 的顺序。
 
 ### 修改启动流程
 编辑 `resumed` 方法。当前只创建 `LocalSession`，如需支持其他会话类型需在此处根据配置选择。
 
 ### 调试渲染不刷新问题
-检查 `RedrawRequested` 中 `pane.drain_output()` 是否被调用、`is_dirty()` 是否返回 true、`snapshot()` 数据是否正确。
+检查 `RedrawRequested` 中每个窗格的 `drain_output()` 是否被调用、`is_dirty()` 是否返回 true、`snapshot()` 数据是否正确。
 
 ### 修改鼠标处理
-编辑鼠标事件处理逻辑。注意 `pixel_to_cell()` 方法用于坐标转换。
+编辑鼠标事件处理逻辑。注意分隔线拖拽优先于窗格点击，`pixel_to_cell_for_pane()` 用于坐标转换（考虑窗格偏移）。
 
 ### 添加平台特定功能
 使用 `#[cfg(target_os = "...")]` 条件编译。现有实现支持 macOS、Linux、Windows。
+
+### 添加新的 PaneAction/MenuAction
+1. 在 `pureterm-ui` 中添加枚举变体
+2. 在 `handle_pane_action` / `handle_menu_action` 中添加 match 分支
+3. 如需多窗格操作，确保操作后调用 `resize_all_panes()` + `window.request_redraw()`

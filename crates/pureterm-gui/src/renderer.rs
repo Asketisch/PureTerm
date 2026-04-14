@@ -27,9 +27,12 @@ pub struct TerminalRenderer {
 impl TerminalRenderer {
     /// Create a new terminal renderer.
     pub async fn new() -> anyhow::Result<Self> {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
-            ..Default::default()
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            display: None,
         });
 
         let adapter = instance
@@ -39,7 +42,7 @@ impl TerminalRenderer {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| anyhow::anyhow!("Failed to find GPU adapter"))?;
+            .map_err(|e| anyhow::anyhow!("Failed to find GPU adapter: {:?}", e))?;
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -47,7 +50,7 @@ impl TerminalRenderer {
                 required_features: wgpu::Features::empty(),
                 required_limits: wgpu::Limits::default(),
                 ..Default::default()
-            }, None)
+            })
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create GPU device: {:?}", e))?;
 
@@ -136,14 +139,14 @@ impl TerminalRenderer {
         if let Some(ref atlas_texture) = self.atlas_texture {
             let (w, h) = self.atlas.atlas_dimensions();
             self.queue.write_texture(
-                wgpu::ImageCopyTexture {
+                wgpu::TexelCopyTextureInfo {
                     texture: atlas_texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
                 self.atlas.atlas_data(),
-                wgpu::ImageDataLayout {
+                wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(w),
                     rows_per_image: Some(h),
@@ -424,7 +427,7 @@ impl TerminalRenderer {
         let mut cursor_x = start_x;
         for ch in text.chars() {
             if ch == ' ' {
-                let (_, cell_w) = self.atlas.cell_size();
+                let (cell_w, _) = self.atlas.cell_size();
                 cursor_x += cell_w * 0.5;
                 continue;
             }
@@ -467,55 +470,69 @@ impl TerminalRenderer {
         indices: &[u32],
         bg_color: [u8; 3],
     ) {
+        let frame = self.draw_to_surface(surface, vertices, indices, bg_color);
+        if let Some(frame) = frame {
+            frame.present();
+        }
+    }
+
+    /// Submit vertices and indices to the GPU but do NOT present.
+    /// Returns the surface texture for further rendering (e.g., egui overlay).
+    pub fn draw_to_surface(
+        &mut self,
+        surface: &wgpu::Surface<'static>,
+        vertices: &[Vertex],
+        indices: &[u32],
+        bg_color: [u8; 3],
+    ) -> Option<wgpu::SurfaceTexture> {
         self.upload_atlas();
 
         if let Some(ref mut pipeline) = self.text_pipeline {
             pipeline.update_buffers(&self.queue, vertices, indices);
         } else {
-            return;
+            return None;
         }
 
-        let output = surface.get_current_texture();
-        match output {
-            Ok(frame) => {
-                let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("Terminal Render Encoder"),
-                });
+        let frame = surface.get_current_texture();
+        let frame = match frame {
+            wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
+            _ => return None,
+        };
+        let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Terminal Render Encoder"),
+        });
 
-                {
-                    let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                        label: Some("Terminal Render Pass"),
-                        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                            view: &view,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: bg_color[0] as f64 / 255.0,
-                                    g: bg_color[1] as f64 / 255.0,
-                                    b: bg_color[2] as f64 / 255.0,
-                                    a: 1.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        })],
-                        depth_stencil_attachment: None,
-                        timestamp_writes: None,
-                        occlusion_query_set: None,
-                    });
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Terminal Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color {
+                            r: bg_color[0] as f64 / 255.0,
+                            g: bg_color[1] as f64 / 255.0,
+                            b: bg_color[2] as f64 / 255.0,
+                            a: 1.0,
+                        }),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
 
-                    if let Some(ref pipeline) = self.text_pipeline {
-                        pipeline.render(&mut render_pass);
-                    }
-                }
-
-                self.queue.submit(std::iter::once(encoder.finish()));
-                frame.present();
-            }
-            Err(e) => {
-                log::warn!("Failed to get surface texture: {:?}", e);
+            if let Some(ref pipeline) = self.text_pipeline {
+                pipeline.render(&mut render_pass);
             }
         }
+
+        self.queue.submit(std::iter::once(encoder.finish()));
+        Some(frame)
     }
 
     /// Render a terminal snapshot with optional selection highlighting.

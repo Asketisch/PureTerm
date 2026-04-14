@@ -43,9 +43,9 @@ impl OnlineSearchPanel {
 
         let mut action = None;
 
-        egui::SidePanel::right("online_search_panel")
-            .min_width(280.0)
-            .default_width(350.0)
+        egui::Panel::right("online_search_panel")
+            .min_size(280.0)
+            .default_size(350.0)
             .show_inside(ui, |ui| {
                 ui.heading("Online Search");
                 ui.add_space(4.0);

@@ -1,7 +1,10 @@
+use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::error::{CoreError, Result};
 use crate::hotkey::HotkeysConfig;
@@ -20,7 +23,12 @@ pub struct AppConfig {
     pub profiles: Vec<Profile>,
     #[serde(default)]
     pub groups: Vec<ProfileGroup>,
+    /// Config version for migration tracking.
+    #[serde(default = "default_config_version")]
+    pub version: u32,
 }
+
+fn default_config_version() -> u32 { 1 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppearanceConfig {
@@ -115,6 +123,7 @@ impl Default for AppConfig {
             hotkeys: HotkeysConfig::default(),
             profiles: Vec::new(),
             groups: Vec::new(),
+            version: default_config_version(),
         }
     }
 }
@@ -122,6 +131,8 @@ impl Default for AppConfig {
 pub struct ConfigService {
     config_dir: PathBuf,
     config: RwLock<AppConfig>,
+    /// Sender for config reload notifications.
+    reload_tx: Option<mpsc::Sender<()>>,
 }
 
 impl ConfigService {
@@ -142,7 +153,52 @@ impl ConfigService {
         Ok(Self {
             config_dir,
             config: RwLock::new(config),
+            reload_tx: None,
         })
+    }
+
+    /// Start watching the config file for changes.
+    /// Returns a receiver that will be notified when the config file changes.
+    pub fn start_watching(&mut self) -> Result<mpsc::Receiver<()>> {
+        let (tx, rx) = mpsc::channel();
+        let tx_clone = tx.clone();
+        let config_path = Self::config_path();
+
+        let mut watcher = RecommendedWatcher::new(
+            move |res: std::result::Result<notify::Event, notify::Error>| {
+                if let Ok(event) = res {
+                    if event.kind.is_modify() {
+                        let _ = tx_clone.send(());
+                    }
+                }
+            },
+            Config::default().with_poll_interval(Duration::from_secs(2)),
+        )
+        .map_err(|e| CoreError::Config(e.to_string()))?;
+
+        watcher
+            .watch(&config_path, RecursiveMode::NonRecursive)
+            .map_err(|e| CoreError::Config(e.to_string()))?;
+
+        self.reload_tx = Some(tx);
+        Ok(rx)
+    }
+
+    /// Reload the config from disk.
+    pub fn reload(&self) -> Result<()> {
+        let config_path = Self::config_path();
+        if !config_path.exists() {
+            return Ok(());
+        }
+
+        let content = fs::read_to_string(&config_path)?;
+        let new_config: AppConfig = toml::from_str(&content)?;
+
+        let mut config = self.config.write();
+        *config = new_config;
+
+        log::info!("Config reloaded from disk");
+        Ok(())
     }
 
     pub fn save(&self) -> Result<()> {

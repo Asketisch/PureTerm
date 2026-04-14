@@ -69,7 +69,7 @@ src/
 | `Hotkey` | id + name + KeyPattern |
 | `HotkeyService` | 快捷键查找和匹配 |
 
-内置快捷键（13 个）：tab_new (Ctrl+Shift+T)、tab_close (Ctrl+Shift+W)、copy (Ctrl+Shift+C)、paste (Ctrl+Shift+V)、search (Ctrl+F)、split_vertical (Ctrl+Shift+D)、split_horizontal (Ctrl+D)、zoom_in (Ctrl+=)、zoom_out (Ctrl+-)、zoom_reset (Ctrl+0)、prev_tab (Ctrl+Shift+Left)、next_tab (Ctrl+Shift+Right)、clear (Ctrl+Shift+L)。
+内置快捷键（14 个）：tab_new (Ctrl+Shift+T)、tab_close (Ctrl+Shift+W)、copy (Ctrl+Shift+C)、paste (Ctrl+Shift+V)、search (Ctrl+F)、split_right (Ctrl+Shift+D)、split_down (Ctrl+D)、split_left (Ctrl+Alt+D)、split_up (Ctrl+Alt+W)、zoom_in (Ctrl+=)、zoom_out (Ctrl+-)、zoom_reset (Ctrl+0)、prev_tab (Ctrl+Shift+Left)、next_tab (Ctrl+Shift+Right)、clear (Ctrl+Shift+L)。
 
 ### profile.rs — 连接配置
 

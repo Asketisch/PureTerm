@@ -96,7 +96,7 @@ impl SearchPanel {
 
         let mut action = None;
 
-        egui::TopBottomPanel::bottom("search_panel").show_inside(ui, |ui| {
+        egui::Panel::bottom("search_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.label("Find:");
 

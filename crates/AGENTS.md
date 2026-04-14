@@ -55,12 +55,14 @@ pureterm-core（独立）
 用户按键 → TerminalPane::handle_key → Session::write
 Session 输出 → broadcast channel → TerminalPane::drain_output → Terminal::write
 Terminal::write → VteParser → VtePerform → Grid/Cell
-渲染 → ScreenSnapshot → TerminalRenderer::render → wgpu GPU
+多窗格渲染 → 每窗格 ScreenSnapshot → build_vertices(ViewportRect) → 合并顶点 → wgpu GPU
+设置覆盖 → draw_to_surface (返回 frame) → egui_backend.render (LoadOp::Load) → frame.present()
 ```
 
 ## 版本兼容性注意
 
 - `russh` 和 `russh-keys` 有严格的版本耦合 — 使用 workspace.dependencies 中的版本
 - `vte 0.15` 是当前稳定版
-- `wgpu 24` API 变更 — 优先使用 `Option::ok()` 而不是 `.map_err()` 选择适配器
+- `wgpu 29` — workspace 和 egui-wgpu 使用统一版本（旧版 wgpu 24 会导致运行时 ID 冲突 panic）
 - `portable-pty 0.8` — 用 `take_writer()` 而不是 `try_clone_writer()`
+- `egui 0.34` — `context.run()` 接受 `FnMut(&Context)`，`tessellate()` 需传入 `pixels_per_point`

@@ -1,21 +1,34 @@
 use anyhow::Result;
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::sync::Arc;
 
+mod quake_mode;
+
 use pureterm_core::config::ConfigService;
+use pureterm_core::profile::{Profile, ProfileOptions, ProfileType};
 use pureterm_core::theme::ThemeService;
 use pureterm_gui::TerminalRenderer;
+use pureterm_gui::EguiBackend;
 use pureterm_gui::renderer::ViewportRect;
-use pureterm_session::base::{ConnectParams, SessionType};
+use pureterm_session::base::{ConnectParams, SessionType, SshAuth};
 use pureterm_session::Session;
 use pureterm_session::LocalSession;
+use pureterm_session::SshSession;
+use pureterm_session::SerialSession;
+use pureterm_session::TelnetSession;
 use pureterm_ui::app::App;
-use pureterm_ui::context_menu::{ContextMenuState, MenuAction, MenuItem,
-    MENU_ITEM_HEIGHT, MENU_PADDING, MENU_SEPARATOR_HEIGHT};
-use pureterm_ui::split::{SplitContainer, Direction, PaneRect, compute_pane_rects,
-    pane_at_point, compute_divider_rects};
+use pureterm_ui::context_menu::{ContextMenuState, MenuAction,
+    MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT};
+use pureterm_ui::profile_selector::ProfileSelector;
+use pureterm_ui::settings::SettingsPanel;
+use quake_mode::QuakeMode;
+use pureterm_ui::split::{SplitContainer, Direction, SplitSide, PaneRect, DividerInfo,
+    compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point};
 use pureterm_ui::tabs::{TabContent, SplitRef};
 use pureterm_ui::terminal::pane::{TerminalPane, PaneAction, Selection};
+use pureterm_ui::WelcomePage;
 use pureterm_terminal::screen::selection::{TerminalMouseEvent, MouseButton, MouseModifiers};
 
 use winit::application::ApplicationHandler;
@@ -44,6 +57,52 @@ struct PureTermApp {
     mouse_pos: (f32, f32),
     /// Clipboard content for copy/paste.
     clipboard_text: String,
+    /// Active divider drag state.
+    divider_drag: Option<DividerDrag>,
+    /// Hovered divider info for cursor highlighting.
+    hovered_divider: Option<DividerInfo>,
+    /// egui backend for settings overlay.
+    egui_backend: Option<EguiBackend>,
+    /// Settings panel state.
+    settings_panel: SettingsPanel,
+    /// Profile selector for quick connect / session selection.
+    profile_selector: ProfileSelector,
+    /// Welcome page for first launch or no tabs.
+    welcome_page: WelcomePage,
+    /// Tab title rename modal state.
+    rename_modal: Option<RenameModalState>,
+    /// Tab color edit modal state.
+    color_modal: Option<ColorModalState>,
+    /// Quake mode (dropdown terminal) state.
+    quake_mode: QuakeMode,
+}
+
+/// State for the tab title rename modal.
+struct RenameModalState {
+    tab_id: u64,
+    new_title: String,
+}
+
+/// State for the tab color edit modal.
+struct ColorModalState {
+    tab_id: u64,
+    color: String,
+}
+
+/// State for an active divider drag.
+struct DividerDrag {
+    /// The container ID that owns the divider being dragged.
+    container_id: u64,
+    /// The index of the left/top child whose right/bottom edge is the divider.
+    child_index: usize,
+    /// Whether the divider is in a Vertical (left-right) or Horizontal (top-bottom) direction.
+    direction: Direction,
+    /// The pixel position where the drag started.
+    start_pos: (f32, f32),
+    /// The total available size in the split direction at the container level.
+    total_size: f32,
+    /// The visible rectangle of the divider being dragged (for highlight matching).
+    divider_rect: PaneRect,
 }
 
 impl PureTermApp {
@@ -57,21 +116,65 @@ impl PureTermApp {
         self.focused_pane_id.and_then(move |id| self.panes.get_mut(&id))
     }
 
-    /// Create a new terminal pane with its own session.
+    /// Show context menu and measure its width based on current font.
+    fn show_context_menu(&mut self, x: f32, y: f32, pane_id: u64) {
+        let char_width = self.renderer.as_ref()
+            .map(|r| r.cell_size().0)
+            .unwrap_or(8.0);
+        self.context_menu.show_at(x, y, pane_id);
+        self.context_menu.measure_width(char_width);
+        if let Some(ref window) = self.window {
+            window.request_redraw();
+        }
+    }
+
+    /// Create a new terminal pane with a local session (convenience method).
     fn create_pane(&mut self, cols: usize, rows: usize) -> u64 {
-        let mut session = LocalSession::new(ConnectParams {
+        self.create_pane_with_session(cols, rows, ConnectParams {
             session_type: SessionType::Local { shell: None, args: Vec::new() },
             env: std::collections::HashMap::new(),
             cwd: None,
-        }).expect("Failed to create local session");
+        })
+    }
+
+    /// Create a new terminal pane with the given session type.
+    fn create_pane_with_session(&mut self, cols: usize, rows: usize, params: ConnectParams) -> u64 {
+        let mut session: Box<dyn Session> = match &params.session_type {
+            SessionType::Local { .. } => {
+                Box::new(LocalSession::new(params.clone()).expect("Failed to create local session"))
+            }
+            SessionType::Ssh { host, port, user, auth, agent_forward, .. } => {
+                let ssh_auth = match auth {
+                    SshAuth::None => pureterm_session::ssh::auth::SshAuth::None,
+                    SshAuth::Password(pwd) => pureterm_session::ssh::auth::SshAuth::Password(pwd.clone()),
+                    SshAuth::PublicKey { key_path, passphrase } => {
+                        pureterm_session::ssh::auth::SshAuth::PublicKey {
+                            key_path: key_path.clone(),
+                            passphrase: passphrase.clone(),
+                        }
+                    }
+                    SshAuth::Agent => pureterm_session::ssh::auth::SshAuth::Agent,
+                    SshAuth::PromptPassword => pureterm_session::ssh::auth::SshAuth::PromptPassword,
+                };
+                Box::new(SshSession::new(host.clone(), *port, user.clone(), ssh_auth, *agent_forward))
+            }
+            SessionType::Serial { path, baud_rate, .. } => {
+                Box::new(SerialSession::new(path.clone(), *baud_rate))
+            }
+            SessionType::Telnet { host, port } => {
+                Box::new(TelnetSession::new(host.clone(), *port))
+            }
+        };
 
         let output_receiver = session.output_stream();
-        pollster::block_on(session.start()).expect("Failed to start session");
+        pollster::block_on(session.start()).unwrap_or_else(|e| {
+            log::error!("Failed to start session: {}", e);
+        });
         session.resize(cols as u16, rows as u16).ok();
 
         let mut pane = TerminalPane::new(cols, rows, 25000);
         let pane_id = pane.id;
-        pane.set_session_with_receiver(Box::new(session), output_receiver);
+        pane.set_session_with_receiver(session, output_receiver);
         self.panes.insert(pane_id, pane);
         pane_id
     }
@@ -150,6 +253,27 @@ impl PureTermApp {
     /// Handle keyboard input - route to focused pane.
     fn handle_key_input(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool) {
         log::debug!("handle_key_input: key={:?}, ctrl={}, alt={}, shift={}", key, ctrl, alt, shift);
+
+        // Global hotkeys handled at app level
+        if ctrl && shift && key == "p" {
+            self.profile_selector.visible = !self.profile_selector.visible;
+            if let Some(ref window) = self.window {
+                window.request_redraw();
+            }
+            return;
+        }
+
+        // Delegate to app hotkey service
+        if let Some(ref mut app) = self.app {
+            if app.handle_key(key, ctrl, alt, shift) {
+                // Hotkey consumed by app
+                if let Some(ref window) = self.window {
+                    window.request_redraw();
+                }
+                return;
+            }
+        }
+
         if let Some(ref mut pane) = self.focused_pane_mut() {
             pane.handle_key(key, ctrl, alt, shift);
         }
@@ -176,10 +300,7 @@ impl PureTermApp {
             PaneAction::ShowContextMenu => {
                 let pane_id = self.focused_pane_id;
                 if let Some(pid) = pane_id {
-                    self.context_menu.show_at(self.mouse_pos.0, self.mouse_pos.1, pid);
-                    if let Some(ref window) = self.window {
-                        window.request_redraw();
-                    }
+                    self.show_context_menu(self.mouse_pos.0, self.mouse_pos.1, pid);
                 }
             }
             PaneAction::OpenUrl(url) => {
@@ -191,25 +312,76 @@ impl PureTermApp {
                 #[cfg(target_os = "windows")]
                 let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn();
             }
-            PaneAction::SplitVertical => {
-                self.handle_split(Direction::Vertical);
+            PaneAction::SplitRight => {
+                self.handle_split(SplitSide::Right);
             }
-            PaneAction::SplitHorizontal => {
-                self.handle_split(Direction::Horizontal);
+            PaneAction::SplitLeft => {
+                self.handle_split(SplitSide::Left);
+            }
+            PaneAction::SplitDown => {
+                self.handle_split(SplitSide::Down);
+            }
+            PaneAction::SplitUp => {
+                self.handle_split(SplitSide::Up);
             }
             PaneAction::EditTabTitle => {
-                log::debug!("Edit tab title requested");
-                // TODO: Implement tab title editing
+                if let Some(ref app) = self.app {
+                    if let Some(tab) = app.tab_manager.active_tab() {
+                        self.rename_modal = Some(RenameModalState {
+                            tab_id: tab.id,
+                            new_title: tab.title.clone(),
+                        });
+                    }
+                }
             }
             PaneAction::EditTabColor => {
-                log::debug!("Edit tab color requested");
-                // TODO: Implement tab color editing
+                if let Some(ref app) = self.app {
+                    if let Some(tab) = app.tab_manager.active_tab() {
+                        self.color_modal = Some(ColorModalState {
+                            tab_id: tab.id,
+                            color: tab.color.clone().unwrap_or_else(|| "#808080".to_string()),
+                        });
+                    }
+                }
             }
         }
     }
 
-    /// Handle split action in the given direction.
-    fn handle_split(&mut self, direction: Direction) {
+    /// Connect using a profile from the profile selector.
+    fn connect_with_profile(&mut self, profile: &Profile) {
+        let (screen_w, screen_h) = self.screen_size();
+        let renderer = match &self.renderer {
+            Some(r) => r,
+            None => return,
+        };
+        let (cell_w, cell_h) = renderer.cell_size();
+        let cols = ((screen_w / cell_w).floor() as usize).max(1);
+        let rows = ((screen_h / cell_h).floor() as usize).max(1);
+
+        let params = profile_to_connect_params(profile);
+        let title = profile_title(profile);
+
+        let pane_id = self.create_pane_with_session(cols, rows, params);
+
+        self.split_root = None;
+        self.focused_pane_id = Some(pane_id);
+
+        if let Some(ref mut app) = self.app {
+            app.tab_manager.open_tab(
+                TabContent::Pane(pane_id),
+                title,
+            );
+        }
+
+        if let Some(ref window) = self.window {
+            window.request_redraw();
+        }
+
+        log::info!("Connected to profile '{}' with pane {}", profile.name, pane_id);
+    }
+
+    /// Handle split action in the given side direction.
+    fn handle_split(&mut self, side: SplitSide) {
         let focused_id = match self.focused_pane_id {
             Some(id) => id,
             None => return,
@@ -221,6 +393,7 @@ impl PureTermApp {
             None => return,
         };
         let (cell_w, cell_h) = renderer.cell_size();
+        let direction = side.direction();
 
         // Calculate new pane size from the focused pane's current rect
         let layout = self.compute_layout(screen_w, screen_h);
@@ -242,18 +415,29 @@ impl PureTermApp {
             }
         };
 
-        let new_pane_id = self.create_pane(new_cols, new_rows);
+        log::info!("Split {:?}: screen=({},{}) focused_rect=({},{},{},{}) new_pane_size=({},{})",
+            side, screen_w, screen_h,
+            focused_rect.x, focused_rect.y, focused_rect.w, focused_rect.h,
+            new_cols, new_rows);
 
-        // Update the split tree
+        let new_pane_id = self.create_pane(new_cols, new_rows);
+        log::info!("Created new pane {}", new_pane_id);
+
+        // Update the split tree using directional split
         match &mut self.split_root {
             None => {
                 let mut container = SplitContainer::single(focused_id);
-                container.split_pane(focused_id, new_pane_id, direction);
+                container.split_pane_directional(focused_id, new_pane_id, side);
                 self.split_root = Some(container);
             }
             Some(root) => {
-                root.split_pane(focused_id, new_pane_id, direction);
+                root.split_pane_directional(focused_id, new_pane_id, side);
             }
+        }
+
+        // Equalize all panes so they share space equally
+        if let Some(ref mut root) = self.split_root {
+            root.equalize();
         }
 
         // Update tab content
@@ -271,11 +455,16 @@ impl PureTermApp {
         // Resize all panes to fit the new layout
         self.resize_all_panes();
 
+        // Log the new layout
+        let new_layout = self.compute_layout(screen_w, screen_h);
+        for (pid, rect) in &new_layout {
+            log::info!("  Pane {} => rect ({},{},{},{})", pid, rect.x, rect.y, rect.w, rect.h);
+        }
+        log::info!("  Total panes: {}", self.panes.len());
+
         if let Some(ref window) = self.window {
             window.request_redraw();
         }
-
-        log::info!("Split {:?}: created pane {} alongside {}", direction, new_pane_id, focused_id);
     }
 
     /// Handle close pane action.
@@ -296,6 +485,12 @@ impl PureTermApp {
         }
 
         self.panes.remove(&pane_id);
+
+        // If the closed pane was focused, switch focus to another pane
+        if self.focused_pane_id == Some(pane_id) {
+            self.focused_pane_id = self.panes.keys().next().copied();
+        }
+
         self.resize_all_panes();
 
         if let Some(ref window) = self.window {
@@ -326,6 +521,9 @@ impl PureTermApp {
                 if let Some(ref mut pane) = self.focused_pane_mut() {
                     let rows = pane.terminal.rows();
                     let cols = pane.terminal.cols();
+                    if rows == 0 || cols == 0 {
+                        return;
+                    }
                     pane.selection = Some(Selection {
                         start_row: 0,
                         start_col: 0,
@@ -333,25 +531,32 @@ impl PureTermApp {
                         end_col: cols - 1,
                         is_block: false,
                     });
-                    // Mark dirty via scroll_to_bottom (sets dirty = true internally)
                     pane.terminal.scroll_to_bottom();
                 }
             }
             MenuAction::Clear => {
-                // Send clear screen escape sequence
                 if let Some(ref mut pane) = self.focused_pane_mut() {
                     pane.write_input(b"\x1b[2J\x1b[H");
                 }
             }
             MenuAction::Search => {
-                log::debug!("Search requested from context menu");
-                // TODO: implement search UI
+                // Toggle search mode: send Ctrl+F to terminal to trigger shell reverse search
+                // or just show a visual indicator
+                if let Some(ref mut pane) = self.focused_pane_mut() {
+                    pane.write_input(b"\x1b[1;5F"); // Ctrl+F
+                }
             }
-            MenuAction::SplitVertical => {
-                self.handle_split(Direction::Vertical);
+            MenuAction::SplitRight => {
+                self.handle_split(SplitSide::Right);
             }
-            MenuAction::SplitHorizontal => {
-                self.handle_split(Direction::Horizontal);
+            MenuAction::SplitLeft => {
+                self.handle_split(SplitSide::Left);
+            }
+            MenuAction::SplitDown => {
+                self.handle_split(SplitSide::Down);
+            }
+            MenuAction::SplitUp => {
+                self.handle_split(SplitSide::Up);
             }
             MenuAction::ClosePane => {
                 if let Some(pane_id) = self.focused_pane_id {
@@ -359,12 +564,10 @@ impl PureTermApp {
                 }
             }
             MenuAction::NewTab => {
-                log::debug!("New tab requested from context menu");
-                // TODO: implement new tab
+                self.handle_new_tab();
             }
             MenuAction::CloseTab => {
-                log::debug!("Close tab requested from context menu");
-                // TODO: implement close tab
+                self.handle_close_tab();
             }
             MenuAction::ZoomIn => {
                 if let Some(ref mut pane) = self.focused_pane_mut() {
@@ -385,15 +588,126 @@ impl PureTermApp {
                 self.resize_all_panes();
             }
             MenuAction::OpenSettings => {
-                log::debug!("Settings requested from context menu");
-                // TODO: implement settings UI
+                self.settings_panel.visible = !self.settings_panel.visible;
+                if let Some(ref mut app) = self.app {
+                    app.show_settings = self.settings_panel.visible;
+                }
+                if let Some(ref window) = self.window {
+                    window.request_redraw();
+                }
             }
             MenuAction::EditTabTitle => {
-                log::debug!("Edit tab title requested from context menu");
+                if let Some(ref app) = self.app {
+                    if let Some(tab) = app.tab_manager.active_tab() {
+                        self.rename_modal = Some(RenameModalState {
+                            tab_id: tab.id,
+                            new_title: tab.title.clone(),
+                        });
+                    }
+                }
             }
             MenuAction::EditTabColor => {
-                log::debug!("Edit tab color requested from context menu");
+                if let Some(ref app) = self.app {
+                    if let Some(tab) = app.tab_manager.active_tab() {
+                        self.color_modal = Some(ColorModalState {
+                            tab_id: tab.id,
+                            color: tab.color.clone().unwrap_or_else(|| "#808080".to_string()),
+                        });
+                    }
+                }
             }
+        }
+    }
+
+    /// Create a new tab with a fresh terminal pane.
+    fn handle_new_tab(&mut self) {
+        let (screen_w, screen_h) = self.screen_size();
+        let renderer = match &self.renderer {
+            Some(r) => r,
+            None => return,
+        };
+        let (cell_w, cell_h) = renderer.cell_size();
+        let cols = ((screen_w / cell_w).floor() as usize).max(1);
+        let rows = ((screen_h / cell_h).floor() as usize).max(1);
+
+        let pane_id = self.create_pane(cols, rows);
+
+        // Close current split state for the new tab
+        self.split_root = None;
+        self.focused_pane_id = Some(pane_id);
+
+        if let Some(ref mut app) = self.app {
+            let tab_count = app.tab_manager.len() + 1;
+            app.tab_manager.open_tab(
+                TabContent::Pane(pane_id),
+                format!("Terminal {}", tab_count),
+            );
+        }
+
+        if let Some(ref window) = self.window {
+            window.request_redraw();
+        }
+
+        log::info!("New tab created with pane {}", pane_id);
+    }
+
+    /// Close the active tab and switch to the nearest one.
+    fn handle_close_tab(&mut self) {
+        // Get the active tab's pane IDs before closing
+        let tab_pane_ids: Vec<u64> = if let Some(ref app) = self.app {
+            if let Some(tab) = app.tab_manager.active_tab() {
+                match &tab.content {
+                    TabContent::Pane(id) => vec![*id],
+                    TabContent::Split(root) => {
+                        // We need the split container to get all pane IDs
+                        // For now, remove all panes in self.panes that belong to this tab
+                        // Since we don't track which panes belong to which tab separately,
+                        // just collect all pane IDs from the split_root
+                        self.split_root.as_ref()
+                            .map(|root| root.pane_ids())
+                            .unwrap_or_default()
+                    }
+                }
+            } else {
+                return;
+            }
+        } else {
+            return;
+        };
+
+        // Close the tab
+        if let Some(ref mut app) = self.app {
+            app.tab_manager.close_active_tab();
+        }
+
+        // Remove panes that belonged to the closed tab
+        for pane_id in &tab_pane_ids {
+            self.panes.remove(pane_id);
+        }
+        self.split_root = None;
+
+        // Switch to the new active tab's pane
+        if let Some(ref app) = self.app {
+            if let Some(tab) = app.tab_manager.active_tab() {
+                match &tab.content {
+                    TabContent::Pane(id) => {
+                        self.focused_pane_id = Some(*id);
+                    }
+                    TabContent::Split(_) => {
+                        // Restore split state if needed
+                        self.focused_pane_id = self.panes.keys().next().copied();
+                    }
+                }
+            } else {
+                // No tabs left - create a new one
+                drop(tab_pane_ids); // release borrow
+                self.handle_new_tab();
+                return;
+            }
+        }
+
+        if let Some(ref window) = self.window {
+            window.request_redraw();
         }
     }
 
@@ -408,15 +722,14 @@ impl PureTermApp {
             return;
         }
 
-        // Background
+        // Background with rounded appearance
         let (mx, my, mw, mh) = context_menu.menu_rect();
         renderer.build_rect_vertices(
             ViewportRect { x: mx, y: my, w: mw, h: mh },
-            [0.15, 0.15, 0.18, 0.95],
+            [0.18, 0.18, 0.22, 0.95],
             vertices, indices,
         );
 
-        // Items
         let fg_color = [0.9f32, 0.9, 0.9, 1.0];
         let hover_bg = [0.25f32, 0.5, 0.85, 1.0];
 
@@ -425,16 +738,16 @@ impl PureTermApp {
             if item.separator_before {
                 let sep_y = iy - MENU_SEPARATOR_HEIGHT + 2.0;
                 renderer.build_rect_vertices(
-                    ViewportRect { x: ix - MENU_PADDING + 4.0, y: sep_y, w: mw - 8.0, h: 1.0 },
+                    ViewportRect { x: mx + 4.0, y: sep_y, w: mw - 8.0, h: 1.0 },
                     [0.4, 0.4, 0.4, 1.0],
                     vertices, indices,
                 );
             }
 
-            // Hover highlight
+            // Hover highlight (full row)
             if context_menu.hovered_index == Some(i) {
                 renderer.build_rect_vertices(
-                    ViewportRect { x: ix - MENU_PADDING, y: iy, w: mw, h: MENU_ITEM_HEIGHT },
+                    ViewportRect { x: mx, y: iy, w: mw, h: MENU_ITEM_HEIGHT },
                     hover_bg,
                     vertices, indices,
                 );
@@ -444,7 +757,7 @@ impl PureTermApp {
             renderer.build_text_vertices(
                 &item.label,
                 ix,
-                iy + 2.0,
+                iy + 4.0,
                 fg_color,
                 vertices, indices,
             );
@@ -453,7 +766,7 @@ impl PureTermApp {
         // Border around menu
         renderer.build_focus_border(
             ViewportRect { x: mx, y: my, w: mw, h: mh },
-            [0.4, 0.4, 0.45, 1.0],
+            [0.45, 0.45, 0.5, 1.0],
             1.0,
             vertices, indices,
         );
@@ -463,9 +776,24 @@ impl PureTermApp {
 impl ApplicationHandler for PureTermApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_none() {
-            let window_attrs = Window::default_attributes()
+            let mut window_attrs = Window::default_attributes()
                 .with_title("PureTerm")
                 .with_inner_size(winit::dpi::LogicalSize::new(1024, 768));
+
+            // Apply quake mode settings if enabled
+            if self.quake_mode.enabled {
+                if let Some(monitor) = event_loop.available_monitors().next() {
+                    let screen_size = monitor.size();
+                    let quake_height = (screen_size.height as f32 * self.quake_mode.height) as u32;
+                    window_attrs = window_attrs
+                        .with_inner_size(winit::dpi::PhysicalSize::new(screen_size.width, quake_height))
+                        .with_position(winit::dpi::PhysicalPosition::new(
+                            monitor.position().x,
+                            monitor.position().y,
+                        ));
+                    // Note: always_on_top requires platform-specific APIs
+                }
+            }
 
             let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
             let size = window.inner_size();
@@ -481,6 +809,16 @@ impl ApplicationHandler for PureTermApp {
 
             let mut renderer = renderer;
             renderer.configure_surface(&surface, size.width, size.height);
+
+            // Initialize egui backend for settings overlay
+            let surface_format = renderer.surface_config()
+                .map(|c| c.format)
+                .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
+            let egui_backend = EguiBackend::new(
+                renderer.device(),
+                surface_format,
+                Arc::clone(&window),
+            );
 
             let (cols, rows) = renderer.pixel_to_cells(size.width, size.height);
 
@@ -500,6 +838,7 @@ impl ApplicationHandler for PureTermApp {
             self.renderer = Some(renderer);
             self.surface = Some(surface);
             self.window = Some(window);
+            self.egui_backend = Some(egui_backend);
 
             log::info!("PureTerm initialized: {}x{}", cols, rows);
         }
@@ -511,6 +850,27 @@ impl ApplicationHandler for PureTermApp {
         _window_id: winit::window::WindowId,
         event: WindowEvent,
     ) {
+        match event {
+            // Route events to egui when any overlay panel is visible
+            ref evt @ WindowEvent::KeyboardInput { .. }
+            | ref evt @ WindowEvent::MouseInput { .. }
+            | ref evt @ WindowEvent::CursorMoved { .. }
+            | ref evt @ WindowEvent::MouseWheel { .. }
+            | ref evt @ WindowEvent::ModifiersChanged { .. }
+            | ref evt @ WindowEvent::Focused { .. }
+                if self.settings_panel.visible || self.profile_selector.visible || self.welcome_page.visible =>
+            {
+                if let (Some(ref mut egui_backend), Some(ref window)) = (&mut self.egui_backend, &self.window) {
+                    let consumed = egui_backend.on_event(window, evt);
+                    window.request_redraw();
+                    if consumed {
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
+
         match event {
             WindowEvent::CloseRequested => {
                 log::info!("Window closed");
@@ -533,7 +893,7 @@ impl ApplicationHandler for PureTermApp {
                 }
 
                 let any_dirty = self.panes.values().any(|p| p.is_dirty());
-                if !any_dirty && !self.context_menu.visible {
+                if !any_dirty && !self.context_menu.visible && !self.settings_panel.visible && !self.profile_selector.visible && !self.welcome_page.visible && self.rename_modal.is_none() && self.color_modal.is_none() {
                     return;
                 }
 
@@ -550,8 +910,14 @@ impl ApplicationHandler for PureTermApp {
                             w: rect.w, h: rect.h,
                         };
                         let snapshot = pane.terminal.snapshot();
+                        log::debug!("Render pane {}: viewport=({},{},{},{}) grid=({}x{}) cursor=({},{}) visible={}",
+                            pane_id, rect.x, rect.y, rect.w, rect.h,
+                            snapshot.rows.len(), snapshot.rows.first().map(|r| r.len()).unwrap_or(0),
+                            snapshot.cursor_row, snapshot.cursor_col, snapshot.cursor_visible);
                         pane.clear_dirty();
                         snapshots.push((*pane_id, viewport, snapshot));
+                    } else {
+                        log::warn!("Layout contains pane {} but not found in panes map!", pane_id);
                     }
                 }
 
@@ -571,18 +937,34 @@ impl ApplicationHandler for PureTermApp {
 
                     // Render each pane snapshot
                     for (_pane_id, viewport, snapshot) in &snapshots {
+                        let offset = all_vertices.len() as u32;
                         let (verts, idx) = renderer.build_vertices(
                             snapshot, &color_scheme, None, Some(*viewport),
                         );
                         all_vertices.extend(verts);
-                        all_indices.extend(idx);
+                        all_indices.extend(idx.iter().map(|i| i + offset));
                     }
 
                     // Render dividers
                     for div in &dividers {
+                        // Highlight the divider if it's being dragged or hovered
+                        let is_active = self.divider_drag.as_ref()
+                            .map_or(false, |d| {
+                                (d.divider_rect.x - div.x).abs() < 1.0
+                                    && (d.divider_rect.y - div.y).abs() < 1.0
+                            });
+                        let is_hovered = self.hovered_divider.as_ref()
+                            .map_or(false, |h| {
+                                (h.rect.x - div.x).abs() < 1.0 && (h.rect.y - div.y).abs() < 1.0
+                            });
+                        let color = if is_active || is_hovered {
+                            [0.4, 0.7, 1.0, 1.0]
+                        } else {
+                            [0.35, 0.35, 0.4, 1.0]
+                        };
                         renderer.build_rect_vertices(
                             ViewportRect { x: div.x, y: div.y, w: div.w, h: div.h },
-                            [0.35, 0.35, 0.4, 1.0],
+                            color,
                             &mut all_vertices, &mut all_indices,
                         );
                     }
@@ -600,7 +982,185 @@ impl ApplicationHandler for PureTermApp {
                     // Render context menu overlay
                     Self::render_context_menu_overlay(&self.context_menu, renderer, &mut all_vertices, &mut all_indices);
 
-                    renderer.draw(surface, &all_vertices, &all_indices, bg);
+                    // Draw terminal content (returns frame without presenting)
+                    let frame = renderer.draw_to_surface(surface, &all_vertices, &all_indices, bg);
+
+                    // Render egui overlay if any panel/modal is visible
+                    let needs_egui = self.settings_panel.visible || self.profile_selector.visible || self.welcome_page.visible || self.rename_modal.is_some() || self.color_modal.is_some();
+                    if needs_egui {
+                        if let (Some(frame), Some(ref mut egui_backend), Some(ref mut app)) = (frame, &mut self.egui_backend, &mut self.app) {
+                            let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
+                            // Extract state that the egui closure will need to read/write
+                            let settings_visible = self.settings_panel.visible;
+                            let profile_visible = self.profile_selector.visible;
+                            let welcome_visible = self.welcome_page.visible;
+                            let mut profile_connect_request: Option<Profile> = None;
+                            let rename_modal_rc = self.rename_modal.take().map(|m| Rc::new(RefCell::new(m)));
+                            let color_modal_rc = self.color_modal.take().map(|m| Rc::new(RefCell::new(m)));
+
+                            let raw_input = egui_backend.winit_state.take_egui_input(self.window.as_ref().unwrap());
+                            let full_output = egui_backend.run(raw_input, |ctx| {
+                                // Settings panel
+                                if settings_visible {
+#[allow(deprecated)]
+                                    egui::CentralPanel::default().show(ctx, |ui| {
+                                        ui.vertical_centered(|ui| {
+                                            ui.set_max_width(600.0);
+                                            self.settings_panel.show(ui, &mut app.config);
+                                        });
+                                    });
+                                }
+
+                                // Profile selector
+                                if profile_visible {
+                                    if let Some(selected_profile) = self.profile_selector.show(ctx, &app.config) {
+                                        profile_connect_request = Some(selected_profile);
+                                    }
+                                }
+
+                                // Welcome page
+                                if welcome_visible && self.panes.is_empty() {
+                                    if let Some(selected_profile) = self.welcome_page.show_page(ctx, &app.config) {
+                                        profile_connect_request = Some(selected_profile);
+                                    }
+                                }
+
+                                // Rename modal
+                                if let Some(ref rc_modal) = rename_modal_rc {
+                                    let mut modal = rc_modal.borrow_mut();
+                                    let tab_id = modal.tab_id;
+                                    let mut close = false;
+                                    egui::Window::new("Rename Tab")
+                                        .collapsible(false)
+                                        .resizable(false)
+                                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                                        .show(ctx, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label("Title:");
+                                                ui.add(
+                                                    egui::TextEdit::singleline(&mut modal.new_title)
+                                                        .desired_width(200.0)
+                                                );
+                                            });
+                                            ui.horizontal(|ui| {
+                                                if ui.button("OK").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                                    close = true;
+                                                }
+                                                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                                    close = true;
+                                                }
+                                            });
+                                        });
+                                    if close {
+                                        self.rename_modal = Some(RenameModalState {
+                                            tab_id,
+                                            new_title: modal.new_title.clone(),
+                                        });
+                                    }
+                                }
+
+                                // Color modal
+                                if let Some(ref rc_modal) = color_modal_rc {
+                                    let mut modal = rc_modal.borrow_mut();
+                                    let tab_id = modal.tab_id;
+                                    let mut close = false;
+                                    egui::Window::new("Tab Color")
+                                        .collapsible(false)
+                                        .resizable(false)
+                                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                                        .show(ctx, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label("Color (#hex):");
+                                                ui.add(
+                                                    egui::TextEdit::singleline(&mut modal.color)
+                                                        .desired_width(120.0)
+                                                );
+                                            });
+                                            // Color preview swatch
+                                            let color_vec = parse_hex_color(&modal.color);
+                                            ui.horizontal(|ui| {
+                                                ui.painter().rect_filled(
+                                                    egui::Rect::from_min_size(ui.cursor().min, egui::vec2(40.0, 20.0)),
+                                                    2.0,
+                                                    egui::Color32::from_rgb(color_vec[0], color_vec[1], color_vec[2]),
+                                                );
+                                                ui.add_space(44.0);
+                                            });
+                                            ui.add_space(4.0);
+                                            // Quick color presets
+                                            ui.horizontal(|ui| {
+                                                for &color in &["#e06c75", "#61afef", "#98c379", "#d19a66", "#c678dd", "#56b6c2", "#e5c07b", "#be5046"] {
+                                                    let cv = parse_hex_color(color);
+                                                    let (rect, response) = ui.allocate_exact_size(
+                                                        egui::vec2(20.0, 20.0),
+                                                        egui::Sense::click(),
+                                                    );
+                                                    ui.painter().rect_filled(
+                                                        rect,
+                                                        2.0,
+                                                        egui::Color32::from_rgb(cv[0], cv[1], cv[2]),
+                                                    );
+                                                    if response.clicked() {
+                                                        modal.color = color.to_string();
+                                                    }
+                                                }
+                                            });
+                                            ui.add_space(8.0);
+                                            ui.horizontal(|ui| {
+                                                if ui.button("OK").clicked() {
+                                                    close = true;
+                                                }
+                                                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                                    close = true;
+                                                }
+                                            });
+                                        });
+                                    if close {
+                                        self.color_modal = Some(ColorModalState {
+                                            tab_id,
+                                            color: modal.color.clone(),
+                                        });
+                                    }
+                                }
+                            });
+
+                            // Apply results from modals
+                            if let Some(profile) = profile_connect_request {
+                                // Connect with profile and request redraw
+                                drop(full_output);
+                                drop(view);
+                                self.connect_with_profile(&profile);
+                                if let Some(ref window) = self.window {
+                                    window.request_redraw();
+                                }
+                                return;
+                            }
+
+                            let shapes = full_output.shapes;
+                            let textures_delta = full_output.textures_delta;
+                            let pixels_per_point = self.window.as_ref().unwrap().scale_factor() as f32;
+                            let paint_jobs = egui_backend.context.tessellate(shapes, pixels_per_point);
+
+                            let screen_descriptor = egui_wgpu::ScreenDescriptor {
+                                size_in_pixels: [screen_w as u32, screen_h as u32],
+                                pixels_per_point,
+                            };
+
+                            egui_backend.render(
+                                renderer.device(),
+                                renderer.queue(),
+                                &view,
+                                paint_jobs,
+                                textures_delta,
+                                screen_descriptor,
+                            );
+
+                            frame.present();
+                        }
+                    } else if let Some(frame) = frame {
+                        frame.present();
+                    }
                 }
             }
             WindowEvent::ModifiersChanged(modifiers) => {
@@ -620,6 +1180,20 @@ impl ApplicationHandler for PureTermApp {
                 let ctrl = self.modifiers.control_key();
                 let alt = self.modifiers.alt_key();
                 let shift = self.modifiers.shift_key();
+
+                // Global hotkey: Ctrl+` toggles quake mode
+                if ctrl && shift {
+                    if let winit::keyboard::Key::Character(ref ch) = event.logical_key {
+                        if ch == "`" {
+                            // Toggle quake mode visibility
+                            if self.quake_mode.enabled {
+                                self.quake_mode.visible = !self.quake_mode.visible;
+                                log::info!("Quake mode toggled: visible={}", self.quake_mode.visible);
+                            }
+                            return;
+                        }
+                    }
+                }
 
                 log::debug!("KeyboardInput: logical_key={:?}, text={:?}, ctrl={}, alt={}, shift={}",
                     event.logical_key, event.text, ctrl, alt, shift);
@@ -689,6 +1263,33 @@ impl ApplicationHandler for PureTermApp {
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse_pos = (position.x as f32, position.y as f32);
 
+                // Handle active divider drag
+                if let Some(ref drag) = self.divider_drag {
+                    let (screen_w, screen_h) = self.screen_size();
+                    let delta = match drag.direction {
+                        Direction::Vertical => self.mouse_pos.0 - drag.start_pos.0,
+                        Direction::Horizontal => self.mouse_pos.1 - drag.start_pos.1,
+                    };
+                    let delta_ratio = delta / drag.total_size;
+
+                    let container_id = drag.container_id;
+                    let child_index = drag.child_index;
+                    if let Some(ref mut root) = self.split_root {
+                        if let Some(container) = root.find_container_mut(container_id) {
+                            container.adjust_ratio(child_index, delta_ratio);
+                        }
+                    }
+                    // Update start_pos for incremental adjustment
+                    if let Some(ref mut drag) = self.divider_drag {
+                        drag.start_pos = self.mouse_pos;
+                    }
+                    self.resize_all_panes();
+                    if let Some(ref window) = self.window {
+                        window.request_redraw();
+                    }
+                    return;
+                }
+
                 // Update context menu hover
                 if self.context_menu.visible {
                     self.context_menu.update_hover(self.mouse_pos.0, self.mouse_pos.1);
@@ -696,6 +1297,25 @@ impl ApplicationHandler for PureTermApp {
                         window.request_redraw();
                     }
                     return;
+                }
+
+                // Check for divider hover (cursor style)
+                let (screen_w, screen_h) = self.screen_size();
+                self.hovered_divider = if let Some(ref root) = self.split_root {
+                    divider_at_point(root, self.mouse_pos.0, self.mouse_pos.1, 0.0, 0.0, screen_w, screen_h)
+                } else {
+                    None
+                };
+                if let Some(ref window) = self.window {
+                    let icon = if let Some(ref info) = self.hovered_divider {
+                        match info.direction {
+                            Direction::Vertical => winit::window::CursorIcon::ColResize,
+                            Direction::Horizontal => winit::window::CursorIcon::RowResize,
+                        }
+                    } else {
+                        winit::window::CursorIcon::Default
+                    };
+                    window.set_cursor(icon);
                 }
 
                 let (screen_w, screen_h) = self.screen_size();
@@ -786,15 +1406,13 @@ impl ApplicationHandler for PureTermApp {
 
                                 // Show context menu
                                 if let Some(target_id) = self.focused_pane_id.or_else(|| self.panes.keys().next().copied()) {
-                                    self.context_menu.show_at(self.mouse_pos.0, self.mouse_pos.1, target_id);
-                                }
-
-                                if let Some(ref window) = self.window {
-                                    window.request_redraw();
+                                    self.show_context_menu(self.mouse_pos.0, self.mouse_pos.1, target_id);
                                 }
                             }
                             MouseButton::Left => {
                                 // Left click
+
+                                // Check divider hit first (priority over pane click)
                                 if self.context_menu.visible {
                                     if let Some(action) = self.context_menu.hit_test(self.mouse_pos.0, self.mouse_pos.1) {
                                         self.context_menu.hide();
@@ -806,6 +1424,26 @@ impl ApplicationHandler for PureTermApp {
                                         window.request_redraw();
                                     }
                                     return;
+                                }
+
+                                // Check if clicking on a divider
+                                if let Some(ref root) = self.split_root {
+                                    if let Some(info) = divider_at_point(root, self.mouse_pos.0, self.mouse_pos.1, 0.0, 0.0, screen_w, screen_h) {
+                                        self.divider_drag = Some(DividerDrag {
+                                            container_id: info.container_id,
+                                            child_index: info.child_index,
+                                            direction: info.direction,
+                                            start_pos: self.mouse_pos,
+                                            total_size: info.container_size,
+                                            divider_rect: PaneRect {
+                                                x: info.rect.x,
+                                                y: info.rect.y,
+                                                w: info.rect.w,
+                                                h: info.rect.h,
+                                            },
+                                        });
+                                        return;
+                                    }
                                 }
 
                                 let target_id = pane_at_point(&layout, self.mouse_pos.0, self.mouse_pos.1);
@@ -885,6 +1523,12 @@ impl ApplicationHandler for PureTermApp {
                         }
                     }
                     ElementState::Released => {
+                        // End divider drag
+                        if self.divider_drag.is_some() {
+                            self.divider_drag = None;
+                            return;
+                        }
+
                         if self.context_menu.visible {
                             return;
                         }
@@ -1001,6 +1645,43 @@ impl ApplicationHandler for PureTermApp {
     }
 }
 
+use clap::{Parser, Subcommand};
+
+/// PureTerm CLI arguments.
+#[derive(Parser, Debug)]
+#[command(name = "pureterm")]
+#[command(version = "0.1.0")]
+#[command(about = "GPU-accelerated terminal emulator")]
+struct Cli {
+    /// Connect to a profile by name.
+    #[arg(short, long)]
+    profile: Option<String>,
+
+    /// Quick SSH connect (user@host or user@host:port).
+    #[arg(short, long)]
+    ssh: Option<String>,
+
+    /// Open a new tab (for IPC).
+    #[arg(long)]
+    new_tab: bool,
+
+    /// Start with quake mode (dropdown terminal).
+    #[arg(long)]
+    quake: bool,
+
+    /// Subcommand for additional actions.
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// List available profiles.
+    List,
+    /// Open settings.
+    Settings,
+}
+
 fn main() -> Result<()> {
     #[cfg(debug_assertions)]
     let default_level = "debug";
@@ -1013,15 +1694,41 @@ fn main() -> Result<()> {
 
     log::info!("PureTerm starting... (build: {})", if cfg!(debug_assertions) { "debug" } else { "release" });
 
+    let cli = Cli::parse();
+
+    // Handle subcommands
+    match cli.command {
+        Some(Commands::List) => {
+            println!("Available profiles:");
+            // Would load and list profiles here
+            println!("  (use --profile to connect)");
+            return Ok(());
+        }
+        Some(Commands::Settings) => {
+            println!("Opening settings...");
+            // Would trigger settings open here
+            return Ok(());
+        }
+        None => {}
+    }
+
     let config_service = ConfigService::load()?;
     let theme_service = ThemeService::new();
-    let config = config_service.get().clone();
+    let mut config = config_service.get().clone();
+
+    // Handle quick SSH connect
+    if let Some(ssh_spec) = cli.ssh {
+        if let Some(profile) = parse_ssh_spec(&ssh_spec) {
+            config.profiles.push(profile);
+        }
+    }
+
     let color_scheme = config.terminal.color_scheme.clone()
         .or_else(|| theme_service.get_scheme(&config.appearance.theme).cloned())
         .unwrap_or_else(|| theme_service.default_scheme().clone());
 
     let event_loop = winit::event_loop::EventLoop::new()?;
-    event_loop.set_control_flow(winit::event_loop::ControlFlow::Poll);
+    let quake_mode = cli.quake;
 
     let mut app = PureTermApp {
         window: None,
@@ -1036,10 +1743,154 @@ fn main() -> Result<()> {
         modifiers: ModifiersState::default(),
         mouse_pos: (0.0, 0.0),
         clipboard_text: String::new(),
+        divider_drag: None,
+        hovered_divider: None,
+        egui_backend: None,
+        settings_panel: SettingsPanel::default(),
+        profile_selector: ProfileSelector::default(),
+        welcome_page: WelcomePage::new(),
+        rename_modal: None,
+        color_modal: None,
+        quake_mode: if quake_mode { QuakeMode::new() } else { QuakeMode::default() },
     };
 
     event_loop.run_app(&mut app)?;
 
     log::info!("PureTerm shutting down");
     Ok(())
+}
+
+/// Parse SSH specification string (user@host:port) into a Profile.
+fn parse_ssh_spec(spec: &str) -> Option<Profile> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return None;
+    }
+
+    let (user, host_part) = if let Some(at) = spec.find('@') {
+        (Some(&spec[..at]), &spec[at + 1..])
+    } else {
+        (None, spec)
+    };
+
+    let (host, port) = if let Some(colon) = host_part.find(':') {
+        let port: u16 = host_part[colon + 1..].parse().ok()?;
+        (host_part[..colon].to_string(), Some(port))
+    } else {
+        (host_part.to_string(), None)
+    };
+
+    let user = user.map(|s| s.to_string())
+        .or_else(|| std::env::var("USER").ok());
+
+    Some(Profile {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: format!("{}@{}", user.as_deref().unwrap_or("user"), host),
+        profile_type: ProfileType::Ssh,
+        group: None,
+        color: Some("#4A9EFF".to_string()),
+        icon: None,
+        options: ProfileOptions {
+            host: Some(host),
+            port,
+            user,
+            auth_method: Some("prompt".to_string()),
+            ..Default::default()
+        },
+    })
+}
+
+/// Convert a Profile to ConnectParams for session creation.
+fn profile_to_connect_params(profile: &Profile) -> ConnectParams {
+    let session_type = match profile.profile_type {
+        ProfileType::Local => {
+            SessionType::Local {
+                shell: profile.options.shell.clone(),
+                args: profile.options.args.clone().unwrap_or_default(),
+            }
+        }
+        ProfileType::Ssh => {
+            let auth = match profile.options.auth_method.as_deref() {
+                Some("password") => SshAuth::Password(String::new()),
+                Some("publickey") => {
+                    let key_path = profile.options.private_key.clone()
+                        .unwrap_or_else(|| "~/.ssh/id_rsa".to_string());
+                    SshAuth::PublicKey {
+                        key_path: std::path::PathBuf::from(key_path),
+                        passphrase: None,
+                    }
+                }
+                Some("agent") => SshAuth::Agent,
+                Some("none") => SshAuth::None,
+                _ => SshAuth::PromptPassword,
+            };
+            SessionType::Ssh {
+                host: profile.options.host.clone().unwrap_or_default(),
+                port: profile.options.port.unwrap_or(22),
+                user: profile.options.user.clone().unwrap_or_default(),
+                auth,
+                agent_forward: profile.options.agent_forward.unwrap_or(false),
+                x11_forward: profile.options.x11_forward.unwrap_or(false),
+                compression: profile.options.compression.unwrap_or(false),
+            }
+        }
+        ProfileType::Serial => {
+            SessionType::Serial {
+                path: profile.options.path.clone().unwrap_or_default(),
+                baud_rate: profile.options.baud_rate.unwrap_or(9600),
+                data_bits: profile.options.data_bits.unwrap_or(8),
+                stop_bits: profile.options.stop_bits.unwrap_or(1),
+                parity: profile.options.parity.clone().unwrap_or_else(|| "none".into()),
+                flow_control: profile.options.flow_control.clone().unwrap_or_else(|| "none".into()),
+            }
+        }
+        ProfileType::Telnet => {
+            SessionType::Telnet {
+                host: profile.options.telnet_host.clone().unwrap_or_default(),
+                port: profile.options.telnet_port.unwrap_or(23),
+            }
+        }
+    };
+
+    ConnectParams {
+        session_type,
+        env: profile.options.env.clone().unwrap_or_default(),
+        cwd: profile.options.cwd.clone(),
+    }
+}
+
+/// Generate a tab title from a profile.
+fn profile_title(profile: &Profile) -> String {
+    match profile.profile_type {
+        ProfileType::Ssh => {
+            let user = profile.options.user.as_deref().unwrap_or("user");
+            let host = profile.options.host.as_deref().unwrap_or("host");
+            let port = profile.options.port.unwrap_or(22);
+            if port == 22 { format!("{}@{}", user, host) } else { format!("{}@{}:{}", user, host, port) }
+        }
+        ProfileType::Serial => {
+            let path = profile.options.path.as_deref().unwrap_or("/dev/tty");
+            let baud = profile.options.baud_rate.unwrap_or(9600);
+            format!("{} @ {}", path, baud)
+        }
+        ProfileType::Telnet => {
+            let host = profile.options.telnet_host.as_deref().unwrap_or("host");
+            let port = profile.options.telnet_port.unwrap_or(23);
+            if port == 23 { host.to_string() } else { format!("{}:{}", host, port) }
+        }
+        ProfileType::Local => profile.name.clone(),
+    }
+}
+
+/// Parse a hex color string like "#ff0000" to [u8; 3].
+fn parse_hex_color(s: &str) -> [u8; 3] {
+    let s = s.trim_start_matches('#');
+    if s.len() >= 6 {
+        let r = u8::from_str_radix(&s[0..2], 16).unwrap_or(128);
+        let g = u8::from_str_radix(&s[2..4], 16).unwrap_or(128);
+        let b = u8::from_str_radix(&s[4..6], 16).unwrap_or(128);
+        [r, g, b]
+    } else {
+        [128, 128, 128]
+    }
 }

@@ -9,6 +9,7 @@ pub mod focus_mode;
 pub mod jump_prompt;
 pub mod lock_screen;
 pub mod online_search;
+pub mod profile_selector;
 pub mod quick_bar;
 pub mod search;
 pub mod settings;
@@ -16,14 +17,17 @@ pub mod split;
 pub mod tabs;
 pub mod tab_recovery;
 pub mod terminal;
+pub mod welcome;
 
 pub use app::App;
 pub use clipboard::ClipboardManager;
 pub use command_palette::CommandPalette;
-pub use context_menu::{ContextMenu, ContextMenuState, MenuAction, MenuItem,
-    MENU_ITEM_HEIGHT, MENU_MIN_WIDTH, MENU_PADDING, MENU_SEPARATOR_HEIGHT};
+pub use context_menu::{ContextMenu, ContextMenuState, MenuAction,
+    MENU_ITEM_HEIGHT, MENU_MIN_WIDTH, MENU_PADDING_H, MENU_PADDING_V, MENU_SEPARATOR_HEIGHT};
+pub use profile_selector::ProfileSelector;
 pub use settings::SettingsPanel;
-pub use split::{SplitContainer, PaneRect, compute_pane_rects, pane_at_point, compute_divider_rects};
+pub use split::{SplitContainer, PaneRect, SplitSide, DividerInfo, compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point, DIVIDER_WIDTH, DIVIDER_HIT_WIDTH};
 pub use tabs::TabManager;
 pub use tab_recovery::{TabRecovery, SavedTab, SavedWindowState};
 pub use terminal::TerminalPane;
+pub use welcome::WelcomePage;

@@ -43,7 +43,7 @@ impl QuickBar {
 
         let mut result = None;
 
-        egui::TopBottomPanel::top("quick_bar").show_inside(ui, |ui| {
+        egui::Panel::top("quick_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 let hint = match self.mode {
                     QuickBarMode::Command => "Command...",

@@ -118,9 +118,9 @@ impl ExplorerPanel {
 
         let mut action = None;
 
-        egui::SidePanel::right("explorer_panel")
-            .min_width(200.0)
-            .default_width(250.0)
+        egui::Panel::right("explorer_panel")
+            .min_size(200.0)
+            .default_size(250.0)
             .show_inside(ui, |ui| {
                 ui.heading("Explorer");
                 ui.add_space(4.0);

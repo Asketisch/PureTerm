@@ -43,8 +43,10 @@ impl CommandPalette {
             CommandEntry { id: "close_tab".into(), label: "Close Tab".into(), category: "Tab".into(), shortcut: Some("Ctrl+Shift+W".into()) },
             CommandEntry { id: "next_tab".into(), label: "Next Tab".into(), category: "Tab".into(), shortcut: Some("Ctrl+Shift+Right".into()) },
             CommandEntry { id: "prev_tab".into(), label: "Previous Tab".into(), category: "Tab".into(), shortcut: Some("Ctrl+Shift+Left".into()) },
-            CommandEntry { id: "split_vertical".into(), label: "Split Vertical".into(), category: "Layout".into(), shortcut: Some("Ctrl+Shift+D".into()) },
-            CommandEntry { id: "split_horizontal".into(), label: "Split Horizontal".into(), category: "Layout".into(), shortcut: Some("Ctrl+D".into()) },
+            CommandEntry { id: "split_right".into(), label: "Split Right".into(), category: "Layout".into(), shortcut: Some("Ctrl+Shift+D".into()) },
+            CommandEntry { id: "split_down".into(), label: "Split Down".into(), category: "Layout".into(), shortcut: Some("Ctrl+D".into()) },
+            CommandEntry { id: "split_left".into(), label: "Split Left".into(), category: "Layout".into(), shortcut: Some("Ctrl+Alt+D".into()) },
+            CommandEntry { id: "split_up".into(), label: "Split Up".into(), category: "Layout".into(), shortcut: Some("Ctrl+Alt+W".into()) },
             CommandEntry { id: "copy".into(), label: "Copy".into(), category: "Edit".into(), shortcut: Some("Ctrl+Shift+C".into()) },
             CommandEntry { id: "paste".into(), label: "Paste".into(), category: "Edit".into(), shortcut: Some("Ctrl+Shift+V".into()) },
             CommandEntry { id: "select_all".into(), label: "Select All".into(), category: "Edit".into(), shortcut: Some("Ctrl+Shift+A".into()) },
@@ -115,7 +117,7 @@ impl CommandPalette {
             self.selected_index = 0;
         }
 
-        let screen_rect = ctx.screen_rect();
+        let screen_rect = ctx.content_rect();
         let palette_width = 400.0;
         let palette_height = 300.0;
         let x = (screen_rect.width() - palette_width) / 2.0;

@@ -5,6 +5,34 @@ pub enum Direction {
     Vertical,
 }
 
+/// Direction of a split relative to the current pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitSide {
+    /// New pane to the right of current (Direction::Vertical, insert after)
+    Right,
+    /// New pane to the left of current (Direction::Vertical, insert before)
+    Left,
+    /// New pane below current (Direction::Horizontal, insert after)
+    Down,
+    /// New pane above current (Direction::Horizontal, insert before)
+    Up,
+}
+
+impl SplitSide {
+    /// Get the layout direction for this split side.
+    pub fn direction(&self) -> Direction {
+        match self {
+            SplitSide::Right | SplitSide::Left => Direction::Vertical,
+            SplitSide::Down | SplitSide::Up => Direction::Horizontal,
+        }
+    }
+
+    /// Whether the new pane should be inserted before the target.
+    pub fn insert_before(&self) -> bool {
+        matches!(self, SplitSide::Left | SplitSide::Up)
+    }
+}
+
 /// A child element in a split container.
 #[derive(Debug)]
 pub enum SplitChild {
@@ -89,6 +117,58 @@ impl SplitContainer {
         false
     }
 
+    /// Split an existing pane with directional control (up/down/left/right).
+    pub fn split_pane_directional(&mut self, pane_id: u64, new_pane_id: u64, side: SplitSide) -> bool {
+        let direction = side.direction();
+        let insert_before = side.insert_before();
+
+        for i in 0..self.children.len() {
+            match &mut self.children[i] {
+                SplitChild::Container(container) => {
+                    if container.split_pane_directional(pane_id, new_pane_id, side) {
+                        return true;
+                    }
+                }
+                SplitChild::Pane(id) if *id == pane_id => {
+                    if direction == self.direction {
+                        // Same direction - insert adjacent
+                        if insert_before {
+                            self.children.insert(i, SplitChild::Pane(new_pane_id));
+                            let half = self.ratios[i] / 2.0;
+                            self.ratios.insert(i, half);
+                            self.ratios[i + 1] = half;
+                        } else {
+                            self.children.insert(i + 1, SplitChild::Pane(new_pane_id));
+                            let half = self.ratios[i] / 2.0;
+                            self.ratios[i] = half;
+                            self.ratios.insert(i + 1, half);
+                        }
+                    } else {
+                        // Perpendicular - create a nested container
+                        let old_pane = std::mem::replace(
+                            &mut self.children[i],
+                            SplitChild::Container(Box::new(SplitContainer::new(direction))),
+                        );
+                        if let SplitChild::Pane(old_id) = old_pane {
+                            if let SplitChild::Container(ref mut container) = self.children[i] {
+                                if insert_before {
+                                    container.add_pane(new_pane_id, 0.5);
+                                    container.add_pane(old_id, 0.5);
+                                } else {
+                                    container.add_pane(old_id, 0.5);
+                                    container.add_pane(new_pane_id, 0.5);
+                                }
+                            }
+                        }
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Close a pane and return its ID.
     pub fn close_pane(&mut self, pane_id: u64) -> Option<u64> {
         for i in 0..self.children.len() {
@@ -100,6 +180,11 @@ impl SplitContainer {
                             self.children.remove(i);
                             self.ratios.remove(i);
                             self.normalize_ratios();
+                        } else if container.children.len() == 1 {
+                            // Collapse single-child container into the parent
+                            let only_child = container.children.pop().unwrap();
+                            self.children[i] = only_child;
+                            // ratios stay the same — single child inherits parent's ratio
                         }
                         return Some(id);
                     }
@@ -127,6 +212,21 @@ impl SplitContainer {
                     }
                 }
                 _ => {}
+            }
+        }
+        None
+    }
+
+    /// Find a container by ID (mutable).
+    pub fn find_container_mut(&mut self, id: u64) -> Option<&mut SplitContainer> {
+        if self.id == id {
+            return Some(self);
+        }
+        for child in &mut self.children {
+            if let SplitChild::Container(container) = child {
+                if let Some(found) = container.find_container_mut(id) {
+                    return Some(found);
+                }
             }
         }
         None

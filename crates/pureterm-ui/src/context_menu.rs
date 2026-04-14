@@ -9,8 +9,10 @@ pub enum MenuAction {
     SelectAll,
     Clear,
     Search,
-    SplitVertical,
-    SplitHorizontal,
+    SplitRight,
+    SplitLeft,
+    SplitDown,
+    SplitUp,
     ClosePane,
     NewTab,
     CloseTab,
@@ -39,13 +41,16 @@ pub struct ContextMenuState {
     pub items: Vec<MenuItem>,
     /// Which pane was right-clicked (for context-dependent actions).
     pub target_pane_id: Option<u64>,
+    /// Cached menu width in pixels (recalculated with measure_width).
+    menu_width: f32,
 }
 
 /// Menu layout constants.
-pub const MENU_ITEM_HEIGHT: f32 = 24.0;
-pub const MENU_MIN_WIDTH: f32 = 200.0;
-pub const MENU_PADDING: f32 = 6.0;
+pub const MENU_ITEM_HEIGHT: f32 = 26.0;
+pub const MENU_PADDING_H: f32 = 12.0;
+pub const MENU_PADDING_V: f32 = 6.0;
 pub const MENU_SEPARATOR_HEIGHT: f32 = 6.0;
+pub const MENU_MIN_WIDTH: f32 = 180.0;
 
 impl Default for ContextMenuState {
     fn default() -> Self {
@@ -55,6 +60,7 @@ impl Default for ContextMenuState {
             hovered_index: None,
             items: Self::default_items(),
             target_pane_id: None,
+            menu_width: MENU_MIN_WIDTH,
         }
     }
 }
@@ -66,21 +72,23 @@ impl ContextMenuState {
 
     fn default_items() -> Vec<MenuItem> {
         vec![
-            MenuItem { label: "Copy  (Ctrl+Shift+C)".into(), action: MenuAction::Copy, enabled: true, separator_before: false },
-            MenuItem { label: "Paste  (Ctrl+Shift+V)".into(), action: MenuAction::Paste, enabled: true, separator_before: false },
+            MenuItem { label: "Copy  Ctrl+Shift+C".into(), action: MenuAction::Copy, enabled: true, separator_before: false },
+            MenuItem { label: "Paste  Ctrl+Shift+V".into(), action: MenuAction::Paste, enabled: true, separator_before: false },
             MenuItem { label: "Select All".into(), action: MenuAction::SelectAll, enabled: true, separator_before: false },
-            MenuItem { label: "Search  (Ctrl+F)".into(), action: MenuAction::Search, enabled: true, separator_before: true },
+            MenuItem { label: "Search  Ctrl+F".into(), action: MenuAction::Search, enabled: true, separator_before: true },
             MenuItem { label: "Clear".into(), action: MenuAction::Clear, enabled: true, separator_before: false },
-            MenuItem { label: "Split Vertical  (Ctrl+Shift+D)".into(), action: MenuAction::SplitVertical, enabled: true, separator_before: true },
-            MenuItem { label: "Split Horizontal  (Ctrl+D)".into(), action: MenuAction::SplitHorizontal, enabled: true, separator_before: false },
+            MenuItem { label: "Split Right  Ctrl+Shift+D".into(), action: MenuAction::SplitRight, enabled: true, separator_before: true },
+            MenuItem { label: "Split Left".into(), action: MenuAction::SplitLeft, enabled: true, separator_before: false },
+            MenuItem { label: "Split Down  Ctrl+D".into(), action: MenuAction::SplitDown, enabled: true, separator_before: false },
+            MenuItem { label: "Split Up".into(), action: MenuAction::SplitUp, enabled: true, separator_before: false },
             MenuItem { label: "Close Pane".into(), action: MenuAction::ClosePane, enabled: true, separator_before: true },
-            MenuItem { label: "New Tab  (Ctrl+Shift+T)".into(), action: MenuAction::NewTab, enabled: true, separator_before: true },
+            MenuItem { label: "New Tab  Ctrl+Shift+T".into(), action: MenuAction::NewTab, enabled: true, separator_before: true },
             MenuItem { label: "Close Tab".into(), action: MenuAction::CloseTab, enabled: true, separator_before: false },
             MenuItem { label: "Rename Tab".into(), action: MenuAction::EditTabTitle, enabled: true, separator_before: true },
             MenuItem { label: "Tab Color".into(), action: MenuAction::EditTabColor, enabled: true, separator_before: false },
-            MenuItem { label: "Zoom In  (Ctrl++)".into(), action: MenuAction::ZoomIn, enabled: true, separator_before: true },
-            MenuItem { label: "Zoom Out  (Ctrl+-)".into(), action: MenuAction::ZoomOut, enabled: true, separator_before: false },
-            MenuItem { label: "Zoom Reset  (Ctrl+0)".into(), action: MenuAction::ZoomReset, enabled: true, separator_before: false },
+            MenuItem { label: "Zoom In  Ctrl++".into(), action: MenuAction::ZoomIn, enabled: true, separator_before: true },
+            MenuItem { label: "Zoom Out  Ctrl+-".into(), action: MenuAction::ZoomOut, enabled: true, separator_before: false },
+            MenuItem { label: "Zoom Reset  Ctrl+0".into(), action: MenuAction::ZoomReset, enabled: true, separator_before: false },
             MenuItem { label: "Settings...".into(), action: MenuAction::OpenSettings, enabled: true, separator_before: true },
         ]
     }
@@ -99,16 +107,34 @@ impl ContextMenuState {
         self.hovered_index = None;
     }
 
+    /// Recalculate menu width based on character width from the renderer.
+    /// Call this before rendering or hit-testing if char_width changes.
+    pub fn measure_width(&mut self, char_width: f32) {
+        let mut max_w = 0.0f32;
+        for item in &self.items {
+            // Monospace font: each character is char_width pixels wide
+            let w = item.label.len() as f32 * char_width;
+            if w > max_w {
+                max_w = w;
+            }
+        }
+        self.menu_width = (max_w + MENU_PADDING_H * 2.0 + 8.0).max(MENU_MIN_WIDTH);
+    }
+
+    /// Get the current menu width.
+    pub fn width(&self) -> f32 {
+        self.menu_width
+    }
+
     /// Compute the bounding rectangle of the entire menu.
     pub fn menu_rect(&self) -> (f32, f32, f32, f32) {
-        // x, y, width, height
         let total_h = self.total_height();
-        (self.position.0, self.position.1, MENU_MIN_WIDTH, total_h)
+        (self.position.0, self.position.1, self.menu_width, total_h)
     }
 
     /// Total height of the menu including separators and padding.
     pub fn total_height(&self) -> f32 {
-        let mut h = MENU_PADDING * 2.0; // top + bottom padding
+        let mut h = MENU_PADDING_V * 2.0;
         for item in &self.items {
             if item.separator_before {
                 h += MENU_SEPARATOR_HEIGHT;
@@ -124,16 +150,16 @@ impl ContextMenuState {
             return None;
         }
 
-        let mut y = self.position.1 + MENU_PADDING;
+        let mut y = self.position.1 + MENU_PADDING_V;
         for (i, item) in self.items.iter().enumerate() {
             if item.separator_before {
                 y += MENU_SEPARATOR_HEIGHT;
             }
             if i == index {
                 return Some((
-                    self.position.0 + MENU_PADDING,
+                    self.position.0 + MENU_PADDING_H,
                     y,
-                    MENU_MIN_WIDTH - MENU_PADDING * 2.0,
+                    self.menu_width - MENU_PADDING_H * 2.0,
                     MENU_ITEM_HEIGHT,
                 ));
             }
@@ -147,8 +173,8 @@ impl ContextMenuState {
         if !self.visible {
             return None;
         }
-        let (mx, my, _mw, mh) = self.menu_rect();
-        if px < mx || px > mx + MENU_MIN_WIDTH || py < my || py > my + mh {
+        let (mx, my, mw, mh) = self.menu_rect();
+        if px < mx || px > mx + mw || py < my || py > my + mh {
             return None;
         }
         for (i, item) in self.items.iter().enumerate() {
@@ -169,8 +195,8 @@ impl ContextMenuState {
         if !self.visible {
             return false;
         }
-        let (mx, my, _mw, mh) = self.menu_rect();
-        px >= mx && px <= mx + MENU_MIN_WIDTH && py >= my && py <= my + mh
+        let (mx, my, mw, mh) = self.menu_rect();
+        px >= mx && px <= mx + mw && py >= my && py <= my + mh
     }
 
     /// Update hovered index based on mouse position.
@@ -193,12 +219,12 @@ impl ContextMenuState {
     /// Iterate over items with their positions for rendering.
     pub fn items_with_positions(&self) -> Vec<(usize, &MenuItem, f32, f32)> {
         let mut result = Vec::new();
-        let mut y = self.position.1 + MENU_PADDING;
+        let mut y = self.position.1 + MENU_PADDING_V;
         for (i, item) in self.items.iter().enumerate() {
             if item.separator_before {
                 y += MENU_SEPARATOR_HEIGHT;
             }
-            result.push((i, item, self.position.0 + MENU_PADDING, y));
+            result.push((i, item, self.position.0 + MENU_PADDING_H, y));
             y += MENU_ITEM_HEIGHT;
         }
         result

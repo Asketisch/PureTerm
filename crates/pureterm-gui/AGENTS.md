@@ -1,12 +1,14 @@
-# pureterm-gui — wgpu GPU 渲染
+# pureterm-gui — wgpu GPU 渲染 + egui 集成
 
-使用 wgpu 实现 GPU 加速的终端文本渲染：字形图集、文本管线、WGSL 着色器。提供 egui 集成层和透明背景支持。
+使用 wgpu 29 实现 GPU 加速的终端文本渲染：字形图集、文本管线、WGSL 着色器。提供 egui-wgpu 集成层用于设置面板覆盖。
 
 ## 关键依赖
 
 内部依赖：`pureterm-core`、`pureterm-terminal`
 
-外部依赖：`wgpu`（GPU）、`fontdue`（字体光栅化）、`egui` + `egui-wgpu` + `egui-winit`（UI 集成）、`bytemuck 1`（顶点数据转换）、`image 0.25`。
+外部依赖：`wgpu 29`（GPU）、`fontdue`（字体光栅化）、`egui 0.34` + `egui-wgpu 0.34` + `egui-winit 0.34`（UI 集成）、`bytemuck 1`（顶点数据转换）、`image 0.25`。
+
+**重要**：workspace 中 `wgpu = "29"`，与 `egui-wgpu 0.34` 使用的 wgpu 版本一致。如果版本不一致会导致运行时 "Mix of internally allocated and externally provided IDs" panic。
 
 ## 文件结构
 
@@ -15,6 +17,7 @@ src/
 ├── lib.rs             # 模块导出
 ├── renderer.rs        # TerminalRenderer（主渲染器）
 ├── pipeline.rs        # TextPipeline + Vertex（渲染管线）
+├── egui_backend.rs    # EguiBackend（egui-wgpu 集成）
 ├── fonts.rs           # GlyphAtlas（字形图集）
 ├── egui_int.rs        # egui 集成层（TerminalWidget）
 ├── transparency.rs    # 透明背景支持
@@ -27,6 +30,8 @@ src/
 
 ```
 ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/Index 缓冲区 → wgpu 渲染
+多窗格：每个窗格指定 ViewportRect 偏移 → 合并顶点 → 一次 draw call
+设置覆盖：draw_to_surface (LoadOp::Clear) → egui_backend.render (LoadOp::Load) → frame.present()
 ```
 
 ## 模块详情
@@ -46,9 +51,9 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 | `surface_config` | `Option<wgpu::SurfaceConfiguration>` |
 
 **初始化**（`new`，异步）：
-1. 创建 wgpu Instance
-2. 请求高性能 Adapter
-3. 创建 Device/Queue
+1. 创建 wgpu Instance（`InstanceDescriptor` 含 `display: None`、`memory_budget_thresholds`、`backend_options`）
+2. 请求高性能 Adapter（返回 `Result` 不是 `Option`，需 `.map_err()`）
+3. 创建 Device/Queue（`request_device` 只需一个参数）
 4. 初始化 GlyphAtlas（14pt）
 5. 加载默认字体
 
@@ -57,17 +62,17 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 2. 创建图集纹理（R8Unorm）
 3. 创建 TextPipeline
 
-**渲染**（`render`）：
-1. 上传图集纹理数据到 GPU
-2. 遍历 snapshot 中所有 Cell，为每个 Cell 生成：
-   - 背景四边形（采样保留的白色像素 0,0，颜色 = 背景色）
-   - 字形四边形（从图集采样，UV 坐标指向字形位图）
-3. 颜色解析：`Color::Rgb` 直接使用，`Color::Palette` 从 ColorScheme 的 16 色查找，NamedColor 从 ColorScheme 获取
-4. 绘制光标（半透明四边形）
-5. 更新顶点/索引缓冲区
-6. 通过 pipeline 渲染
+**多窗格渲染**：
+- `build_vertices(snapshot, color_scheme, selection, viewport: Option<ViewportRect>)` — 支持 ViewportRect 偏移，窗格渲染到子区域
+- `build_rect_vertices(rect, color, ...)` — 渲染填充矩形（分隔线、边框、菜单背景）
+- `build_focus_border(rect, color, thickness, ...)` — 4 条细矩形组成焦点边框
+- `build_text_vertices(text, x, y, color, ...)` — 用字形图集渲染文本（上下文菜单）
+- `draw_to_surface(...)` → 返回 `Option<wgpu::SurfaceTexture>`（不 present），用于后续 egui 覆盖
+- `draw(...)` → 完整渲染并 present（兼容旧接口）
 
-**注意**：wgpu 24 API 使用 `Option::ok()` 而非 `.map_err()` 来选择 adapter。
+**wgpu 29 API 注意**：
+- `get_current_texture()` 返回 `CurrentSurfaceTexture` 枚举（`Success`/`Suboptimal`），不是 `Result`
+- `ImageCopyTexture` → `TexelCopyTextureInfo`，`ImageDataLayout` → `TexelCopyBufferLayout`
 
 ### pipeline.rs — 渲染管线
 
@@ -83,9 +88,28 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 - 创建 render pipeline（alpha blending）
 - 预分配缓冲区（最多 1024×1024 个 Cell）
 
-`TextPipeline::render` — 设置 pipeline、bind group、缓冲区，执行 `draw_indexed`。
+**wgpu 29 API 注意**：
+- `PipelineLayoutDescriptor` 使用 `immediate_size` 替代 `push_constant_ranges`
+- `RenderPipelineDescriptor` 使用 `multiview_mask` 替代 `multiview`
 
+`TextPipeline::render` — 设置 pipeline、bind group、缓冲区，执行 `draw_indexed`。
 `TextPipeline::update_buffers` — 写入顶点和索引数据到 GPU 缓冲区。
+
+### egui_backend.rs — egui-wgpu 集成
+
+| 字段 | 说明 |
+|------|------|
+| `context` | `egui::Context` |
+| `winit_state` | `egui_winit::State`（桥接 winit 事件） |
+| `renderer` | `egui_wgpu::Renderer` |
+
+关键方法：
+- `new(device, surface_format, window)` — 初始化 egui context、winit state、wgpu renderer
+- `on_event(window, event)` — 处理 winit 窗口事件，返回是否被 egui 消费
+- `run(raw_input, update_fn)` — 运行 egui 更新，返回 `FullOutput`
+- `render(device, queue, surface_view, paint_jobs, textures_delta, screen_descriptor)` — 在现有 surface texture 上用 `LoadOp::Load` 渲染 egui 覆盖
+
+**注意**：`egui_wgpu::Renderer::render()` 需要 `RenderPass<'static>`，用 `forget_lifetime()` 从 `RenderPass<'_>` 转换。
 
 ### fonts.rs — 字形图集
 
@@ -135,7 +159,7 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 ## 常见任务
 
 ### 修改渲染效果
-编辑 `renderer.rs` 的 `render` 方法。背景和文字四边形的构建逻辑在此。
+编辑 `renderer.rs` 的 `build_vertices` 方法。背景和文字四边形的构建逻辑在此。
 
 ### 修改着色器
 编辑 `shaders/terminal.wgsl`。注意当前设计依赖 red 通道作 alpha 遮罩的约定。
@@ -152,6 +176,12 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 
 ### 修改管线配置
 编辑 `pipeline.rs`。注意 alpha blending 设置和预分配缓冲区大小。
+
+### 调试 egui 设置覆盖不显示
+1. 确认 `settings_panel.visible` 为 true
+2. 确认 `draw_to_surface()` 返回 `Some(frame)`
+3. 检查 egui `raw_input` 是否通过 `take_egui_input()` 获取
+4. 确认 `frame.present()` 在 egui render 之后调用
 
 ### 集成 egui UI
 使用 `TerminalWidget::new()` 创建 widget，传入 `ScreenSnapshot` 和 `ColorScheme`。

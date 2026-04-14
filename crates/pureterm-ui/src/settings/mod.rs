@@ -65,7 +65,7 @@ impl SettingsPanel {
 
         let mut changed = false;
 
-        egui::TopBottomPanel::top("settings_tabs").show_inside(ui, |ui| {
+        egui::Panel::top("settings_tabs").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.selected_tab, SettingsTab::Appearance, "Appearance");
                 ui.selectable_value(&mut self.selected_tab, SettingsTab::Terminal, "Terminal");
