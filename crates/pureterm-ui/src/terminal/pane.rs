@@ -257,20 +257,20 @@ impl TerminalPane {
     }
 
     /// Set the session for this pane and start output processing.
-    pub fn set_session(&mut self, session: Box<dyn Session>) {
+    pub fn set_session(&mut self, session: Box<dyn Session>, waker: Option<Arc<dyn Fn() + Send + Sync>>) {
         let receiver = session.output_stream();
         self.session = Some(session);
-        self.start_output_processing(receiver);
+        self.start_output_processing(receiver, waker);
     }
 
     /// Set the session with a pre-created receiver (avoids broadcast race condition).
-    pub fn set_session_with_receiver(&mut self, session: Box<dyn Session>, receiver: broadcast::Receiver<Vec<u8>>) {
+    pub fn set_session_with_receiver(&mut self, session: Box<dyn Session>, receiver: broadcast::Receiver<Vec<u8>>, waker: Option<Arc<dyn Fn() + Send + Sync>>) {
         self.session = Some(session);
-        self.start_output_processing(receiver);
+        self.start_output_processing(receiver, waker);
     }
 
     /// Start processing session output in a background thread.
-    fn start_output_processing(&mut self, mut receiver: broadcast::Receiver<Vec<u8>>) {
+    fn start_output_processing(&mut self, mut receiver: broadcast::Receiver<Vec<u8>>, waker: Option<Arc<dyn Fn() + Send + Sync>>) {
         let output_buffer = Arc::clone(&self.output_buffer);
 
             std::thread::spawn(move || {
@@ -279,6 +279,9 @@ impl TerminalPane {
                         Ok(data) => {
                             if let Ok(mut buffer) = output_buffer.lock() {
                                 buffer.extend(data);
+                            }
+                            if let Some(ref waker) = waker {
+                                waker();
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
@@ -594,6 +597,11 @@ impl TerminalPane {
     pub fn clear_dirty(&mut self) {
         self.dirty = false;
         self.terminal.clear_dirty();
+    }
+
+    /// Mark the pane as dirty so it will be re-rendered.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 
     // ── Mouse event handling ──

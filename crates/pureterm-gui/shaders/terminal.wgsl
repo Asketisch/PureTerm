@@ -54,9 +54,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
         let screen_w = u_uniforms.screen_width;
         let screen_h = u_uniforms.screen_height;
 
-        // 将裁剪空间坐标转换为像素坐标
-        let pixel_x = (in.position.x + 1.0) * 0.5 * screen_w;
-        let pixel_y = (1.0 - in.position.y) * 0.5 * screen_h;
+        // @builtin(position) 在 fragment shader 中已经是帧缓冲像素坐标
+        let pixel_x = in.position.x;
+        let pixel_y = in.position.y;
 
         // 左下角
         if (pixel_x < radius && pixel_y < radius) {

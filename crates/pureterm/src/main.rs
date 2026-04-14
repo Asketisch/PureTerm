@@ -82,6 +82,8 @@ struct PureTermApp {
     tab_bar: TabBarState,
     /// Appearance config for resize handling.
     appearance: pureterm_core::config::AppearanceConfig,
+    /// Event loop proxy for waking the event loop from background threads.
+    proxy: winit::event_loop::EventLoopProxy<()>,
 }
 
 /// State for the tab title rename modal.
@@ -181,7 +183,9 @@ impl PureTermApp {
 
         let mut pane = TerminalPane::new(cols, rows, 25000);
         let pane_id = pane.id;
-        pane.set_session_with_receiver(session, output_receiver);
+        let proxy = self.proxy.clone();
+        let waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || { let _ = proxy.send_event(()); });
+        pane.set_session_with_receiver(session, output_receiver, Some(waker));
         self.panes.insert(pane_id, pane);
         pane_id
     }
@@ -1195,7 +1199,15 @@ impl ApplicationHandler for PureTermApp {
                     // Draw terminal content (returns frame without presenting)
                     let frame = renderer.draw_to_surface(surface, &all_vertices, &all_indices, bg);
                     if frame.is_none() {
-                        log::error!("draw_to_surface returned None!");
+                        log::warn!("draw_to_surface returned None, will retry on next redraw");
+                        // Re-mark all panes dirty so we retry rendering
+                        for pane in self.panes.values_mut() {
+                            pane.mark_dirty();
+                        }
+                        if let Some(ref window) = self.window {
+                            window.request_redraw();
+                        }
+                        return;
                     }
 
                     // Render egui overlay if any panel/modal is visible
@@ -1934,6 +1946,13 @@ impl ApplicationHandler for PureTermApp {
         // to pile up and block other events (like mouse clicks) from being processed.
         // Instead, request redraw only when something actually changes.
     }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
+        // Woken by PTY output thread — request a redraw to display new terminal content.
+        if let Some(window) = &self.window {
+            window.request_redraw();
+        }
+    }
 }
 
 use clap::{Parser, Subcommand};
@@ -2019,6 +2038,7 @@ fn main() -> Result<()> {
         .unwrap_or_else(|| theme_service.default_scheme().clone());
 
     let event_loop = winit::event_loop::EventLoop::new()?;
+    let proxy = event_loop.create_proxy();
     let quake_mode = cli.quake;
 
     let mut app = PureTermApp {
@@ -2045,6 +2065,7 @@ fn main() -> Result<()> {
         quake_mode: if quake_mode { QuakeMode::new() } else { QuakeMode::default() },
         tab_bar: TabBarState::new(),
         appearance: pureterm_core::config::AppearanceConfig::default(),
+        proxy,
     };
 
     event_loop.run_app(&mut app)?;
