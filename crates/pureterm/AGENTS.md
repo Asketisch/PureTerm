@@ -12,7 +12,11 @@
 
 ```
 src/
-└── main.rs          # 唯一源文件
+├── main.rs          # 唯一源文件
+├── quake_mode.rs    # Quake 模式（dropdown terminal）
+└── platform/       # 平台特定功能
+    ├── mod.rs       # PlatformWindowExt trait
+    └── macos.rs     # macOS 实现（玻璃效果、圆角占位）
 ```
 
 ## 关键类型
@@ -39,6 +43,7 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 | `hovered_divider` | `Option<DividerInfo>` | 悬浮的分隔线（用于光标高亮） |
 | `egui_backend` | `Option<EguiBackend>` | egui-wgpu 后端（设置面板） |
 | `settings_panel` | `SettingsPanel` | 设置面板状态 |
+| `appearance` | `AppearanceConfig` | 外观配置（用于窗口大小变化时重新配置渲染器） |
 
 ### `DividerDrag`
 
@@ -55,14 +60,15 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 ### 启动（`resumed`）
 1. 创建 winit `Window`
 2. 异步初始化 `TerminalRenderer`（wgpu instance/adapter/device/queue）
-3. 配置 surface
-4. 初始化 `EguiBackend`（用 device、surface format、window）
-5. 创建初始 `TerminalPane`，注册到 `panes` HashMap
-6. 通过 `ConfigService` 加载配置，打开初始标签页
+3. 从 `AppearanceConfig` 创建 `TransparencyConfig`
+4. 配置 surface（设置透明度 alpha_mode 和圆角）
+5. 初始化 `EguiBackend`（用 device、surface format、window）
+6. 创建初始 `TerminalPane`，注册到 `panes` HashMap
+7. 通过 `ConfigService` 加载配置，打开初始标签页
 
 ### 事件循环（`window_event`）
 - `CloseRequested` → 退出
-- `Resized` → 重新配置 surface + `resize_all_panes()`
+- `Resized` → 重新配置 surface（传入当前 appearance 配置）+ `resize_all_panes()`
 - `RedrawRequested` → drain 所有窗格 → dirty check → 多窗格 snapshot/render → 可选 egui 覆盖
 - `ModifiersChanged` → 记录修饰键状态
 - `KeyboardInput` → 设置面板可见时路由给 egui，否则转发给 `handle_key_input`
@@ -91,7 +97,7 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 
 ### PaneAction 处理
 `handle_pane_action` 处理来自 `TerminalPane` 的动作：
-- `CopyText` → 更新剪贴板
+- `CopyText(String)` → 更新剪贴板
 - `PasteFromClipboard` → 从剪贴板粘贴
 - `ShowContextMenu` → 显示上下文菜单
 - `OpenUrl` → 打开 URL（平台特定）

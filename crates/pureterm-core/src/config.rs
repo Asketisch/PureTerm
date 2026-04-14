@@ -30,20 +30,42 @@ pub struct AppConfig {
 
 fn default_config_version() -> u32 { 1 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum GlassEffectStyle {
+    None,      // 无玻璃效果
+    Regular,   // macOS 常规材质
+    Clear,     // macOS 26+ 透明材质
+    Light,     // 浅色外观
+    Dark,      // 深色外观
+    Automatic, // 自动（平台默认）
+}
+
+impl Default for GlassEffectStyle {
+    fn default() -> Self {
+        Self::Automatic
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppearanceConfig {
     #[serde(default = "default_tabs_location")]
-    pub tabs_location: String,
+    pub tabs_location: String,    // 标签栏位置：top 或 bottom
     #[serde(default = "default_theme")]
-    pub theme: String,
+    pub theme: String,           // 主题名称
     #[serde(default = "default_frame")]
-    pub frame: String,
+    pub frame: String,           // 窗口边框样式
     #[serde(default)]
-    pub opacity: f32,
+    pub opacity: f32,            // 窗口不透明度 (0.1-1.0)
     #[serde(default)]
-    pub show_tab_bar: bool,
+    pub show_tab_bar: bool,      // 是否显示标签栏
     #[serde(default = "default_true")]
-    pub show_title_bar: bool,
+    pub show_title_bar: bool,   // 是否显示标题栏
+    #[serde(default = "default_corner_radius")]
+    pub corner_radius: f32,      // 窗口圆角半径（像素），默认 16
+    #[serde(default)]
+    pub glass_effect: GlassEffectStyle, // 玻璃效果样式
+    #[serde(default = "default_background_blur")]
+    pub background_blur: u32,   // 背景模糊强度 (0-100)
 }
 
 impl Default for AppearanceConfig {
@@ -55,6 +77,9 @@ impl Default for AppearanceConfig {
             opacity: 1.0,
             show_tab_bar: true,
             show_title_bar: true,
+            corner_radius: default_corner_radius(),
+            glass_effect: GlassEffectStyle::default(),
+            background_blur: default_background_blur(),
         }
     }
 }
@@ -63,6 +88,8 @@ fn default_tabs_location() -> String { "top".into() }
 fn default_theme() -> String { "dark".into() }
 fn default_frame() -> String { "thin".into() }
 fn default_true() -> bool { true }
+fn default_corner_radius() -> f32 { 16.0 }
+fn default_background_blur() -> u32 { 20 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminalConfig {

@@ -4,7 +4,7 @@
 //! terminal settings, profiles, and hotkeys.
 
 use egui::{CollapsingHeader, ComboBox, RichText, Slider, TextEdit, Ui};
-use pureterm_core::config::{AppConfig, AppearanceConfig, TerminalConfig};
+use pureterm_core::config::{AppConfig, AppearanceConfig, GlassEffectStyle, TerminalConfig};
 use pureterm_core::hotkey::Hotkey;
 use pureterm_core::profile::{Profile, ProfileOptions, ProfileType};
 use pureterm_core::theme::ThemeService;
@@ -108,15 +108,15 @@ impl SettingsPanel {
     fn appearance_panel(ui: &mut Ui, appearance: &mut AppearanceConfig) -> bool {
         let mut changed = false;
 
-        ui.heading("Appearance");
+        ui.heading("外观设置");
         ui.add_space(8.0);
 
-        // Theme selection
+        // 主题选择
         let theme_service = ThemeService::new();
         let themes: Vec<&str> = theme_service.list_schemes();
         let current = &appearance.theme;
 
-        ComboBox::from_label("Theme")
+        ComboBox::from_label("主题")
             .selected_text(current.as_str())
             .show_ui(ui, |ui| {
                 for theme in &themes {
@@ -127,17 +127,17 @@ impl SettingsPanel {
                 }
             });
 
-        // Tab bar
+        // 标签栏
         ui.add_space(4.0);
-        if ui.checkbox(&mut appearance.show_tab_bar, "Show tab bar").changed() {
+        if ui.checkbox(&mut appearance.show_tab_bar, "显示标签栏").changed() {
             changed = true;
         }
-        if ui.checkbox(&mut appearance.show_title_bar, "Show title bar").changed() {
+        if ui.checkbox(&mut appearance.show_title_bar, "显示标题栏").changed() {
             changed = true;
         }
 
-        // Tabs location
-        ComboBox::from_label("Tab location")
+        // 标签位置
+        ComboBox::from_label("标签位置")
             .selected_text(&appearance.tabs_location)
             .show_ui(ui, |ui| {
                 for loc in &["top", "bottom"] {
@@ -148,9 +148,60 @@ impl SettingsPanel {
                 }
             });
 
-        // Opacity
+        // 窗口透明度
         ui.add_space(4.0);
-        if ui.add(Slider::new(&mut appearance.opacity, 0.1..=1.0).text("Opacity")).changed() {
+        if ui.add(Slider::new(&mut appearance.opacity, 0.1..=1.0).text("透明度")).changed() {
+            changed = true;
+        }
+
+        // 圆角半径
+        ui.add_space(4.0);
+        if ui.add(Slider::new(&mut appearance.corner_radius, 0.0..=24.0).text("圆角半径")).changed() {
+            changed = true;
+        }
+
+        // 玻璃效果
+        ui.add_space(4.0);
+        let glass_label = match appearance.glass_effect {
+            GlassEffectStyle::None => "无",
+            GlassEffectStyle::Regular => "常规",
+            GlassEffectStyle::Clear => "透明",
+            GlassEffectStyle::Light => "浅色",
+            GlassEffectStyle::Dark => "深色",
+            GlassEffectStyle::Automatic => "自动",
+        };
+        ComboBox::from_label("玻璃效果")
+            .selected_text(glass_label)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(matches!(appearance.glass_effect, GlassEffectStyle::None), "无").clicked() {
+                    appearance.glass_effect = GlassEffectStyle::None;
+                    changed = true;
+                }
+                if ui.selectable_label(matches!(appearance.glass_effect, GlassEffectStyle::Regular), "常规").clicked() {
+                    appearance.glass_effect = GlassEffectStyle::Regular;
+                    changed = true;
+                }
+                if ui.selectable_label(matches!(appearance.glass_effect, GlassEffectStyle::Clear), "透明").clicked() {
+                    appearance.glass_effect = GlassEffectStyle::Clear;
+                    changed = true;
+                }
+                if ui.selectable_label(matches!(appearance.glass_effect, GlassEffectStyle::Light), "浅色").clicked() {
+                    appearance.glass_effect = GlassEffectStyle::Light;
+                    changed = true;
+                }
+                if ui.selectable_label(matches!(appearance.glass_effect, GlassEffectStyle::Dark), "深色").clicked() {
+                    appearance.glass_effect = GlassEffectStyle::Dark;
+                    changed = true;
+                }
+                if ui.selectable_label(matches!(appearance.glass_effect, GlassEffectStyle::Automatic), "自动").clicked() {
+                    appearance.glass_effect = GlassEffectStyle::Automatic;
+                    changed = true;
+                }
+            });
+
+        // 背景模糊
+        ui.add_space(4.0);
+        if ui.add(Slider::new(&mut appearance.background_blur, 0..=100).text("背景模糊")).changed() {
             changed = true;
         }
 
@@ -484,7 +535,7 @@ impl SettingsPanel {
     }
 
     fn hotkeys_panel(ui: &mut Ui, hotkeys: &mut pureterm_core::hotkey::HotkeysConfig) {
-        ui.heading("Hotkeys");
+        ui.heading("快捷键");
         ui.add_space(8.0);
 
         ui.label("Default keybindings:");

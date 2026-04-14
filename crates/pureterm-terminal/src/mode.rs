@@ -29,6 +29,15 @@ impl TermMode {
     pub const BRACKETED_PASTE: u32 = 0x2000;
     pub const FOCUS_IN_OUT: u32 = 0x4000;
 
+    // Editing
+    pub const INSERT: u32 = 0x8000;
+
+    // Cursor
+    pub const CURSOR_BLINK: u32 = 0x10000;
+
+    // Margin modes
+    pub const LEFT_RIGHT_MARGIN: u32 = 0x20000; // DECLRMM (mode 69)
+
     pub fn contains(&self, flag: u32) -> bool {
         self.0 & flag != 0
     }

@@ -49,6 +49,7 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 | `text_pipeline` | `Option<TextPipeline>` 渲染管线 |
 | `atlas_texture` | `Option<wgpu::Texture>` 图集纹理 |
 | `surface_config` | `Option<wgpu::SurfaceConfiguration>` |
+| `transparency_config` | `TransparencyConfig` 透明背景配置 |
 
 **初始化**（`new`，异步）：
 1. 创建 wgpu Instance（`InstanceDescriptor` 含 `display: None`、`memory_budget_thresholds`、`backend_options`）
@@ -58,9 +59,10 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 5. 加载默认字体
 
 **Surface 配置**（`configure_surface`）：
-1. 配置 Surface（启用 VSync）
+1. 配置 Surface（启用 VSync），根据 `TransparencyConfig` 设置 `PostMultiplied` alpha 模式
 2. 创建图集纹理（R8Unorm）
 3. 创建 TextPipeline
+4. 更新管线屏幕尺寸和圆角半径
 
 **多窗格渲染**：
 - `build_vertices(snapshot, color_scheme, selection, viewport: Option<ViewportRect>)` — 支持 ViewportRect 偏移，窗格渲染到子区域
@@ -69,6 +71,13 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 - `build_text_vertices(text, x, y, color, ...)` — 用字形图集渲染文本（上下文菜单）
 - `draw_to_surface(...)` → 返回 `Option<wgpu::SurfaceTexture>`（不 present），用于后续 egui 覆盖
 - `draw(...)` → 完整渲染并 present（兼容旧接口）
+
+**颜色解析流程**（`build_vertices` 内）：
+
+1. **raw_fg/raw_bg**：`Rgb` → 直接使用；`Palette(0-7)` + bold → 使用 `(idx+8)` 亮色（bold→bright 映射）；`Palette(8-15)` → 直接使用；`Named` → 使用配色方案默认色
+2. **Inverse 模式**：`cell.attrs.inverse` 时交换 `raw_fg` ↔ `raw_bg`，得到 `resolved_fg`/`resolved_bg`
+3. **选区覆盖**：选区内的背景色与 `selection_bg` 混合（blend 0.6），前景色使用 `selection_fg`
+4. **Hidden 文本**：`cell.attrs.hidden` 时跳过字形四边形渲染（只显示背景）
 
 **wgpu 29 API 注意**：
 - `get_current_texture()` 返回 `CurrentSurfaceTexture` 枚举（`Success`/`Suboptimal`），不是 `Result`
@@ -79,14 +88,18 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 | 类型 | 说明 |
 |------|------|
 | `Vertex` | position[2] + tex_coords[2] + color[4]，实现 Pod/Zeroable |
-| `TextPipeline` | pipeline + vertex/index 缓冲区 + bind group |
+| `TerminalUniforms` | corner_radius + screen_width + screen_height（传递给 shader） |
+| `TextPipeline` | pipeline + vertex/index 缓冲区 + uniform 缓冲区 + bind group |
 
 `TextPipeline::new`：
 - 创建 shader module（从 WGSL）
 - 创建 nearest-neighbor sampler
-- 创建 bind group（texture + sampler）
+- 创建 uniform 缓冲区（TerminalUniforms）
+- 创建 bind group（texture + sampler + uniform buffer）
 - 创建 render pipeline（alpha blending）
 - 预分配缓冲区（最多 1024×1024 个 Cell）
+
+**圆角支持**：通过 `set_corner_radius()` 更新 uniform 缓冲区，shader 在片段着色器中根据 `corner_radius` 裁剪四个角的片段。
 
 **wgpu 29 API 注意**：
 - `PipelineLayoutDescriptor` 使用 `immediate_size` 替代 `push_constant_ranges`
@@ -143,18 +156,37 @@ ScreenSnapshot → 遍历 Cell → 背景四边形 + 字形四边形 → Vertex/
 
 ### transparency.rs — 透明背景支持
 
-支持终端窗口透明背景渲染，配置窗口透明度级别。
+| 类型 | 说明 |
+|------|------|
+| `TransparencyConfig` | opacity（0.0-1.0）、blur、blur_radius、transparent_background |
+| `BlurHint` | 平台模糊提示 |
+
+**关键方法：**
+- `configure_surface()` — 设置 `PostMultiplied` alpha 模式
+- `clear_color()` — 根据 opacity 返回带透明度的清屏颜色
+- `blur_hint()` — 返回平台模糊提示
+
+当 `opacity < 1.0` 或 `transparent_background` 为 true 时启用透明渲染。
 
 ### background.rs — 背景渲染
 
 终端背景渲染模块，支持纹理背景或纯色背景。
 
+| 类型 | 说明 |
+|------|------|
+| `BackgroundConfig` | 配置：image_path、mode（Stretch/Tile/Center/Cover/Fit）、opacity、blur |
+| `BackgroundMode` | 5 种缩放模式 |
+
+- `load_image()` → 使用 `image` crate 加载图片，返回 `(u32, u32, Vec<u8>)`（RGBA8 像素数据）
+- `calculate_uv(img_w, img_h, win_w, win_h)` → 根据模式计算 UV 坐标
+
 ### shaders/terminal.wgsl — 着色器
 
 - **顶点着色器**（`vs_main`）：直接传递 position、tex_coords、color
 - **片段着色器**（`fs_main`）：采样图集纹理，用 red 通道作为 alpha 遮罩，乘以顶点颜色 alpha：`vec4f(color.rgb, color.a * alpha)`
+- **圆角裁剪**：当 `corner_radius > 0` 时，在四个角使用距离检查丢弃超出圆角的片段
 
-这个设计使同一个着色器既能渲染实心背景四边形（采样白色像素 0,0，alpha=1.0），也能渲染文字字形（采样字形位图，alpha 由字形形状决定）。
+这个设计使同一个着色器既能渲染实心背景四边形（采样白色像素 0,0，alpha=1.0），也能渲染文字字形（采样字形位图，alpha 由字形形状决定）。Uniforms 通过 `TerminalUniforms` uniform buffer 传递（binding 2）。
 
 ## 常见任务
 

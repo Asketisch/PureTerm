@@ -1,6 +1,10 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use anyhow::{anyhow, Result};
+
+use super::client::SshClientHandler;
 
 /// Key for identifying connections.
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -19,16 +23,17 @@ pub struct ConnectionStats {
     pub last_activity: std::time::Instant,
 }
 
+type SharedHandle = Arc<Mutex<russh::client::Handle<SshClientHandler>>>;
+
 struct ConnectionEntry {
     stats: ConnectionStats,
+    handle: Option<SharedHandle>,
 }
 
 /// Manages shared SSH connections.
 ///
-/// The multiplexer tracks connection metadata so that multiple tabs/sessions
-/// can reuse the same underlying SSH transport. Actual russh `Handle` storage
-/// and channel operations are handled by `SshSession`; this struct is
-/// responsible only for pooling logic.
+/// The multiplexer stores actual SSH connection handles so that multiple
+/// sessions can reuse the same underlying SSH transport.
 pub struct SshMultiplexer {
     connections: HashMap<ConnectionKey, ConnectionEntry>,
     max_connections: usize,
@@ -43,6 +48,75 @@ impl SshMultiplexer {
             max_connections: 10,
             max_idle_time: std::time::Duration::from_secs(30 * 60),
         }
+    }
+
+    /// Get or create a connection. Returns the shared handle.
+    /// If a connection to the same host:port:user exists, returns it;
+    /// otherwise stores the provided handle.
+    pub fn get_or_connect(
+        &mut self,
+        host: &str,
+        port: u16,
+        user: &str,
+        handle: SharedHandle,
+    ) -> SharedHandle {
+        let key = ConnectionKey {
+            host: host.to_string(),
+            port,
+            user: user.to_string(),
+        };
+
+        if let Some(entry) = self.connections.get_mut(&key) {
+            entry.stats.channel_count += 1;
+            entry.stats.last_activity = std::time::Instant::now();
+            if let Some(ref h) = entry.handle {
+                return Arc::clone(h);
+            }
+        }
+
+        // Evict most idle if at capacity
+        if self.connections.len() >= self.max_connections {
+            if let Some(evict_key) = self.connections
+                .iter()
+                .min_by_key(|(_, e)| e.stats.last_activity)
+                .map(|(k, _)| k.clone())
+            {
+                log::info!("Evicting idle SSH connection to {}", evict_key.host);
+                self.connections.remove(&evict_key);
+            }
+        }
+
+        self.connections.insert(key.clone(), ConnectionEntry {
+            stats: ConnectionStats {
+                key: key.clone(),
+                channel_count: 1,
+                created_at: std::time::Instant::now(),
+                last_activity: std::time::Instant::now(),
+            },
+            handle: Some(Arc::clone(&handle)),
+        });
+
+        Arc::clone(&handle)
+    }
+
+    /// Check if a connection to the given key already exists.
+    pub fn has_connection(&self, host: &str, port: u16, user: &str) -> bool {
+        let key = ConnectionKey {
+            host: host.to_string(),
+            port,
+            user: user.to_string(),
+        };
+        self.connections.contains_key(&key)
+    }
+
+    /// Get the shared handle for an existing connection.
+    pub fn get_handle(&self, host: &str, port: u16, user: &str) -> Option<SharedHandle> {
+        let key = ConnectionKey {
+            host: host.to_string(),
+            port,
+            user: user.to_string(),
+        };
+        self.connections.get(&key).and_then(|e| e.handle.as_ref().map(|h| Arc::clone(h)))
     }
 
     /// Register a new connection.
@@ -79,6 +153,7 @@ impl SshMultiplexer {
                     created_at: now,
                     last_activity: now,
                 },
+                handle: None,
             },
         );
 

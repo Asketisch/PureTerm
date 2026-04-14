@@ -68,13 +68,10 @@ impl BackgroundConfig {
     /// Returns (width, height, rgba_data).
     pub fn load_image(&self) -> Option<(u32, u32, Vec<u8>)> {
         let path = self.image_path.as_ref()?;
-        let data = std::fs::read(path).ok()?;
-
-        // Decode PNG using a minimal decoder
-        // For a full implementation, use the `image` crate
-        // Here we provide a stub that returns None if the image crate isn't available
-        log::warn!("Background image loading requires the `image` crate (not yet added)");
-        None
+        let img = image::open(path).ok()?;
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        Some((w, h, rgba.into_raw()))
     }
 
     /// Calculate UV coordinates for the given mode.

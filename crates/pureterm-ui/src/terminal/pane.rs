@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::sync::broadcast;
 
@@ -10,6 +10,111 @@ use pureterm_terminal::screen::selection::{
     self, ClickCount, MouseButton, MouseModifiers, TerminalMouseEvent,
 };
 use pureterm_terminal::mode::TermMode;
+
+// ── Smooth Scroll State ───────────────────────────────────────────────────────
+
+/// Smooth scrolling animation state
+#[derive(Debug, Clone)]
+pub struct ScrollState {
+    /// Current animated scroll offset (can be fractional for smooth animation)
+    pub current_offset: f32,
+    /// Target scroll offset (where we want to scroll to)
+    pub target_offset: f32,
+    /// Velocity for momentum scrolling
+    pub velocity: f32,
+    /// Whether animation is in progress
+    pub is_animating: bool,
+    /// Animation start time
+    pub animation_start: Option<Instant>,
+    /// Animation duration
+    pub animation_duration: Duration,
+}
+
+impl Default for ScrollState {
+    fn default() -> Self {
+        Self {
+            current_offset: 0.0,
+            target_offset: 0.0,
+            velocity: 0.0,
+            is_animating: false,
+            animation_start: None,
+            animation_duration: Duration::from_millis(150),
+        }
+    }
+}
+
+impl ScrollState {
+    /// Create a new scroll state with default animation settings
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set the target scroll offset and start animation if different from current
+    pub fn set_target(&mut self, target: f32) {
+        self.target_offset = target;
+        if (self.target_offset - self.current_offset).abs() > 0.01 {
+            self.is_animating = true;
+            self.animation_start = Some(Instant::now());
+        }
+    }
+
+    /// Update the scroll state, returns the new interpolated offset
+    pub fn update(&mut self) -> f32 {
+        if !self.is_animating {
+            return self.current_offset;
+        }
+
+        let start = self.animation_start.unwrap_or(Instant::now());
+        let elapsed = start.elapsed();
+        let t = (elapsed.as_millis() as f32 / self.animation_duration.as_millis() as f32).min(1.0);
+
+        // Ease-out cubic: t * (2 - t)
+        let eased = t * (2.0 - t);
+
+        let start_offset = self.current_offset;
+        let diff = self.target_offset - start_offset;
+        self.current_offset = start_offset + diff * eased;
+
+        if t >= 1.0 {
+            self.current_offset = self.target_offset;
+            self.is_animating = false;
+        }
+
+        self.current_offset
+    }
+
+    /// Set scroll offset immediately (no animation)
+    pub fn set_immediate(&mut self, offset: f32) {
+        self.current_offset = offset;
+        self.target_offset = offset;
+        self.is_animating = false;
+        self.velocity = 0.0;
+    }
+
+    /// Add velocity for momentum scrolling (e.g., from mouse wheel)
+    pub fn add_velocity(&mut self, delta: f32) {
+        self.velocity += delta;
+        self.is_animating = true;
+        self.animation_start = Some(Instant::now());
+    }
+
+    /// Update with momentum, gradually decelerating
+    pub fn update_momentum(&mut self) -> f32 {
+        if self.velocity.abs() < 0.01 {
+            self.velocity = 0.0;
+            self.is_animating = false;
+            return self.current_offset;
+        }
+
+        // Apply friction
+        self.velocity *= 0.95;
+        self.current_offset += self.velocity;
+        self.target_offset = self.current_offset;
+
+        self.is_animating = true;
+        self.current_offset
+    }
+}
 
 /// Selection state within a terminal pane.
 #[derive(Debug, Clone)]
@@ -118,6 +223,8 @@ pub struct TerminalPane {
     pub copy_on_select: bool,
     /// Callback for clipboard copy (set by the application).
     pub on_copy: Option<Box<dyn FnMut(&str) + Send>>,
+    /// Smooth scroll state for animated scrolling
+    pub scroll_state: ScrollState,
 }
 
 static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
@@ -145,6 +252,7 @@ impl TerminalPane {
             dropped_files: Vec::new(),
             copy_on_select: true,
             on_copy: None,
+            scroll_state: ScrollState::new(),
         }
     }
 
@@ -222,13 +330,39 @@ impl TerminalPane {
 
     /// Handle a key press for terminal input.
     pub fn handle_key(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool) {
+        // Auto-scroll to bottom on input
+        if self.terminal.scroll_offset() > 0 {
+            self.terminal.scroll_to_bottom();
+            self.dirty = true;
+        }
         let bytes = self.encode_key(key, ctrl, alt, shift);
         self.write_input(&bytes);
+    }
+
+    /// Get the smooth scroll visual offset (fractional pixels for smooth scrolling)
+    pub fn scroll_visual_offset(&self) -> f32 {
+        self.scroll_state.current_offset
+    }
+
+    /// Update the scroll animation. Call this every frame.
+    /// Returns the updated visual offset.
+    pub fn update_scroll_animation(&mut self) -> f32 {
+        if self.scroll_state.is_animating {
+            self.dirty = true;
+        }
+        self.scroll_state.update()
+    }
+
+    /// Get whether smooth scroll animation is in progress
+    pub fn is_scrolling_animated(&self) -> bool {
+        self.scroll_state.is_animating
     }
 
     /// Encode a key event into terminal escape sequences.
     fn encode_key(&self, key: &str, ctrl: bool, alt: bool, shift: bool) -> Vec<u8> {
         log::debug!("encode_key: key={:?}, ctrl={}, alt={}, shift={}", key, ctrl, alt, shift);
+
+        let app_cursor = self.terminal.mode().contains(TermMode::APP_CURSOR);
 
         // Handle control characters
         if ctrl && !alt && !shift {
@@ -262,22 +396,96 @@ impl TerminalPane {
                 "[" => return vec![0x1b],
                 "\\" => return vec![0x1c],
                 "]" => return vec![0x1d],
+                "/" => return vec![0x1f],
                 _ => {}
             }
         }
 
-        // Handle special keys
+        // Handle Ctrl + special keys (word navigation, etc.)
+        if ctrl && !alt {
+            match key {
+                "Up" => return b"\x1b[1;5A".to_vec(),
+                "Down" => return b"\x1b[1;5B".to_vec(),
+                "Right" => return b"\x1b[1;5C".to_vec(),
+                "Left" => return b"\x1b[1;5D".to_vec(),
+                "Home" => return b"\x1b[1;5H".to_vec(),
+                "End" => return b"\x1b[1;5F".to_vec(),
+                _ => {}
+            }
+        }
+
+        // Handle Alt + special keys
+        if alt && !ctrl {
+            match key {
+                "Up" => return b"\x1b[1;3A".to_vec(),
+                "Down" => return b"\x1b[1;3B".to_vec(),
+                "Right" => return b"\x1b[1;3C".to_vec(),
+                "Left" => return b"\x1b[1;3D".to_vec(),
+                "Home" => return b"\x1b[1;3H".to_vec(),
+                "End" => return b"\x1b[1;3F".to_vec(),
+                _ => {}
+            }
+        }
+
+        // Handle Shift + Ctrl + special keys
+        if ctrl && shift && !alt {
+            match key {
+                "Up" => return b"\x1b[1;6A".to_vec(),
+                "Down" => return b"\x1b[1;6B".to_vec(),
+                "Right" => return b"\x1b[1;6C".to_vec(),
+                "Left" => return b"\x1b[1;6D".to_vec(),
+                _ => {}
+            }
+        }
+
+        // Handle special keys (with app cursor mode support)
         match key {
             "Enter" => return vec![0x0d],
             "Backspace" => return vec![0x7f],
             "Tab" => return vec![0x09],
             "Escape" => return vec![0x1b],
-            "Up" => return b"\x1b[A".to_vec(),
-            "Down" => return b"\x1b[B".to_vec(),
-            "Right" => return b"\x1b[C".to_vec(),
-            "Left" => return b"\x1b[D".to_vec(),
-            "Home" => return b"\x1b[H".to_vec(),
-            "End" => return b"\x1b[F".to_vec(),
+            "Up" => {
+                return if app_cursor {
+                    b"\x1bOA".to_vec()
+                } else {
+                    b"\x1b[A".to_vec()
+                };
+            }
+            "Down" => {
+                return if app_cursor {
+                    b"\x1bOB".to_vec()
+                } else {
+                    b"\x1b[B".to_vec()
+                };
+            }
+            "Right" => {
+                return if app_cursor {
+                    b"\x1bOC".to_vec()
+                } else {
+                    b"\x1b[C".to_vec()
+                };
+            }
+            "Left" => {
+                return if app_cursor {
+                    b"\x1bOD".to_vec()
+                } else {
+                    b"\x1b[D".to_vec()
+                };
+            }
+            "Home" => {
+                return if app_cursor {
+                    b"\x1bOH".to_vec()
+                } else {
+                    b"\x1b[H".to_vec()
+                };
+            }
+            "End" => {
+                return if app_cursor {
+                    b"\x1bOF".to_vec()
+                } else {
+                    b"\x1b[F".to_vec()
+                };
+            }
             "PageUp" => return b"\x1b[5~".to_vec(),
             "PageDown" => return b"\x1b[6~".to_vec(),
             "Insert" => return b"\x1b[2~".to_vec(),
@@ -297,17 +505,21 @@ impl TerminalPane {
             _ => {}
         }
 
-        // Handle Shift + special keys
+        // Handle Shift + special keys (fallback for non-arrow keys)
         if shift {
             match key {
-                "Up" => return b"\x1b[1;2A".to_vec(),
-                "Down" => return b"\x1b[1;2B".to_vec(),
-                "Right" => return b"\x1b[1;2C".to_vec(),
-                "Left" => return b"\x1b[1;2D".to_vec(),
-                "Home" => return b"\x1b[1;2H".to_vec(),
-                "End" => return b"\x1b[1;2F".to_vec(),
                 "Tab" => return b"\x1b[Z".to_vec(),
                 _ => {}
+            }
+        }
+
+        // Handle Alt modifier for printable characters
+        if alt && !ctrl {
+            let bytes = key.as_bytes();
+            if !bytes.is_empty() && bytes[0] >= 0x20 && bytes[0] < 0x7f {
+                let mut result = vec![0x1b];
+                result.extend_from_slice(bytes);
+                return result;
             }
         }
 
@@ -338,15 +550,20 @@ impl TerminalPane {
 
     /// Paste text into the terminal, respecting bracketed paste mode.
     pub fn paste(&mut self, text: &str) {
+        // Trim trailing newlines to prevent accidental command execution
+        let trimmed = text.trim_end_matches(|c| c == '\n' || c == '\r');
+        if trimmed.is_empty() {
+            return;
+        }
         let bracketed = self.terminal.mode().contains(TermMode::BRACKETED_PASTE);
         if bracketed {
-            let mut data = Vec::with_capacity(text.len() + 12);
+            let mut data = Vec::with_capacity(trimmed.len() + 12);
             data.extend_from_slice(b"\x1b[200~");
-            data.extend_from_slice(text.as_bytes());
+            data.extend_from_slice(trimmed.as_bytes());
             data.extend_from_slice(b"\x1b[201~");
             self.write_input(&data);
         } else {
-            self.write_input(text.as_bytes());
+            self.write_input(trimmed.as_bytes());
         }
     }
 
@@ -418,10 +635,15 @@ impl TerminalPane {
                         return (None, Some(PaneAction::PasteFromClipboard));
                     }
                     MouseButton::Right => {
-                        // Right-click: extend selection to click position
-                        if let Some(ref mut sel) = self.selection {
-                            sel.end_row = row;
-                            sel.end_col = col;
+                        // Right-click: copy selection if exists, then show context menu
+                        if let Some(sel) = &self.selection {
+                            let text = self.terminal.get_text(
+                                sel.start_row, sel.start_col,
+                                sel.end_row, sel.end_col,
+                            );
+                            if !text.is_empty() {
+                                return (None, Some(PaneAction::CopyText(text)));
+                            }
                         }
                         return (None, Some(PaneAction::ShowContextMenu));
                     }
@@ -470,20 +692,39 @@ impl TerminalPane {
             }
             TerminalMouseEvent::Scroll { delta_rows, row, col, modifiers } => {
                 if mouse_active {
-                    let button = if delta_rows > 0 { MouseButton::Middle } else { MouseButton::Middle };
                     // Mouse wheel events are encoded as button 64 (up) / 65 (down)
                     let code = if delta_rows > 0 { 64 } else { 65 };
                     if mode.contains(TermMode::MOUSE_SGR) {
-                        let mut bytes = format!("\x1b[<{};{};{}M", code, col + 1, row + 1).into_bytes();
+                        let bytes = format!("\x1b[<{};{};{}M", code, col + 1, row + 1).into_bytes();
+                        return (Some(bytes), None);
+                    } else {
+                        // X10-style encoding for scroll
+                        let bytes = selection::encode_mouse_x10(
+                            if delta_rows > 0 { MouseButton::Middle } else { MouseButton::Middle },
+                            true, row, col, modifiers,
+                        );
                         return (Some(bytes), None);
                     }
-                    return (None, None);
                 }
 
-                // Normal scroll
+                // Alt + scroll sends arrow keys (useful for less, etc.)
+                if modifiers.alt {
+                    let bytes = if delta_rows > 0 {
+                        b"\x1b[A".to_vec()
+                    } else {
+                        b"\x1b[B".to_vec()
+                    };
+                    return (Some(bytes), None);
+                }
+
+                // Normal scroll with smooth scrolling animation
                 if delta_rows > 0 {
+                    let current = self.scroll_state.current_offset;
+                    self.scroll_state.set_target(current + delta_rows as f32);
                     self.terminal.scroll_up(delta_rows as usize);
                 } else {
+                    let current = self.scroll_state.current_offset;
+                    self.scroll_state.set_target(current - (-delta_rows) as f32);
                     self.terminal.scroll_down((-delta_rows) as usize);
                 }
                 self.dirty = true;

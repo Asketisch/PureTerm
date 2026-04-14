@@ -5,6 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod quake_mode;
+mod platform;
 
 use pureterm_core::config::ConfigService;
 use pureterm_core::profile::{Profile, ProfileOptions, ProfileType};
@@ -12,6 +13,7 @@ use pureterm_core::theme::ThemeService;
 use pureterm_gui::TerminalRenderer;
 use pureterm_gui::EguiBackend;
 use pureterm_gui::renderer::ViewportRect;
+use pureterm_gui::transparency::TransparencyConfig;
 use pureterm_session::base::{ConnectParams, SessionType, SshAuth};
 use pureterm_session::Session;
 use pureterm_session::LocalSession;
@@ -27,6 +29,7 @@ use quake_mode::QuakeMode;
 use pureterm_ui::split::{SplitContainer, Direction, SplitSide, PaneRect, DividerInfo,
     compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point};
 use pureterm_ui::tabs::{TabContent, SplitRef};
+use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT};
 use pureterm_ui::terminal::pane::{TerminalPane, PaneAction, Selection};
 use pureterm_ui::WelcomePage;
 use pureterm_terminal::screen::selection::{TerminalMouseEvent, MouseButton, MouseModifiers};
@@ -75,6 +78,10 @@ struct PureTermApp {
     color_modal: Option<ColorModalState>,
     /// Quake mode (dropdown terminal) state.
     quake_mode: QuakeMode,
+    /// Tab bar state.
+    tab_bar: TabBarState,
+    /// Appearance config for resize handling.
+    appearance: pureterm_core::config::AppearanceConfig,
 }
 
 /// State for the tab title rename modal.
@@ -181,15 +188,81 @@ impl PureTermApp {
 
     /// Compute the current layout (pane rects).
     fn compute_layout(&self, screen_w: f32, screen_h: f32) -> Vec<(u64, PaneRect)> {
+        let tab_bar_offset_y = if self.show_tab_bar() { TAB_BAR_HEIGHT } else { 0.0 };
         if let Some(ref root) = self.split_root {
-            compute_pane_rects(root, 0.0, 0.0, screen_w, screen_h)
+            compute_pane_rects(root, 0.0, tab_bar_offset_y, screen_w, screen_h - tab_bar_offset_y)
         } else {
             // Single pane fills the window
             let pane_id = match self.focused_pane_id {
                 Some(id) => id,
                 None => return Vec::new(),
             };
-            vec![(pane_id, PaneRect { x: 0.0, y: 0.0, w: screen_w, h: screen_h })]
+            vec![(pane_id, PaneRect { x: 0.0, y: tab_bar_offset_y, w: screen_w, h: screen_h - tab_bar_offset_y })]
+        }
+    }
+
+    /// Check if tab bar should be shown.
+    fn show_tab_bar(&self) -> bool {
+        let config = self.app.as_ref().map(|a| &a.config.appearance);
+        let show = config.map(|c| c.show_tab_bar).unwrap_or(true);
+        let location = config.map(|c| c.tabs_location.as_str()).unwrap_or("top");
+        show && location == "top"
+    }
+
+    /// Update tab bar layout before rendering.
+    fn update_tab_bar_layout(&mut self) {
+        let (screen_w, _screen_h) = self.screen_size();
+        let show = self.show_tab_bar();
+
+        self.tab_bar.visible = show;
+
+        if !show {
+            self.tab_bar.tab_layouts.clear();
+            return;
+        }
+
+        let tabs = self.app.as_ref().map(|a| a.tab_manager.tabs()).unwrap_or(&[]);
+        let active_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
+
+        self.tab_bar.height = TAB_BAR_HEIGHT;
+        self.tab_bar.tab_layouts.clear();
+
+        let char_width = self.renderer.as_ref().map(|r| r.cell_size().0).unwrap_or(8.0);
+
+        let mut x = 0.0f32;
+        for tab in tabs {
+            // Calculate tab width based on title length
+            let title_width = tab.title.len() as f32 * char_width;
+            let close_width = if self.app.as_ref().map(|a| a.tab_manager.len()).unwrap_or(0) > 1 { 20.0 } else { 0.0 };
+            let tab_width = (title_width + TAB_BAR_HEIGHT + close_width)
+                .clamp(100.0, 250.0);
+
+            let rect = TabViewportRect {
+                x,
+                y: 0.0,
+                w: tab_width,
+                h: TAB_BAR_HEIGHT,
+            };
+
+            let close_rect = if close_width > 0.0 {
+                Some(TabViewportRect {
+                    x: x + tab_width - close_width - 4.0,
+                    y: 8.0,
+                    w: close_width,
+                    h: TAB_BAR_HEIGHT - 16.0,
+                })
+            } else {
+                None
+            };
+
+            self.tab_bar.tab_layouts.push(TabLayout {
+                tab_id: tab.id,
+                title: tab.title.clone(),
+                rect,
+                close_button_rect: close_rect,
+            });
+
+            x += tab_width;
         }
     }
 
@@ -372,6 +445,9 @@ impl PureTermApp {
                 title,
             );
         }
+
+        // Hide welcome page when a tab is opened
+        self.welcome_page.visible = false;
 
         if let Some(ref window) = self.window {
             window.request_redraw();
@@ -644,6 +720,9 @@ impl PureTermApp {
             );
         }
 
+        // Hide welcome page when a tab is opened
+        self.welcome_page.visible = false;
+
         if let Some(ref window) = self.window {
             window.request_redraw();
         }
@@ -771,6 +850,86 @@ impl PureTermApp {
             vertices, indices,
         );
     }
+
+    fn render_tab_bar_overlay(
+        tab_bar: &TabBarState,
+        active_tab_id: Option<u64>,
+        renderer: &mut TerminalRenderer,
+        vertices: &mut Vec<pureterm_gui::pipeline::Vertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        if !tab_bar.visible || tab_bar.tab_layouts.is_empty() {
+            return;
+        }
+
+        let screen_w: f32 = tab_bar.tab_layouts.iter().map(|l| l.rect.x + l.rect.w).fold(0.0, f32::max);
+
+        // Tab bar background
+        renderer.build_rect_vertices(
+            ViewportRect { x: 0.0, y: 0.0, w: screen_w, h: TAB_BAR_HEIGHT },
+            [0.12, 0.12, 0.14, 1.0],
+            vertices, indices,
+        );
+
+        // Bottom border
+        renderer.build_rect_vertices(
+            ViewportRect { x: 0.0, y: TAB_BAR_HEIGHT - 1.0, w: screen_w, h: 1.0 },
+            [0.35, 0.35, 0.4, 1.0],
+            vertices, indices,
+        );
+
+        for (i, layout) in tab_bar.tab_layouts.iter().enumerate() {
+            let is_active = active_tab_id == Some(layout.tab_id);
+            let is_hovered = tab_bar.hovered_tab_index == Some(i);
+
+            // Tab background (active or hovered)
+            if is_active || is_hovered {
+                let bg_color = if is_active {
+                    [0.2, 0.2, 0.24, 1.0]
+                } else {
+                    [0.18, 0.18, 0.22, 1.0]
+                };
+                renderer.build_rect_vertices(
+                    ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
+                    bg_color,
+                    vertices, indices,
+                );
+            }
+
+            // Tab title text
+            let title_x = layout.rect.x + 8.0;
+            let title_y = layout.rect.y + (TAB_BAR_HEIGHT - 16.0) / 2.0;
+            let fg_color = if is_active {
+                [1.0f32, 1.0, 1.0, 1.0]
+            } else {
+                [0.75f32, 0.75, 0.8, 1.0]
+            };
+
+            renderer.build_text_vertices(
+                &layout.title,
+                title_x,
+                title_y,
+                fg_color,
+                vertices, indices,
+            );
+
+            // Close button
+            if let Some(ref close_rect) = layout.close_button_rect {
+                let close_color = if is_hovered {
+                    [0.9f32, 0.3, 0.3, 1.0]
+                } else {
+                    [0.6f32, 0.6, 0.65, 1.0]
+                };
+                renderer.build_text_vertices(
+                    "x",
+                    close_rect.x,
+                    close_rect.y,
+                    close_color,
+                    vertices, indices,
+                );
+            }
+        }
+    }
 }
 
 impl ApplicationHandler for PureTermApp {
@@ -798,6 +957,19 @@ impl ApplicationHandler for PureTermApp {
             let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
             let size = window.inner_size();
 
+            // Load config first to get appearance settings
+            let config = ConfigService::load().expect("Failed to load config");
+            let appearance = &config.get().appearance;
+
+            // Create transparency config from appearance settings
+            let transparency = TransparencyConfig {
+                opacity: appearance.opacity,
+                blur: appearance.background_blur > 0,
+                blur_radius: appearance.background_blur,
+                transparent_background: !matches!(appearance.glass_effect, pureterm_core::config::GlassEffectStyle::None)
+                    || appearance.opacity < 1.0,
+            };
+
             // Initialize renderer
             let renderer = pollster::block_on(async {
                 TerminalRenderer::new().await
@@ -808,7 +980,14 @@ impl ApplicationHandler for PureTermApp {
                 .expect("Failed to create surface");
 
             let mut renderer = renderer;
-            renderer.configure_surface(&surface, size.width, size.height);
+            renderer.configure_surface(&surface, size.width, size.height, &transparency);
+            renderer.set_corner_radius(appearance.corner_radius);
+
+            // Apply platform-specific window styling (macOS: corner radius, glass effect)
+            #[cfg(target_os = "macos")]
+            {
+                platform::macos::apply_platform_styling(&window, appearance.corner_radius, &appearance.glass_effect);
+            }
 
             // Initialize egui backend for settings overlay
             let surface_format = renderer.surface_config()
@@ -825,8 +1004,7 @@ impl ApplicationHandler for PureTermApp {
             // Create initial pane
             let pane_id = self.create_pane(cols, rows);
 
-            // Create app and open initial tab
-            let config = ConfigService::load().expect("Failed to load config");
+            // Create app and open initial tab (use already loaded config)
             let mut app = App::new(config.get().clone());
             app.tab_manager.open_tab(
                 TabContent::Pane(pane_id),
@@ -835,10 +1013,19 @@ impl ApplicationHandler for PureTermApp {
 
             self.focused_pane_id = Some(pane_id);
             self.app = Some(app);
+
+            // Hide welcome page since we have an initial tab
+            self.welcome_page.visible = false;
             self.renderer = Some(renderer);
             self.surface = Some(surface);
             self.window = Some(window);
             self.egui_backend = Some(egui_backend);
+            self.appearance = appearance.clone();
+
+            // Request initial render after setup
+            if let Some(ref win) = self.window {
+                win.request_redraw();
+            }
 
             log::info!("PureTerm initialized: {}x{}", cols, rows);
         }
@@ -881,7 +1068,15 @@ impl ApplicationHandler for PureTermApp {
                     (&mut self.renderer, &mut self.surface)
                 {
                     if physical_size.width > 0 && physical_size.height > 0 {
-                        renderer.configure_surface(surface, physical_size.width, physical_size.height);
+                        let transparency = TransparencyConfig {
+                            opacity: self.appearance.opacity,
+                            blur: self.appearance.background_blur > 0,
+                            blur_radius: self.appearance.background_blur,
+                            transparent_background: !matches!(self.appearance.glass_effect, pureterm_core::config::GlassEffectStyle::None)
+                                || self.appearance.opacity < 1.0,
+                        };
+                        renderer.configure_surface(surface, physical_size.width, physical_size.height, &transparency);
+                        renderer.set_corner_radius(self.appearance.corner_radius);
                         self.resize_all_panes();
                     }
                 }
@@ -893,13 +1088,21 @@ impl ApplicationHandler for PureTermApp {
                 }
 
                 let any_dirty = self.panes.values().any(|p| p.is_dirty());
+                log::debug!("RedrawRequested: any_dirty={}, context_menu={}, settings={}, profile={}, welcome={}, rename={}, color={}",
+                    any_dirty, self.context_menu.visible, self.settings_panel.visible,
+                    self.profile_selector.visible, self.welcome_page.visible,
+                    self.rename_modal.is_some(), self.color_modal.is_some());
                 if !any_dirty && !self.context_menu.visible && !self.settings_panel.visible && !self.profile_selector.visible && !self.welcome_page.visible && self.rename_modal.is_none() && self.color_modal.is_none() {
+                    log::debug!("RedrawRequested: early return due to no dirty panes and all panels hidden");
                     return;
                 }
 
                 let (screen_w, screen_h) = self.screen_size();
                 let layout = self.compute_layout(screen_w, screen_h);
                 let bg = pureterm_core::theme::ColorScheme::parse_color(&self.color_scheme.background);
+
+                // Update tab bar layout before rendering
+                self.update_tab_bar_layout();
 
                 // Collect snapshots before borrowing renderer
                 let mut snapshots: Vec<(u64, ViewportRect, pureterm_terminal::ScreenSnapshot)> = Vec::new();
@@ -922,8 +1125,9 @@ impl ApplicationHandler for PureTermApp {
                 }
 
                 // Collect divider rects
+                let tab_bar_offset_y = if self.show_tab_bar() { TAB_BAR_HEIGHT } else { 0.0 };
                 let dividers = self.split_root.as_ref()
-                    .map(|root| compute_divider_rects(root, 0.0, 0.0, screen_w, screen_h))
+                    .map(|root| compute_divider_rects(root, 0.0, tab_bar_offset_y, screen_w, screen_h - tab_bar_offset_y))
                     .unwrap_or_default();
 
                 // Collect focus border info
@@ -936,11 +1140,13 @@ impl ApplicationHandler for PureTermApp {
                     let mut all_indices = Vec::new();
 
                     // Render each pane snapshot
+                    log::debug!("Rendering {} snapshots", snapshots.len());
                     for (_pane_id, viewport, snapshot) in &snapshots {
                         let offset = all_vertices.len() as u32;
                         let (verts, idx) = renderer.build_vertices(
                             snapshot, &color_scheme, None, Some(*viewport),
                         );
+                        log::debug!("  pane {}: verts={}, indices={}", _pane_id, verts.len(), idx.len());
                         all_vertices.extend(verts);
                         all_indices.extend(idx.iter().map(|i| i + offset));
                     }
@@ -979,15 +1185,28 @@ impl ApplicationHandler for PureTermApp {
                         );
                     }
 
+                    // Render tab bar overlay
+                    let active_tab_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
+                    Self::render_tab_bar_overlay(&self.tab_bar, active_tab_id, renderer, &mut all_vertices, &mut all_indices);
+
                     // Render context menu overlay
                     Self::render_context_menu_overlay(&self.context_menu, renderer, &mut all_vertices, &mut all_indices);
 
                     // Draw terminal content (returns frame without presenting)
                     let frame = renderer.draw_to_surface(surface, &all_vertices, &all_indices, bg);
+                    if frame.is_none() {
+                        log::error!("draw_to_surface returned None!");
+                    }
 
                     // Render egui overlay if any panel/modal is visible
-                    let needs_egui = self.settings_panel.visible || self.profile_selector.visible || self.welcome_page.visible || self.rename_modal.is_some() || self.color_modal.is_some();
-                    if needs_egui {
+                    // Note: welcome page only actually needs rendering when there are no tabs
+                    let needs_egui = self.settings_panel.visible || self.profile_selector.visible
+                        || self.rename_modal.is_some() || self.color_modal.is_some();
+                    let show_welcome = self.welcome_page.visible && self.app.as_ref().map(|a| a.tab_manager.is_empty()).unwrap_or(false);
+                    log::debug!("needs_egui={}, show_welcome={}, welcome_visible={}, app.tab_manager.is_empty()={}",
+                        needs_egui, show_welcome, self.welcome_page.visible,
+                        self.app.as_ref().map(|a| a.tab_manager.is_empty()).unwrap_or(false));
+                    if needs_egui || show_welcome {
                         if let (Some(frame), Some(ref mut egui_backend), Some(ref mut app)) = (frame, &mut self.egui_backend, &mut self.app) {
                             let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
@@ -1019,8 +1238,8 @@ impl ApplicationHandler for PureTermApp {
                                     }
                                 }
 
-                                // Welcome page
-                                if welcome_visible && self.panes.is_empty() {
+                                // Welcome page - show when no tabs are open
+                                if welcome_visible && app.tab_manager.is_empty() {
                                     if let Some(selected_profile) = self.welcome_page.show_page(ctx, &app.config) {
                                         profile_connect_request = Some(selected_profile);
                                     }
@@ -1043,14 +1262,16 @@ impl ApplicationHandler for PureTermApp {
                                                         .desired_width(200.0)
                                                 );
                                             });
-                                            ui.horizontal(|ui| {
-                                                if ui.button("OK").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                                                    close = true;
-                                                }
-                                                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                                    close = true;
-                                                }
-                                            });
+                                            let ok_clicked = ui.button("OK").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                            let cancel_clicked = ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+                                            if ok_clicked {
+                                                close = true;
+                                            }
+                                            if cancel_clicked {
+                                                // Cancel: just close without saving
+                                                self.rename_modal = None;
+                                                return;
+                                            }
                                         });
                                     if close {
                                         self.rename_modal = Some(RenameModalState {
@@ -1159,7 +1380,10 @@ impl ApplicationHandler for PureTermApp {
                             frame.present();
                         }
                     } else if let Some(frame) = frame {
+                        log::debug!("Presenting frame directly (needs_egui=false, show_welcome=false)");
                         frame.present();
+                    } else {
+                        log::warn!("No frame to present and no egui needed!");
                     }
                 }
             }
@@ -1299,6 +1523,26 @@ impl ApplicationHandler for PureTermApp {
                     return;
                 }
 
+                // Check for tab bar hover
+                if self.tab_bar.visible {
+                    let hovered_idx = self.tab_bar.tab_layouts.iter().position(|l| {
+                        l.rect.contains(self.mouse_pos.0, self.mouse_pos.1)
+                    });
+                    if hovered_idx != self.tab_bar.hovered_tab_index {
+                        self.tab_bar.hovered_tab_index = hovered_idx;
+                        if let Some(ref window) = self.window {
+                            window.request_redraw();
+                        }
+                    }
+                    if hovered_idx.is_some() {
+                        // Set cursor to hand when hovering over tab bar
+                        if let Some(ref window) = self.window {
+                            window.set_cursor(winit::window::CursorIcon::Pointer);
+                        }
+                        return;
+                    }
+                }
+
                 // Check for divider hover (cursor style)
                 let (screen_w, screen_h) = self.screen_size();
                 self.hovered_divider = if let Some(ref root) = self.split_root {
@@ -1412,18 +1656,65 @@ impl ApplicationHandler for PureTermApp {
                             MouseButton::Left => {
                                 // Left click
 
-                                // Check divider hit first (priority over pane click)
+                                // Check context menu first (if visible and hit)
                                 if self.context_menu.visible {
                                     if let Some(action) = self.context_menu.hit_test(self.mouse_pos.0, self.mouse_pos.1) {
                                         self.context_menu.hide();
                                         self.handle_menu_action(action);
-                                    } else {
-                                        self.context_menu.hide();
+                                        if let Some(ref window) = self.window {
+                                            window.request_redraw();
+                                        }
+                                        return;
                                     }
-                                    if let Some(ref window) = self.window {
-                                        window.request_redraw();
+                                    // Click was outside menu - hide menu and continue to tab bar/other handling
+                                    self.context_menu.hide();
+                                }
+
+                                // Check if clicking on a tab bar
+                                if self.tab_bar.visible {
+                                    if let Some(idx) = self.tab_bar.tab_layouts.iter().position(|l| l.rect.contains(self.mouse_pos.0, self.mouse_pos.1)) {
+                                        let layout = &self.tab_bar.tab_layouts[idx];
+                                        let tab_id = layout.tab_id;
+
+                                        // Check if clicking close button
+                                        if let Some(ref close_rect) = layout.close_button_rect {
+                                            if close_rect.contains(self.mouse_pos.0, self.mouse_pos.1) {
+                                                // Close this tab
+                                                if let Some(ref mut app) = self.app {
+                                                    app.tab_manager.close_tab(tab_id);
+                                                }
+                                                if let Some(ref window) = self.window {
+                                                    window.request_redraw();
+                                                }
+                                                return;
+                                            }
+                                        }
+
+                                        // Switch to this tab
+                                        let current_active = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
+                                        if current_active != Some(tab_id) {
+                                            if let Some(ref mut app) = self.app {
+                                                app.tab_manager.select_tab(tab_id);
+                                                // Update focused_pane_id from tab content
+                                                if let Some(tab) = app.tab_manager.active_tab() {
+                                                    match &tab.content {
+                                                        TabContent::Pane(pane_id) => {
+                                                            self.focused_pane_id = Some(*pane_id);
+                                                            self.split_root = None;
+                                                        }
+                                                        TabContent::Split(split_ref) => {
+                                                            // TODO: restore split state per tab
+                                                            let _ = split_ref;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if let Some(ref window) = self.window {
+                                                window.request_redraw();
+                                            }
+                                        }
+                                        return;
                                     }
-                                    return;
                                 }
 
                                 // Check if clicking on a divider
@@ -1639,9 +1930,9 @@ impl ApplicationHandler for PureTermApp {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(ref window) = self.window {
-            window.request_redraw();
-        }
+        // Don't unconditionally request redraw here - it causes RedrawRequested events
+        // to pile up and block other events (like mouse clicks) from being processed.
+        // Instead, request redraw only when something actually changes.
     }
 }
 
@@ -1752,6 +2043,8 @@ fn main() -> Result<()> {
         rename_modal: None,
         color_modal: None,
         quake_mode: if quake_mode { QuakeMode::new() } else { QuakeMode::default() },
+        tab_bar: TabBarState::new(),
+        appearance: pureterm_core::config::AppearanceConfig::default(),
     };
 
     event_loop.run_app(&mut app)?;

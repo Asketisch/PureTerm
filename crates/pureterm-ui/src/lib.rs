@@ -16,6 +16,7 @@ pub mod settings;
 pub mod split;
 pub mod tabs;
 pub mod tab_recovery;
+pub mod tab_bar;
 pub mod terminal;
 pub mod welcome;
 

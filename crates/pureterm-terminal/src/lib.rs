@@ -1,4 +1,5 @@
 pub mod bracketed_paste;
+pub mod charset;
 pub mod hyperlink;
 pub mod image;
 pub mod mark;

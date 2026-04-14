@@ -87,6 +87,15 @@ impl Terminal {
         &self.perform.mode
     }
 
+    /// Check if a bell was triggered and clear the flag.
+    pub fn take_bell(&mut self) -> bool {
+        let triggered = self.perform.bell_triggered;
+        if triggered {
+            self.perform.bell_triggered = false;
+        }
+        triggered
+    }
+
     /// Get the history (scrollback) size.
     pub fn history(&self) -> usize {
         self.perform.grid.history()

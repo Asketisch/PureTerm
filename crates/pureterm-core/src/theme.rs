@@ -322,6 +322,37 @@ impl ThemeService {
         Self { schemes }
     }
 
+    /// Load user themes from the given directory.
+    /// Reads all .toml files and registers them as color schemes.
+    pub fn load_user_themes(&mut self, themes_dir: &std::path::Path) {
+        if !themes_dir.exists() {
+            return;
+        }
+        if let Ok(entries) = std::fs::read_dir(themes_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().map_or(false, |e| e == "toml") {
+                    match std::fs::read_to_string(&path) {
+                        Ok(content) => {
+                            match toml::from_str::<ColorScheme>(&content) {
+                                Ok(scheme) => {
+                                    log::info!("Loaded user theme: {}", scheme.name);
+                                    self.register_scheme(scheme);
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to parse theme {:?}: {}", path, e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to read theme {:?}: {}", path, e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn get_scheme(&self, name: &str) -> Option<&ColorScheme> {
         self.schemes.get(name)
     }

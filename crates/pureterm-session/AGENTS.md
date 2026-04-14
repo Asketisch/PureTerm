@@ -27,7 +27,13 @@ src/
 ├── ssh/
 │   ├── mod.rs          # 重导出
 │   ├── auth.rs         # SshAuth 枚举
-│   └── client.rs       # SshSession（russh）
+│   ├── client.rs       # SshSession（russh 0.60）+ 端口转发 + 代理
+│   ├── agent_forward.rs # SSH Agent 转发
+│   ├── forward.rs      # 端口转发管理（Local/Remote/Dynamic）
+│   ├── known_hosts.rs  # 主机密钥验证（TOFU）
+│   ├── multiplexer.rs  # 连接复用（存储 Arc<Mutex<Handle>>）
+│   ├── sftp.rs         # SFTP v3 客户端
+│   └── x11.rs          # X11 转发
 ├── ssh_provider.rs     # Ssh ProfileProvider
 ├── serial/
 │   └── mod.rs          # SerialSession（serialport）
@@ -80,13 +86,9 @@ trait Session: Send {
 
 ### SshSession（ssh/client.rs）
 
-基于 `russh 0.60` 的 SSH 实现。
+详细文档：[ssh/AGENTS.md](src/ssh/AGENTS.md)
 
-- `start()` — 连接 → 认证（支持 None、Password、PublicKey；Agent 和 PromptPassword 为 TODO）→ 打开 shell channel → 分离读写 → 启动 tokio 任务读取输出
-- `resize()` — 调用 `window_change()`
-- `write()` — 调用 `channel.data()`
-- `kill()` — 发送 EOF 并断开连接
-- **注意**：`SshClientHandler` 目前接受所有服务器密钥（TODO: known_hosts 验证）
+基于 `russh 0.60` 的 SSH 实现，包含：连接认证、SFTP、端口转发、X11/Agent 转发、连接复用。
 
 ### SerialSession（serial/mod.rs）
 
@@ -127,6 +129,12 @@ SSH 跳板机（bastion/proxy host）支持：
 | `JumpHostManager` | 管理跳板机规则，按目标主机名模式匹配 |
 
 支持多跳 SSH 隧道连接。
+
+### SshMultiplexer（ssh/multiplexer.rs）
+
+详细文档：[ssh/AGENTS.md](src/ssh/AGENTS.md)
+
+SSH 连接复用，支持多会话共享同一底层 SSH 传输，自动清理空闲连接（默认 30 分钟）。
 
 ### SessionLog（session_log.rs）
 

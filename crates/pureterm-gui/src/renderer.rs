@@ -1,9 +1,10 @@
 use crate::fonts::GlyphAtlas;
 use crate::pipeline::{TextPipeline, Vertex};
+use crate::transparency::TransparencyConfig;
 use pureterm_core::theme::ColorScheme;
 use pureterm_terminal::ScreenSnapshot;
 
-/// A viewport rectangle for sub-region rendering.
+/// 用于子区域渲染的视口矩形
 #[derive(Debug, Clone, Copy)]
 pub struct ViewportRect {
     pub x: f32,
@@ -12,7 +13,7 @@ pub struct ViewportRect {
     pub h: f32,
 }
 
-/// Main terminal renderer using wgpu.
+/// 使用 wgpu 的主终端渲染器
 pub struct TerminalRenderer {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
@@ -22,10 +23,11 @@ pub struct TerminalRenderer {
     text_pipeline: Option<TextPipeline>,
     atlas_texture: Option<wgpu::Texture>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
+    transparency_config: TransparencyConfig,
 }
 
 impl TerminalRenderer {
-    /// Create a new terminal renderer.
+    /// 创建新的终端渲染器
     pub async fn new() -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
@@ -66,27 +68,36 @@ impl TerminalRenderer {
             text_pipeline: None,
             atlas_texture: None,
             surface_config: None,
+            transparency_config: TransparencyConfig::default(),
         })
     }
 
-    /// Get a reference to the wgpu instance.
+    /// 获取 wgpu 实例的引用
     pub fn instance(&self) -> &wgpu::Instance {
         &self.instance
     }
 
-    /// Get a reference to the device.
+    /// 获取 wgpu 设备的引用
     pub fn device(&self) -> &wgpu::Device {
         &self.device
     }
 
-    /// Initialize rendering pipelines for a surface.
+    /// 初始化 surface 的渲染管线
     pub fn configure_surface(
         &mut self,
         surface: &wgpu::Surface<'static>,
         width: u32,
         height: u32,
+        transparency: &TransparencyConfig,
     ) {
         let caps = surface.get_capabilities(&self.adapter);
+
+        // 根据透明度设置确定 alpha 模式
+        let alpha_mode = if transparency.opacity < 1.0 || transparency.transparent_background {
+            wgpu::CompositeAlphaMode::PostMultiplied
+        } else {
+            wgpu::CompositeAlphaMode::Auto
+        };
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -94,13 +105,19 @@ impl TerminalRenderer {
             width,
             height,
             present_mode: wgpu::PresentMode::AutoVsync,
-            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            alpha_mode,
             view_formats: vec![],
             desired_maximum_frame_latency: 2,
         };
 
+        self.transparency_config = transparency.clone();
         surface.configure(&self.device, &config);
         self.surface_config = Some(config.clone());
+
+        // 更新管线的屏幕尺寸
+        if let Some(ref mut pipeline) = self.text_pipeline {
+            pipeline.set_screen_size(&self.queue, width as f32, height as f32);
+        }
 
         self.create_atlas_texture();
         self.create_pipeline(&config);
@@ -134,7 +151,14 @@ impl TerminalRenderer {
         }
     }
 
-    /// Upload atlas texture data to GPU.
+    /// 更新圆角半径
+    pub fn set_corner_radius(&mut self, radius: f32) {
+        if let Some(ref mut pipeline) = self.text_pipeline {
+            pipeline.set_corner_radius(&self.queue, radius);
+        }
+    }
+
+    /// 上传字形图集纹理数据到 GPU
     fn upload_atlas(&self) {
         if let Some(ref atlas_texture) = self.atlas_texture {
             let (w, h) = self.atlas.atlas_dimensions();
@@ -156,10 +180,10 @@ impl TerminalRenderer {
         }
     }
 
-    /// Build vertices for a single pane's terminal snapshot within a viewport.
+    /// 为视口内单个窗格的终端快照构建顶点
     ///
-    /// If `viewport` is `None`, renders to the full surface (legacy single-pane mode).
-    /// Returns `(vertices, indices)`.
+    /// 如果 `viewport` 为 None，则渲染到整个表面（传统单窗格模式）
+    /// 返回 `(vertices, indices)`
     pub fn build_vertices(
         &mut self,
         snapshot: &ScreenSnapshot,
@@ -182,7 +206,7 @@ impl TerminalRenderer {
         let screen_w = config.width as f32;
         let screen_h = config.height as f32;
 
-        // Offset for sub-region rendering
+        // 子区域渲染的偏移量
         let (offset_x, offset_y) = match viewport {
             Some(vp) => (vp.x, vp.y),
             None => (0.0, 0.0),
@@ -196,42 +220,54 @@ impl TerminalRenderer {
                 let x = offset_x + col_idx as f32 * cell_w;
                 let y = offset_y + row_idx as f32 * cell_h;
 
-                // Convert to clip space (always relative to full surface)
+                // 转换为裁剪空间（始终相对于整个表面）
                 let x0 = (x / screen_w) * 2.0 - 1.0;
                 let y0 = 1.0 - (y / screen_h) * 2.0;
                 let x1 = ((x + cell_w) / screen_w) * 2.0 - 1.0;
                 let y1 = 1.0 - ((y + cell_h) / screen_h) * 2.0;
 
-                // Background quad
+                // 背景四边形
                 let is_selected = selection.map_or(false, |s| s(row_idx, col_idx));
+
+                // 解析原始颜色（palette 0-7 的 bold→bright 映射）
+                let raw_fg = match cell.fg {
+                    pureterm_terminal::Color::Rgb(r, g, b) => [r, g, b],
+                    pureterm_terminal::Color::Palette(idx) => {
+                        if idx < 8 && cell.attrs.bold {
+                            color_scheme.color_rgb((idx + 8) as usize)
+                        } else {
+                            color_scheme.color_rgb(idx as usize)
+                        }
+                    }
+                    _ => fg,
+                };
+                let raw_bg = match cell.bg {
+                    pureterm_terminal::Color::Rgb(r, g, b) => [r, g, b],
+                    pureterm_terminal::Color::Palette(idx) => color_scheme.color_rgb(idx as usize),
+                    _ => bg,
+                };
+
+                // 应用反色：交换前景/背景
+                let (resolved_fg, resolved_bg) = if cell.attrs.inverse {
+                    (raw_bg, raw_fg)
+                } else {
+                    (raw_fg, raw_bg)
+                };
+
                 let bg_color = if is_selected {
-                    if cell.bg == pureterm_terminal::Color::Named(pureterm_terminal::NamedColor::Background) {
+                    if cell.bg == pureterm_terminal::Color::Named(pureterm_terminal::NamedColor::Background) && !cell.attrs.inverse {
                         [sel_bg[0] as f32 / 255.0, sel_bg[1] as f32 / 255.0, sel_bg[2] as f32 / 255.0, 1.0]
                     } else {
-                        let c = match cell.bg {
-                            pureterm_terminal::Color::Rgb(r, g, b) => [r, g, b],
-                            pureterm_terminal::Color::Palette(idx) => color_scheme.color_rgb(idx as usize),
-                            _ => bg,
-                        };
                         let blend = 0.6;
                         [
-                            (sel_bg[0] as f32 * (1.0 - blend) + c[0] as f32 * blend) / 255.0,
-                            (sel_bg[1] as f32 * (1.0 - blend) + c[1] as f32 * blend) / 255.0,
-                            (sel_bg[2] as f32 * (1.0 - blend) + c[2] as f32 * blend) / 255.0,
+                            (sel_bg[0] as f32 * (1.0 - blend) + resolved_bg[0] as f32 * blend) / 255.0,
+                            (sel_bg[1] as f32 * (1.0 - blend) + resolved_bg[1] as f32 * blend) / 255.0,
+                            (sel_bg[2] as f32 * (1.0 - blend) + resolved_bg[2] as f32 * blend) / 255.0,
                             1.0,
                         ]
                     }
                 } else {
-                    match cell.bg {
-                        pureterm_terminal::Color::Rgb(r, g, b) => {
-                            [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
-                        }
-                        pureterm_terminal::Color::Palette(idx) => {
-                            let c = color_scheme.color_rgb(idx as usize);
-                            [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
-                        }
-                        _ => [bg[0] as f32 / 255.0, bg[1] as f32 / 255.0, bg[2] as f32 / 255.0, 1.0],
-                    }
+                    [resolved_bg[0] as f32 / 255.0, resolved_bg[1] as f32 / 255.0, resolved_bg[2] as f32 / 255.0, 1.0]
                 };
 
                 let base = vertices.len() as u32;
@@ -243,28 +279,19 @@ impl TerminalRenderer {
                 ]);
                 indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
 
-                // Glyph quad
-                if cell.c != ' ' {
+                // 字形四边形（隐藏则跳过）
+                if cell.c != ' ' && !cell.attrs.hidden {
                     let (atlas_w, atlas_h) = self.atlas.atlas_dimensions();
                     if let Some(glyph) = self.atlas.get_glyph(0, cell.c) {
                         let tx0 = glyph.x as f32 / atlas_w as f32;
                         let ty0 = glyph.y as f32 / atlas_h as f32;
-                        let tx1 = (glyph.x + glyph.width) as f32 / atlas_w as f32;
-                        let ty1 = (glyph.y + glyph.height) as f32 / atlas_h as f32;
+                        let tx1 = (glyph.x + glyph.width as u32) as f32 / atlas_w as f32;
+                        let ty1 = (glyph.y + glyph.height as u32) as f32 / atlas_h as f32;
 
                         let fg_color = if is_selected {
                             [sel_fg[0] as f32 / 255.0, sel_fg[1] as f32 / 255.0, sel_fg[2] as f32 / 255.0, 1.0]
                         } else {
-                            match cell.fg {
-                                pureterm_terminal::Color::Rgb(r, g, b) => {
-                                    [r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0]
-                                }
-                                pureterm_terminal::Color::Palette(idx) => {
-                                    let c = color_scheme.color_rgb(idx as usize);
-                                    [c[0] as f32 / 255.0, c[1] as f32 / 255.0, c[2] as f32 / 255.0, 1.0]
-                                }
-                                _ => [fg[0] as f32 / 255.0, fg[1] as f32 / 255.0, fg[2] as f32 / 255.0, 1.0],
-                            }
+                            [resolved_fg[0] as f32 / 255.0, resolved_fg[1] as f32 / 255.0, resolved_fg[2] as f32 / 255.0, 1.0]
                         };
 
                         let gx0 = x + glyph.x_offset;
@@ -290,7 +317,7 @@ impl TerminalRenderer {
             }
         }
 
-        // Render cursor
+        // 渲染光标
         if snapshot.cursor_visible {
             let cx = offset_x + snapshot.cursor_col as f32 * cell_w;
             let cy = offset_y + snapshot.cursor_row as f32 * cell_h;
@@ -345,7 +372,7 @@ impl TerminalRenderer {
         (vertices, indices)
     }
 
-    /// Build vertices for a filled rectangle (used for dividers, borders, menu background).
+    /// 为填充矩形构建顶点（用于分隔线、边框、菜单背景）
     pub fn build_rect_vertices(
         &mut self,
         rect: ViewportRect,
@@ -375,7 +402,7 @@ impl TerminalRenderer {
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
     }
 
-    /// Build vertices for a focus border (4 thin rectangles around the outside of a rect).
+    /// 为焦点边框构建顶点（矩形外部的 4 条细矩形）
     pub fn build_focus_border(
         &mut self,
         rect: ViewportRect,
@@ -384,29 +411,29 @@ impl TerminalRenderer {
         vertices: &mut Vec<Vertex>,
         indices: &mut Vec<u32>,
     ) {
-        // Top border
+        // 顶部边框
         self.build_rect_vertices(
             ViewportRect { x: rect.x, y: rect.y, w: rect.w, h: thickness },
             color, vertices, indices,
         );
-        // Bottom border
+        // 底部边框
         self.build_rect_vertices(
             ViewportRect { x: rect.x, y: rect.y + rect.h - thickness, w: rect.w, h: thickness },
             color, vertices, indices,
         );
-        // Left border
+        // 左边框
         self.build_rect_vertices(
             ViewportRect { x: rect.x, y: rect.y, w: thickness, h: rect.h },
             color, vertices, indices,
         );
-        // Right border
+        // 右边框
         self.build_rect_vertices(
             ViewportRect { x: rect.x + rect.w - thickness, y: rect.y, w: thickness, h: rect.h },
             color, vertices, indices,
         );
     }
 
-    /// Build vertices for context menu text using the glyph atlas.
+    /// 使用字形图集为上下文菜单文本构建顶点
     pub fn build_text_vertices(
         &mut self,
         text: &str,
@@ -435,8 +462,8 @@ impl TerminalRenderer {
             if let Some(glyph) = self.atlas.get_glyph(0, ch) {
                 let tx0 = glyph.x as f32 / atlas_w as f32;
                 let ty0 = glyph.y as f32 / atlas_h as f32;
-                let tx1 = (glyph.x + glyph.width) as f32 / atlas_w as f32;
-                let ty1 = (glyph.y + glyph.height) as f32 / atlas_h as f32;
+                let tx1 = (glyph.x + glyph.width as u32) as f32 / atlas_w as f32;
+                let ty1 = (glyph.y + glyph.height as u32) as f32 / atlas_h as f32;
 
                 let gx0 = cursor_x + glyph.x_offset;
                 let gx1 = gx0 + glyph.width as f32;
@@ -462,7 +489,7 @@ impl TerminalRenderer {
         }
     }
 
-    /// Submit vertices and indices to the GPU and present.
+    /// 提交顶点和索引到 GPU 并呈现
     pub fn draw(
         &mut self,
         surface: &wgpu::Surface<'static>,
@@ -476,8 +503,8 @@ impl TerminalRenderer {
         }
     }
 
-    /// Submit vertices and indices to the GPU but do NOT present.
-    /// Returns the surface texture for further rendering (e.g., egui overlay).
+    /// 提交顶点和索引到 GPU 但不呈现
+    /// 返回 surface 纹理用于进一步渲染（如 egui 覆盖）
     pub fn draw_to_surface(
         &mut self,
         surface: &wgpu::Surface<'static>,
@@ -496,7 +523,22 @@ impl TerminalRenderer {
         let frame = surface.get_current_texture();
         let frame = match frame {
             wgpu::CurrentSurfaceTexture::Success(f) | wgpu::CurrentSurfaceTexture::Suboptimal(f) => f,
-            _ => return None,
+            wgpu::CurrentSurfaceTexture::Timeout => {
+                log::warn!("get_current_texture timed out");
+                return None;
+            }
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                log::warn!("get_current_texture outdated");
+                return None;
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                log::warn!("get_current_texture lost");
+                return None;
+            }
+            other => {
+                log::warn!("get_current_texture returned: {:?}", other);
+                return None;
+            }
         };
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -504,6 +546,7 @@ impl TerminalRenderer {
         });
 
         {
+            let clear_color = self.transparency_config.clear_color(bg_color);
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Terminal Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -511,12 +554,7 @@ impl TerminalRenderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: bg_color[0] as f64 / 255.0,
-                            g: bg_color[1] as f64 / 255.0,
-                            b: bg_color[2] as f64 / 255.0,
-                            a: 1.0,
-                        }),
+                        load: wgpu::LoadOp::Clear(clear_color),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -535,8 +573,8 @@ impl TerminalRenderer {
         Some(frame)
     }
 
-    /// Render a terminal snapshot with optional selection highlighting.
-    /// Legacy single-pane convenience method.
+    /// 渲染终端快照（可选选区高亮）
+    /// 传统单窗格便捷方法
     pub fn render(
         &mut self,
         surface: &wgpu::Surface<'static>,
@@ -546,7 +584,7 @@ impl TerminalRenderer {
         self.render_with_selection(surface, snapshot, color_scheme, None);
     }
 
-    /// Render with selection (legacy single-pane).
+    /// 带选区渲染（传统单窗格）
     pub fn render_with_selection(
         &mut self,
         surface: &wgpu::Surface<'static>,
@@ -559,12 +597,12 @@ impl TerminalRenderer {
         self.draw(surface, &vertices, &indices, bg);
     }
 
-    /// Get the cell size in pixels.
+    /// 获取单元格尺寸（像素）
     pub fn cell_size(&self) -> (f32, f32) {
         self.atlas.cell_size()
     }
 
-    /// Calculate terminal dimensions from pixel size.
+    /// 从像素尺寸计算终端尺寸
     pub fn pixel_to_cells(&self, width: u32, height: u32) -> (usize, usize) {
         let (cell_w, cell_h) = self.cell_size();
         let cols = (width as f32 / cell_w).floor() as usize;
@@ -572,37 +610,37 @@ impl TerminalRenderer {
         (cols.max(1), rows.max(1))
     }
 
-    /// Get a reference to the wgpu queue.
+    /// 获取 wgpu 队列的引用
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
     }
 
-    /// Get a reference to the adapter.
+    /// 获取 wgpu 适配器的引用
     pub fn adapter(&self) -> &wgpu::Adapter {
         &self.adapter
     }
 
-    /// Get mutable access to the glyph atlas.
+    /// 获取字形图集的可变引用
     pub fn atlas_mut(&mut self) -> &mut GlyphAtlas {
         &mut self.atlas
     }
 
-    /// Get the glyph atlas.
+    /// 获取字形图集
     pub fn atlas(&self) -> &GlyphAtlas {
         &self.atlas
     }
 
-    /// Get the atlas texture (for egui paint callback integration).
+    /// 获取图集纹理（用于 egui 绘制回调集成）
     pub fn atlas_texture(&self) -> Option<&wgpu::Texture> {
         self.atlas_texture.as_ref()
     }
 
-    /// Get the text pipeline.
+    /// 获取文本管线
     pub fn text_pipeline(&self) -> Option<&TextPipeline> {
         self.text_pipeline.as_ref()
     }
 
-    /// Get the surface configuration.
+    /// 获取表面配置
     pub fn surface_config(&self) -> Option<&wgpu::SurfaceConfiguration> {
         self.surface_config.as_ref()
     }

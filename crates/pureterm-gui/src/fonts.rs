@@ -6,13 +6,87 @@ use std::path::Path;
 /// A glyph in the atlas.
 #[derive(Debug, Clone)]
 pub struct GlyphInfo {
-    pub x: u16,
-    pub y: u16,
+    pub x: u32,
+    pub y: u32,
     pub width: u16,
     pub height: u16,
     pub x_offset: f32,
     pub y_offset: f32,
     pub advance: f32,
+    /// Whether this glyph is a ligature (multiple characters combined)
+    pub is_ligature: bool,
+    /// Original character count if ligature (for advance calculation)
+    pub ligature_len: usize,
+}
+
+// ── Ligature Engine ──────────────────────────────────────────────────────────
+
+/// Common ligature mappings: (str pair) -> Unicode ligature character
+/// These are common programming ligatures supported by fonts like Fira Code, JetBrains Mono
+const LIGATURE_PAIRS: &[(&str, char, f32)] = &[
+    // Arrows
+    ("->", '\u{2192}', 2.0),   // →
+    ("<-", '\u{2190}', 2.0),   // ←
+    ("=>", '\u{21D2}', 2.0),   // ⇒
+    ("<=", '\u{21D0}', 2.0),   // ⇐
+    // Comparison
+    ("!=", '\u{2260}', 2.0),   // ≠
+    (">=", '\u{2265}', 2.0),   // ≥
+    ("<=", '\u{2264}', 2.0),   // ≤
+    // Logic
+    (">>", '\u{226B}', 2.0),   // ≫
+    ("<<", '\u{226A}', 2.0),   // ≪
+    ("|>", '\u{27D4}', 2.0),   // ⟴
+    ("||", '\u{2228}', 2.0),   // ∨
+    ("&&", '\u{2227}', 2.0),   // ∧
+    // Punctuation / Combined
+    ("::", '\u{2A2F}', 2.0),  // ⁄⁄ (double colon)
+    (";;", '\u{2E3B}', 2.0),   // ⁄⁄ (double semicolon)
+    ("...", '\u{2026}', 3.0),  // …
+    // Shell
+    ("|-", '\u{2502}', 2.0),  // │ (pipe-dash)
+    ("-|", '\u{2502}', 2.0),  // │ (dash-pipe)
+];
+
+/// Ligature engine for detecting and resolving character sequences into ligatures.
+#[derive(Default)]
+pub struct LigatureEngine {
+    /// Ligature cache: (char1, char2) -> LigatureInfo
+    ligatures: HashMap<(char, char), LigatureInfo>,
+}
+
+#[derive(Clone)]
+struct LigatureInfo {
+    ch: char,
+    width_factor: f32,
+}
+
+impl LigatureEngine {
+    pub fn new() -> Self {
+        let mut engine = Self::default();
+        engine.build_ligature_table();
+        engine
+    }
+
+    /// Build the ligature lookup table from LIGATURE_PAIRS
+    fn build_ligature_table(&mut self) {
+        for (pair, ch, width_factor) in LIGATURE_PAIRS {
+            let mut chars = pair.chars();
+            if let (Some(c1), Some(c2)) = (chars.next(), chars.next()) {
+                // Only handle 2-char ligatures for now (simpler advance calculation)
+                self.ligatures.insert((c1, c2), LigatureInfo {
+                    ch: *ch,
+                    width_factor: *width_factor,
+                });
+            }
+        }
+    }
+
+    /// Check if two consecutive characters form a ligature.
+    /// Returns the ligature info if found, None otherwise.
+    pub fn get_ligature(&self, c1: char, c2: char) -> Option<LigatureInfo> {
+        self.ligatures.get(&(c1, c2)).cloned()
+    }
 }
 
 /// Font atlas that caches rendered glyphs.
@@ -24,9 +98,13 @@ pub struct GlyphAtlas {
     atlas_width: u32,
     atlas_height: u32,
     atlas_data: Vec<u8>,
-    cursor_x: u16,
-    cursor_y: u16,
-    line_height: u16,
+    cursor_x: u32,
+    cursor_y: u32,
+    line_height: u32,
+    /// Ligature engine for character sequence detection
+    ligature_engine: LigatureEngine,
+    /// Ligature-enabled fonts (loaded font supports ligatures)
+    ligature_enabled: bool,
 }
 
 impl GlyphAtlas {
@@ -44,7 +122,9 @@ impl GlyphAtlas {
             atlas_data,
             cursor_x: 1, // Start after reserved pixel
             cursor_y: 0,
-            line_height: (font_size * 1.2) as u16,
+            line_height: (font_size * 1.2) as u32,
+            ligature_engine: LigatureEngine::new(),
+            ligature_enabled: true,
         }
     }
 
@@ -139,13 +219,13 @@ impl GlyphAtlas {
         let height = metrics.height as u16;
 
         // Check if we need a new row
-        if self.cursor_x + width > self.atlas_width as u16 {
+        if self.cursor_x + width as u32 > self.atlas_width {
             self.cursor_x = 0;
             self.cursor_y += self.line_height;
         }
 
         // Check if atlas is full
-        if self.cursor_y + height > self.atlas_height as u16 {
+        if self.cursor_y + height as u32 > self.atlas_height {
             log::warn!("Glyph atlas full, cannot cache more glyphs");
             return None;
         }
@@ -171,9 +251,82 @@ impl GlyphAtlas {
             x_offset: metrics.xmin as f32,
             y_offset: metrics.ymin as f32,
             advance: metrics.advance_width,
+            is_ligature: false,
+            ligature_len: 1,
         };
 
-        self.cursor_x += width + 1; // 1px padding
+        self.cursor_x += width as u32 + 1; // 1px padding
+        self.cache.insert(key, info);
+        self.cache.get(&key)
+    }
+
+    /// Check if two consecutive characters form a ligature.
+    /// Returns the ligature character and width factor if found.
+    pub fn get_ligature(&self, c1: char, c2: char) -> Option<(char, f32)> {
+        if !self.ligature_enabled {
+            return None;
+        }
+        self.ligature_engine
+            .get_ligature(c1, c2)
+            .map(|info| (info.ch, info.width_factor))
+    }
+
+    /// Get or rasterize a ligature glyph.
+    /// This handles cases where two characters combine into one glyph (e.g., -> becomes →).
+    pub fn get_ligature_glyph(&mut self, font_index: usize, lig_char: char, width_factor: f32) -> Option<&GlyphInfo> {
+        if self.fonts.is_empty() {
+            return None;
+        }
+
+        let key = (font_index, lig_char);
+        if self.cache.contains_key(&key) {
+            return self.cache.get(&key);
+        }
+
+        let font = &self.fonts.get(font_index)?;
+        let (metrics, bitmap) = font.rasterize(lig_char, self.font_size);
+
+        let width = metrics.width as u16;
+        let height = metrics.height as u16;
+
+        // Check if we need a new row
+        if self.cursor_x + width as u32 > self.atlas_width {
+            self.cursor_x = 0;
+            self.cursor_y += self.line_height;
+        }
+
+        // Check if atlas is full
+        if self.cursor_y + height as u32 > self.atlas_height {
+            log::warn!("Glyph atlas full, cannot cache more glyphs");
+            return None;
+        }
+
+        // Write the glyph to the atlas
+        let start_x = self.cursor_x as usize;
+        let start_y = self.cursor_y as usize;
+        for (gy, row) in bitmap.chunks(width as usize).enumerate() {
+            for (gx, &val) in row.iter().enumerate() {
+                let px = start_x + gx;
+                let py = start_y + gy;
+                if px < self.atlas_width as usize && py < self.atlas_height as usize {
+                    self.atlas_data[py * self.atlas_width as usize + px] = val;
+                }
+            }
+        }
+
+        let info = GlyphInfo {
+            x: self.cursor_x,
+            y: self.cursor_y,
+            width,
+            height,
+            x_offset: metrics.xmin as f32,
+            y_offset: metrics.ymin as f32,
+            advance: metrics.advance_width * width_factor,
+            is_ligature: true,
+            ligature_len: 2,
+        };
+
+        self.cursor_x += width as u32 + 1; // 1px padding
         self.cache.insert(key, info);
         self.cache.get(&key)
     }
@@ -192,13 +345,23 @@ impl GlyphAtlas {
     pub fn set_font_size(&mut self, size: f32) {
         if (self.font_size - size).abs() > f32::EPSILON {
             self.font_size = size;
-            self.line_height = (size * 1.2) as u16;
+            self.line_height = (size * 1.2) as u32;
             self.cache.clear();
             self.atlas_data = vec![0; (self.atlas_width * self.atlas_height) as usize];
             self.atlas_data[0] = 255; // Re-reserve background pixel
             self.cursor_x = 1;
             self.cursor_y = 0;
         }
+    }
+
+    /// Enable or disable ligatures.
+    pub fn set_ligatures_enabled(&mut self, enabled: bool) {
+        self.ligature_enabled = enabled;
+    }
+
+    /// Check if ligatures are enabled.
+    pub fn ligatures_enabled(&self) -> bool {
+        self.ligature_enabled
     }
 
     /// Get the cell dimensions for the current font size.
@@ -211,6 +374,11 @@ impl GlyphAtlas {
         } else {
             (8.0, 16.0)
         }
+    }
+
+    /// Get the line height in pixels.
+    pub fn line_height(&self) -> u32 {
+        self.line_height
     }
 
     /// Get the atlas texture data.

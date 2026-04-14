@@ -104,10 +104,29 @@ impl ExplorerPanel {
         self.current_path = path.to_string();
         self.selected_index = None;
         if self.is_remote {
-            // Remote refresh would need SFTP client — handled by caller
+            // Remote refresh needs SFTP client - handled by caller via refresh_remote()
         } else {
             self.refresh_local();
         }
+    }
+
+    /// Set remote entries from SFTP listing. Call this after an SFTP read_dir completes.
+    pub fn set_remote_entries(&mut self, entries: Vec<FileEntry>) {
+        self.entries = entries;
+        self.loading = false;
+        self.error = None;
+    }
+
+    /// Set remote error from SFTP operation.
+    pub fn set_remote_error(&mut self, error: String) {
+        self.error = Some(error);
+        self.loading = false;
+    }
+
+    /// Mark as loading (call before starting async SFTP operation).
+    pub fn set_loading(&mut self) {
+        self.loading = true;
+        self.error = None;
     }
 
     /// Show the explorer panel. Returns the selected file path if double-clicked.

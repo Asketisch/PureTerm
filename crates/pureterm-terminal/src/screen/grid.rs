@@ -8,6 +8,8 @@ pub struct Grid {
     rows: Vec<Vec<Cell>>,
     /// Per-row marks (indexed same as `rows`).
     marks: Vec<Option<Mark>>,
+    /// Per-row wrapped flag (true if line was soft-wrapped from the previous line).
+    wrapped: Vec<bool>,
     /// Number of visible columns
     cols: usize,
     /// Number of visible rows
@@ -26,10 +28,12 @@ impl Grid {
             .map(|_| (0..cols).map(|_| Cell::blank()).collect())
             .collect();
         let grid_marks = vec![None; total_rows];
+        let grid_wrapped = vec![false; total_rows];
 
         Self {
             rows: grid_rows,
             marks: grid_marks,
+            wrapped: grid_wrapped,
             cols,
             visible_rows,
             scrollback_limit: scrollback,
@@ -80,9 +84,11 @@ impl Grid {
         if self.rows.len() > self.visible_rows + self.scrollback_limit {
             self.rows.remove(0);
             self.marks.remove(0);
+            self.wrapped.remove(0);
         }
         self.rows.push(new_row);
         self.marks.push(None);
+        self.wrapped.push(false);
     }
 
     /// Scroll down by one line.
@@ -93,25 +99,82 @@ impl Grid {
         if start > 0 {
             self.rows.insert(start, new_row);
             self.marks.insert(start, None);
+            self.wrapped.insert(start, false);
         }
     }
 
-    /// Resize the grid to new dimensions.
+    /// Scroll a specific region up by one line (delete top row, add blank at bottom of region).
+    /// `top` and `bottom` are 0-based visible row indices, exclusive of bottom.
+    pub fn scroll_region_up(&mut self, top: usize, bottom: usize) {
+        if top >= bottom || bottom > self.visible_rows {
+            return;
+        }
+        let start = self.visible_start();
+        // Remove the row at the top of the region
+        let remove_idx = start + top;
+        if remove_idx < self.rows.len() {
+            self.rows.remove(remove_idx);
+            self.marks.remove(remove_idx);
+            self.wrapped.remove(remove_idx);
+        }
+        // Insert a blank row just before the bottom of the region
+        let insert_idx = start + bottom - 1; // -1 because we removed a row
+        let new_row = (0..self.cols).map(|_| Cell::blank()).collect();
+        if insert_idx <= self.rows.len() {
+            self.rows.insert(insert_idx, new_row);
+            self.marks.insert(insert_idx, None);
+            self.wrapped.insert(insert_idx, false);
+        }
+    }
+
+    /// Scroll a specific region down by one line (insert blank at top, delete bottom row).
+    /// `top` and `bottom` are 0-based visible row indices, exclusive of bottom.
+    pub fn scroll_region_down(&mut self, top: usize, bottom: usize) {
+        if top >= bottom || bottom > self.visible_rows {
+            return;
+        }
+        let start = self.visible_start();
+        // Insert a blank row at the top of the region
+        let insert_idx = start + top;
+        let new_row = (0..self.cols).map(|_| Cell::blank()).collect();
+        if insert_idx <= self.rows.len() {
+            self.rows.insert(insert_idx, new_row);
+            self.marks.insert(insert_idx, None);
+            self.wrapped.insert(insert_idx, false);
+        }
+        // Remove the row at the bottom of the region
+        let remove_idx = start + bottom; // bottom row (1 past because we inserted)
+        if remove_idx < self.rows.len() {
+            self.rows.remove(remove_idx);
+            self.marks.remove(remove_idx);
+            self.wrapped.remove(remove_idx);
+        }
+    }
+
+    /// Resize the grid to new dimensions with reflow support.
     pub fn resize(&mut self, new_cols: usize, new_rows: usize) {
-        // Adjust each row to the new column count
-        for row in &mut self.rows {
-            row.resize(new_cols, Cell::blank());
+        if new_cols == self.cols && new_rows == self.visible_rows {
+            return;
+        }
+
+        // Reflow: recombine wrapped lines and re-wrap at the new width
+        if new_cols != self.cols {
+            self.reflow(new_cols);
+        } else {
+            // Just resize each row
+            for row in &mut self.rows {
+                row.resize(new_cols, Cell::blank());
+            }
         }
         self.cols = new_cols;
 
         // Adjust visible rows
         if new_rows > self.visible_rows {
-            // Add more rows
             let extra = new_rows - self.visible_rows;
             for _ in 0..extra {
-                let new_row = (0..self.cols).map(|_| Cell::blank()).collect();
-                self.rows.push(new_row);
+                self.rows.push((0..self.cols).map(|_| Cell::blank()).collect());
                 self.marks.push(None);
+                self.wrapped.push(false);
             }
         }
         self.visible_rows = new_rows;
@@ -121,6 +184,76 @@ impl Grid {
         if self.scroll_offset > max_scroll {
             self.scroll_offset = max_scroll;
         }
+    }
+
+    /// Reflow rows: recombine wrapped lines, then re-wrap at new width.
+    fn reflow(&mut self, new_cols: usize) {
+        // Step 1: Recombine wrapped lines into logical lines
+        let mut logical_lines: Vec<Vec<Cell>> = Vec::new();
+        let mut i = 0;
+        while i < self.rows.len() {
+            let mut line = std::mem::take(&mut self.rows[i]);
+            i += 1;
+            // If the next row is wrapped, append it
+            while i < self.rows.len() && self.wrapped[i] {
+                let wrapped_row = std::mem::take(&mut self.rows[i]);
+                line.extend(wrapped_row);
+                i += 1;
+            }
+            logical_lines.push(line);
+        }
+
+        // Step 2: Re-wrap each logical line at the new width
+        let mut new_rows: Vec<Vec<Cell>> = Vec::new();
+        let mut new_wrapped: Vec<bool> = Vec::new();
+        let mut new_marks: Vec<Option<Mark>> = Vec::new();
+
+        for (line_idx, line) in logical_lines.into_iter().enumerate() {
+            if line.is_empty() || line.iter().all(|c| c.c == ' ') {
+                new_rows.push((0..new_cols).map(|_| Cell::blank()).collect());
+                new_wrapped.push(false);
+                // Preserve mark for the first row of the logical line
+                new_marks.push(self.marks.get(line_idx).and_then(|m| m.clone()));
+            } else {
+                let chunks = line.chunks(new_cols);
+                let num_chunks = chunks.len();
+                for (chunk_idx, chunk) in chunks.enumerate() {
+                    let mut row: Vec<Cell> = chunk.to_vec();
+                    row.resize(new_cols, Cell::blank());
+                    new_rows.push(row);
+                    new_wrapped.push(chunk_idx < num_chunks - 1);
+                    new_marks.push(None); // marks only on first row
+                }
+                // Put the mark on the first chunk
+                if let Some(last) = new_marks.last_mut() {
+                    *last = self.marks.get(line_idx).and_then(|m| m.clone());
+                }
+            }
+        }
+
+        self.rows = new_rows;
+        self.wrapped = new_wrapped;
+        self.marks = new_marks;
+    }
+
+    /// Set the wrapped flag for a visible row.
+    pub fn set_wrapped(&mut self, row: usize, value: bool) {
+        if row >= self.visible_rows {
+            return;
+        }
+        let idx = self.visible_start() + row;
+        if let Some(w) = self.wrapped.get_mut(idx) {
+            *w = value;
+        }
+    }
+
+    /// Get the wrapped flag for a visible row.
+    pub fn is_wrapped(&self, row: usize) -> bool {
+        if row >= self.visible_rows {
+            return false;
+        }
+        let idx = self.visible_start() + row;
+        self.wrapped.get(idx).copied().unwrap_or(false)
     }
 
     /// Scroll the viewport up (into history).

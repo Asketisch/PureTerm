@@ -35,7 +35,8 @@ src/
 | 类型 | 说明 |
 |------|------|
 | `AppConfig` | 顶层配置结构（appearance + terminal + hotkeys + profiles + groups） |
-| `AppearanceConfig` | 外观配置：tabs_location、theme、frame、opacity、show_tab_bar、show_title_bar |
+| `AppearanceConfig` | 外观配置：tabs_location、theme、frame、opacity、show_tab_bar、show_title_bar、corner_radius、glass_effect、background_blur |
+| `GlassEffectStyle` | 玻璃效果枚举：None、Regular、Clear、Light、Dark、Automatic |
 | `TerminalConfig` | 终端配置：font_family/font_size、scrollback_lines、renderer、bell、ligatures、cursor_style、cursor_blink、copy_on_select、color_scheme |
 | `ConfigService` | 基于 `RwLock<AppConfig>` 的线程安全配置服务 |
 
@@ -52,9 +53,11 @@ src/
 | `ColorScheme` | 配色方案：name、foreground、background、cursor、selection_*、colors[16] |
 | `ThemeService` | 管理内置和自定义配色方案 |
 
-内置配色（9 种）：Monokai Pro、Monokai、Solarized Dark、Solarized Light、Dracula、One Dark、GitHub Dark、Nord、Catppuccin Mocha（默认）。
+内置配色（28 种）：Monokai Pro、Monokai、Solarized Dark/Light、Dracula、One Dark、GitHub Dark、Nord、Catppuccin Mocha（默认）/Latte、Tokyo Night、Night Owl、Gruvbox Dark/Light、One Light、Rose Pine、Everforest Dark、Kanagawa Dragon、VS Code Dark+/Light+、Iceberg、Argonaut、Ayu Dark/Light、Half Life、C64、Tango Dark/Light、Xterm、Linux。
 
 `ColorScheme` 颜色方法：`foreground_rgb()`、`background_rgb()`、`cursor_rgb()`、`color_rgb(index)` — 都返回 `[u8; 3]`。
+
+`ThemeService` 支持加载用户自定义主题：`load_user_themes(themes_dir)` 从目录中读取 `.toml` 文件并注册。
 
 ### theme_auto.rs — 自动主题切换
 
