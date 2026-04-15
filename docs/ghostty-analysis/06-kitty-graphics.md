@@ -148,7 +148,7 @@ Flags (packed struct):
 
 ### 实现优先级
 
-Kitty 图形协议属于 P2 级别，可以在核心终端功能完成后实现。但 `kitty/key.zig` 的键盘协议是 P0，因为影响键盘编码。
+**必须实现**。Kitty 图形协议是完整的终端功能，必须全部实现。`kitty/key.zig` 的键盘协议是 P0，因为影响键盘编码。
 
 ```rust
 pub struct KittyImageStorage {

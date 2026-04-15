@@ -44,8 +44,8 @@ Ghostty 使用的自定义数据结构、Unicode 支持和 SIMD 加速例程。
 |------|------|----------|
 | `fastmem.zig` | 快速 memcpy/memmove | `std::ptr::copy` (已优化) |
 | `math.zig` | 4x4 矩阵 + 正交投影 | `cgmath` / `glam` crate |
-| `quirks.zig` | 环境 workaround | 按需实现 |
-| `tripwire.zig` | 错误注入测试 | 不需要 |
+| `quirks.zig` | 环境 workaround | 必须实现（兼容各种终端行为） |
+| `tripwire.zig` | 错误注入测试 | 必须实现（用于测试验证） |
 | `file_type.zig` | 图像类型检测 | `infer` crate |
 
 ## 纯 Rust 实现要点

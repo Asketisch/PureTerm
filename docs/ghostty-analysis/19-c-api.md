@@ -40,4 +40,4 @@ libghostty 和 libghostty-vt 的 C API 导出，使终端引擎可以被 C/ObjC/
 
 ## 纯 Rust 实现要点
 
-**PureTerm 不需要 C API**。但如果将来需要嵌入其他应用，可以用 `cbindgen` 或 `uniffi` 生成 FFI 绑定。属于不需要实现的部分。
+**必须实现**。C API 用于库导出和跨语言调用（FFI）。如果将来需要嵌入其他应用，可以用 `cbindgen` 或 `uniffi` 生成 FFI 绑定。

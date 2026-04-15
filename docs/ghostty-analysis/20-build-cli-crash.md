@@ -7,7 +7,7 @@
 ## Ghostty 源码文件
 
 ### 构建系统 (`build/`, 35 files)
-Ghostty 用 Zig 构建系统的自定义步骤。PureTerm 用 Cargo 不需要这些。
+Ghostty 用 Zig 构建系统的自定义步骤。PureTerm 用 Cargo 必须实现标准构建配置。
 
 ### CLI (`cli/`, 25 files)
 命令行子命令：`+help`, `+version`, `+list-fonts`, `+list-themes`, `+show-config` 等。
@@ -53,10 +53,10 @@ enum Cli {
 用 Cargo 标准构建，不需要自定义构建系统。
 
 ### 崩溃报告
-可选，用 `sentry` crate。
+必须实现，用 `sentry` crate。
 
 ### Terminfo
 需要为 PureTerm 定义自己的 terminfo 条目，或使用 `xterm-256color` 兼容。
 
 ### 其余
-不需要实现。
+全部必须实现。

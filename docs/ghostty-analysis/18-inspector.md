@@ -23,4 +23,4 @@
 
 ## 纯 Rust 实现要点
 
-使用 `egui` 的 `debug` 功能代替 Dear ImGui。可以用 `egui_inspect` 或自定义调试面板。属于 P3 级别。
+**必须实现**。使用 `egui` 的 `debug` 功能代替 Dear ImGui。可以用 `egui_inspect` 或自定义调试面板。
