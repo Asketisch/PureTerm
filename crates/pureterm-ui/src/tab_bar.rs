@@ -35,6 +35,8 @@ pub struct TabLayout {
     pub tab_id: u64,
     /// The tab title.
     pub title: String,
+    /// Optional tab color (hex string like "#e06c75").
+    pub color: Option<String>,
     /// The tab rect in screen coordinates.
     pub rect: ViewportRect,
     /// Close button rect, if present.
@@ -61,7 +63,7 @@ pub const TAB_BAR_HEIGHT: f32 = 36.0;
 pub const TAB_PADDING_H: f32 = 12.0;
 pub const TAB_CLOSE_BTN_WIDTH: f32 = 20.0;
 pub const TAB_MIN_WIDTH: f32 = 100.0;
-pub const TAB_MAX_WIDTH: f32 = 200.0;
+pub const TAB_MAX_WIDTH: f32 = 250.0;
 pub const TAB_BAR_BORDER_SIZE: f32 = 1.0;
 pub const TAB_TITLE_OFFSET_X: f32 = 8.0;
 pub const TAB_CLOSE_BTN_OFFSET_X: f32 = 4.0;

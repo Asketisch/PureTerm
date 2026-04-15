@@ -489,6 +489,27 @@ impl TerminalRenderer {
         }
     }
 
+    /// 测量文本的像素宽度
+    pub fn measure_text(&mut self, text: &str) -> f32 {
+        let mut width = 0.0f32;
+        for ch in text.chars() {
+            width += self.measure_text_char(ch);
+        }
+        width
+    }
+
+    /// 测量单个字符的像素宽度
+    pub fn measure_text_char(&mut self, ch: char) -> f32 {
+        if ch == ' ' {
+            let (cell_w, _) = self.atlas.cell_size();
+            cell_w * 0.5
+        } else if let Some(glyph) = self.atlas.get_glyph(0, ch) {
+            glyph.advance
+        } else {
+            0.0
+        }
+    }
+
     /// 提交顶点和索引到 GPU 并呈现
     pub fn draw(
         &mut self,

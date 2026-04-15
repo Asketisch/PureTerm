@@ -30,7 +30,7 @@ use quake_mode::QuakeMode;
 use pureterm_ui::split::{SplitContainer, Direction, SplitSide, PaneRect, DividerInfo,
     compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point};
 use pureterm_ui::tabs::{TabContent, SplitRef};
-use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT};
+use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_MIN_WIDTH, TAB_PADDING_H, TAB_CLOSE_BTN_OFFSET_X};
 use pureterm_ui::terminal::pane::{TerminalPane, PaneAction, Selection};
 use pureterm_ui::WelcomePage;
 use pureterm_terminal::screen::selection::{TerminalMouseEvent, MouseButton, MouseModifiers};
@@ -232,26 +232,27 @@ impl PureTermApp {
         self.tab_bar.height = TAB_BAR_HEIGHT;
         self.tab_bar.tab_layouts.clear();
 
-        let char_width = self.renderer.as_ref().map(|r| r.cell_size().0).unwrap_or(8.0);
+        let tab_count = tabs.len();
+        if tab_count == 0 {
+            return;
+        }
+
+        let equal_width = (screen_w / tab_count as f32).max(TAB_MIN_WIDTH);
 
         let mut x = 0.0f32;
         for tab in tabs {
-            // Calculate tab width based on title length
-            let title_width = tab.title.len() as f32 * char_width;
-            let close_width = if self.app.as_ref().map(|a| a.tab_manager.len()).unwrap_or(0) > 1 { 20.0 } else { 0.0 };
-            let tab_width = (title_width + TAB_BAR_HEIGHT + close_width)
-                .clamp(100.0, 250.0);
+            let close_width = if tab_count > 1 { 20.0 } else { 0.0 };
 
             let rect = TabViewportRect {
                 x,
                 y: 0.0,
-                w: tab_width,
+                w: equal_width,
                 h: TAB_BAR_HEIGHT,
             };
 
             let close_rect = if close_width > 0.0 {
                 Some(TabViewportRect {
-                    x: x + tab_width - close_width - 4.0,
+                    x: x + equal_width - close_width - 4.0,
                     y: 8.0,
                     w: close_width,
                     h: TAB_BAR_HEIGHT - 16.0,
@@ -263,11 +264,12 @@ impl PureTermApp {
             self.tab_bar.tab_layouts.push(TabLayout {
                 tab_id: tab.id,
                 title: tab.title.clone(),
+                color: tab.color.clone(),
                 rect,
                 close_button_rect: close_rect,
             });
 
-            x += tab_width;
+            x += equal_width;
         }
     }
 
@@ -901,8 +903,28 @@ impl PureTermApp {
                 );
             }
 
-            // Tab title text
-            let title_x = layout.rect.x + 8.0;
+            // Tab title text (centered)
+            let close_width = layout.close_button_rect.map_or(0.0, |cr| cr.w + TAB_CLOSE_BTN_OFFSET_X);
+            let available_width = layout.rect.w - close_width;
+            let max_text_width = available_width - TAB_PADDING_H;
+            let full_width = renderer.measure_text(&layout.title);
+
+            let (display_title, text_width) = if full_width <= max_text_width {
+                (layout.title.clone(), full_width)
+            } else {
+                // Truncate character by character
+                let mut byte_end = 0usize;
+                let mut w = 0.0f32;
+                for (i, ch) in layout.title.char_indices() {
+                    let cw = renderer.measure_text_char(ch);
+                    if w + cw > max_text_width { break; }
+                    w += cw;
+                    byte_end = i + ch.len_utf8();
+                }
+                (layout.title[..byte_end].to_string(), w)
+            };
+
+            let title_x = layout.rect.x + (available_width - text_width) / 2.0;
             let title_y = layout.rect.y + (TAB_BAR_HEIGHT - 16.0) / 2.0;
             let fg_color = if is_active {
                 [1.0f32, 1.0, 1.0, 1.0]
@@ -911,7 +933,7 @@ impl PureTermApp {
             };
 
             renderer.build_text_vertices(
-                &layout.title,
+                &display_title,
                 title_x,
                 title_y,
                 fg_color,
@@ -930,6 +952,21 @@ impl PureTermApp {
                     close_rect.x,
                     close_rect.y,
                     close_color,
+                    vertices, indices,
+                );
+            }
+
+            // Tab color indicator stripe
+            if let Some(ref color_hex) = layout.color {
+                let cv = parse_hex_color(color_hex);
+                renderer.build_rect_vertices(
+                    ViewportRect {
+                        x: layout.rect.x,
+                        y: layout.rect.y + layout.rect.h - 3.0,
+                        w: layout.rect.w,
+                        h: 3.0,
+                    },
+                    [cv[0] as f32 / 255.0, cv[1] as f32 / 255.0, cv[2] as f32 / 255.0, 1.0],
                     vertices, indices,
                 );
             }
@@ -1053,7 +1090,8 @@ impl ApplicationHandler for PureTermApp {
             | ref evt @ WindowEvent::MouseWheel { .. }
             | ref evt @ WindowEvent::ModifiersChanged { .. }
             | ref evt @ WindowEvent::Focused { .. }
-                if self.settings_panel.visible || self.profile_selector.visible || self.welcome_page.visible =>
+                if self.settings_panel.visible || self.profile_selector.visible || self.welcome_page.visible
+                    || self.rename_modal.is_some() || self.color_modal.is_some() =>
             {
                 if let (Some(ref mut egui_backend), Some(ref window)) = (&mut self.egui_backend, &self.window) {
                     let consumed = egui_backend.on_event(window, evt);
@@ -1235,6 +1273,8 @@ impl ApplicationHandler for PureTermApp {
                             let color_modal_rc = self.color_modal.take().map(|m| Rc::new(RefCell::new(m)));
 
                             let raw_input = egui_backend.winit_state.take_egui_input(self.window.as_ref().unwrap());
+                            let mut rename_done = false;
+                            let mut color_done = false;
                             let full_output = egui_backend.run(raw_input, |ctx| {
                                 // Settings panel
                                 if settings_visible {
@@ -1265,7 +1305,8 @@ impl ApplicationHandler for PureTermApp {
                                 if let Some(ref rc_modal) = rename_modal_rc {
                                     let mut modal = rc_modal.borrow_mut();
                                     let tab_id = modal.tab_id;
-                                    let mut close = false;
+                                    let mut close_ok = false;
+                                    let mut close_cancel = false;
                                     egui::Window::new("Rename Tab")
                                         .collapsible(false)
                                         .resizable(false)
@@ -1278,22 +1319,24 @@ impl ApplicationHandler for PureTermApp {
                                                         .desired_width(200.0)
                                                 );
                                             });
-                                            let ok_clicked = ui.button("OK").clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter));
+                                            let ok_clicked = ui.button("OK").clicked();
                                             let cancel_clicked = ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape));
                                             if ok_clicked {
-                                                close = true;
+                                                close_ok = true;
                                             }
                                             if cancel_clicked {
-                                                // Cancel: just close without saving
-                                                self.rename_modal = None;
-                                                return;
+                                                close_cancel = true;
                                             }
                                         });
-                                    if close {
+                                    if close_ok {
                                         self.rename_modal = Some(RenameModalState {
                                             tab_id,
                                             new_title: modal.new_title.clone(),
                                         });
+                                        rename_done = true;
+                                    } else if close_cancel {
+                                        self.rename_modal = None;
+                                        rename_done = true;
                                     }
                                 }
 
@@ -1301,7 +1344,8 @@ impl ApplicationHandler for PureTermApp {
                                 if let Some(ref rc_modal) = color_modal_rc {
                                     let mut modal = rc_modal.borrow_mut();
                                     let tab_id = modal.tab_id;
-                                    let mut close = false;
+                                    let mut close_ok = false;
+                                    let mut close_cancel = false;
                                     egui::Window::new("Tab Color")
                                         .collapsible(false)
                                         .resizable(false)
@@ -1346,23 +1390,58 @@ impl ApplicationHandler for PureTermApp {
                                             ui.add_space(8.0);
                                             ui.horizontal(|ui| {
                                                 if ui.button("OK").clicked() {
-                                                    close = true;
+                                                    close_ok = true;
                                                 }
                                                 if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                                    close = true;
+                                                    close_cancel = true;
                                                 }
                                             });
                                         });
-                                    if close {
+                                    if close_ok {
                                         self.color_modal = Some(ColorModalState {
                                             tab_id,
                                             color: modal.color.clone(),
                                         });
+                                        color_done = true;
+                                    } else if close_cancel {
+                                        self.color_modal = None;
+                                        color_done = true;
                                     }
                                 }
                             });
 
                             // Apply results from modals
+                            // Apply rename modal result (only set when OK was clicked)
+                            if let Some(rename_state) = self.rename_modal.take() {
+                                app.tab_manager.set_title(rename_state.tab_id, rename_state.new_title);
+                            }
+                            // Apply color modal result (only set when OK was clicked)
+                            if let Some(color_state) = self.color_modal.take() {
+                                app.tab_manager.set_color(color_state.tab_id, Some(color_state.color));
+                            }
+                            // Restore modal state if still active (neither OK nor Cancel was clicked)
+                            if !rename_done && rename_modal_rc.is_some() {
+                                let m = rename_modal_rc.as_ref().unwrap().borrow();
+                                self.rename_modal = Some(RenameModalState {
+                                    tab_id: m.tab_id,
+                                    new_title: m.new_title.clone(),
+                                });
+                            }
+                            if !color_done && color_modal_rc.is_some() {
+                                let m = color_modal_rc.as_ref().unwrap().borrow();
+                                self.color_modal = Some(ColorModalState {
+                                    tab_id: m.tab_id,
+                                    color: m.color.clone(),
+                                });
+                            }
+                            // Check if theme changed and re-resolve color scheme
+                            if app.config.appearance.theme != self.color_scheme.name {
+                                let theme_service = pureterm_core::theme::ThemeService::new();
+                                if let Some(scheme) = theme_service.get_scheme(&app.config.appearance.theme) {
+                                    self.color_scheme = scheme.clone();
+                                }
+                            }
+
                             if let Some(profile) = profile_connect_request {
                                 // Connect with profile and request redraw
                                 drop(full_output);
@@ -1412,6 +1491,11 @@ impl ApplicationHandler for PureTermApp {
             WindowEvent::KeyboardInput { event, .. } => {
                 // Only process key press events, ignore releases
                 if event.state != ElementState::Pressed {
+                    return;
+                }
+
+                // Skip terminal input when a modal is open (let egui handle it)
+                if self.rename_modal.is_some() || self.color_modal.is_some() {
                     return;
                 }
 
@@ -1717,6 +1801,9 @@ impl ApplicationHandler for PureTermApp {
                                                         TabContent::Pane(pane_id) => {
                                                             self.focused_pane_id = Some(*pane_id);
                                                             self.split_root = None;
+                                                            if let Some(pane) = self.panes.get_mut(pane_id) {
+                                                                pane.mark_dirty();
+                                                            }
                                                         }
                                                         TabContent::Split(split_ref) => {
                                                             // TODO: restore split state per tab
