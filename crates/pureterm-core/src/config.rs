@@ -51,7 +51,9 @@ pub struct AppearanceConfig {
     #[serde(default = "default_tabs_location")]
     pub tabs_location: String,    // 标签栏位置：top 或 bottom
     #[serde(default = "default_theme")]
-    pub theme: String,           // 主题名称
+    pub theme: String,           // 终端配色方案名称
+    #[serde(default = "default_ui_theme")]
+    pub ui_theme: String,        // 界面主题：dark / light
     #[serde(default = "default_frame")]
     pub frame: String,           // 窗口边框样式
     #[serde(default)]
@@ -73,6 +75,7 @@ impl Default for AppearanceConfig {
         Self {
             tabs_location: default_tabs_location(),
             theme: default_theme(),
+            ui_theme: default_ui_theme(),
             frame: default_frame(),
             opacity: 1.0,
             show_tab_bar: true,
@@ -86,6 +89,7 @@ impl Default for AppearanceConfig {
 
 fn default_tabs_location() -> String { "top".into() }
 fn default_theme() -> String { "dark".into() }
+fn default_ui_theme() -> String { "dark".into() }
 fn default_frame() -> String { "thin".into() }
 fn default_true() -> bool { true }
 fn default_corner_radius() -> f32 { 16.0 }

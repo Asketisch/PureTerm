@@ -18,6 +18,8 @@ pub mod tabs;
 pub mod tab_recovery;
 pub mod tab_bar;
 pub mod terminal;
+pub mod theme;
+pub mod tokens;
 pub mod welcome;
 
 pub use app::App;
@@ -31,4 +33,5 @@ pub use split::{SplitContainer, PaneRect, SplitSide, DividerInfo, compute_pane_r
 pub use tabs::TabManager;
 pub use tab_recovery::{TabRecovery, SavedTab, SavedWindowState};
 pub use terminal::TerminalPane;
+pub use theme::{ColorTheme, apply_theme, set_theme, dark_mode, light_mode, dark_color_theme, light_color_theme};
 pub use welcome::WelcomePage;

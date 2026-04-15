@@ -111,12 +111,34 @@ impl SettingsPanel {
         ui.heading("外观设置");
         ui.add_space(8.0);
 
-        // 主题选择
+        // 界面主题 (dark/light)
+        let ui_theme_label = match appearance.ui_theme.as_str() {
+            "light" => "浅色",
+            _ => "深色",
+        };
+        ComboBox::from_label("界面主题")
+            .selected_text(ui_theme_label)
+            .show_ui(ui, |ui| {
+                if ui.selectable_label(appearance.ui_theme == "dark", "深色").clicked() {
+                    appearance.ui_theme = "dark".to_string();
+                    ui.ctx().set_theme(egui::ThemePreference::Dark);
+                    changed = true;
+                }
+                if ui.selectable_label(appearance.ui_theme == "light", "浅色").clicked() {
+                    appearance.ui_theme = "light".to_string();
+                    ui.ctx().set_theme(egui::ThemePreference::Light);
+                    changed = true;
+                }
+            });
+
+        ui.add_space(8.0);
+
+        // 终端配色方案
         let theme_service = ThemeService::new();
         let themes: Vec<&str> = theme_service.list_schemes();
         let current = &appearance.theme;
 
-        ComboBox::from_label("主题")
+        ComboBox::from_label("终端配色")
             .selected_text(current.as_str())
             .show_ui(ui, |ui| {
                 for theme in &themes {

@@ -25,6 +25,7 @@ use pureterm_ui::context_menu::{ContextMenuState, MenuAction,
     MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT};
 use pureterm_ui::profile_selector::ProfileSelector;
 use pureterm_ui::settings::SettingsPanel;
+use pureterm_ui::{apply_theme, set_theme};
 use quake_mode::QuakeMode;
 use pureterm_ui::split::{SplitContainer, Direction, SplitSide, PaneRect, DividerInfo,
     compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point};
@@ -1002,6 +1003,9 @@ impl ApplicationHandler for PureTermApp {
                 surface_format,
                 Arc::clone(&window),
             );
+
+            // Apply PureTerm theme to egui context (notedeck-inspired design system)
+            apply_theme(&egui_backend.context, &config.get().appearance.ui_theme);
 
             let (cols, rows) = renderer.pixel_to_cells(size.width, size.height);
 
