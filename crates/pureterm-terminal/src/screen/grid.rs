@@ -39,13 +39,12 @@ pub struct Grid {
 impl Grid {
     pub fn new(cols: usize, rows: usize, scrollback: usize) -> Self {
         let visible_rows = rows;
-        let total_rows = rows + scrollback;
-        let grid_rows = (0..total_rows)
+        let grid_rows = (0..visible_rows)
             .map(|_| (0..cols).map(|_| Cell::blank()).collect())
             .collect();
-        let grid_marks = vec![None; total_rows];
-        let grid_wrapped = vec![false; total_rows];
-        let grid_double = vec![DoubleMode::Normal; total_rows];
+        let grid_marks = vec![None; visible_rows];
+        let grid_wrapped = vec![false; visible_rows];
+        let grid_double = vec![DoubleMode::Normal; visible_rows];
 
         Self {
             rows: grid_rows,
@@ -98,15 +97,16 @@ impl Grid {
     /// Scroll up by one line, adding a new blank line at the bottom.
     pub fn scroll_up(&mut self) {
         let new_row = (0..self.cols).map(|_| Cell::blank()).collect();
-        // If we're at the scrollback limit, remove the oldest row
         if self.rows.len() > self.visible_rows + self.scrollback_limit {
             self.rows.remove(0);
             self.marks.remove(0);
             self.wrapped.remove(0);
+            self.double_mode.remove(0);
         }
         self.rows.push(new_row);
         self.marks.push(None);
         self.wrapped.push(false);
+        self.double_mode.push(DoubleMode::Normal);
     }
 
     /// Scroll down by one line.
@@ -118,6 +118,13 @@ impl Grid {
             self.rows.insert(start, new_row);
             self.marks.insert(start, None);
             self.wrapped.insert(start, false);
+            self.double_mode.insert(start, DoubleMode::Normal);
+        }
+        if self.rows.len() > self.visible_rows + self.scrollback_limit {
+            self.rows.remove(0);
+            self.marks.remove(0);
+            self.wrapped.remove(0);
+            self.double_mode.remove(0);
         }
     }
 

@@ -55,15 +55,19 @@ ${BOLD}模式${RESET}:
   debug     开发构建（dev profile）
   release   发布构建（LTO + strip 优化）
   app       发布构建 + 打包为平台应用包
+  clean     清除所有构建缓存
 
 ${BOLD}选项${RESET}:
+  --clean             构建前清除增量编译缓存（推荐字体/资源变更后使用）
   --target <triple>   指定交叉编译目标（如 aarch64-apple-darwin）
   -h, --help          显示此帮助信息
 
 ${BOLD}示例${RESET}:
   ./build.sh debug
+  ./build.sh --clean debug        # 清除缓存后构建（解决增量编译问题）
   ./build.sh release
   ./build.sh app
+  ./build.sh clean                # 仅清除缓存
   ./build.sh --target aarch64-apple-darwin release
 
 EOF
@@ -92,6 +96,32 @@ detect_platform() {
 }
 
 # =============================================================================
+# 清除缓存
+# =============================================================================
+
+# 涉及 include_bytes! 的 crate 列表，增量编译可能无法正确追踪嵌入资源变更
+readonly EMBEDDED_RESOURCE_CRATES=(pureterm-gui)
+
+do_clean() {
+    local mode="${1:-all}"
+
+    if [ "$mode" = "all" ]; then
+        step "清除所有构建缓存..."
+        cargo clean
+        success "已清除 target/ 下所有构建产物"
+    else
+        step "清除增量编译缓存（保留依赖）..."
+        for crate in "${EMBEDDED_RESOURCE_CRATES[@]}"; do
+            cargo clean -p "$crate" 2>/dev/null && \
+                info "已清除 ${crate}" || true
+        done
+        cargo clean -p "${BINARY_NAME}" 2>/dev/null && \
+            info "已清除 ${BINARY_NAME}" || true
+        success "增量编译缓存已清除"
+    fi
+}
+
+# =============================================================================
 # 构建函数
 # =============================================================================
 
@@ -105,6 +135,10 @@ get_binary_path() {
 }
 
 build_debug() {
+    if [ "$CLEAN_BEFORE_BUILD" = "true" ]; then
+        do_clean incremental
+    fi
+
     step "构建 debug 版本 (dev profile)..."
     local cmd="cargo build --bin ${BINARY_NAME}"
     if [ -n "${TARGET_TRIPLE:-}" ]; then
@@ -125,6 +159,10 @@ build_debug() {
 }
 
 build_release() {
+    if [ "$CLEAN_BEFORE_BUILD" = "true" ]; then
+        do_clean incremental
+    fi
+
     step "构建 release 版本 (LTO + strip 优化)..."
     local cmd="cargo build --release --bin ${BINARY_NAME}"
     if [ -n "${TARGET_TRIPLE:-}" ]; then
@@ -298,16 +336,21 @@ EOF
 
 TARGET_TRIPLE=""
 MODE=""
+CLEAN_BEFORE_BUILD="false"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        debug|release|app)
+        debug|release|app|clean)
             if [ -n "$MODE" ]; then
                 error "只能指定一个模式"
                 usage
                 exit 1
             fi
             MODE="$1"
+            shift
+            ;;
+        --clean)
+            CLEAN_BEFORE_BUILD="true"
             shift
             ;;
         --target)
@@ -353,4 +396,5 @@ case "$MODE" in
     debug)   build_debug   ;;
     release) build_release ;;
     app)     build_app     ;;
+    clean)   do_clean all  ;;
 esac

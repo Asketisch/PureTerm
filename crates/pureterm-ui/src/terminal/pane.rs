@@ -269,6 +269,11 @@ impl TerminalPane {
         self.start_output_processing(receiver, waker);
     }
 
+    /// Hard cap on the pending output buffer to prevent unbounded memory growth.
+    /// 16 MiB is generous — even at maximum PTY throughput this represents
+    /// several seconds of output, far more than a single frame can display.
+    const MAX_OUTPUT_BUFFER_BYTES: usize = 16 * 1024 * 1024;
+
     /// Start processing session output in a background thread.
     fn start_output_processing(&mut self, mut receiver: broadcast::Receiver<Vec<u8>>, waker: Option<Arc<dyn Fn() + Send + Sync>>) {
         let output_buffer = Arc::clone(&self.output_buffer);
@@ -278,6 +283,16 @@ impl TerminalPane {
                     match receiver.blocking_recv() {
                         Ok(data) => {
                             if let Ok(mut buffer) = output_buffer.lock() {
+                                let new_len = buffer.len() + data.len();
+                                if new_len > Self::MAX_OUTPUT_BUFFER_BYTES {
+                                    let excess = new_len - Self::MAX_OUTPUT_BUFFER_BYTES;
+                                    buffer.drain(..excess);
+                                    log::warn!(
+                                        "output_buffer exceeded {} MiB cap, dropped {} bytes of oldest data",
+                                        Self::MAX_OUTPUT_BUFFER_BYTES / (1024 * 1024),
+                                        excess,
+                                    );
+                                }
                                 buffer.extend(data);
                             }
                             if let Some(ref waker) = waker {

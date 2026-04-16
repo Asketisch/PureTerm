@@ -63,9 +63,37 @@ impl Session for LocalSession {
             cmd.cwd(cwd);
         }
 
-        // Apply shell integration if supported
+        // Build child environment: start from inherited env, then ensure
+        // critical variables are set. When launched from Finder (double-click),
+        // the inherited env is minimal — LANG, PATH, etc. may be missing.
         let mut env: HashMap<String, String> = std::env::vars().collect();
         env.insert("TERM".to_string(), "xterm-256color".to_string());
+        env.insert("COLORTERM".to_string(), "truecolor".to_string());
+
+        // Ensure UTF-8 locale — required for correct Unicode rendering
+        if !env.contains_key("LANG") {
+            env.insert("LANG".to_string(), "en_US.UTF-8".to_string());
+        }
+        for lc_var in ["LC_ALL", "LC_CTYPE"] {
+            if !env.contains_key(lc_var) {
+                env.insert(lc_var.to_string(), "en_US.UTF-8".to_string());
+            }
+        }
+
+        // Ensure PATH includes common tool directories (Homebrew, local bins)
+        if let Some(path) = env.get("PATH") {
+            if !path.contains("/usr/local/bin") {
+                let mut extended = path.clone();
+                for extra in ["/usr/local/bin", "/opt/homebrew/bin", "/opt/homebrew/sbin"] {
+                    if std::path::Path::new(extra).is_dir() && !extended.contains(extra) {
+                        extended = format!("{}:{}", extra, extended);
+                    }
+                }
+                env.insert("PATH".to_string(), extended);
+            }
+        }
+
+        // Apply shell integration if supported
         shell_integration::apply_env(shell, &mut env);
 
         // Set the environment for the command
