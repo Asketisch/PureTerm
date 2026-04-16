@@ -261,4 +261,4 @@ UI 层通过 `terminal.take_bell()` 轮询检查 bell 触发。返回 true 后�
 
 ## 父级导航
 
-← [pureterm-terminal/AGENTS.md](../AGENTS.md)
+← [pureterm-terminal/AGENTS.md](../../AGENTS.md)

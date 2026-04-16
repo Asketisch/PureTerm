@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CursorStyle {
     Block,
+    /// Hollow/outline block, typically shown when terminal is unfocused.
+    BlockHollow,
     Underline,
     Beam,
 }

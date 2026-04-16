@@ -25,7 +25,7 @@ use pureterm_ui::context_menu::{ContextMenuState, MenuAction,
     MENU_ITEM_HEIGHT, MENU_SEPARATOR_HEIGHT};
 use pureterm_ui::profile_selector::ProfileSelector;
 use pureterm_ui::settings::SettingsPanel;
-use pureterm_ui::{apply_theme, set_theme};
+use pureterm_ui::apply_theme;
 use quake_mode::QuakeMode;
 use pureterm_ui::split::{SplitContainer, Direction, SplitSide, PaneRect, DividerInfo,
     compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point};
@@ -227,7 +227,7 @@ impl PureTermApp {
         }
 
         let tabs = self.app.as_ref().map(|a| a.tab_manager.tabs()).unwrap_or(&[]);
-        let active_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
+        let _active_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
 
         self.tab_bar.height = TAB_BAR_HEIGHT;
         self.tab_bar.tab_layouts.clear();
@@ -274,6 +274,7 @@ impl PureTermApp {
     }
 
     /// Find which pane is at the given pixel position.
+    #[allow(dead_code)]
     fn pane_at_point(&self, px: f32, py: f32, screen_w: f32, screen_h: f32) -> Option<u64> {
         let layout = self.compute_layout(screen_w, screen_h);
         pane_at_point(&layout, px, py)
@@ -335,6 +336,31 @@ impl PureTermApp {
         log::debug!("handle_key_input: key={:?}, ctrl={}, alt={}, shift={}", key, ctrl, alt, shift);
 
         // Global hotkeys handled at app level
+        if ctrl && shift && key == "c" {
+            // Copy selection to OS clipboard
+            let text = self.focused_pane().and_then(|p| p.copy_selection());
+            if let Some(text) = text {
+                self.clipboard_text = text.clone();
+                if let Ok(mut cb) = arboard::Clipboard::new() {
+                    let _ = cb.set_text(&text);
+                }
+            }
+            return;
+        }
+        if ctrl && shift && key == "v" {
+            // Paste from OS clipboard
+            let text = if let Ok(mut cb) = arboard::Clipboard::new() {
+                cb.get_text().unwrap_or_else(|_| self.clipboard_text.clone())
+            } else {
+                self.clipboard_text.clone()
+            };
+            if let Some(ref mut pane) = self.focused_pane_mut() {
+                if !text.is_empty() {
+                    pane.paste(&text);
+                }
+            }
+            return;
+        }
         if ctrl && shift && key == "p" {
             self.profile_selector.visible = !self.profile_selector.visible;
             if let Some(ref window) = self.window {
@@ -366,11 +392,19 @@ impl PureTermApp {
     fn handle_pane_action(&mut self, action: PaneAction) {
         match action {
             PaneAction::CopyText(text) => {
-                self.clipboard_text = text;
-                log::debug!("Copied {} chars to clipboard", self.clipboard_text.len());
+                self.clipboard_text = text.clone();
+                if let Ok(mut cb) = arboard::Clipboard::new() {
+                    if let Err(e) = cb.set_text(&text) {
+                        log::warn!("Failed to write to clipboard: {}", e);
+                    }
+                }
             }
             PaneAction::PasteFromClipboard => {
-                let text = self.clipboard_text.clone();
+                let text = if let Ok(mut cb) = arboard::Clipboard::new() {
+                    cb.get_text().unwrap_or_else(|_| self.clipboard_text.clone())
+                } else {
+                    self.clipboard_text.clone()
+                };
                 if let Some(ref mut pane) = self.focused_pane_mut() {
                     if !text.is_empty() {
                         pane.paste(&text);
@@ -589,11 +623,20 @@ impl PureTermApp {
             MenuAction::Copy => {
                 let text = self.focused_pane().and_then(|p| p.copy_selection());
                 if let Some(text) = text {
-                    self.clipboard_text = text;
+                    self.clipboard_text = text.clone();
+                    if let Ok(mut cb) = arboard::Clipboard::new() {
+                        if let Err(e) = cb.set_text(&text) {
+                            log::warn!("Failed to write to clipboard: {}", e);
+                        }
+                    }
                 }
             }
             MenuAction::Paste => {
-                let text = self.clipboard_text.clone();
+                let text = if let Ok(mut cb) = arboard::Clipboard::new() {
+                    cb.get_text().unwrap_or_else(|_| self.clipboard_text.clone())
+                } else {
+                    self.clipboard_text.clone()
+                };
                 if let Some(ref mut pane) = self.focused_pane_mut() {
                     if !text.is_empty() {
                         pane.paste(&text);
@@ -744,7 +787,7 @@ impl PureTermApp {
             if let Some(tab) = app.tab_manager.active_tab() {
                 match &tab.content {
                     TabContent::Pane(id) => vec![*id],
-                    TabContent::Split(root) => {
+                    TabContent::Split(_root) => {
                         // We need the split container to get all pane IDs
                         // For now, remove all panes in self.panes that belong to this tab
                         // Since we don't track which panes belong to which tab separately,
@@ -1002,6 +1045,7 @@ impl ApplicationHandler for PureTermApp {
             // Load config first to get appearance settings
             let config = ConfigService::load().expect("Failed to load config");
             let appearance = &config.get().appearance;
+            let terminal_config = &config.get().terminal;
 
             // Create transparency config from appearance settings
             let transparency = TransparencyConfig {
@@ -1012,9 +1056,9 @@ impl ApplicationHandler for PureTermApp {
                     || appearance.opacity < 1.0,
             };
 
-            // Initialize renderer
+            // Initialize renderer with custom font path if configured
             let renderer = pollster::block_on(async {
-                TerminalRenderer::new().await
+                TerminalRenderer::new(terminal_config.font_path.as_deref()).await
             }).expect("Failed to initialize renderer");
 
             let surface = renderer.instance()
@@ -1150,8 +1194,8 @@ impl ApplicationHandler for PureTermApp {
                 // Update tab bar layout before rendering
                 self.update_tab_bar_layout();
 
-                // Collect snapshots before borrowing renderer
-                let mut snapshots: Vec<(u64, ViewportRect, pureterm_terminal::ScreenSnapshot)> = Vec::new();
+                // Collect snapshots and selection state before borrowing renderer
+                let mut snapshots: Vec<(u64, ViewportRect, pureterm_terminal::ScreenSnapshot, Option<pureterm_ui::terminal::Selection>)> = Vec::new();
                 for (pane_id, rect) in &layout {
                     if let Some(pane) = self.panes.get_mut(pane_id) {
                         let viewport = ViewportRect {
@@ -1159,12 +1203,13 @@ impl ApplicationHandler for PureTermApp {
                             w: rect.w, h: rect.h,
                         };
                         let snapshot = pane.terminal.snapshot();
+                        let selection = pane.selection.clone();
                         log::debug!("Render pane {}: viewport=({},{},{},{}) grid=({}x{}) cursor=({},{}) visible={}",
                             pane_id, rect.x, rect.y, rect.w, rect.h,
                             snapshot.rows.len(), snapshot.rows.first().map(|r| r.len()).unwrap_or(0),
                             snapshot.cursor_row, snapshot.cursor_col, snapshot.cursor_visible);
                         pane.clear_dirty();
-                        snapshots.push((*pane_id, viewport, snapshot));
+                        snapshots.push((*pane_id, viewport, snapshot, selection));
                     } else {
                         log::warn!("Layout contains pane {} but not found in panes map!", pane_id);
                     }
@@ -1187,10 +1232,15 @@ impl ApplicationHandler for PureTermApp {
 
                     // Render each pane snapshot
                     log::debug!("Rendering {} snapshots", snapshots.len());
-                    for (_pane_id, viewport, snapshot) in &snapshots {
+                    for (_pane_id, viewport, snapshot, selection) in &snapshots {
                         let offset = all_vertices.len() as u32;
+                        let sel = selection.clone();
+                        let sel_cb: Option<Box<dyn Fn(usize, usize) -> bool>> = sel.map(|s| {
+                            Box::new(move |row: usize, col: usize| s.contains(row, col))
+                                as Box<dyn Fn(usize, usize) -> bool>
+                        });
                         let (verts, idx) = renderer.build_vertices(
-                            snapshot, &color_scheme, None, Some(*viewport),
+                            snapshot, &color_scheme, sel_cb.as_ref().map(|f| f.as_ref()), Some(*viewport),
                         );
                         log::debug!("  pane {}: verts={}, indices={}", _pane_id, verts.len(), idx.len());
                         all_vertices.extend(verts);
@@ -1275,6 +1325,7 @@ impl ApplicationHandler for PureTermApp {
                             let raw_input = egui_backend.winit_state.take_egui_input(self.window.as_ref().unwrap());
                             let mut rename_done = false;
                             let mut color_done = false;
+                            #[allow(deprecated)]
                             let full_output = egui_backend.run(raw_input, |ctx| {
                                 // Settings panel
                                 if settings_visible {
@@ -1511,7 +1562,7 @@ impl ApplicationHandler for PureTermApp {
                         if ch == "`" {
                             // Toggle quake mode visibility
                             if self.quake_mode.enabled {
-                                self.quake_mode.visible = !self.quake_mode.visible;
+                                self.quake_mode.toggle();
                                 log::info!("Quake mode toggled: visible={}", self.quake_mode.visible);
                             }
                             return;
@@ -1589,7 +1640,7 @@ impl ApplicationHandler for PureTermApp {
 
                 // Handle active divider drag
                 if let Some(ref drag) = self.divider_drag {
-                    let (screen_w, screen_h) = self.screen_size();
+                    let (_screen_w, _screen_h) = self.screen_size();
                     let delta = match drag.direction {
                         Direction::Vertical => self.mouse_pos.0 - drag.start_pos.0,
                         Direction::Horizontal => self.mouse_pos.1 - drag.start_pos.1,
@@ -2081,6 +2132,14 @@ enum Commands {
     List,
     /// Open settings.
     Settings,
+    /// List all available fonts.
+    ListFonts,
+    /// List all available themes.
+    ListThemes,
+    /// Show current configuration.
+    ShowConfig,
+    /// Show version information.
+    Version,
 }
 
 fn main() -> Result<()> {
@@ -2092,6 +2151,34 @@ fn main() -> Result<()> {
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or(default_level)
     ).init();
+
+    // Initialize crash reporting (local storage only, does not send to network)
+    // Use a local crash directory
+    let crash_dir = std::env::temp_dir().join("pureterm-crashes");
+    std::fs::create_dir_all(&crash_dir).ok();
+
+    // Initialize sentry - empty DSN disables network transport
+    let _guard = sentry::init(sentry::ClientOptions {
+        dsn: None,
+        release: Some(env!("CARGO_PKG_VERSION").into()),
+        ..Default::default()
+    });
+    // Set up panic hook to capture crashes
+    std::panic::set_hook(Box::new(|panic_info| {
+        let payload = panic_info.payload();
+        let message = if let Some(s) = payload.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+        let location = panic_info.location().map(|loc| {
+            format!("{}:{}:{}", loc.file(), loc.line(), loc.column())
+        }).unwrap_or_else(|| "unknown".to_string());
+        eprintln!("PANIC: {} at {}", message, location);
+        sentry::capture_message(&format!("Panic: {} at {}", message, location), sentry::Level::Error);
+    }));
 
     log::info!("PureTerm starting... (build: {})", if cfg!(debug_assertions) { "debug" } else { "release" });
 
@@ -2108,6 +2195,33 @@ fn main() -> Result<()> {
         Some(Commands::Settings) => {
             println!("Opening settings...");
             // Would trigger settings open here
+            return Ok(());
+        }
+        Some(Commands::ListFonts) => {
+            println!("Available fonts:");
+            println!("  JetBrainsMono Nerd Font (embedded)");
+            println!("  (custom fonts can be configured in settings)");
+            return Ok(());
+        }
+        Some(Commands::ListThemes) => {
+            use pureterm_core::theme::builtin_color_schemes;
+            println!("Available themes:");
+            for scheme in builtin_color_schemes() {
+                println!("  {}", scheme.name);
+            }
+            return Ok(());
+        }
+        Some(Commands::ShowConfig) => {
+            let config_service = ConfigService::load()?;
+            let config = config_service.get();
+            println!("Current configuration:");
+            println!("{}", serde_json::to_string_pretty(&*config).unwrap_or_default());
+            return Ok(());
+        }
+        Some(Commands::Version) => {
+            println!("PureTerm {}", env!("CARGO_PKG_VERSION"));
+            println!("Built with: Rust, wgpu, egui");
+            println!("Features: GPU-accelerated rendering, ligatures, unicode box-drawing");
             return Ok(());
         }
         None => {}

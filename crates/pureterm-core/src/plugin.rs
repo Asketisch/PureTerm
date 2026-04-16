@@ -1,4 +1,3 @@
-use std::any::Any;
 
 /// Trait for PureTerm plugins.
 pub trait Plugin: Send + Sync {

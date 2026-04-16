@@ -174,4 +174,4 @@ SGR 格式：`\x1b[<Pb;Px;PwM`（Down）、`\x1b[<Pb;Px;PwM`（Up）、`\x1b[<Pb
 
 ## 父级导航
 
-← [pureterm-terminal/AGENTS.md](../AGENTS.md)
+← [pureterm-terminal/AGENTS.md](../../AGENTS.md)

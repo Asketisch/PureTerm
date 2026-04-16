@@ -3,10 +3,7 @@
 //! Provides tunneling capabilities through an SSH connection.
 
 use anyhow::{Context, Result};
-use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::net::TcpListener;
 
 /// Type of port forwarding.
 #[derive(Debug, Clone)]
@@ -123,7 +120,7 @@ pub async fn start_local_forward(
     remote_host: &str,
     remote_port: u16,
 ) -> Result<()> {
-    let listener = TcpListener::bind(format!("{}:{}", local_addr, local_port))
+    let _listener = TcpListener::bind(format!("{}:{}", local_addr, local_port))
         .await
         .context("Failed to bind local port")?;
 

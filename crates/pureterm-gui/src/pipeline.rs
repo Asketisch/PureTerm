@@ -62,7 +62,7 @@ impl TextPipeline {
     pub fn new(
         device: &wgpu::Device,
         config: &wgpu::SurfaceConfiguration,
-        atlas_texture: &wgpu::Texture,
+        _atlas_texture: &wgpu::Texture,
         atlas_view: &wgpu::TextureView,
     ) -> Self {
         // 创建 shader 模块

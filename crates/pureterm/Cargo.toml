@@ -20,6 +20,9 @@ tokio = { workspace = true }
 env_logger = { workspace = true }
 log = { workspace = true }
 anyhow = { workspace = true }
+arboard = { workspace = true }
 pollster = "0.4"
 clap = { version = "4", features = ["derive"] }
 uuid = { workspace = true }
+serde_json = { workspace = true }
+sentry = { version = "0.32", features = ["panic", "backtrace"] }

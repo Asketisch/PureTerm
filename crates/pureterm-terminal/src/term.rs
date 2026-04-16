@@ -1,9 +1,12 @@
 use crate::parser::{VteParser, VtePerform, ScreenSnapshot};
+use crate::search::{SearchState, SearchMatch, SearchDirection, search_grid};
 
 /// Main terminal structure that combines parser and screen.
 pub struct Terminal {
     perform: VtePerform,
     parser: VteParser,
+    /// Search state.
+    pub search: SearchState,
 }
 
 impl Terminal {
@@ -11,6 +14,7 @@ impl Terminal {
         Self {
             perform: VtePerform::new(cols, rows, scrollback),
             parser: VteParser::new(),
+            search: SearchState::new(),
         }
     }
 
@@ -101,20 +105,136 @@ impl Terminal {
         self.perform.grid.history()
     }
 
+    /// Generate focus-in sequence (ESC[I). Should be sent when terminal gains focus
+    /// and FOCUS_IN_OUT mode (1004) is active.
+    pub fn focus_in_sequence() -> &'static [u8] {
+        b"\x1b[I"
+    }
+
+    /// Generate focus-out sequence (ESC[O). Should be sent when terminal loses focus
+    /// and FOCUS_IN_OUT mode (1004) is active.
+    pub fn focus_out_sequence() -> &'static [u8] {
+        b"\x1b[O"
+    }
+
+    /// Check if focus events should be reported.
+    pub fn should_report_focus(&self) -> bool {
+        self.perform.mode.contains(crate::mode::TermMode::FOCUS_IN_OUT)
+    }
+
+    /// Check if modifyOtherKeys mode is active.
+    pub fn modify_other_keys(&self) -> bool {
+        self.perform.mode.contains(crate::mode::TermMode::MODIFY_OTHER_KEYS)
+    }
+
+    /// Get Kitty keyboard protocol flags as a bitmask.
+    /// Returns 0 if no Kitty keyboard flags are active.
+    pub fn kitty_keyboard_flags(&self) -> u8 {
+        let m = &self.perform.mode;
+        let mut flags = 0u8;
+        if m.contains(crate::mode::TermMode::KITTY_KEYBOARD_DISAMBIGUATE) {
+            flags |= 1;
+        }
+        if m.contains(crate::mode::TermMode::KITTY_KEYBOARD_REPORT_EVENTS) {
+            flags |= 2;
+        }
+        if m.contains(crate::mode::TermMode::KITTY_KEYBOARD_REPORT_ALTERNATES) {
+            flags |= 4;
+        }
+        if m.contains(crate::mode::TermMode::KITTY_KEYBOARD_REPORT_ALL) {
+            flags |= 8;
+        }
+        if m.contains(crate::mode::TermMode::KITTY_KEYBOARD_REPORT_ASSOCIATED) {
+            flags |= 16;
+        }
+        flags
+    }
+
+    /// Execute a search with the given query string.
+    /// Updates internal search state with all matches.
+    pub fn search(&mut self, query: &str) -> Result<(), regex::Error> {
+        let re = regex::Regex::new(query)?;
+        let visible: Vec<Vec<crate::screen::Cell>> = (0..self.perform.rows)
+            .filter_map(|r| self.perform.grid.visible_row(r).map(|r| r.to_vec()))
+            .collect();
+        // Collect history rows
+        let history = self.perform.rows;
+        let history_count = self.perform.grid.history();
+        let mut history_rows = Vec::with_capacity(history_count);
+        for i in 0..history_count {
+            if let Some(row) = self.perform.grid.history_row(i) {
+                history_rows.push(row.to_vec());
+            }
+        }
+        let all_matches = search_grid(&re, &visible, &history_rows, history);
+        self.search.query = Some(re);
+        self.search.matches = all_matches;
+        self.search.selected = if self.search.matches.is_empty() { None } else { Some(0) };
+        Ok(())
+    }
+
+    /// Move to the next search match.
+    pub fn search_next(&mut self) -> Option<&SearchMatch> {
+        if self.search.matches.is_empty() {
+            return None;
+        }
+        let count = self.search.matches.len();
+        let current = self.search.selected.unwrap_or(0);
+        let next = (current + 1) % count;
+        self.search.selected = Some(next);
+        self.search.direction = SearchDirection::Forward;
+        self.search.matches.get(next)
+    }
+
+    /// Move to the previous search match.
+    pub fn search_prev(&mut self) -> Option<&SearchMatch> {
+        if self.search.matches.is_empty() {
+            return None;
+        }
+        let count = self.search.matches.len();
+        let current = self.search.selected.unwrap_or(0);
+        let prev = if current == 0 { count - 1 } else { current - 1 };
+        self.search.selected = Some(prev);
+        self.search.direction = SearchDirection::Backward;
+        self.search.matches.get(prev)
+    }
+
+    /// Clear the current search.
+    pub fn clear_search(&mut self) {
+        self.search.clear();
+    }
+
+    /// Get the search state (read-only).
+    pub fn search_state(&self) -> &SearchState {
+        &self.search
+    }
+
     /// Get visible text content for copy.
     pub fn get_text(&self, start_row: usize, start_col: usize, end_row: usize, end_col: usize) -> String {
+        // Normalize: ensure start <= end regardless of drag direction
+        let (sr, sc, er, ec) = if start_row < end_row || (start_row == end_row && start_col <= end_col) {
+            (start_row, start_col, end_row, end_col)
+        } else {
+            (end_row, end_col, start_row, start_col)
+        };
         let mut text = String::new();
-        for row in start_row..=end_row.min(self.perform.rows - 1) {
-            let col_start = if row == start_row { start_col } else { 0 };
-            let col_end = if row == end_row { end_col.min(self.perform.cols - 1) } else { self.perform.cols - 1 };
+        for row in sr..=er.min(self.perform.rows - 1) {
+            let col_start = if row == sr { sc } else { 0 };
+            let col_end = if row == er { ec.min(self.perform.cols - 1) } else { self.perform.cols - 1 };
             if let Some(row_cells) = self.perform.grid.visible_row(row) {
                 for col in col_start..=col_end {
                     if col < row_cells.len() {
+                        // Skip spacer cells in text extraction
+                        if row_cells[col].wide == crate::screen::WideMode::SpacerTail
+                            || row_cells[col].wide == crate::screen::WideMode::SpacerHead
+                        {
+                            continue;
+                        }
                         text.push(row_cells[col].c);
                     }
                 }
             }
-            if row < end_row {
+            if row < er {
                 text.push('\n');
             }
         }
@@ -128,14 +248,20 @@ impl Terminal {
             if let Some(row_cells) = self.perform.grid.visible_row(row) {
                 let mut line = String::new();
                 let mut trailing = row_cells.len();
-                // Trim trailing spaces
+                // Trim trailing spaces (but not spacer tails)
                 for (i, cell) in row_cells.iter().enumerate().rev() {
-                    if cell.c != ' ' {
+                    if cell.c != ' ' || cell.wide != crate::screen::WideMode::Narrow {
                         trailing = i + 1;
                         break;
                     }
                 }
                 for cell in &row_cells[..trailing] {
+                    // Skip spacer cells
+                    if cell.wide == crate::screen::WideMode::SpacerTail
+                        || cell.wide == crate::screen::WideMode::SpacerHead
+                    {
+                        continue;
+                    }
                     line.push(cell.c);
                 }
                 text.push_str(&line);

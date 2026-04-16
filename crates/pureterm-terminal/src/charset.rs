@@ -92,14 +92,30 @@ pub fn map_char(charset: Charset, c: char) -> char {
     }
 }
 
-/// Get charset from designation code.
-/// Intermediate bytes determine the specific variant.
-pub fn charset_from_code(code: u8, _intermediates: &[u8]) -> Charset {
-    match code {
-        b'A' => Charset::ISO88591, // Also used for UK in some contexts
+/// Get charset from the designation byte (the final byte in ESC ( C, etc.).
+/// For ESC ( 0, the vte crate delivers intermediates=[0x28] and byte=0x30.
+/// This function takes the designation byte (0x30 = '0') directly.
+pub fn charset_from_designation(byte: u8) -> Charset {
+    match byte {
+        b'B' => Charset::ASCII,
+        b'A' => Charset::UK,
         b'0' => Charset::DecSpecialGraphics,
         b'1' => Charset::ISO88591,
         b'2' => Charset::ISO88591,
+        b'4' => Charset::Dutch,
+        b'5' => Charset::NorwegianDanish,
+        b'C' | b'R' => Charset::French,
+        b'f' => Charset::French,
+        b'7' => Charset::Swedish,
+        b'8' => Charset::Swedish,
+        b'D' | b'Q' => Charset::ISO88591,
+        b'9' => Charset::Italian,
+        b'K' => Charset::German,
+        b'Y' => Charset::Italian,
+        b'Z' => Charset::Spanish,
+        b'`' => Charset::NorwegianDanish,
+        b'E' | b'6' => Charset::NorwegianDanish,
+        b'%' => Charset::ISO88591,
         _ => Charset::ASCII,
     }
 }

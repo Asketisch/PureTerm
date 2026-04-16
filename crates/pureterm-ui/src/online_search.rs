@@ -81,7 +81,7 @@ impl OnlineSearchPanel {
 
                 // Results
                 ScrollArea::vertical().show(ui, |ui| {
-                    for (i, entry) in self.results.iter().enumerate() {
+                    for (_i, entry) in self.results.iter().enumerate() {
                         ui.group(|ui| {
                             ui.set_max_width(ui.available_width());
                             ui.colored_label(

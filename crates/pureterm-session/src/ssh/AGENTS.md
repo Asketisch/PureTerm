@@ -197,4 +197,4 @@ pub struct AgentForwardManager {
 
 ## 父级导航
 
-← [pureterm-session/AGENTS.md](../AGENTS.md)
+← [pureterm-session/AGENTS.md](../../AGENTS.md)

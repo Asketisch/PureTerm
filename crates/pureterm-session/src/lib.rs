@@ -1,14 +1,16 @@
 pub mod base;
 pub mod clone_shell;
+pub mod jump_host;
 pub mod local;
 pub mod local_provider;
 pub mod login_script;
 pub mod middleware;
 pub mod osc_processor;
 pub mod proxy;
-pub mod session_log;
 pub mod serial;
 pub mod serial_provider;
+pub mod session_log;
+pub mod shell_integration;
 pub mod ssh;
 pub mod ssh_provider;
 pub mod sync_input;
@@ -16,7 +18,6 @@ pub mod telnet;
 pub mod telnet_provider;
 pub mod xmodem;
 pub mod zmodem;
-pub mod jump_host;
 
 pub use base::{Session, ConnectParams};
 pub use local::LocalSession;

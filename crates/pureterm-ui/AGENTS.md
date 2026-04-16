@@ -21,24 +21,36 @@ src/
 ├── context_menu.rs      # 右键菜单（17 个 MenuAction）
 ├── explorer.rs          # 文件浏览器
 ├── focus_mode.rs        # 专注模式
+├── inspector.rs         # 终端检查器（调试面板）
 ├── jump_prompt.rs       # 跳转提示（Ctrl+;）
 ├── lock_screen.rs       # 锁屏
 ├── online_search.rs     # 在线搜索
+├── profile_selector.rs  # 连接配置选择器
 ├── quick_bar.rs         # 快速命令栏
-├── search.rs            # 搜索面板
-├── settings/            # 设置面板
-│   └── mod.rs
-├── tab_bar.rs         # 标签页栏 UI 组件
+├── search.rs            # 搜索面板（SlidingWindow + ViewportSearch）
+├── settings/
+│   ├── mod.rs          # 设置面板
+│   └── AGENTS.md       # 设置面板详解
 ├── split/
 │   ├── mod.rs           # 重导出（含 SplitSide、DividerInfo、divider_at_point 等）
 │   ├── container.rs     # SplitContainer + SplitChild + Direction + SplitSide
-│   └── layout.rs        # compute_pane_rects、compute_divider_rects、divider_at_point、PaneRect
+│   ├── layout.rs        # compute_pane_rects、compute_divider_rects、divider_at_point、PaneRect
+│   ├── split_tree.rs    # 分割树管理
+│   └── AGENTS.md        # 分割面板布局详解
+├── surface.rs           # Surface 表面管理
+├── tab_bar.rs           # 标签页栏 UI 组件
+├── tab_recovery.rs      # 标签页恢复
 ├── tabs/
 │   ├── mod.rs           # 重导出
-│   └── manager.rs       # TabManager + Tab + TabContent + ClosedTab
-└── terminal/
-    ├── mod.rs           # 重导出
-    └── pane.rs          # TerminalPane + Selection + PaneAction（含 4 方向 Split）
+│   ├── manager.rs       # TabManager + Tab + TabContent + ClosedTab
+│   └── AGENTS.md        # 标签页管理详解
+├── terminal/
+│   ├── mod.rs           # 重导出
+│   ├── pane.rs          # TerminalPane + Selection + PaneAction（含 4 方向 Split）
+│   └── AGENTS.md        # 终端面板详解
+├── theme.rs             # 主题管理
+├── tokens.rs            # UI token 定义
+└── welcome.rs           # 欢迎页面
 ```
 
 ## 模块详情
@@ -98,8 +110,11 @@ src/
 
 | 类型 | 说明 |
 |------|------|
-| `SearchPanel` | 搜索面板 UI |
-| `SearchOptions` | 搜索选项：大小写敏感、正则、整词 |
+| `SearchPanel` | 搜索面板 UI，含大小写敏感和正则模式 |
+| `SearchConfig` | 搜索配置：case_sensitive、regex_mode、direction |
+| `SearchThread` | 后台搜索线程（mpsc 通道通信） |
+| `SlidingWindow` | 跨页搜索滑动窗口（支持 scrollback） |
+| `ViewportSearch` | 可视区域搜索（指纹变更检测） |
 
 ### ai_chat.rs — AI 聊天面板
 
@@ -145,6 +160,26 @@ Ctrl+; 激活的快速跳转面板，可跳转到指定行号或匹配项。
 ### lock_screen.rs — 锁屏
 
 终端锁屏功能，输入密码解锁。
+
+### inspector.rs — 终端检查器
+
+调试面板，用于查看终端状态、渲染器信息、键盘事件和 VT 解析日志：
+
+| 类型 | 说明 |
+|------|------|
+| `InspectorState` | 检查器状态，包含可见性、终端信息、渲染器信息 |
+| `TerminalDebugInfo` | 终端调试信息：光标位置、屏幕尺寸、模式标志、标题、目录 |
+| `RendererDebugInfo` | 渲染器调试信息：帧计数、FPS、纹理内存、绘制调用 |
+| `KeyEventRecord` | 键盘事件历史记录：时间戳、按键、修饰键、是否消费 |
+
+**InspectorState 方法：**
+- `toggle()` — 切换可见性
+- `is_visible()` / `set_visible(bool)` — 检查/设置可见性
+- `update_terminal(info)` — 更新终端调试信息
+- `update_renderer(info)` — 更新渲染器调试信息
+- `record_key(key, mods, consumed)` — 记录键盘事件
+- `log_vt(event)` — 记录 VT 事件
+- `draw(ui)` — 绘制检查器 UI（包含 4 个可折叠部分）
 
 ### online_search.rs — 在线搜索
 

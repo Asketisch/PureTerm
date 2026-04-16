@@ -14,18 +14,27 @@ src/
 ├── ai.rs            # AI 集成（OpenAI/Claude/Ollama）
 ├── auto_profile.rs  # 自动配置文件选择
 ├── clipboard.rs     # 剪贴板管理
-├── config.rs        # AppConfig + ConfigService
+├── config/            # 配置系统（多文件）
+│   ├── mod.rs          # AppConfig + ConfigService
+│   ├── options.rs      # 配置选项定义
+│   ├── conditional.rs  # 条件配置（OS/架构/环境）
+│   ├── loader.rs       # 配置文件加载器
+│   ├── validator.rs    # 配置验证器
+│   └── cli.rs          # CLI 参数解析
 ├── dirfreq.rs       # 目录频率统计
 ├── error.rs         # CoreError 枚举
 ├── hotkey.rs        # 快捷键系统
+├── i18n.rs          # 国际化支持
 ├── notification.rs  # 桌面通知
 ├── plugin.rs        # 插件框架（预留）
 ├── profile.rs       # 连接配置文件
 ├── remote.rs        # 远程管理
+├── terminfo.rs      # terminfo 数据库解析
 ├── theme.rs         # 配色方案 + ThemeService
 ├── theme_auto.rs    # 自动主题切换
 ├── trigger.rs       # 输出触发器（通知/高亮/命令）
-└── vault.rs         # 敏感信息加密存储（AES-256-GCM）
+├── vault.rs         # 敏感信息加密存储（AES-256-GCM）
+└── capi.rs          # C API 桩实现（FFI 接口契约）
 ```
 
 ## 模块详情
@@ -152,6 +161,46 @@ enum CoreError {
 ### plugin.rs — 插件系统（预留）
 
 定义 `Plugin` trait、`PluginManager`、`ServiceRegistry`、`CommandDescriptor`。目前为占位实现。
+
+### capi.rs — C API（FFI 接口）
+
+libpureterm 的 C API，定义了用于在 C/ObjC/Swift 应用中嵌入终端的完整接口契约。
+
+> **注意**：当前为 **桩实现（stub）**。所有类型定义和函数签名已就绪，但函数体返回空指针/硬编码值。需要后续接入 `pureterm-terminal` 的 Terminal/Grid 模块。
+
+| 类型 | 说明 |
+|------|------|
+| `PTTerminal` / `PTDisplay` / `PTConfig` | 不透明指针类型（`*mut ()`） |
+| `PTSize` | 终端尺寸（cols, rows） |
+| `PTCursor` | 光标位置（x, y） |
+| `PTCellAttrs` | 单元格属性（颜色、bold、italic 等） |
+| `PTModifiers` | 修饰键标志（shift、ctrl、alt、super_key） |
+| `PTKeyEvent` / `PTMouseEvent` | 按键和鼠标事件 |
+| `PTKeyType` | 按键类型：None、Unicode、Function、Special |
+| `PTMouseButton` | 鼠标按钮：None、Left、Middle、Right、WheelUp、WheelDown |
+| `PTError` | 错误码：None、InvalidParam、NotInitialized、OutOfMemory 等 |
+
+**核心函数：**
+- `pt_init()` / `pt_shutdown()` — 库初始化/关闭
+- `pt_terminal_new()` / `pt_terminal_new_with_size(cols, rows)` — 创建终端
+- `pt_terminal_free(term)` — 销毁终端
+- `pt_terminal_resize(term, size)` / `pt_terminal_get_size(term, &mut size)` — 调整/获取尺寸
+- `pt_terminal_write(term, data, len)` — 写入数据
+- `pt_terminal_send_key/mouse(term, event)` — 发送按键/鼠标事件
+- `pt_terminal_get_cell(term, x, y, &mut char, &mut attrs)` — 获取单元格
+- `pt_terminal_get_scrollback_size/clear_scrollback` — 回滚缓冲区管理
+- `pt_terminal_get_title(term)` — 获取标题
+- `pt_terminal_set_output_callback(term, callback, user_data)` — 输出回调
+- `pt_terminal_set_title_callback/bell_callback` — 标题/响铃回调
+- `pt_config_from_file/path(string)` — 从文件/字符串创建配置
+- `pt_get_build_info()` — 获取构建信息 JSON
+
+**回调类型：**
+```rust
+type PTOutputCallback = extern "C" fn(*const u8, usize, *mut ());
+type PTTitleCallback = extern "C" fn(*const c_char, *mut ());
+type PTBellCallback = extern "C" fn(*mut ());
+```
 
 ## 常见任务
 

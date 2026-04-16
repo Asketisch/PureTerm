@@ -2,6 +2,7 @@
 
 /// XModem packet size.
 const XMODEM_PACKET_SIZE: usize = 128;
+#[allow(dead_code)]
 const XMODEM_1K_PACKET_SIZE: usize = 1024;
 
 /// Protocol variant.

@@ -11,13 +11,38 @@
 ## 文件结构
 
 ```
-src/
-├── main.rs          # 唯一源文件
-├── quake_mode.rs    # Quake 模式（dropdown terminal）
-└── platform/       # 平台特定功能
-    ├── mod.rs       # PlatformWindowExt trait
-    └── macos.rs     # macOS 实现（玻璃效果、圆角占位）
+src/                  # 主源代码
+├── AGENTS.md         # src/ 目录详解
+├── main.rs           # 主入口（CLI + 事件循环）
+├── quake_mode.rs     # Quake 模式（dropdown terminal）
+├── tray.rs           # 系统托盘图标
+├── multi_window.rs   # 多窗口管理
+├── single_instance.rs # 单实例锁定
+├── global_hotkeys.rs # 全局快捷键
+└── platform/         # 平台特定功能
+    ├── mod.rs        # PlatformWindowExt trait
+    └── macos.rs      # macOS 实现（玻璃效果、圆角占位）
 ```
+
+## CLI 子命令
+
+| 命令 | 说明 |
+|------|------|
+| `pureterm list-fonts` | 列出可用字体 |
+| `pureterm list-themes` | 列出可用主题 |
+| `pureterm show-config` | 显示当前配置（JSON 格式） |
+| `pureterm version` | 显示版本信息 |
+| `pureterm settings` | 打开设置面板 |
+| `pureterm --profile <name>` | 通过配置文件连接 |
+| `pureterm --ssh <user@host>` | 快速 SSH 连接 |
+| `pureterm --quake` | 下拉终端模式 |
+
+## 崩溃报告
+
+使用 `sentry` crate 实现本地崩溃报告（不发送网络）：
+- 初始化时设置 `dsn: None`（离线模式）
+- 崩溃信息存储在本地目录
+- 启动时注册 panic hook 捕获崩溃信息（位置、消息）
 
 ## 关键类型
 

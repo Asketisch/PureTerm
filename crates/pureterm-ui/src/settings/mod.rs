@@ -3,9 +3,8 @@
 //! Provides egui-based settings panels for configuring appearance,
 //! terminal settings, profiles, and hotkeys.
 
-use egui::{CollapsingHeader, ComboBox, RichText, Slider, TextEdit, Ui};
+use egui::{ComboBox, RichText, Slider, Ui};
 use pureterm_core::config::{AppConfig, AppearanceConfig, GlassEffectStyle, TerminalConfig};
-use pureterm_core::hotkey::Hotkey;
 use pureterm_core::profile::{Profile, ProfileOptions, ProfileType};
 use pureterm_core::theme::ThemeService;
 
@@ -238,9 +237,26 @@ impl SettingsPanel {
 
         // Font family
         ui.horizontal(|ui| {
-            ui.label("Font family:");
+            ui.label("Font:");
             if ui.text_edit_singleline(&mut terminal.font_family).changed() {
                 changed = true;
+            }
+        });
+
+        // Font path (optional custom font)
+        ui.horizontal(|ui| {
+            ui.label("Font path:");
+            let mut path_display = terminal.font_path.clone().unwrap_or_default();
+            if ui.text_edit_singleline(&mut path_display).changed() {
+                terminal.font_path = if path_display.is_empty() {
+                    None
+                } else {
+                    Some(path_display)
+                };
+                changed = true;
+            }
+            if terminal.font_path.is_none() {
+                ui.label(RichText::new("(default)").small().weak());
             }
         });
 

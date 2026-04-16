@@ -6,7 +6,11 @@
 //!
 //! Reference: https://sw.kovidgoyal.net/kitty/graphics-protocol/
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
+
+
+/// Default maximum bytes for image storage (320MB as per Kitty default).
+const DEFAULT_BYTE_LIMIT: usize = 320 * 1024 * 1024;
 
 /// A placed image in the terminal grid.
 #[derive(Debug, Clone)]
@@ -31,14 +35,26 @@ pub struct TerminalImage {
     pub format: ImageFormat,
     /// Z-index for layering.
     pub z_index: i32,
+    /// Whether the image has a transparency channel.
+    pub has_alpha: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageFormat {
-    /// Raw RGBA pixels.
+    /// Raw RGBA pixels (format 32).
     Rgba,
-    /// PNG encoded.
+    /// Raw RGB pixels (format 24).
+    Rgb,
+    /// PNG encoded (format 100).
     Png,
+    /// Direct (uncompressed) RGBA (format 32).
+    Direct,
+}
+
+impl Default for ImageFormat {
+    fn default() -> Self {
+        ImageFormat::Rgba
+    }
 }
 
 /// Parsed Kitty graphics command.
@@ -46,7 +62,7 @@ pub enum ImageFormat {
 pub struct KittyGraphicsCommand {
     /// Action (t=transmit, p=place, q=query, d=delete).
     pub action: KittyAction,
-    /// Whether data is compressed.
+    /// Whether data is compressed (zlib).
     pub compressed: bool,
     /// Image format.
     pub format: ImageFormat,
@@ -69,6 +85,16 @@ pub struct KittyGraphicsCommand {
     pub z_index: Option<i32>,
     /// Raw data payload.
     pub data: Option<Vec<u8>>,
+    /// More data follows (for chunked transfer).
+    pub more_follows: bool,
+    /// Transfer offset (for chunked transfer).
+    pub offset: Option<u32>,
+    /// Total data size (before compression).
+    pub data_size: Option<u32>,
+    /// Placement ID.
+    pub placement_id: Option<u32>,
+    /// Delete specific placements.
+    pub delete_placements: Option<Vec<u32>>,
     /// Additional options.
     pub options: HashMap<String, String>,
 }
@@ -104,9 +130,35 @@ impl Default for KittyGraphicsCommand {
             crop: None,
             z_index: None,
             data: None,
+            more_follows: false,
+            offset: None,
+            data_size: None,
+            placement_id: None,
+            delete_placements: None,
             options: HashMap::new(),
         }
     }
+}
+
+/// State for chunked image transfer.
+#[derive(Debug)]
+pub struct ChunkedTransfer {
+    /// Image ID being received.
+    pub image_id: u32,
+    /// Expected total size (uncompressed).
+    pub total_size: u32,
+    /// Current received bytes.
+    pub received: Vec<u8>,
+    /// Transfer offset.
+    pub offset: u32,
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Image format.
+    pub format: ImageFormat,
+    /// Whether transfer is complete.
+    pub complete: bool,
 }
 
 // ── Sixel Image Support ──────────────────────────────────────────────────────
@@ -131,8 +183,12 @@ pub struct SixelImage {
 }
 
 /// Sixel parser state machine.
+///
+/// Sixel images are organized as rows of "sixel bands" (6 pixels tall each).
+/// Each column in a band is described by a character whose 6 bits select
+/// which of the 6 vertical pixels are drawn, using the current color register.
 pub struct SixelParser {
-    /// Color palette (16 or 256 colors).
+    /// Color palette (up to 256 colors).
     color_registers: Vec<[u8; 3]>,
     /// Max color register number (0-15 for 16-color mode).
     max_register: usize,
@@ -147,6 +203,11 @@ pub struct SixelParser {
     /// Current strip width in pixels.
     strip_width: usize,
 }
+
+/// Per-pixel entry in the intermediate buffer: (color_register, pixel_mask_6bits).
+/// Each column in a sixel band stores which of the 6 vertical pixels are set
+/// and which color register they use.
+type SixelPixel = (usize, u8); // (color_register_index, 6-bit mask)
 
 impl SixelParser {
     pub fn new() -> Self {
@@ -259,7 +320,205 @@ impl SixelParser {
         self.strips.push(strip);
     }
 
-    /// Convert Sixel data to RGBA image.
+    /// Parse a complete Sixel data stream and produce an image.
+    ///
+    /// Handles the full Sixel state machine:
+    /// - `"` color/intensity definition (RGB or HLS)
+    /// - `#` select color register
+    /// - `!` repeat introducer followed by count and graphics character
+    /// - `$` carriage return (move to beginning of current band)
+    /// - `-` new line (advance to next 6-pixel band)
+    /// - `?` through `~` graphics characters encoding 6 vertical pixels each
+    pub fn parse_all(&mut self, data: &[u8]) -> SixelImage {
+        self.reset();
+
+        let mut current_color: usize = 0;
+        // Each band row stores (color_register, 6-bit pixel mask) per column.
+        // Multiple passes over the same column (via $) merge with OR.
+        let mut bands: Vec<Vec<SixelPixel>> = Vec::new();
+        let mut current_band: Vec<SixelPixel> = Vec::new();
+        let mut col_pos: usize = 0;
+        let mut max_width: usize = 0;
+
+        let mut i = 0;
+        while i < data.len() {
+            let c = data[i];
+            match c {
+                b'#' => {
+                    // Select color register: # Pc
+                    i += 1;
+                    let mut num_str = String::new();
+                    while i < data.len() && data[i].is_ascii_digit() {
+                        num_str.push(data[i] as char);
+                        i += 1;
+                    }
+                    current_color = num_str.parse().unwrap_or(0);
+                    continue; // Already advanced past digits
+                }
+                b'"' => {
+                    // Color/intensity definition: " Pc ; Pu ; Px ; Py ; Pz
+                    i += 1;
+                    let mut cparams = Vec::new();
+                    let mut current_num = String::new();
+                    while i < data.len() {
+                        let pc = data[i];
+                        match pc {
+                            b'0'..=b'9' => {
+                                current_num.push(pc as char);
+                            }
+                            b';' => {
+                                cparams.push(current_num.parse::<i32>().unwrap_or(0));
+                                current_num.clear();
+                            }
+                            _ => {
+                                if !current_num.is_empty() {
+                                    cparams.push(current_num.parse::<i32>().unwrap_or(0));
+                                }
+                                break;
+                            }
+                        }
+                        i += 1;
+                    }
+                    if !cparams.is_empty() {
+                        let reg = cparams[0] as usize;
+                        if cparams.len() >= 5 && cparams[1] == 1 {
+                            // HLS color: "Pc;1;Hh;Ll;Ss
+                            let h = cparams[2] as f32 / 360.0;
+                            let l = cparams[3] as f32 / 100.0;
+                            let s = cparams[4] as f32 / 100.0;
+                            let (r, g, b) = hls_to_rgb(h, l, s);
+                            self.set_color(reg, r, g, b);
+                            current_color = reg;
+                        } else if cparams.len() >= 5 && cparams[1] == 2 {
+                            // RGB direct: "Pc;2;Rr;Gg;Bb (values 0-100 scale to 0-255)
+                            let r = (cparams[2] as f32 * 255.0 / 100.0) as u8;
+                            let g = (cparams[3] as f32 * 255.0 / 100.0) as u8;
+                            let b = (cparams[4] as f32 * 255.0 / 100.0) as u8;
+                            self.set_color(reg, r, g, b);
+                            current_color = reg;
+                        } else if cparams.len() == 1 {
+                            current_color = reg;
+                        }
+                    }
+                    continue;
+                }
+                b'!' => {
+                    // Repeat introducer: ! Pn Ch
+                    i += 1;
+                    let mut count_str = String::new();
+                    while i < data.len() && data[i].is_ascii_digit() {
+                        count_str.push(data[i] as char);
+                        i += 1;
+                    }
+                    let count: u32 = count_str.parse().unwrap_or(1);
+                    if i < data.len() && data[i] >= 0x3F && data[i] <= 0x7E {
+                        let mask = decode_sixel_char(data[i]);
+                        for _ in 0..count {
+                            while current_band.len() <= col_pos {
+                                current_band.push((0, 0));
+                            }
+                            let prev = current_band[col_pos];
+                            current_band[col_pos] = (current_color, prev.1 | mask);
+                            col_pos += 1;
+                        }
+                        max_width = max_width.max(col_pos);
+                    }
+                    i += 1;
+                    continue;
+                }
+                b'$' => {
+                    // CR within band: go back to column 0 for overlapping drawing
+                    col_pos = 0;
+                }
+                b'-' => {
+                    // New line: finalize current band, start next
+                    if !current_band.is_empty() {
+                        max_width = max_width.max(current_band.len());
+                        bands.push(current_band.clone());
+                    }
+                    current_band.clear();
+                    col_pos = 0;
+                }
+                0x3F..=0x7E => {
+                    // Graphics character: 6-bit pixel mask
+                    let mask = decode_sixel_char(c);
+                    while current_band.len() <= col_pos {
+                        current_band.push((0, 0));
+                    }
+                    let prev = current_band[col_pos];
+                    current_band[col_pos] = (current_color, prev.1 | mask);
+                    col_pos += 1;
+                    max_width = max_width.max(col_pos);
+                }
+                _ => {
+                    // Control characters ignored
+                }
+            }
+            i += 1;
+        }
+
+        // Flush remaining band
+        if !current_band.is_empty() {
+            max_width = max_width.max(current_band.len());
+            bands.push(current_band);
+        }
+
+        if bands.is_empty() || max_width == 0 {
+            return SixelImage {
+                id: 0,
+                width: 0,
+                height: 0,
+                data: Vec::new(),
+                color_palette: self.color_registers.clone(),
+                cols: 0,
+                rows: 0,
+            };
+        }
+
+        // Convert bands to RGBA image
+        let width = max_width;
+        let height = bands.len() * 6;
+        let mut img_data = vec![0u8; width * height * 4];
+
+        for (band_idx, band) in bands.iter().enumerate() {
+            for (col_idx, &(color_reg, mask)) in band.iter().enumerate() {
+                if mask == 0 {
+                    continue; // No pixels set in this column
+                }
+                let color = if color_reg < self.color_registers.len() {
+                    self.color_registers[color_reg]
+                } else {
+                    [0, 0, 0]
+                };
+                // Each of the 6 bits in mask corresponds to a pixel row in the band
+                for bit in 0..6 {
+                    if mask & (1 << bit) != 0 {
+                        let y = band_idx * 6 + bit;
+                        let offset = (y * width + col_idx) * 4;
+                        img_data[offset] = color[0];
+                        img_data[offset + 1] = color[1];
+                        img_data[offset + 2] = color[2];
+                        img_data[offset + 3] = 255;
+                    }
+                }
+            }
+        }
+
+        let cell_cols = ((width as u32) + 7) / 8;
+        let cell_rows = ((height as u32) + 15) / 16;
+
+        SixelImage {
+            id: 0,
+            width: width as u32,
+            height: height as u32,
+            data: img_data,
+            color_palette: self.color_registers.clone(),
+            cols: cell_cols,
+            rows: cell_rows,
+        }
+    }
+
+    /// Convert Sixel data to RGBA image (legacy API, prefer parse_all).
     pub fn to_image(&self, id: u32, cell_cols: u32, cell_rows: u32) -> SixelImage {
         let height = self.strips.len() * 6;
         let width = self.strip_width;
@@ -301,6 +560,45 @@ impl SixelParser {
     }
 }
 
+/// Decode a sixel character (0x3F-0x7E) into 6 vertical pixel bits.
+/// The sixel character encodes 6 bits where bit 0 is top pixel.
+/// Returns a u8 with bits 0-5 set for pixels that should be drawn.
+fn decode_sixel_char(c: u8) -> u8 {
+    // Sixel characters range from ? (0x3F) to ~ (0x7E)
+    // The lower 6 bits represent 6 vertical pixels
+    (c - 0x3F) & 0x3F
+}
+
+/// Convert HLS color values to RGB.
+fn hls_to_rgb(h: f32, l: f32, s: f32) -> (u8, u8, u8) {
+    if s == 0.0 {
+        let v = (l * 255.0) as u8;
+        return (v, v, v);
+    }
+
+    let q = if l < 0.5 {
+        l * (1.0 + s)
+    } else {
+        l + s - l * s
+    };
+    let p = 2.0 * l - q;
+
+    let hue_to_rgb = |t: f32| -> f32 {
+        let mut t = t;
+        if t < 0.0 { t += 1.0; }
+        if t > 1.0 { t -= 1.0; }
+        if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
+        if t < 1.0 / 2.0 { return q; }
+        if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+        p
+    };
+
+    let r = (hue_to_rgb(h + 1.0 / 3.0) * 255.0) as u8;
+    let g = (hue_to_rgb(h) * 255.0) as u8;
+    let b = (hue_to_rgb(h - 1.0 / 3.0) * 255.0) as u8;
+    (r, g, b)
+}
+
 impl Default for SixelParser {
     fn default() -> Self {
         Self::new()
@@ -323,15 +621,19 @@ pub enum SixelAction {
 }
 
 /// Parser for Kitty graphics protocol commands.
+/// Format: key=value,key=value,...;payload_data
 pub struct KittyGraphicsParser;
 
 impl KittyGraphicsParser {
     /// Parse the control string portion of a Kitty graphics command.
-    /// Format: key=value,key=value,...;payload_data
     pub fn parse(control: &str, payload: &[u8]) -> Option<KittyGraphicsCommand> {
         let mut cmd = KittyGraphicsCommand::default();
 
-        for part in control.split(',') {
+        // Split control string into key=value pairs
+        // Format can be: "a=t,f=32,s=100,v=100" or "a=t;data"
+        let parts: Vec<&str> = control.split(',').collect();
+
+        for part in parts {
             let kv: Vec<&str> = part.splitn(2, '=').collect();
             if kv.len() != 2 {
                 continue;
@@ -342,17 +644,18 @@ impl KittyGraphicsParser {
             match key {
                 "a" => {
                     cmd.action = match value {
-                        "t" | "T" => KittyAction::Transmit,
-                        "p" | "P" => KittyAction::Place,
-                        "q" | "Q" => KittyAction::Query,
-                        "d" | "D" => KittyAction::Delete,
-                        "f" | "F" => KittyAction::Frame,
+                        "t" | "T" | "transmit" => KittyAction::Transmit,
+                        "p" | "P" | "place" => KittyAction::Place,
+                        "q" | "Q" | "query" => KittyAction::Query,
+                        "d" | "D" | "delete" => KittyAction::Delete,
+                        "f" | "F" | "frame" => KittyAction::Frame,
                         _ => return None,
                     };
                 }
                 "f" => {
                     cmd.format = match value {
                         "32" => ImageFormat::Rgba,
+                        "24" => ImageFormat::Rgb,
                         "100" => ImageFormat::Png,
                         _ => ImageFormat::Rgba,
                     };
@@ -369,13 +672,19 @@ impl KittyGraphicsParser {
                 "c" => cmd.cell_cols = value.parse().ok(),
                 "r" => cmd.cell_rows = value.parse().ok(),
                 "z" => cmd.z_index = value.parse().ok(),
-                "S" => {
-                    // Crop: S=width,height,x,y
-                    let parts: Vec<u32> = value.split('x')
-                        .chain(std::iter::once(""))
-                        .flat_map(|s| s.parse())
+                "m" => {
+                    cmd.more_follows = value == "1";
+                }
+                "O" => cmd.offset = value.parse().ok(),
+                "S" => cmd.data_size = value.parse().ok(),
+                "p" => cmd.placement_id = value.parse().ok(),
+                "d" => {
+                    // Delete specific placements (comma-separated IDs)
+                    let ids: Option<Vec<u32>> = value
+                        .split(':')
+                        .map(|s| s.parse().ok())
                         .collect();
-                    // Simplified crop parsing
+                    cmd.delete_placements = ids;
                 }
                 _ => {
                     cmd.options.insert(key.to_string(), value.to_string());
@@ -389,13 +698,177 @@ impl KittyGraphicsParser {
 
         Some(cmd)
     }
+
+    /// Parse a complete Kitty graphics command string (control;payload).
+    pub fn parse_command(data: &[u8]) -> Option<KittyGraphicsCommand> {
+        // Find the semicolon separator between control and payload
+        // Control is before semicolon, payload is base64-encoded data after
+        let semicolon_pos = data.iter().position(|&b| b == b';');
+
+        let (control, payload) = if let Some(pos) = semicolon_pos {
+            (&data[..pos], &data[pos + 1..])
+        } else {
+            // No payload, treat all as control
+            (&data[..], &[][..])
+        };
+
+        let control_str = String::from_utf8_lossy(control);
+
+        // Decode base64 payload if present
+        let decoded_payload = if !payload.is_empty() {
+            Some(base64_decode(payload))
+        } else {
+            None
+        };
+
+        let payload_bytes = decoded_payload.unwrap_or_default();
+
+        Self::parse(&control_str, &payload_bytes)
+    }
 }
 
-/// Manages terminal images (Kitty + Sixel).
+/// Decode base64 data.
+fn base64_decode(data: &[u8]) -> Vec<u8> {
+    fn decode_char(b: u8) -> Option<u8> {
+        match b {
+            b'A'..=b'Z' => Some(b - b'A'),
+            b'a'..=b'z' => Some(b - b'a' + 26),
+            b'0'..=b'9' => Some(b - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            b'=' => None, // Padding
+            _ => None,
+        }
+    }
+
+    let mut result = Vec::new();
+    let mut buffer: u32 = 0;
+    let mut bits = 0;
+
+    for &b in data {
+        if b == b'\n' || b == b'\r' || b == b' ' || b == b'\t' {
+            continue; // Skip whitespace
+        }
+        if let Some(value) = decode_char(b) {
+            buffer = (buffer << 6) | (value as u32);
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                result.push((buffer >> bits) as u8);
+                buffer &= (1 << bits) - 1;
+            }
+        } else if b != b'=' {
+            // Invalid character in base64, but we still skip it
+        }
+    }
+
+    result
+}
+
+/// Decompress zlib-compressed data.
+fn decompress(data: &[u8]) -> Option<Vec<u8>> {
+    miniz_oxide::inflate::decompress_to_vec(data).ok()
+}
+
+/// Decode PNG data to RGBA pixels.
+fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+    let decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let mut reader = decoder.read_info().ok()?;
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut buf).ok()?;
+    let bytes = &buf[..info.buffer_size()];
+
+    let width = info.width;
+    let height = info.height;
+
+    // Convert to RGBA if needed
+    let rgba_data = match info.color_type {
+        png::ColorType::Rgba => bytes.to_vec(),
+        png::ColorType::Rgb => {
+            let mut rgba = vec![0u8; width as usize * height as usize * 4];
+            for i in 0..(width as usize * height as usize) {
+                rgba[i * 4] = bytes[i * 3];
+                rgba[i * 4 + 1] = bytes[i * 3 + 1];
+                rgba[i * 4 + 2] = bytes[i * 3 + 2];
+                rgba[i * 4 + 3] = 255;
+            }
+            rgba
+        }
+        png::ColorType::GrayscaleAlpha => {
+            let mut rgba = vec![0u8; width as usize * height as usize * 4];
+            for i in 0..(width as usize * height as usize) {
+                rgba[i * 4] = bytes[i * 2];
+                rgba[i * 4 + 1] = bytes[i * 2];
+                rgba[i * 4 + 2] = bytes[i * 2];
+                rgba[i * 4 + 3] = bytes[i * 2 + 1];
+            }
+            rgba
+        }
+        png::ColorType::Grayscale => {
+            let mut rgba = vec![0u8; width as usize * height as usize * 4];
+            for i in 0..(width as usize * height as usize) {
+                rgba[i * 4] = bytes[i];
+                rgba[i * 4 + 1] = bytes[i];
+                rgba[i * 4 + 2] = bytes[i];
+                rgba[i * 4 + 3] = 255;
+            }
+            rgba
+        }
+        _ => return None,
+    };
+
+    Some((width, height, rgba_data))
+}
+
+/// Decode raw RGB/RGBA pixel data.
+fn decode_raw_pixels(
+    data: &[u8],
+    format: ImageFormat,
+    width: u32,
+    height: u32,
+) -> Option<Vec<u8>> {
+    match format {
+        ImageFormat::Rgba => Some(data.to_vec()),
+        ImageFormat::Rgb => {
+            if data.len() < (width as usize * height as usize * 3) {
+                return None;
+            }
+            let mut rgba = vec![0u8; width as usize * height as usize * 4];
+            for i in 0..(width as usize * height as usize) {
+                rgba[i * 4] = data[i * 3];
+                rgba[i * 4 + 1] = data[i * 3 + 1];
+                rgba[i * 4 + 2] = data[i * 3 + 2];
+                rgba[i * 4 + 3] = 255;
+            }
+            Some(rgba)
+        }
+        _ => None,
+    }
+}
+
+/// Manages terminal images (Kitty + Sixel) with LRU eviction.
 pub struct ImageManager {
     images: HashMap<u32, TerminalImage>,
     sixel_images: HashMap<u32, SixelImage>,
+    placements: HashMap<(u32, u32), Placement>, // (image_id, placement_id) -> Placement
     next_id: u32,
+    byte_limit: usize,
+    used_bytes: usize,
+    /// LRU order for images (oldest first).
+    lru_order: VecDeque<u32>,
+    /// Pending chunked transfers.
+    chunked_transfers: HashMap<u32, ChunkedTransfer>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Placement {
+    pub image_id: u32,
+    pub placement_id: u32,
+    pub x: u16,
+    pub y: u16,
+    pub z: i16,
+    pub width: u16,
+    pub height: u16,
 }
 
 impl ImageManager {
@@ -403,14 +876,40 @@ impl ImageManager {
         Self {
             images: HashMap::new(),
             sixel_images: HashMap::new(),
+            placements: HashMap::new(),
             next_id: 1,
+            byte_limit: DEFAULT_BYTE_LIMIT,
+            used_bytes: 0,
+            lru_order: VecDeque::new(),
+            chunked_transfers: HashMap::new(),
         }
+    }
+
+    /// Set the byte limit for image storage.
+    pub fn set_byte_limit(&mut self, limit: usize) {
+        self.byte_limit = limit;
+        self.evict_if_needed();
     }
 
     /// Store a new image.
     pub fn store(&mut self, image: TerminalImage) -> u32 {
         let id = image.id;
+        let size = image.data.len();
+
+        // Evict if needed before adding
+        while self.used_bytes + size > self.byte_limit && !self.images.is_empty() {
+            self.evict_oldest();
+        }
+
+        // Remove existing image with same ID if present
+        if let Some(old) = self.images.remove(&id) {
+            self.used_bytes -= old.data.len();
+            self.lru_order.retain(|&x| x != id);
+        }
+
         self.images.insert(id, image);
+        self.used_bytes += size;
+        self.lru_order.push_back(id);
         id
     }
 
@@ -419,6 +918,16 @@ impl ImageManager {
         let id = image.id;
         self.sixel_images.insert(id, image);
         id
+    }
+
+    /// Add a placement for an image.
+    pub fn add_placement(&mut self, placement: Placement) {
+        self.placements.insert((placement.image_id, placement.placement_id), placement);
+    }
+
+    /// Get a placement.
+    pub fn get_placement(&self, image_id: u32, placement_id: u32) -> Option<&Placement> {
+        self.placements.get(&(image_id, placement_id))
     }
 
     /// Get an image by ID.
@@ -431,9 +940,37 @@ impl ImageManager {
         self.sixel_images.get(&id)
     }
 
+    /// Get a mutable reference to an image by ID.
+    pub fn get_mut(&mut self, id: u32) -> Option<&mut TerminalImage> {
+        self.images.get_mut(&id)
+    }
+
+    /// Update an image's position and z-index.
+    pub fn update_image_position(&mut self, id: u32, col: Option<u32>, row: Option<u32>, z_index: Option<i32>) {
+        if let Some(img) = self.images.get_mut(&id) {
+            if let Some(c) = col {
+                img.col = c;
+            }
+            if let Some(r) = row {
+                img.row = r;
+            }
+            if let Some(z) = z_index {
+                img.z_index = z;
+            }
+        }
+    }
+
     /// Remove an image by ID.
     pub fn remove(&mut self, id: u32) -> Option<TerminalImage> {
-        self.images.remove(&id)
+        if let Some(image) = self.images.remove(&id) {
+            self.used_bytes -= image.data.len();
+            self.lru_order.retain(|&x| x != id);
+            // Remove all placements for this image
+            self.placements.retain(|(img_id, _), _| *img_id != id);
+            Some(image)
+        } else {
+            None
+        }
     }
 
     /// Remove a Sixel image by ID.
@@ -443,9 +980,17 @@ impl ImageManager {
 
     /// Remove all images at a given cell position.
     pub fn remove_at(&mut self, row: u32, col: u32) {
-        self.images.retain(|_, img| {
-            !(img.row <= row && row < img.row + img.rows && img.col <= col && col < img.col + img.cols)
-        });
+        let to_remove: Vec<u32> = self.images.values()
+            .filter(|img| {
+                img.row <= row && row < img.row + img.rows
+                    && img.col <= col && col < img.col + img.cols
+            })
+            .map(|img| img.id)
+            .collect();
+
+        for id in to_remove {
+            self.remove(id);
+        }
     }
 
     /// Get all images overlapping a region.
@@ -456,6 +1001,11 @@ impl ImageManager {
                     && img.col < col + cols && img.col + img.cols > col
             })
             .collect()
+    }
+
+    /// Get all placements.
+    pub fn all_placements(&self) -> impl Iterator<Item = &Placement> {
+        self.placements.values()
     }
 
     /// Allocate the next image ID.
@@ -469,6 +1019,210 @@ impl ImageManager {
     pub fn clear(&mut self) {
         self.images.clear();
         self.sixel_images.clear();
+        self.placements.clear();
+        self.used_bytes = 0;
+        self.lru_order.clear();
+    }
+
+    /// Get total bytes used by images.
+    pub fn used_bytes(&self) -> usize {
+        self.used_bytes
+    }
+
+    /// Get byte limit.
+    pub fn byte_limit(&self) -> usize {
+        self.byte_limit
+    }
+
+    /// Process a chunked transfer.
+    pub fn process_chunked_transfer(&mut self, cmd: &KittyGraphicsCommand) -> Option<TerminalImage> {
+        let image_id = cmd.image_id?;
+
+        if cmd.action == KittyAction::Delete {
+            // Remove the pending transfer
+            self.chunked_transfers.remove(&image_id);
+            return None;
+        }
+
+        // Start a new transfer or continue existing
+        let is_new = !self.chunked_transfers.contains_key(&image_id);
+
+        if is_new {
+            // Start new transfer
+            let total_size = cmd.data_size?;
+            let width = cmd.width?;
+            let height = cmd.height?;
+            let format = cmd.format;
+
+            let transfer = ChunkedTransfer {
+                image_id,
+                total_size,
+                received: Vec::new(),
+                offset: cmd.offset.unwrap_or(0),
+                width,
+                height,
+                format,
+                complete: false,
+            };
+
+            self.chunked_transfers.insert(image_id, transfer);
+        }
+
+        // Append data at the correct offset
+        let data = cmd.data.as_ref()?;
+        let offset = cmd.offset.unwrap_or(0) as usize;
+
+        {
+            let transfer = self.chunked_transfers.get_mut(&image_id)?;
+
+            // Ensure we have enough space
+            while transfer.received.len() < offset + data.len() {
+                transfer.received.push(0);
+            }
+            transfer.received[offset..offset + data.len()].copy_from_slice(data);
+
+            // Check if transfer is complete
+            if !cmd.more_follows || transfer.received.len() >= transfer.total_size as usize {
+                transfer.complete = true;
+            }
+        }
+
+        // If complete, decode the image
+        let transfer = self.chunked_transfers.get(&image_id)?;
+        if transfer.complete {
+            let received = transfer.received.clone();
+            let format = transfer.format;
+            let width = transfer.width;
+            let height = transfer.height;
+
+            self.chunked_transfers.remove(&image_id);
+            return self.decode_and_store_image(
+                image_id,
+                &received,
+                format,
+                width,
+                height,
+            );
+        }
+
+        None
+    }
+
+    /// Decode and store an image from raw data.
+    fn decode_and_store_image(
+        &mut self,
+        id: u32,
+        data: &[u8],
+        format: ImageFormat,
+        width: u32,
+        height: u32,
+    ) -> Option<TerminalImage> {
+        // Decompress if needed
+        let decompressed = if format == ImageFormat::Png || data.len() > 10000 {
+            // Try zlib decompression first for non-PNG
+            decompress(data).unwrap_or_else(|| data.to_vec())
+        } else {
+            data.to_vec()
+        };
+
+        // Handle PNG specially
+        if format == ImageFormat::Png {
+            let (w, h, rgba) = decode_png(&decompressed)?;
+            let image = TerminalImage {
+                id,
+                width: w,
+                height: h,
+                data: rgba,
+                cols: (w + 7) / 8, // Approximate cell size
+                rows: (h + 15) / 16,
+                col: 0,
+                row: 0,
+                format,
+                z_index: 0,
+                has_alpha: true,
+            };
+            self.store(image.clone());
+            return Some(image);
+        }
+
+        // Handle raw RGB/RGBA
+        let rgba = if format == ImageFormat::Png {
+            // Already decoded above
+            return Some(TerminalImage {
+                id,
+                width,
+                height,
+                data: decompressed,
+                cols: (width + 7) / 8,
+                rows: (height + 15) / 16,
+                col: 0,
+                row: 0,
+                format,
+                z_index: 0,
+                has_alpha: true,
+            });
+        } else {
+            decode_raw_pixels(&decompressed, format, width, height)?
+        };
+
+        let has_alpha = format == ImageFormat::Rgba;
+
+        let image = TerminalImage {
+            id,
+            width,
+            height,
+            data: rgba,
+            cols: (width + 7) / 8,
+            rows: (height + 15) / 16,
+            col: 0,
+            row: 0,
+            format,
+            z_index: 0,
+            has_alpha,
+        };
+
+        self.store(image.clone());
+        Some(image)
+    }
+
+    /// Store an image directly from a command.
+    pub fn store_from_command(&mut self, cmd: &KittyGraphicsCommand) -> Option<TerminalImage> {
+        let image_id = cmd.image_id?;
+        let data = cmd.data.as_ref()?;
+        let width = cmd.width?;
+        let height = cmd.height?;
+
+        self.decode_and_store_image(image_id, data, cmd.format, width, height)
+    }
+
+    /// Remove images by ID list (for delete action).
+    pub fn delete_images(&mut self, ids: &[u32]) {
+        for &id in ids {
+            self.remove(id);
+        }
+    }
+
+    /// Remove all images.
+    pub fn delete_all(&mut self) {
+        self.clear();
+    }
+
+    /// Evict the oldest image when at capacity.
+    fn evict_oldest(&mut self) {
+        if let Some(oldest_id) = self.lru_order.pop_front() {
+            if let Some(image) = self.images.remove(&oldest_id) {
+                self.used_bytes -= image.data.len();
+                // Remove placements for this image
+                self.placements.retain(|(img_id, _), _| *img_id != oldest_id);
+            }
+        }
+    }
+
+    /// Evict images until under capacity.
+    fn evict_if_needed(&mut self) {
+        while self.used_bytes > self.byte_limit && !self.images.is_empty() {
+            self.evict_oldest();
+        }
     }
 }
 
@@ -493,6 +1247,83 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_with_compression() {
+        let cmd = KittyGraphicsParser::parse("a=t,f=32,s=10,v=10,i=1,o=z", &[]).unwrap();
+        assert!(cmd.compressed);
+    }
+
+    #[test]
+    fn test_parse_chunked_transfer() {
+        let cmd = KittyGraphicsParser::parse("a=t,f=32,s=100,v=100,i=1,S=1000,m=1", &[]).unwrap();
+        assert!(cmd.more_follows);
+        assert_eq!(cmd.data_size, Some(1000));
+    }
+
+    #[test]
+    fn test_image_manager_lru() {
+        let mut mgr = ImageManager::new();
+        // Each image is 100x100x4 = 40,000 bytes
+        // Set limit to 80,000 bytes (exactly 2 images)
+        mgr.set_byte_limit(80_000);
+
+        // Store images
+        let img1 = TerminalImage {
+            id: 1,
+            width: 100,
+            height: 100,
+            data: vec![0; 100 * 100 * 4],
+            cols: 10,
+            rows: 5,
+            col: 0,
+            row: 0,
+            format: ImageFormat::Rgba,
+            z_index: 0,
+            has_alpha: true,
+        };
+        mgr.store(img1);
+
+        let img2 = TerminalImage {
+            id: 2,
+            width: 100,
+            height: 100,
+            data: vec![0; 100 * 100 * 4],
+            cols: 10,
+            rows: 5,
+            col: 0,
+            row: 0,
+            format: ImageFormat::Rgba,
+            z_index: 0,
+            has_alpha: true,
+        };
+        mgr.store(img2);
+
+        // Both should fit (80,000 bytes used, 80,000 limit)
+        assert!(mgr.get(1).is_some());
+        assert!(mgr.get(2).is_some());
+
+        // Add image 3 - this exceeds the limit, so image 1 (oldest) should be evicted
+        let img3 = TerminalImage {
+            id: 3,
+            width: 100,
+            height: 100,
+            data: vec![0; 100 * 100 * 4],
+            cols: 10,
+            rows: 5,
+            col: 0,
+            row: 0,
+            format: ImageFormat::Rgba,
+            z_index: 0,
+            has_alpha: true,
+        };
+        mgr.store(img3);
+
+        // Image 1 should be evicted (oldest), but images 2 and 3 should remain
+        assert!(mgr.get(1).is_none());
+        assert!(mgr.get(2).is_some());
+        assert!(mgr.get(3).is_some());
+    }
+
+    #[test]
     fn test_image_manager() {
         let mut mgr = ImageManager::new();
         let img = TerminalImage {
@@ -506,11 +1337,20 @@ mod tests {
             row: 0,
             format: ImageFormat::Rgba,
             z_index: 0,
+            has_alpha: true,
         };
         mgr.store(img);
         assert!(mgr.get(1).is_some());
         assert_eq!(mgr.images_in_region(0, 0, 5, 10).len(), 1);
         mgr.remove(1);
         assert!(mgr.get(1).is_none());
+    }
+
+    #[test]
+    fn test_base64_decode() {
+        // "Hello" in base64
+        let encoded = b"SGVsbG8";
+        let decoded = base64_decode(encoded);
+        assert_eq!(decoded, b"Hello");
     }
 }

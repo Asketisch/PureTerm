@@ -1,6 +1,6 @@
 //! Quick bar — inline command input at the top of the terminal.
 
-use egui::{Id, TextEdit, Ui};
+use egui::{TextEdit, Ui};
 
 /// Quick bar state.
 pub struct QuickBar {

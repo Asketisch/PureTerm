@@ -1,6 +1,5 @@
 //! Focus mode — hide all UI chrome except the terminal content.
 
-use egui::Ui;
 
 /// Manages focus mode state.
 pub struct FocusMode {

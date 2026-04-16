@@ -1,10 +1,12 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use tokio::sync::broadcast;
 
-use crate::base::{ConnectParams, Session, SessionType};
+use crate::base::{ConnectParams, Session};
+use crate::shell_integration::{self, Shell};
 
 /// Local shell session using PTY.
 pub struct LocalSession {
@@ -16,7 +18,7 @@ pub struct LocalSession {
 }
 
 impl LocalSession {
-    pub fn new(params: ConnectParams) -> Result<Self> {
+    pub fn new(_params: ConnectParams) -> Result<Self> {
         let (output_tx, _) = broadcast::channel(4096);
 
         Ok(Self {
@@ -51,10 +53,24 @@ impl Session for LocalSession {
             })
             .context("Failed to open PTY")?;
 
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let shell_path = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let shell = Shell::detect_from_path(&shell_path);
 
-        let mut cmd = CommandBuilder::new(shell);
-        cmd.cwd(std::env::var("HOME").unwrap_or_else(|_| "/".to_string()));
+        let mut cmd = CommandBuilder::new(shell_path);
+
+        // Set working directory
+        if let Ok(cwd) = std::env::var("HOME") {
+            cmd.cwd(cwd);
+        }
+
+        // Apply shell integration if supported
+        let mut env: HashMap<String, String> = std::env::vars().collect();
+        shell_integration::apply_env(shell, &mut env);
+
+        // Set the environment for the command
+        for (key, value) in &env {
+            cmd.env(key, value);
+        }
 
         let child = pair.slave
             .spawn_command(cmd)
@@ -111,7 +127,7 @@ impl Session for LocalSession {
         Ok(())
     }
 
-    fn kill(&mut self, signal: &str) -> Result<()> {
+    fn kill(&mut self, _signal: &str) -> Result<()> {
         // The PTY child will be killed when dropped
         self.open = false;
         Ok(())

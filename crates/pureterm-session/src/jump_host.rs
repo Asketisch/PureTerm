@@ -1,6 +1,5 @@
 //! SSH jump host (bastion) support.
 
-use crate::base::Session;
 use std::collections::HashMap;
 
 /// Configuration for connecting through a jump host (bastion/proxy host).

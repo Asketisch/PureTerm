@@ -48,6 +48,9 @@ serde_json = "1.0"
 toml = "0.8"
 dirs = "5.0"
 
+# Clipboard
+arboard = "3"
+
 # Utils
 uuid = { version = "1", features = ["v4", "serde"] }
 thiserror = "2.0"
@@ -59,6 +62,35 @@ once_cell = "1.20"
 regex = "1.11"
 rpassword = "7"
 notify = "8"
+
+# Image decoding
+png = "0.17"
+miniz_oxide = "0.5"
+
+# GPU Math
+glam = "0.29"
+
+# SIMD
+simdutf8 = "0.1"
+memchr = "2"
+
+# Font system
+ttf-parser = "0.24"
+fontdb = { version = "0.21", features = ["fs", "memmap"] }
+rustybuzz = "0.20"
+
+# Shader compilation
+naga = "24"
+
+# Threading
+crossbeam-channel = "0.5"
+
+# Unicode
+unicode-bidi = "0.3"
+
+# Data structures
+intrusive-collections = "0.9"
+im = "15"
 
 # Testing
 tempfile = "3"

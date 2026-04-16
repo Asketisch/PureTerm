@@ -1,5 +1,140 @@
 //! Mouse event handling and text selection for the terminal.
 
+use super::{Grid, WideMode};
+
+/// A text selection within the terminal.
+#[derive(Debug, Clone)]
+pub struct Selection {
+    /// Start row (0-based visible row).
+    pub start_row: usize,
+    /// Start column (0-based).
+    pub start_col: usize,
+    /// End row (0-based visible row).
+    pub end_row: usize,
+    /// End column (0-based).
+    pub end_col: usize,
+    /// Whether this is a rectangular (block) selection.
+    pub rectangle: bool,
+}
+
+impl Selection {
+    /// Create a new selection from two points.
+    /// The points are NOT required to be in order.
+    pub fn new(
+        row1: usize, col1: usize,
+        row2: usize, col2: usize,
+        rectangle: bool,
+    ) -> Self {
+        Self {
+            start_row: row1,
+            start_col: col1,
+            end_row: row2,
+            end_col: col2,
+            rectangle,
+        }
+    }
+
+    /// Get the ordered (top-left, bottom-right) corners of the selection.
+    pub fn ordered(&self) -> ((usize, usize), (usize, usize)) {
+        if self.start_row < self.end_row
+            || (self.start_row == self.end_row && self.start_col <= self.end_col)
+        {
+            ((self.start_row, self.start_col), (self.end_row, self.end_col))
+        } else {
+            ((self.end_row, self.end_col), (self.start_row, self.start_col))
+        }
+    }
+
+    /// Check if a point is within the selection.
+    pub fn contains(&self, row: usize, col: usize) -> bool {
+        let ((tl_row, tl_col), (br_row, br_col)) = self.ordered();
+        if self.rectangle {
+            // Rectangle: check bounding box
+            row >= tl_row && row <= br_row && col >= tl_col && col <= br_col
+        } else {
+            // Normal: full-line span between start and end
+            if row < tl_row || row > br_row {
+                return false;
+            }
+            if row == tl_row && row == br_row {
+                col >= tl_col && col <= br_col
+            } else if row == tl_row {
+                col >= tl_col
+            } else if row == br_row {
+                col <= br_col
+            } else {
+                true
+            }
+        }
+    }
+
+    /// Extract the selected text from the grid.
+    pub fn text(&self, grid: &Grid, cols: usize) -> String {
+        let ((tl_row, tl_col), (br_row, br_col)) = self.ordered();
+        let mut text = String::new();
+
+        for row in tl_row..=br_row {
+            if let Some(row_cells) = grid.visible_row(row) {
+                let col_start = if row == tl_row { tl_col } else { 0 };
+                let col_end = if row == br_row {
+                    br_col.min(cols.saturating_sub(1))
+                } else {
+                    cols.saturating_sub(1)
+                };
+
+                if self.rectangle {
+                    // Rectangle: extract only the column range on each row
+                    for col in col_start..=col_end {
+                        if col < row_cells.len() {
+                            let cell = &row_cells[col];
+                            if cell.wide != WideMode::SpacerTail
+                                && cell.wide != WideMode::SpacerHead
+                            {
+                                text.push(cell.c);
+                            }
+                        }
+                    }
+                    if row < br_row {
+                        text.push('\n');
+                    }
+                } else {
+                    // Normal: extract full range, trim trailing spaces
+                    let mut line_end = col_end;
+                    // Find last non-space in range
+                    for col in (col_start..=col_end).rev() {
+                        if col < row_cells.len()
+                            && row_cells[col].c != ' '
+                            && row_cells[col].wide != WideMode::SpacerTail
+                        {
+                            line_end = col;
+                            break;
+                        }
+                    }
+                    for col in col_start..=line_end {
+                        if col < row_cells.len() {
+                            let cell = &row_cells[col];
+                            if cell.wide != WideMode::SpacerTail
+                                && cell.wide != WideMode::SpacerHead
+                            {
+                                text.push(cell.c);
+                            }
+                        }
+                    }
+                    if row < br_row {
+                        text.push('\n');
+                    }
+                }
+            }
+        }
+        text
+    }
+
+    /// Check if the selection is empty (start == end).
+    pub fn is_empty(&self) -> bool {
+        self.start_row == self.end_row && self.start_col == self.end_col
+    }
+}
+
 /// Word boundary characters — used for double-click word selection.
 const WORD_CHARS: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.@/";
 
@@ -95,7 +230,7 @@ pub fn encode_mouse_sgr(button: MouseButton, pressed: bool, row: usize, col: usi
 }
 
 /// Encode a mouse event as X10-style escape sequence.
-pub fn encode_mouse_x10(button: MouseButton, pressed: bool, row: usize, col: usize, _modifiers: MouseModifiers) -> Vec<u8> {
+pub fn encode_mouse_x10(button: MouseButton, _pressed: bool, row: usize, col: usize, _modifiers: MouseModifiers) -> Vec<u8> {
     let cb = match button {
         MouseButton::Left => 0,
         MouseButton::Middle => 1,
@@ -116,7 +251,7 @@ mod tests {
     fn test_word_bounds() {
         let line: Vec<char> = "hello world_foo".chars().collect();
         assert_eq!(find_word_bounds(&line, 0), (0, 4)); // "hello"
-        assert_eq!(find_word_bounds(&line, 6), (6, 13)); // "world_foo"
+        assert_eq!(find_word_bounds(&line, 6), (6, 14)); // "world_foo" (indices 6-14)
     }
 
     #[test]

@@ -1,4 +1,3 @@
-use serde::{Deserialize, Serialize};
 use std::ops::{BitAnd, BitOr, Not};
 
 /// Terminal mode flags.
@@ -38,6 +37,21 @@ impl TermMode {
     // Margin modes
     pub const LEFT_RIGHT_MARGIN: u32 = 0x20000; // DECLRMM (mode 69)
 
+    // Mouse modes
+    pub const MOUSE_X10: u32 = 0x40000; // Mode 9: X10 mouse (press only)
+
+    // Extended modes
+    pub const SYNCHRONIZED_OUTPUT: u32 = 0x80000; // Mode 2026: synchronized output
+    pub const MOUSE_SGR_PIXELS: u32 = 0x100000; // Mode 1016: SGR-Pixels mouse
+    pub const MODIFY_OTHER_KEYS: u32 = 0x200000; // Mode 2017: modifyOtherKeys
+
+    // Kitty keyboard protocol flags (mode numbers 1-4, stored as bit patterns)
+    pub const KITTY_KEYBOARD_DISAMBIGUATE: u32 = 0x400000;  // Flag 1: disambiguate modified keys
+    pub const KITTY_KEYBOARD_REPORT_EVENTS: u32 = 0x800000; // Flag 2: report key events
+    pub const KITTY_KEYBOARD_REPORT_ALTERNATES: u32 = 0x1000000; // Flag 3: report alternate keys
+    pub const KITTY_KEYBOARD_REPORT_ALL: u32 = 0x2000000;   // Flag 4: report all keys
+    pub const KITTY_KEYBOARD_REPORT_ASSOCIATED: u32 = 0x4000000; // Flag 5: report associated text
+
     pub fn contains(&self, flag: u32) -> bool {
         self.0 & flag != 0
     }
@@ -56,6 +70,15 @@ impl TermMode {
         } else {
             self.remove(flag);
         }
+    }
+
+    /// Check if any Kitty keyboard protocol flag is active.
+    pub fn kitty_keyboard_active(&self) -> bool {
+        self.0 & (Self::KITTY_KEYBOARD_DISAMBIGUATE
+            | Self::KITTY_KEYBOARD_REPORT_EVENTS
+            | Self::KITTY_KEYBOARD_REPORT_ALTERNATES
+            | Self::KITTY_KEYBOARD_REPORT_ALL
+            | Self::KITTY_KEYBOARD_REPORT_ASSOCIATED) != 0
     }
 }
 

@@ -3,20 +3,25 @@
 //! Uses the russh SFTP subsystem to provide basic file operations.
 //! Implements SFTP v3 protocol.
 
+#[allow(dead_code)]
 use anyhow::{Context, Result};
 use russh::ChannelMsg;
-use std::path::{Path, PathBuf};
-use tokio::io::AsyncWriteExt;
+use std::path::Path;
 
 /// SFTP protocol version we implement.
 const SFTP_VERSION: u32 = 3;
 
 /// SFTP packet types (v3).
+#[allow(dead_code)]
 const SSH_FXP_INIT: u8 = 1;
+#[allow(dead_code)]
 const SSH_FXP_VERSION: u8 = 2;
+#[allow(dead_code)]
 const SSH_FXP_OPEN: u8 = 3;
 const SSH_FXP_CLOSE: u8 = 4;
+#[allow(dead_code)]
 const SSH_FXP_READ: u8 = 5;
+#[allow(dead_code)]
 const SSH_FXP_WRITE: u8 = 6;
 const SSH_FXP_READDIR: u8 = 11;
 const SSH_FXP_STAT: u8 = 7;
@@ -25,23 +30,33 @@ const SSH_FXP_MKDIR: u8 = 14;
 const SSH_FXP_REMOVE: u8 = 13;
 const SSH_FXP_RENAME: u8 = 11;
 const SSH_FXP_HANDLE: u8 = 101;
+#[allow(dead_code)]
 const SSH_FXP_DATA: u8 = 102;
 const SSH_FXP_STATUS: u8 = 103;
 const SSH_FXP_NAME: u8 = 104;
+#[allow(dead_code)]
 const SSH_FXP_ATTRS: u8 = 105;
 
 /// SFTP status codes.
 const SSH_FX_OK: u32 = 0;
 const SSH_FX_EOF: u32 = 1;
+#[allow(dead_code)]
 const SSH_FX_NO_SUCH_FILE: u32 = 2;
+#[allow(dead_code)]
 const SSH_FX_PERMISSION_DENIED: u32 = 3;
 
 /// File open flags.
+#[allow(dead_code)]
 const SSH_FXF_READ: u32 = 0x1;
+#[allow(dead_code)]
 const SSH_FXF_WRITE: u32 = 0x2;
+#[allow(dead_code)]
 const SSH_FXF_APPEND: u32 = 0x4;
+#[allow(dead_code)]
 const SSH_FXF_CREAT: u32 = 0x8;
+#[allow(dead_code)]
 const SSH_FXF_TRUNC: u32 = 0x10;
+#[allow(dead_code)]
 const SSH_FXF_EXCL: u32 = 0x20;
 
 /// Metadata for a remote file.
@@ -126,6 +141,7 @@ async fn sftp_read_packet(channel: &mut russh::Channel<russh::client::Msg>) -> R
 }
 
 /// Encode a filename attribute block (simplified).
+#[allow(dead_code)]
 fn encode_filename(name: &str, longname: &str, _is_dir: bool, size: u64) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(&[0u8; 4]); // flags placeholder
@@ -259,6 +275,7 @@ impl SftpClient {
     }
 
     /// Parse an SFTP names response.
+    #[allow(dead_code)]
     fn parse_names_response(&self, data: &[u8]) -> Result<Vec<RemoteFileMeta>> {
         let mut pos = 0;
         let count = if data.len() >= 4 {
@@ -362,7 +379,7 @@ impl SftpClient {
         // Read directory entries
         let mut entries = Vec::new();
         loop {
-            let id = {
+            let _id = {
                 // Scope to release borrow of self before async call
                 let id = self.next_id();
                 let mut req = Vec::new();
@@ -550,7 +567,7 @@ impl SftpClient {
 
     /// Close the SFTP session.
     pub async fn close(&mut self) -> Result<()> {
-        if let Some(mut channel) = self.channel.take() {
+        if let Some(channel) = self.channel.take() {
             let id = self.next_id();
             let mut packet = vec![SSH_FXP_CLOSE];
             // Send empty handle to close (no handle to close since we don't keep one)

@@ -19,3 +19,4 @@ log = { workspace = true }
 parking_lot = { workspace = true }
 regex = { workspace = true }
 uuid = { workspace = true }
+im = { workspace = true }

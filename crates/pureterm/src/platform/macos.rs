@@ -34,7 +34,7 @@ impl PlatformWindowExt for winit::window::Window {
     /// 这需要 objc2 crate 或 Swift helper 配合实现，较为复杂。
     /// 目前透明度通过 wgpu 的 alpha_mode 启用。
     /// Ghostty 通过 Swift helper ghostty_set_window_background_blur() 实现此功能。
-    fn set_glass_effect(&self, style: pureterm_core::config::GlassEffectStyle, _blur_radius: u32) {
+    fn set_glass_effect(&self, _style: pureterm_core::config::GlassEffectStyle, _blur_radius: u32) {
         #[cfg(target_os = "macos")]
         {
             // 玻璃效果需要 AppKit 的 NSVisualEffectView

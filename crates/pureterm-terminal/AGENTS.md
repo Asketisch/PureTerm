@@ -15,22 +15,44 @@ src/
 ├── lib.rs              # 模块导出 + pub use
 ├── term.rs            # Terminal 结构体（顶层接口）
 ├── mode.rs            # TermMode 位标志
+├── charset.rs         # 字符集映射（G0-G3、DEC Special Graphics、锁定/单移）
 ├── hyperlink.rs       # 超链接支持（ OSC 8 ）
 ├── mark.rs            # 终端标记（书签）
-├── image.rs           # 内联图片支持（ITerm2 协议）
+├── image.rs           # 内联图片支持（Kitty Graphics + Sixel 协议）
 ├── bracketed_paste.rs # 括号粘贴模式
 ├── replay.rs          # 终端回放功能
+├── search.rs          # 终端内搜索（基于 Ghostty 架构）
+├── bidi.rs            # 双向文本支持（Arabic、Hebrew 等）
 ├── parser/
 │   ├── mod.rs          # VteParser 包装
-│   └── perform.rs      # VtePerform（vte::Perform 实现）+ ScreenSnapshot
-└── screen/
-    ├── mod.rs
-    ├── cell.rs         # Cell、CellAttrs、Color、NamedColor
-    ├── color.rs        # 重导出 Color
-    ├── cursor.rs       # Cursor、CursorStyle
-    ├── grid.rs         # Grid（回滚缓冲区 + 可见视口 + wrapped flag + reflow）
-    ├── selection.rs    # 选择区域 + 鼠标事件编码
-    └── history.rs      # 回滚历史管理
+│   ├── perform.rs      # VtePerform（vte::Perform 实现）+ ScreenSnapshot
+│   └── AGENTS.md       # VTE 执行引擎详解
+├── screen/
+│   ├── mod.rs
+│   ├── cell.rs         # Cell、CellAttrs、Color、NamedColor
+│   ├── color.rs        # 重导出 Color
+│   ├── cursor.rs       # Cursor、CursorStyle
+│   ├── grid.rs         # Grid（回滚缓冲区 + 可见视口 + wrapped flag + reflow）
+│   ├── selection.rs    # 选择区域 + 鼠标事件编码
+│   ├── ref_counted_set.rs  # 引用计数集合
+│   ├── style.rs        # 样式定义
+│   ├── color_palette.rs # 颜色调色板
+│   └── AGENTS.md       # 字符网格与选择区域详解
+├── input/
+│   ├── mod.rs          # 模块重导出
+│   ├── key.rs          # 按键定义
+│   ├── key_encode.rs   # 按键编码
+│   ├── binding.rs      # 按键绑定
+│   ├── mods.rs         # 修饰键状态
+│   ├── mouse.rs        # 鼠标事件
+│   ├── paste.rs        # 粘贴处理
+│   └── AGENTS.md       # 输入处理详解
+└── tmux/
+    ├── mod.rs          # 模块重导出
+    ├── control.rs      # DCS 1000p 控制模式解析器
+    ├── layout.rs       # 布局字符串解析器
+    ├── viewer.rs       # Tmux 会话查看器
+    └── AGENTS.md       # Tmux 集成详解
 ```
 
 ## 数据流
@@ -61,7 +83,7 @@ Session 字节 → VteParser::parse() → VtePerform（vte::Perform）→ Grid/C
 
 ### mode.rs — 终端模式标志
 
-`TermMode`（u32 位标志）：`SHOW_CURSOR`(0x01)、`APP_CURSOR`(0x02)、`APP_KEYPAD`(0x04)、`AUTO_WRAP`(0x08)、`LINE_FEED_NEW_LINE`(0x10)、`ORIGIN`(0x20)、`COLUMN_132`(0x40)、`INVERSE`(0x80)、`VISIBLE_BELL`(0x100)、`MOUSE_REPORT_CLICK`(0x200)、`MOUSE_DRAG`(0x400)、`MOUSE_MOTION`(0x800)、`MOUSE_SGR`(0x1000)、`BRACKETED_PASTE`(0x2000)、`FOCUS_IN_OUT`(0x4000)、`INSERT`(0x8000)、`CURSOR_BLINK`(0x10000)。
+`TermMode`（u32 位标志）：`SHOW_CURSOR`(0x01)、`APP_CURSOR`(0x02)、`APP_KEYPAD`(0x04)、`AUTO_WRAP`(0x08)、`LINE_FEED_NEW_LINE`(0x10)、`ORIGIN`(0x20)、`COLUMN_132`(0x40)、`INVERSE`(0x80)、`VISIBLE_BELL`(0x100)、`MOUSE_REPORT_CLICK`(0x200)、`MOUSE_DRAG`(0x400)、`MOUSE_MOTION`(0x800)、`MOUSE_SGR`(0x1000)、`BRACKETED_PASTE`(0x2000)、`FOCUS_IN_OUT`(0x4000)、`INSERT`(0x8000)、`CURSOR_BLINK`(0x10000)、`LEFT_RIGHT_MARGIN`(0x20000)、`MOUSE_X10`(0x40000)、`SYNCHRONIZED_OUTPUT`(0x80000)、`MOUSE_SGR_PIXELS`(0x100000)。
 
 ### screen/ — 字符网格与选择区域
 
@@ -74,6 +96,36 @@ Session 字节 → VteParser::parse() → VtePerform（vte::Perform）→ Grid/C
 详细文档：[parser/AGENTS.md](src/parser/AGENTS.md)
 
 `VtePerform` 实现 `vte::Perform` trait（1263 行），包含：CSI/OSC/ESC 序列分发、`pending_wrap` 机制、IRM 插入模式、双宽字符、备用屏幕缓冲区（Alt Screen）、DCS Hook/Put/Unhook、SGR 文本属性。ScreenSnapshot 作为渲染用的屏幕快照。
+
+### tmux/ — Tmux 集成
+
+Tmux 控制模式支持，用于与 tmux 会话集成：
+
+| 类型 | 说明 |
+|------|------|
+| `ControlParser` | DCS 1000p 输出解析器 |
+| `ControlEvent` | 控制事件：SessionChanged/LayoutChange/Output/Exit 等 |
+| `TmuxCommand` | Tmux 命令：SelectWindow/SelectPane/SendKeys/ResizePane 等 |
+| `LayoutParser` | 布局字符串解析器（`{WxH,X,Y[%id],...}` 格式） |
+| `Layout` | 布局树：Pane 或 Split |
+| `PaneInfo` | 窗格信息：id、位置、尺寸、是否激活 |
+| `SplitInfo` | 分割信息：类型（水平/垂直）、子布局、大小 |
+| `Viewer` | Tmux 会话查看器，管理连接状态 |
+
+**布局字符串格式：**
+```
+{WxH,X,Y[%id],...} 或 [WxH,X,Y[%id]]
+- WxH = 宽度×高度
+- X,Y = 位置坐标
+- %id = 窗格 ID（可选）
+- {} = 水平分割，[] = 垂直分割
+```
+
+**控制模式命令编码：**
+```rust
+encode_command(TmuxCommand::SendKeys { pane_id: Some(1), keys: "ls" })
+// → "\x1bP1000p\x1b\\send-keys -t 1 ls\x1b\\"
+```
 
 ## 常见任务
 

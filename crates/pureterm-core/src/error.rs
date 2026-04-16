@@ -25,3 +25,9 @@ pub enum CoreError {
 }
 
 pub type Result<T> = std::result::Result<T, CoreError>;
+
+impl From<crate::config::ConfigError> for CoreError {
+    fn from(e: crate::config::ConfigError) -> Self {
+        CoreError::Config(e.to_string())
+    }
+}

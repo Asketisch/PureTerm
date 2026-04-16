@@ -6,6 +6,7 @@ use crate::middleware::SessionMiddleware;
 type CallbackEmitter = Arc<Mutex<Option<Box<dyn FnMut(String) + Send>>>>;
 
 /// Middleware that processes OSC sequences, particularly OSC 7 (current directory).
+#[allow(dead_code)]
 pub struct OscProcessorMiddleware {
     cwd_reported: CallbackEmitter,
     buffer: Vec<u8>,

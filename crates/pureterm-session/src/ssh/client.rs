@@ -78,6 +78,7 @@ pub struct SshSession {
 }
 
 /// A port forwarding listener that accepts local connections and forwards through SSH.
+#[allow(dead_code)]
 pub struct PortForwardListener {
     /// The TCP listener for accepting local connections.
     listener: Arc<TcpListener>,

@@ -21,3 +21,9 @@ parking_lot = { workspace = true }
 serde = { workspace = true }
 bytemuck = "1"
 image = "0.25"
+glam = { workspace = true }
+ttf-parser = { workspace = true }
+fontdb = { workspace = true }
+rustybuzz = { workspace = true }
+naga = { workspace = true }
+crossbeam-channel = { workspace = true }

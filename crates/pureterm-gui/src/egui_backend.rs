@@ -47,6 +47,7 @@ impl EguiBackend {
     }
 
     /// Run the egui update and get full output.
+    #[allow(deprecated)]
     pub fn run(
         &self,
         raw_input: egui::RawInput,

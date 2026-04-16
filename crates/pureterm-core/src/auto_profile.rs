@@ -1,7 +1,6 @@
 //! Auto profile switching based on working directory or SSH host.
 
 use crate::profile::Profile;
-use std::collections::HashMap;
 
 /// Rule for automatically switching profiles.
 #[derive(Debug, Clone)]

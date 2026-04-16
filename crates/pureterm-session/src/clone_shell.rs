@@ -1,6 +1,5 @@
 //! Clone shell — duplicate an existing session's environment.
 
-use crate::base::Session;
 use anyhow::Result;
 
 /// Information needed to clone a session's environment.

@@ -172,4 +172,4 @@ Alt 键按下时滚轮发送方向键序列（适用于 `less` 等程序）。
 
 ## 父级导航
 
-← [pureterm-ui/AGENTS.md](../AGENTS.md)
+← [pureterm-ui/AGENTS.md](../../AGENTS.md)

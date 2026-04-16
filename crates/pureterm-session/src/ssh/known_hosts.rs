@@ -1,6 +1,5 @@
 use anyhow::{Context, Result};
 use russh::keys::ssh_key::PublicKey;
-use std::collections::HashMap;
 use std::fmt;
 use std::fs;
 use std::io::{BufRead, Write};

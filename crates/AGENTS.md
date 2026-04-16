@@ -7,10 +7,10 @@
 | Crate | 说明 | 详细指南 |
 |-------|------|----------|
 | [pureterm](pureterm/AGENTS.md) | 二进制入口点，事件循环、窗口管理、多窗格渲染、CLI | [pureterm/AGENTS.md](pureterm/AGENTS.md) |
-| [pureterm-core](pureterm-core/AGENTS.md) | 配置、主题（28 种内置）、快捷键、i18n、AI、加密、触发器 | [pureterm-core/AGENTS.md](pureterm-core/AGENTS.md) |
-| [pureterm-terminal](pureterm-terminal/AGENTS.md) | VTE 解析器、屏幕网格（reflow）、终端模拟 | [pureterm-terminal/AGENTS.md](pureterm-terminal/AGENTS.md) |
-| [pureterm-session](pureterm-session/AGENTS.md) | Session trait + Local/SSH/Serial/Telnet + 端口转发/复用/SFTP | [pureterm-session/AGENTS.md](pureterm-session/AGENTS.md) |
-| [pureterm-ui](pureterm-ui/AGENTS.md) | egui 组件：标签页、分割面板、终端面板、设置、Profile | [pureterm-ui/AGENTS.md](pureterm-ui/AGENTS.md) |
+| [pureterm-core](pureterm-core/AGENTS.md) | 配置、主题（28 种内置）、快捷键、i18n、AI、加密、触发器、C API | [pureterm-core/AGENTS.md](pureterm-core/AGENTS.md) |
+| [pureterm-terminal](pureterm-terminal/AGENTS.md) | VTE 解析器、屏幕网格（reflow）、终端模拟、Tmux 集成 | [pureterm-terminal/AGENTS.md](pureterm-terminal/AGENTS.md) |
+| [pureterm-session](pureterm-session/AGENTS.md) | Session trait + Local/SSH/Serial/Telnet + Shell 集成 | [pureterm-session/AGENTS.md](pureterm-session/AGENTS.md) |
+| [pureterm-ui](pureterm-ui/AGENTS.md) | egui 组件：标签页、分割面板、终端面板、设置、Inspector | [pureterm-ui/AGENTS.md](pureterm-ui/AGENTS.md) |
 | [pureterm-gui](pureterm-gui/AGENTS.md) | wgpu GPU 渲染、字形图集、着色器、背景图片、egui 集成 | [pureterm-gui/AGENTS.md](pureterm-gui/AGENTS.md) |
 
 ## 依赖关系

@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod auto_profile;
+pub mod capi;
 pub mod clipboard;
 pub mod config;
 pub mod dirfreq;
@@ -10,7 +11,10 @@ pub mod notification;
 pub mod plugin;
 pub mod profile;
 pub mod remote;
+pub mod terminfo;
 pub mod theme;
 pub mod theme_auto;
 pub mod trigger;
 pub mod vault;
+
+pub use config::{AppConfig as Config, ConfigService, CliArgs};

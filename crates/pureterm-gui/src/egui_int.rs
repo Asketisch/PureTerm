@@ -14,6 +14,7 @@ use pureterm_terminal::ScreenSnapshot;
 /// The actual terminal rendering is done via the wgpu text pipeline
 /// in the main render loop.
 pub struct TerminalWidget<'a> {
+    #[allow(dead_code)]
     snapshot: &'a ScreenSnapshot,
     color_scheme: &'a ColorScheme,
     /// Requested size in pixels.

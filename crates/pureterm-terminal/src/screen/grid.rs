@@ -1,6 +1,20 @@
 use crate::mark::Mark;
 use crate::screen::cell::Cell;
 
+/// Per-row double-width/double-height mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DoubleMode {
+    #[default]
+    /// Normal single-width, single-height line.
+    Normal,
+    /// Double-width line (DECDWL, CSI # 6).
+    DoubleWidth,
+    /// Double-height line, top half (DECDHL, CSI # 3).
+    DoubleHeightTop,
+    /// Double-height line, bottom half (DECDHL, CSI # 4).
+    DoubleHeightBottom,
+}
+
 /// A 2D grid of terminal cells with scrollback history.
 #[derive(Debug, Clone)]
 pub struct Grid {
@@ -10,6 +24,8 @@ pub struct Grid {
     marks: Vec<Option<Mark>>,
     /// Per-row wrapped flag (true if line was soft-wrapped from the previous line).
     wrapped: Vec<bool>,
+    /// Per-row double-width/double-height mode.
+    double_mode: Vec<DoubleMode>,
     /// Number of visible columns
     cols: usize,
     /// Number of visible rows
@@ -29,11 +45,13 @@ impl Grid {
             .collect();
         let grid_marks = vec![None; total_rows];
         let grid_wrapped = vec![false; total_rows];
+        let grid_double = vec![DoubleMode::Normal; total_rows];
 
         Self {
             rows: grid_rows,
             marks: grid_marks,
             wrapped: grid_wrapped,
+            double_mode: grid_double,
             cols,
             visible_rows,
             scrollback_limit: scrollback,
@@ -300,6 +318,17 @@ impl Grid {
         self.rows.get_mut(idx)
     }
 
+    /// Get a history row by index (0 = oldest history row).
+    pub fn history_row(&self, idx: usize) -> Option<&[Cell]> {
+        let history_count = self.history();
+        if idx >= history_count {
+            return None;
+        }
+        // History rows are above the visible area: rows[0..history_count]
+        // idx=0 is the oldest (rows[0]), idx=history_count-1 is newest
+        self.rows.get(idx).map(|r| r.as_slice())
+    }
+
     /// Clear the visible area.
     pub fn clear(&mut self) {
         for row_idx in 0..self.visible_rows {
@@ -315,6 +344,39 @@ impl Grid {
     pub fn history(&self) -> usize {
         let total = self.rows.len();
         total.saturating_sub(self.visible_rows)
+    }
+
+    /// Clear scrollback history (CSI 3 J).
+    pub fn clear_history(&mut self) {
+        // Remove all rows above the visible area
+        let visible_start = self.rows.len().saturating_sub(self.visible_rows);
+        if visible_start > 0 {
+            self.rows.drain(0..visible_start);
+            self.marks.drain(0..visible_start);
+            self.wrapped.drain(0..visible_start);
+            self.double_mode.drain(0..visible_start);
+        }
+        self.scroll_offset = 0;
+    }
+
+    /// Set the double-width/double-height mode for a visible row.
+    pub fn set_double_mode(&mut self, row: usize, mode: DoubleMode) {
+        if row >= self.visible_rows {
+            return;
+        }
+        let idx = self.visible_start() + row;
+        if let Some(m) = self.double_mode.get_mut(idx) {
+            *m = mode;
+        }
+    }
+
+    /// Get the double-width/double-height mode for a visible row.
+    pub fn get_double_mode(&self, row: usize) -> DoubleMode {
+        if row >= self.visible_rows {
+            return DoubleMode::Normal;
+        }
+        let idx = self.visible_start() + row;
+        self.double_mode.get(idx).copied().unwrap_or_default()
     }
 
     /// Set a mark on a visible row.

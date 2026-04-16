@@ -33,3 +33,23 @@ cargo build --release
   - [pureterm-session/AGENTS.md](crates/pureterm-session/AGENTS.md) — Session trait + 4 种实现
   - [pureterm-ui/AGENTS.md](crates/pureterm-ui/AGENTS.md) — egui 组件层
   - [pureterm-gui/AGENTS.md](crates/pureterm-gui/AGENTS.md) — wgpu GPU 渲染
+
+## CLI 命令
+
+```bash
+pureterm --profile <name>       # 通过配置文件连接
+pureterm --ssh <user@host>      # 快速 SSH 连接
+pureterm --quake                # 下拉终端模式
+pureterm list-fonts             # 列出可用字体
+pureterm list-themes            # 列出可用主题
+pureterm show-config            # 显示当前配置
+pureterm version                # 显示版本信息
+pureterm settings               # 打开设置面板
+```
+
+## 新增功能文档索引
+
+- **Shell 集成**：[pureterm-session/AGENTS.md](crates/pureterm-session/AGENTS.md) — OSC 133 标记注入
+- **终端检查器**：[pureterm-ui/AGENTS.md](crates/pureterm-ui/AGENTS.md) — InspectorState 调试面板
+- **C API**：[pureterm-core/AGENTS.md](crates/pureterm-core/AGENTS.md) — libpureterm FFI 接口
+- **Tmux 集成**：[pureterm-terminal/AGENTS.md](crates/pureterm-terminal/AGENTS.md) — DCS 1000p 控制模式

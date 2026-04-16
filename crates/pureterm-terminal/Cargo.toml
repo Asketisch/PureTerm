@@ -8,7 +8,14 @@ description = "Terminal emulation engine for PureTerm"
 vte = { workspace = true }
 unicode-width = { workspace = true }
 unicode-segmentation = { workspace = true }
+unicode-bidi = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
+png = { workspace = true }
+miniz_oxide = { workspace = true }
+regex = { workspace = true }
+simdutf8 = { workspace = true }
+memchr = { workspace = true }
+intrusive-collections = { workspace = true }

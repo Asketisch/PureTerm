@@ -80,4 +80,4 @@ pub struct TabManager {
 
 ## 父级导航
 
-← [pureterm-ui/AGENTS.md](../AGENTS.md)
+← [pureterm-ui/AGENTS.md](../../AGENTS.md)

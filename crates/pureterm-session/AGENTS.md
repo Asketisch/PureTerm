@@ -24,6 +24,7 @@ src/
 ├── sync_input.rs       # 同步输入管理
 ├── clone_shell.rs      # 克隆 shell 会话
 ├── login_script.rs     # 登录脚本中间件
+├── shell_integration.rs # Shell 集成（OSC 133）
 ├── ssh/
 │   ├── mod.rs          # 重导出
 │   ├── auth.rs         # SshAuth 枚举
@@ -33,13 +34,17 @@ src/
 │   ├── known_hosts.rs  # 主机密钥验证（TOFU）
 │   ├── multiplexer.rs  # 连接复用（存储 Arc<Mutex<Handle>>）
 │   ├── sftp.rs         # SFTP v3 客户端
-│   └── x11.rs          # X11 转发
+│   ├── x11.rs          # X11 转发
+│   └── AGENTS.md       # SSH 子系统详解
 ├── ssh_provider.rs     # Ssh ProfileProvider
 ├── serial/
-│   └── mod.rs          # SerialSession（serialport）
+│   ├── mod.rs          # SerialSession（serialport）
+│   └── AGENTS.md       # 串口会话详解
 ├── serial_provider.rs  # Serial ProfileProvider
 ├── telnet/
-│   └── mod.rs          # TelnetSession（TCP）
+│   ├── mod.rs          # TelnetSession（TCP）
+│   ├── iac.rs          # IAC 解析器
+│   └── AGENTS.md       # Telnet 会话详解
 ├── telnet_provider.rs  # Telnet ProfileProvider
 ├── xmodem.rs           # Xmodem 文件传输
 └── zmodem.rs            # Zmodem 文件传输
@@ -164,6 +169,30 @@ SSH 连接复用，支持多会话共享同一底层 SSH 传输，自动清理�
 ### CloneShell（clone_shell.rs）
 
 克隆现有 shell 会话，创建新的 PTY 链接到同一个 shell 进程。
+
+### shell_integration.rs — Shell 集成
+
+Shell 集成模块，注入 OSC 133 标记用于提示和命令跟踪：
+
+| 类型 | 说明 |
+|------|------|
+| `Shell` | Shell 类型枚举：Bash、Zsh、Fish、Nushell、Elvish、Unknown |
+| `ShellEnv` | 环境变量和文件集合 |
+| `Shell::detect_from_env()` | 从 SHELL 环境变量检测 |
+| `Shell::detect_from_path(path)` | 从路径检测（如 `/bin/bash`） |
+| `ShellEnv::for_zsh/bash/fish()` | 生成对应 shell 的集成环境 |
+| `apply_env(shell, env)` | 应用 shell 集成到会话环境 |
+
+**OSC 133 标记：**
+- `A` — Prompt Start（提示开始）
+- `B` — Command Start（命令开始）
+- `C` — Command Execute（命令执行）
+- `D` — Command Output End（命令输出结束）
+
+**集成方式：**
+- Zsh：通过 `ZDOTDIR` 环境变量引入 `pureterm-integration.zsh` 脚本
+- Bash：通过 `PROMPT_COMMAND` 和 `DEBUG` trap 注入
+- Fish：通过 Fish 函数和事件钩子注入
 
 ### ZmodemMiddleware / Xmodem（zmodem.rs / xmodem.rs）
 

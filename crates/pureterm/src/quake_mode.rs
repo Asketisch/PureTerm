@@ -3,6 +3,7 @@
 use winit::window::Window;
 
 /// Quake mode configuration and state.
+#[allow(dead_code)]
 pub struct QuakeMode {
     /// Whether quake mode is enabled.
     pub enabled: bool,
@@ -48,18 +49,21 @@ impl QuakeMode {
     }
 
     /// Show the quake window.
+    #[allow(dead_code)]
     pub fn show(&mut self) -> QuakeAction {
         self.visible = true;
         QuakeAction::Show
     }
 
     /// Hide the quake window.
+    #[allow(dead_code)]
     pub fn hide(&mut self) -> QuakeAction {
         self.visible = false;
         QuakeAction::Hide
     }
 
     /// Apply quake mode window attributes to a winit Window.
+    #[allow(dead_code)]
     pub fn apply_window_attrs(&self, window: &Window) {
         if !self.enabled {
             return;
@@ -84,6 +88,7 @@ impl QuakeMode {
     }
 
     /// Whether the window should be shown (for the event loop to decide).
+    #[allow(dead_code)]
     pub fn should_show(&self) -> bool {
         self.enabled && self.visible
     }

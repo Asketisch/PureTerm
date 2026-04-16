@@ -1,6 +1,5 @@
 //! Jump to prompt — navigate between shell prompts using OSC 133 marks.
 
-use egui::Ui;
 
 /// Manages navigation between prompt marks.
 pub struct JumpToPrompt {

@@ -1,6 +1,5 @@
 //! Automatic theme switching between light and dark modes.
 
-use crate::theme::ThemeService;
 
 /// Detects system dark/light mode preference.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
