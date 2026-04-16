@@ -8,7 +8,7 @@ use crate::sprite::{is_block_element, is_box_drawing, is_braille, is_powerline, 
 
 /// Embedded Nerd Font (JetBrains Mono) with full Unicode support including
 /// Box-drawing (U+2500-U+257F), Block Elements (U+2580-U+259F), and Powerline symbols.
-static EMBEDDED_NERD_FONT: &[u8] = include_bytes!("fonts/JetBrainsMonoNerdFont-Regular.ttf");
+static EMBEDDED_NERD_FONT: &[u8] = include_bytes!("fonts/MapleMono-Regular.ttf");
 
 /// A glyph in the atlas.
 #[derive(Debug, Clone)]
@@ -626,23 +626,15 @@ except:
 
         // Use sprite drawing for special terminal characters
         if is_block_element(c) {
-            eprintln!("SPRITE PATH: block_element '{}' (U+{:04X})", c, c as u32);
-            log::debug!("Sprite glyph: block_element '{}' (U+{:04X})", c, c as u32);
             return self.get_sprite_glyph(font_index, c);
         }
         if is_box_drawing(c) {
-            eprintln!("SPRITE PATH: box_drawing '{}' (U+{:04X})", c, c as u32);
-            log::debug!("Sprite glyph: box_drawing '{}' (U+{:04X})", c, c as u32);
             return self.get_box_drawing_glyph(font_index, c);
         }
         if is_braille(c) {
-            eprintln!("SPRITE PATH: braille '{}' (U+{:04X})", c, c as u32);
-            log::debug!("Sprite glyph: braille '{}' (U+{:04X})", c, c as u32);
             return self.get_braille_glyph(font_index, c);
         }
         if is_powerline(c) {
-            eprintln!("SPRITE PATH: powerline '{}' (U+{:04X})", c, c as u32);
-            log::debug!("Sprite glyph: powerline '{}' (U+{:04X})", c, c as u32);
             return self.get_powerline_glyph(font_index, c);
         }
 
@@ -657,12 +649,6 @@ except:
             log::debug!("Glyph for '{}' (U+{:04X}) has zero dimensions ({}x{}), skipping",
                 c, c as u32, width, height);
             return None;
-        }
-
-        // Debug special characters
-        let code = c as u32;
-        if (code >= 0x2500 && code <= 0x257F) || (code >= 0x2580 && code <= 0x259F) || (code >= 0x2800 && code <= 0x28FF) {
-            eprintln!("FONT PATH: '{}' (U+{:04X}) rasterized to {}x{}", c, code, width, height);
         }
 
         // Allocate space in the atlas using skyline bin packing
@@ -712,7 +698,7 @@ except:
 
         // Compute cell dimensions (ceil to avoid sub-pixel gaps)
         let (cell_w_f32, cell_h_f32) = self.cell_size();
-        let cell_w = cell_w_f32 as u32;
+        let cell_w = cell_w_f32.ceil() as u32;
         let cell_h = cell_h_f32.ceil() as u32;
 
         // Allocate space using skyline bin packing
@@ -761,7 +747,7 @@ except:
 
         // Compute cell dimensions (ceil to avoid sub-pixel gaps)
         let (cell_w_f32, cell_h_f32) = self.cell_size();
-        let cell_w = cell_w_f32 as u32;
+        let cell_w = cell_w_f32.ceil() as u32;
         let cell_h = cell_h_f32.ceil() as u32;
 
         // Allocate space using skyline bin packing
@@ -806,7 +792,7 @@ except:
 
         // Compute cell dimensions (ceil to avoid sub-pixel gaps)
         let (cell_w_f32, cell_h_f32) = self.cell_size();
-        let cell_w = cell_w_f32 as u32;
+        let cell_w = cell_w_f32.ceil() as u32;
         let cell_h = cell_h_f32.ceil() as u32;
 
         // Allocate space using skyline bin packing
@@ -852,7 +838,7 @@ except:
 
         // Compute cell dimensions (ceil to avoid sub-pixel gaps)
         let (cell_w_f32, cell_h_f32) = self.cell_size();
-        let cell_w = cell_w_f32 as u32;
+        let cell_w = cell_w_f32.ceil() as u32;
         let cell_h = cell_h_f32.ceil() as u32;
 
         // Allocate space using skyline bin packing

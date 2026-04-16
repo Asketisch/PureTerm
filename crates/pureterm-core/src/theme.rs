@@ -43,6 +43,18 @@ impl ColorScheme {
     pub fn color_rgb(&self, index: usize) -> [u8; 3] {
         if index < 16 {
             Self::parse_color(&self.colors[index])
+        } else if index < 232 {
+            // 6x6x6 color cube (indices 16-231)
+            let idx = index - 16;
+            let r = (idx / 36) as u8;
+            let g = ((idx / 6) % 6) as u8;
+            let b = (idx % 6) as u8;
+            let to_val = |c: u8| if c == 0 { 0 } else { 55 + 40 * c };
+            [to_val(r), to_val(g), to_val(b)]
+        } else if index < 256 {
+            // Grayscale ramp (indices 232-255)
+            let v = (8 + 10 * (index - 232)) as u8;
+            [v, v, v]
         } else {
             [0, 0, 0]
         }

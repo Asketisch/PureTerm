@@ -65,6 +65,7 @@ impl Session for LocalSession {
 
         // Apply shell integration if supported
         let mut env: HashMap<String, String> = std::env::vars().collect();
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
         shell_integration::apply_env(shell, &mut env);
 
         // Set the environment for the command

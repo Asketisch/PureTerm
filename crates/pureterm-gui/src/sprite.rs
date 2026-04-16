@@ -99,18 +99,20 @@ fn fill_quadrant(
 ) {
     let half_w = metrics.cell_width / 2;
     let half_h = metrics.cell_height / 2;
+    let right_w = metrics.cell_width - half_w;
+    let bottom_h = metrics.cell_height - half_h;
 
     if tl {
         draw_rect(atlas_data, atlas_width, offset_x as i32, offset_y as i32, half_w, half_h, Shade::On);
     }
     if tr {
-        draw_rect(atlas_data, atlas_width, (offset_x + half_w) as i32, offset_y as i32, half_w, half_h, Shade::On);
+        draw_rect(atlas_data, atlas_width, (offset_x + half_w) as i32, offset_y as i32, right_w, half_h, Shade::On);
     }
     if bl {
-        draw_rect(atlas_data, atlas_width, offset_x as i32, (offset_y + half_h) as i32, half_w, half_h, Shade::On);
+        draw_rect(atlas_data, atlas_width, offset_x as i32, (offset_y + half_h) as i32, half_w, bottom_h, Shade::On);
     }
     if br {
-        draw_rect(atlas_data, atlas_width, (offset_x + half_w) as i32, (offset_y + half_h) as i32, half_w, half_h, Shade::On);
+        draw_rect(atlas_data, atlas_width, (offset_x + half_w) as i32, (offset_y + half_h) as i32, right_w, bottom_h, Shade::On);
     }
 }
 
@@ -131,9 +133,9 @@ fn draw_half_block(
         let half_h = metrics.cell_height / 2;
         draw_rect(atlas_data, atlas_width, offset_x as i32, offset_y as i32, metrics.cell_width, half_h, shade);
     } else {
-        // Left half (right half filled)
+        // Right half filled
         let half_w = metrics.cell_width / 2;
-        draw_rect(atlas_data, atlas_width, (offset_x + half_w) as i32, offset_y as i32, half_w, metrics.cell_height, shade);
+        draw_rect(atlas_data, atlas_width, (offset_x + half_w) as i32, offset_y as i32, metrics.cell_width - half_w, metrics.cell_height, shade);
     }
 }
 
@@ -258,7 +260,7 @@ pub fn draw_block_element(
         // ▀ U+2580: UPPER HALF BLOCK
         0x2580 => {
             let half_h = height / 2;
-            draw_rect(atlas_data, atlas_width, offset_x as i32, offset_y as i32, width, half_h, Shade::On);
+            draw_rect(atlas_data, atlas_width, offset_x as i32, offset_y as i32, width, height - half_h, Shade::On);
         }
 
         // ▁ U+2581: LOWER ONE EIGHTH BLOCK
@@ -281,8 +283,8 @@ pub fn draw_block_element(
 
         // ▄ U+2584: LOWER HALF BLOCK
         0x2584 => {
-            let h = height / 2;
-            draw_rect(atlas_data, atlas_width, offset_x as i32, (offset_y + height - h) as i32, width, h, Shade::On);
+            let half_h = height / 2;
+            draw_rect(atlas_data, atlas_width, offset_x as i32, (offset_y + half_h) as i32, width, height - half_h, Shade::On);
         }
 
         // ▅ U+2585: LOWER FIVE EIGHTHS BLOCK
@@ -353,7 +355,7 @@ pub fn draw_block_element(
         // ▐ U+2590: RIGHT HALF BLOCK
         0x2590 => {
             let w = width / 2;
-            draw_rect(atlas_data, atlas_width, (offset_x + w) as i32, offset_y as i32, w, height, Shade::On);
+            draw_rect(atlas_data, atlas_width, (offset_x + w) as i32, offset_y as i32, width - w, height, Shade::On);
         }
 
         // ░ U+2591: LIGHT SHADE

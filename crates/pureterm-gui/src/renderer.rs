@@ -192,14 +192,6 @@ impl TerminalRenderer {
         selection: Option<&dyn Fn(usize, usize) -> bool>,
         viewport: Option<ViewportRect>,
     ) -> (Vec<Vertex>, Vec<u32>) {
-        use std::io::Write;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/pureterm_debug.txt")
-        {
-            let _ = writeln!(f, "BUILD_VERTICES: called with {} rows", snapshot.rows.len());
-        }
         let config = match &self.surface_config {
             Some(c) => c,
             None => return (Vec::new(), Vec::new()),
@@ -226,27 +218,27 @@ impl TerminalRenderer {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        // Debug: check if first row has special characters
-        if let Some(first_row) = snapshot.rows.first() {
-            let first_chars: String = first_row.iter().take(20).map(|c| c.c).collect();
-            let has_special = first_row.iter().take(20).any(|c| {
-                let code = c.c as u32;
-                (code >= 0x2500 && code <= 0x257F) || (code >= 0x2580 && code <= 0x259F) || (code >= 0x2800 && code <= 0x28FF)
-            });
-            if has_special {
-                eprintln!("DEBUG FIRST ROW: '{}' ({} chars, has special)", first_chars, first_row.len());
-            }
-        }
-
         for (row_idx, row) in snapshot.rows.iter().enumerate() {
             for (col_idx, cell) in row.iter().enumerate() {
+                // Skip spacer tail cells — the Wide cell already covers this area
+                if cell.wide == pureterm_terminal::WideMode::SpacerTail {
+                    continue;
+                }
+
                 let x = offset_x + col_idx as f32 * cell_w;
                 let y = offset_y + row_idx as f32 * cell_h;
+
+                // Wide characters occupy 2 cells horizontally
+                let effective_w = if cell.wide == pureterm_terminal::WideMode::Wide {
+                    cell_w * 2.0
+                } else {
+                    cell_w
+                };
 
                 // 转换为裁剪空间（始终相对于整个表面）
                 let x0 = (x / screen_w) * 2.0 - 1.0;
                 let y0 = 1.0 - (y / screen_h) * 2.0;
-                let x1 = ((x + cell_w) / screen_w) * 2.0 - 1.0;
+                let x1 = ((x + effective_w) / screen_w) * 2.0 - 1.0;
                 let y1 = 1.0 - ((y + cell_h) / screen_h) * 2.0;
 
                 // 背景四边形
@@ -307,21 +299,11 @@ impl TerminalRenderer {
                     let (atlas_w, atlas_h) = self.atlas.atlas_dimensions();
                     let face_idx = self.atlas.face_index_for_attrs(cell.attrs.bold, cell.attrs.italic);
                     let glyph_opt = self.atlas.get_glyph(face_idx, cell.c);
-                    let code = cell.c as u32;
-                    let is_special = (code >= 0x2500 && code <= 0x257F) || (code >= 0x2580 && code <= 0x259F) || (code >= 0x2800 && code <= 0x28FF);
-                    if is_special {
-                        eprintln!("DEBUG: cell.c='{}' (U+{:04X}) special={} glyph_opt={}", cell.c, code, is_special, glyph_opt.is_some());
-                    }
                     if let Some(glyph) = glyph_opt {
                         let tx0 = glyph.x as f32 / atlas_w as f32;
                         let ty0 = glyph.y as f32 / atlas_h as f32;
                         let tx1 = (glyph.x + glyph.width as u32) as f32 / atlas_w as f32;
                         let ty1 = (glyph.y + glyph.height as u32) as f32 / atlas_h as f32;
-
-                        if is_special {
-                            eprintln!("DEBUG: Glyph render: '{}' (U+{:04X}) atlas=({},{}) size={}x{} tx=({:.3},{:.3}) ty=({:.3},{:.3})",
-                                cell.c, code, glyph.x, glyph.y, glyph.width, glyph.height, tx0, ty0, tx1, ty1);
-                        }
 
                         let fg_color = if is_selected {
                             [sel_fg[0] as f32 / 255.0, sel_fg[1] as f32 / 255.0, sel_fg[2] as f32 / 255.0, 1.0]
@@ -347,10 +329,6 @@ impl TerminalRenderer {
                             Vertex { position: [cgx1, cgy1], tex_coords: [tx1, ty1], color: fg_color },
                         ]);
                         indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
-                    } else {
-                        if is_special {
-                            eprintln!("DEBUG: No glyph found for '{}' (U+{:04X})", cell.c, code);
-                        }
                     }
                 }
 
