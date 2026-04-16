@@ -1,6 +1,10 @@
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// Minimum interval between waker calls to avoid event loop flooding.
+/// At ~60fps (16ms), there's no benefit to waking more often.
+const WAKE_INTERVAL: Duration = Duration::from_millis(16);
 
 use tokio::sync::broadcast;
 
@@ -225,6 +229,10 @@ pub struct TerminalPane {
     pub on_copy: Option<Box<dyn FnMut(&str) + Send>>,
     /// Smooth scroll state for animated scrolling
     pub scroll_state: ScrollState,
+    /// Signal from output thread that the session has closed.
+    session_closed: Arc<AtomicBool>,
+    /// Last time the waker was called, for rate-limiting.
+    last_wake: Arc<Mutex<Instant>>,
 }
 
 static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
@@ -253,6 +261,8 @@ impl TerminalPane {
             copy_on_select: true,
             on_copy: None,
             scroll_state: ScrollState::new(),
+            session_closed: Arc::new(AtomicBool::new(false)),
+            last_wake: Arc::new(Mutex::new(Instant::now())),
         }
     }
 
@@ -277,6 +287,8 @@ impl TerminalPane {
     /// Start processing session output in a background thread.
     fn start_output_processing(&mut self, mut receiver: broadcast::Receiver<Vec<u8>>, waker: Option<Arc<dyn Fn() + Send + Sync>>) {
         let output_buffer = Arc::clone(&self.output_buffer);
+        let session_closed = Arc::clone(&self.session_closed);
+        let last_wake = Arc::clone(&self.last_wake);
 
             std::thread::spawn(move || {
                 loop {
@@ -295,14 +307,32 @@ impl TerminalPane {
                                 }
                                 buffer.extend(data);
                             }
+                            // Rate-limit waker calls to ~60fps max
                             if let Some(ref waker) = waker {
-                                waker();
+                                let should_wake = if let Ok(mut lw) = last_wake.lock() {
+                                    let now = Instant::now();
+                                    if now.duration_since(*lw) >= WAKE_INTERVAL {
+                                        *lw = now;
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                };
+                                if should_wake {
+                                    waker();
+                                }
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(n)) => {
                             log::warn!("Output lagged by {} messages", n);
                         }
                         Err(broadcast::error::RecvError::Closed) => {
+                            session_closed.store(true, Ordering::SeqCst);
+                            if let Some(ref waker) = waker {
+                                waker();
+                            }
                             break;
                         }
                     }
@@ -312,6 +342,12 @@ impl TerminalPane {
 
     /// Drain pending output from the session and process it.
     pub fn drain_output(&mut self) {
+        // Check if the session has closed
+        let session_exited = self.session_closed.load(Ordering::SeqCst);
+        if session_exited {
+            self.session_closed.store(false, Ordering::SeqCst);
+        }
+
         if let Ok(mut buffer) = self.output_buffer.lock() {
             if !buffer.is_empty() {
                 log::debug!("drain_output: {} bytes from session", buffer.len());
@@ -326,6 +362,32 @@ impl TerminalPane {
                 buffer.clear();
             }
         }
+
+        // Handle session exit cleanup
+        if session_exited {
+            self.handle_session_exit();
+        }
+    }
+
+    /// Perform cleanup when the child process exits.
+    fn handle_session_exit(&mut self) {
+        log::info!("Session exited, resetting terminal state");
+
+        // Switch back to primary buffer if on alternate screen
+        if self.terminal.is_alt_buffer() {
+            self.terminal.reset_to_primary_buffer();
+        }
+
+        // Reset all terminal modes (clears mouse reporting, bracketed paste, etc.)
+        self.terminal.reset_modes();
+
+        // Scroll to bottom of primary buffer
+        self.terminal.scroll_to_bottom();
+
+        // Print exit message through the normal parser path
+        self.terminal.write(b"\r\n[Process exited]\r\n");
+
+        self.dirty = true;
     }
 
     /// Write input data to the session.

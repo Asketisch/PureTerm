@@ -130,6 +130,8 @@ pub struct GlyphAtlas {
     ligature_enabled: bool,
     /// Maximum atlas height (for auto-grow).
     max_atlas_height: u32,
+    /// Whether new glyphs have been rasterized since last upload.
+    dirty: bool,
 }
 
 impl GlyphAtlas {
@@ -151,7 +153,13 @@ impl GlyphAtlas {
             ligature_engine: LigatureEngine::new(),
             ligature_enabled: true,
             max_atlas_height: 8192,
+            dirty: true,
         }
+    }
+
+    /// Check if atlas has new glyph data and clear the flag.
+    pub fn take_dirty(&mut self) -> bool {
+        std::mem::take(&mut self.dirty)
     }
 
     /// Load a font from bytes into a specific face slot.
@@ -296,6 +304,7 @@ impl GlyphAtlas {
             if new_height > self.atlas_height {
                 self.atlas_data.resize((self.atlas_width * new_height) as usize, 0);
                 self.atlas_height = new_height;
+                self.dirty = true;
                 // Retry allocation
                 return self.allocate_rect(width, height);
             }
@@ -331,6 +340,7 @@ impl GlyphAtlas {
 
         // Insert new segment
         self.skyline.insert(insert_pos, new_seg);
+        self.dirty = true;
 
         // Merge adjacent segments at the same y level
         let mut i = 0;
@@ -979,11 +989,15 @@ except:
     }
 
     /// Get the cell dimensions for the current font size.
+    /// Uses the font's actual line metrics (ascent + descent + line gap)
+    /// instead of a fixed multiplier, matching Ghostty's approach.
     pub fn cell_size(&self) -> (f32, f32) {
         if let Some(font) = self.fonts[face::REGULAR].as_ref() {
             let (metrics, _) = font.rasterize('M', self.font_size);
             let width = metrics.advance_width;
-            let height = self.font_size * 1.2;
+            let height = font.horizontal_line_metrics(self.font_size)
+                .map(|lm| lm.new_line_size)
+                .unwrap_or(self.font_size * 1.2);
             (width, height)
         } else {
             (8.0, 16.0)
@@ -992,7 +1006,7 @@ except:
 
     /// Get the line height in pixels.
     pub fn line_height(&self) -> u32 {
-        (self.font_size * 1.2) as u32
+        self.cell_size().1 as u32
     }
 
     /// Get decoration metrics derived from font data.

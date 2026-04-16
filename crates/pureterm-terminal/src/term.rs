@@ -272,4 +272,25 @@ impl Terminal {
         }
         text
     }
+
+    /// Check if the terminal is currently on the alternate screen buffer.
+    pub fn is_alt_buffer(&self) -> bool {
+        self.perform.is_alt_buffer()
+    }
+
+    /// Force switch from alternate screen back to primary screen buffer.
+    pub fn reset_to_primary_buffer(&mut self) {
+        self.perform.switch_to_primary_buffer();
+        self.perform.restore_cursor_from_alt();
+        self.perform.dirty = true;
+    }
+
+    /// Reset all terminal modes to sensible defaults.
+    pub fn reset_modes(&mut self) {
+        self.perform.mode = crate::mode::TermMode::default();
+        self.perform.mode.insert(crate::mode::TermMode::SHOW_CURSOR);
+        self.perform.mode.insert(crate::mode::TermMode::AUTO_WRAP);
+        self.perform.cursor.visible = true;
+        self.perform.dirty = true;
+    }
 }

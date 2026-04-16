@@ -87,7 +87,7 @@ impl Surface {
             size,
             mouse: SurfaceMouse::default(),
             keyboard: KeyboardState::default(),
-            font_size: 14.0,
+            font_size: 13.0,
             focused: false,
             readonly: false,
             child_exited: false,
@@ -243,7 +243,7 @@ impl Surface {
                 self.font_size = (self.font_size + delta).clamp(1.0, 256.0);
             }
             Action::FontSizeReset => {
-                self.font_size = 14.0;
+                self.font_size = 13.0;
             }
             Action::CopySelection => {
                 // Copy selection to clipboard

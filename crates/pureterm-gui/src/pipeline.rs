@@ -194,8 +194,9 @@ impl TextPipeline {
             cache: None,
         });
 
-        // 预分配缓冲区（支持最多 1024x1024 个单元格）
-        let max_cells = 1024 * 1024;
+        // 预分配缓冲区：支持最多 500×200 = 100K 单元格（约 12MB vertex + 2.4MB index）
+        // 远超实际终端尺寸，但不再浪费 152MB
+        let max_cells = 500 * 200;
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terminal Vertex Buffer"),
             size: (max_cells * 4 * std::mem::size_of::<Vertex>()) as u64,

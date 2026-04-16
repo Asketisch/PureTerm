@@ -189,7 +189,8 @@ pub fn create_linear_sampler(device: &Device, label: &str) -> wgpu::Sampler {
 }
 
 /// Pre-allocated max cells for buffer sizing.
-const MAX_CELLS: u64 = 1024 * 1024;
+/// 500×200 = 100K cells is far beyond any realistic terminal size.
+const MAX_CELLS: u64 = 500 * 200;
 /// Vertices per quad.
 const VERTS_PER_QUAD: u64 = 4;
 /// Indices per quad.

@@ -420,7 +420,7 @@ pub(crate) fn default_font_family_bold_italic() -> RepeatableString {
 }
 
 pub(crate) fn default_font_size() -> f32 {
-    14.0
+    13.0
 }
 
 pub(crate) fn default_font_synthetic_style() -> SyntheticStyle {

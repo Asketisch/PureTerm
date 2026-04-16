@@ -134,12 +134,12 @@ impl App {
     }
 
     /// Process a key event and return if consumed.
-    pub fn handle_key(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool) -> bool {
+    pub fn handle_key(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool, super_key: bool) -> bool {
         let modifiers = pureterm_core::hotkey::Modifiers {
             ctrl,
             alt,
             shift,
-            super_key: false,
+            super_key,
         };
 
         if self.hotkey_service.matches("tab_new", key, modifiers) {

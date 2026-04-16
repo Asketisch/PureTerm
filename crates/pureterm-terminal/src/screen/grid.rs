@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use crate::mark::Mark;
 use crate::screen::cell::Cell;
 
@@ -16,16 +18,19 @@ pub enum DoubleMode {
 }
 
 /// A 2D grid of terminal cells with scrollback history.
+///
+/// Uses `VecDeque` for O(1) push/pop at both ends, eliminating the O(n)
+/// overhead of `Vec::remove(0)` during scroll operations.
 #[derive(Debug, Clone)]
 pub struct Grid {
     /// Visible rows + scrollback
-    rows: Vec<Vec<Cell>>,
+    rows: VecDeque<Vec<Cell>>,
     /// Per-row marks (indexed same as `rows`).
-    marks: Vec<Option<Mark>>,
+    marks: VecDeque<Option<Mark>>,
     /// Per-row wrapped flag (true if line was soft-wrapped from the previous line).
-    wrapped: Vec<bool>,
+    wrapped: VecDeque<bool>,
     /// Per-row double-width/double-height mode.
-    double_mode: Vec<DoubleMode>,
+    double_mode: VecDeque<DoubleMode>,
     /// Number of visible columns
     cols: usize,
     /// Number of visible rows
@@ -42,9 +47,9 @@ impl Grid {
         let grid_rows = (0..visible_rows)
             .map(|_| (0..cols).map(|_| Cell::blank()).collect())
             .collect();
-        let grid_marks = vec![None; visible_rows];
-        let grid_wrapped = vec![false; visible_rows];
-        let grid_double = vec![DoubleMode::Normal; visible_rows];
+        let grid_marks = (0..visible_rows).map(|_| None).collect();
+        let grid_wrapped = (0..visible_rows).map(|_| false).collect();
+        let grid_double = (0..visible_rows).map(|_| DoubleMode::Normal).collect();
 
         Self {
             rows: grid_rows,
@@ -98,15 +103,15 @@ impl Grid {
     pub fn scroll_up(&mut self) {
         let new_row = (0..self.cols).map(|_| Cell::blank()).collect();
         if self.rows.len() > self.visible_rows + self.scrollback_limit {
-            self.rows.remove(0);
-            self.marks.remove(0);
-            self.wrapped.remove(0);
-            self.double_mode.remove(0);
+            self.rows.pop_front();
+            self.marks.pop_front();
+            self.wrapped.pop_front();
+            self.double_mode.pop_front();
         }
-        self.rows.push(new_row);
-        self.marks.push(None);
-        self.wrapped.push(false);
-        self.double_mode.push(DoubleMode::Normal);
+        self.rows.push_back(new_row);
+        self.marks.push_back(None);
+        self.wrapped.push_back(false);
+        self.double_mode.push_back(DoubleMode::Normal);
     }
 
     /// Scroll down by one line.
@@ -121,10 +126,10 @@ impl Grid {
             self.double_mode.insert(start, DoubleMode::Normal);
         }
         if self.rows.len() > self.visible_rows + self.scrollback_limit {
-            self.rows.remove(0);
-            self.marks.remove(0);
-            self.wrapped.remove(0);
-            self.double_mode.remove(0);
+            self.rows.pop_front();
+            self.marks.pop_front();
+            self.wrapped.pop_front();
+            self.double_mode.pop_front();
         }
     }
 
@@ -197,9 +202,9 @@ impl Grid {
         if new_rows > self.visible_rows {
             let extra = new_rows - self.visible_rows;
             for _ in 0..extra {
-                self.rows.push((0..self.cols).map(|_| Cell::blank()).collect());
-                self.marks.push(None);
-                self.wrapped.push(false);
+                self.rows.push_back((0..self.cols).map(|_| Cell::blank()).collect());
+                self.marks.push_back(None);
+                self.wrapped.push_back(false);
             }
         }
         self.visible_rows = new_rows;
@@ -229,28 +234,28 @@ impl Grid {
         }
 
         // Step 2: Re-wrap each logical line at the new width
-        let mut new_rows: Vec<Vec<Cell>> = Vec::new();
-        let mut new_wrapped: Vec<bool> = Vec::new();
-        let mut new_marks: Vec<Option<Mark>> = Vec::new();
+        let mut new_rows: VecDeque<Vec<Cell>> = VecDeque::new();
+        let mut new_wrapped: VecDeque<bool> = VecDeque::new();
+        let mut new_marks: VecDeque<Option<Mark>> = VecDeque::new();
 
         for (line_idx, line) in logical_lines.into_iter().enumerate() {
             if line.is_empty() || line.iter().all(|c| c.c == ' ') {
-                new_rows.push((0..new_cols).map(|_| Cell::blank()).collect());
-                new_wrapped.push(false);
+                new_rows.push_back((0..new_cols).map(|_| Cell::blank()).collect());
+                new_wrapped.push_back(false);
                 // Preserve mark for the first row of the logical line
-                new_marks.push(self.marks.get(line_idx).and_then(|m| m.clone()));
+                new_marks.push_back(self.marks.get(line_idx).and_then(|m| m.clone()));
             } else {
                 let chunks = line.chunks(new_cols);
                 let num_chunks = chunks.len();
                 for (chunk_idx, chunk) in chunks.enumerate() {
                     let mut row: Vec<Cell> = chunk.to_vec();
                     row.resize(new_cols, Cell::blank());
-                    new_rows.push(row);
-                    new_wrapped.push(chunk_idx < num_chunks - 1);
-                    new_marks.push(None); // marks only on first row
+                    new_rows.push_back(row);
+                    new_wrapped.push_back(chunk_idx < num_chunks - 1);
+                    new_marks.push_back(None); // marks only on first row
                 }
                 // Put the mark on the first chunk
-                if let Some(last) = new_marks.last_mut() {
+                if let Some(last) = new_marks.back_mut() {
                     *last = self.marks.get(line_idx).and_then(|m| m.clone());
                 }
             }
@@ -300,9 +305,8 @@ impl Grid {
     /// Get the visible portion of the grid as a flat slice of rows.
     pub fn visible_cells(&self) -> Vec<&[Cell]> {
         let start = self.visible_start();
-        let end = start + self.visible_rows;
-        self.rows[start..end.min(self.rows.len())]
-            .iter()
+        let end = (start + self.visible_rows).min(self.rows.len());
+        self.rows.range(start..end)
             .map(|row| row.as_slice())
             .collect()
     }
@@ -358,10 +362,10 @@ impl Grid {
         // Remove all rows above the visible area
         let visible_start = self.rows.len().saturating_sub(self.visible_rows);
         if visible_start > 0 {
-            self.rows.drain(0..visible_start);
-            self.marks.drain(0..visible_start);
-            self.wrapped.drain(0..visible_start);
-            self.double_mode.drain(0..visible_start);
+            self.rows.drain(..visible_start);
+            self.marks.drain(..visible_start);
+            self.wrapped.drain(..visible_start);
+            self.double_mode.drain(..visible_start);
         }
         self.scroll_offset = 0;
     }

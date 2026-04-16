@@ -159,8 +159,11 @@ impl TerminalRenderer {
         }
     }
 
-    /// 上传字形图集纹理数据到 GPU
-    fn upload_atlas(&self) {
+    /// 上传字形图集纹理数据到 GPU（仅在 dirty 时）
+    fn upload_atlas(&mut self) {
+        if !self.atlas.take_dirty() {
+            return;
+        }
         if let Some(ref atlas_texture) = self.atlas_texture {
             let (w, h) = self.atlas.atlas_dimensions();
             self.queue.write_texture(

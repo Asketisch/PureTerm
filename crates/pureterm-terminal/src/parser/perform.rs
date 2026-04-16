@@ -220,7 +220,7 @@ impl VtePerform {
     }
 
     /// Restore cursor state from alternate screen switch.
-    fn restore_cursor_from_alt(&mut self) {
+    pub fn restore_cursor_from_alt(&mut self) {
         if let Some(saved) = self.saved_cursor.take() {
             self.cursor = saved;
         }
@@ -254,7 +254,7 @@ impl VtePerform {
     }
 
     /// Switch back to primary screen buffer.
-    fn switch_to_primary_buffer(&mut self) {
+    pub fn switch_to_primary_buffer(&mut self) {
         if let Some(alt) = self.alt_buffer.take() {
             self.grid = alt.grid;
             // cursor and saved state are restored via restore_cursor_from_alt()
@@ -262,6 +262,11 @@ impl VtePerform {
             self.scroll_top = alt.scroll_top;
             self.scroll_bottom = alt.scroll_bottom;
         }
+    }
+
+    /// Check if currently on alternate screen buffer.
+    pub fn is_alt_buffer(&self) -> bool {
+        self.alt_buffer.is_some()
     }
 
     /// Resize the terminal.
@@ -2003,26 +2008,39 @@ fn parse_osc_color(params: &[&[u8]]) -> Color {
     // rgb:RR/GG/BB format
     if spec.starts_with("rgb:") {
         let rest = &spec[4..];
+        // Strip '/' separators to get raw hex digits
+        let hex: String = rest.chars().filter(|c| *c != '/').collect();
 
-        // Try RR/GG/BB format (2 hex digits each)
-        if rest.len() == 6 {
+        // 2 hex digits per channel (RRGGBB)
+        if hex.len() == 6 {
             if let (Ok(r), Ok(g), Ok(b)) = (
-                u8::from_str_radix(&rest[0..2], 16),
-                u8::from_str_radix(&rest[2..4], 16),
-                u8::from_str_radix(&rest[4..6], 16),
+                u8::from_str_radix(&hex[0..2], 16),
+                u8::from_str_radix(&hex[2..4], 16),
+                u8::from_str_radix(&hex[4..6], 16),
             ) {
                 return Color::Rgb(r, g, b);
             }
         }
 
-        // Try RRR/GGG/BBB format (3 hex digits each)
-        if rest.len() == 9 {
+        // 3 hex digits per channel (RRRGGGBBB) — take upper byte
+        if hex.len() == 9 {
             if let (Ok(r), Ok(g), Ok(b)) = (
-                u8::from_str_radix(&rest[0..3], 16),
-                u8::from_str_radix(&rest[3..6], 16),
-                u8::from_str_radix(&rest[6..9], 16),
+                u8::from_str_radix(&hex[0..3], 16),
+                u8::from_str_radix(&hex[3..6], 16),
+                u8::from_str_radix(&hex[6..9], 16),
             ) {
                 return Color::Rgb(r, g, b);
+            }
+        }
+
+        // 4 hex digits per channel (RRRRGGGGBBBB) — take upper byte
+        if hex.len() == 12 {
+            if let (Ok(r), Ok(g), Ok(b)) = (
+                u16::from_str_radix(&hex[0..4], 16),
+                u16::from_str_radix(&hex[4..8], 16),
+                u16::from_str_radix(&hex[8..12], 16),
+            ) {
+                return Color::Rgb((r >> 8) as u8, (g >> 8) as u8, (b >> 8) as u8);
             }
         }
     }
@@ -2077,7 +2095,9 @@ impl VtePerform {
             return;
         }
 
-        for param in params {
+        let mut i = 0;
+        while i < params.len() {
+            let param = &params[i];
             let code = param.first().copied().unwrap_or(0);
             match code {
                 0 => {
@@ -2119,15 +2139,27 @@ impl VtePerform {
                 30..=37 => self.fg = Color::Palette((code - 30) as u8),
                 38 => {
                     // Extended foreground color
-                    if let Some(color) = parse_extended_color(param) {
+                    if param.len() > 1 {
+                        // Subparameter syntax: 38:5:N or 38:2:R:G:B
+                        if let Some(color) = parse_extended_color(param) {
+                            self.fg = color;
+                        }
+                    } else if let Some((color, skip)) = parse_sgr_extended_color_lookahead(params, i) {
                         self.fg = color;
+                        i += skip;
                     }
                 }
                 39 => self.fg = Color::Named(NamedColor::Foreground),
                 40..=47 => self.bg = Color::Palette((code - 40) as u8),
                 48 => {
-                    if let Some(color) = parse_extended_color(param) {
+                    // Extended background color
+                    if param.len() > 1 {
+                        if let Some(color) = parse_extended_color(param) {
+                            self.bg = color;
+                        }
+                    } else if let Some((color, skip)) = parse_sgr_extended_color_lookahead(params, i) {
                         self.bg = color;
+                        i += skip;
                     }
                 }
                 49 => self.bg = Color::Named(NamedColor::Background),
@@ -2135,8 +2167,13 @@ impl VtePerform {
                 55 => self.attrs.overline = false,
                 58 => {
                     // Underline color
-                    if let Some(color) = parse_extended_color(param) {
+                    if param.len() > 1 {
+                        if let Some(color) = parse_extended_color(param) {
+                            self.attrs.underline_color = color;
+                        }
+                    } else if let Some((color, skip)) = parse_sgr_extended_color_lookahead(params, i) {
                         self.attrs.underline_color = color;
+                        i += skip;
                     }
                 }
                 59 => self.attrs.underline_color = Color::Named(NamedColor::Foreground),
@@ -2144,6 +2181,7 @@ impl VtePerform {
                 100..=107 => self.bg = Color::Palette((code - 100 + 8) as u8),
                 _ => {}
             }
+            i += 1;
         }
     }
 
@@ -2498,5 +2536,38 @@ impl VtePerform {
                 self.dirty = true;
             }
         }
+    }
+}
+
+/// Parse SGR extended color with lookahead for semicolon-delimited params.
+/// For `\e[38;5;196m`, params are `[[38],[5],[196]]` and `start` is the index of `[38]`.
+/// Returns the parsed color and the number of extra params to skip (beyond the base +1).
+fn parse_sgr_extended_color_lookahead(params: &[Vec<u16>], start: usize) -> Option<(Color, usize)> {
+    if start + 1 >= params.len() {
+        return None;
+    }
+    let type_code = params[start + 1].first().copied().unwrap_or(0);
+    match type_code {
+        5 => {
+            // 256-color: 38;5;N
+            if start + 2 < params.len() {
+                let idx = params[start + 2].first().copied().unwrap_or(0);
+                Some((Color::Palette(idx as u8), 2))
+            } else {
+                None
+            }
+        }
+        2 => {
+            // Truecolor: 38;2;R;G;B
+            if start + 4 < params.len() {
+                let r = params[start + 2].first().copied().unwrap_or(0);
+                let g = params[start + 3].first().copied().unwrap_or(0);
+                let b = params[start + 4].first().copied().unwrap_or(0);
+                Some((Color::Rgb(r as u8, g as u8, b as u8), 4))
+            } else {
+                None
+            }
+        }
+        _ => None,
     }
 }

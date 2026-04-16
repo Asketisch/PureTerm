@@ -180,7 +180,7 @@ impl Default for TerminalConfig {
 }
 
 fn legacy_font_family() -> String { "JetBrains Mono".into() }
-fn legacy_font_size() -> u16 { 14 }
+fn legacy_font_size() -> u16 { 13 }
 fn legacy_scrollback() -> u32 { 25000 }
 fn legacy_renderer() -> String { "wgpu".into() }
 fn legacy_bell() -> String { "visual".into() }

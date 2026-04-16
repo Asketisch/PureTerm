@@ -332,11 +332,15 @@ impl PureTermApp {
     }
 
     /// Handle keyboard input - route to focused pane.
-    fn handle_key_input(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool) {
-        log::debug!("handle_key_input: key={:?}, ctrl={}, alt={}, shift={}", key, ctrl, alt, shift);
+    fn handle_key_input(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool, super_key: bool) {
+        log::debug!("handle_key_input: key={:?}, ctrl={}, alt={}, shift={}, super={}", key, ctrl, alt, shift, super_key);
 
         // Global hotkeys handled at app level
-        if ctrl && shift && key == "c" {
+        // On macOS, use Super (Command) key; on other platforms, use Ctrl+Shift
+        let copy_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
+        let paste_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
+
+        if copy_trigger && key == "c" && !ctrl {
             // Copy selection to OS clipboard
             let text = self.focused_pane().and_then(|p| p.copy_selection());
             if let Some(text) = text {
@@ -347,7 +351,7 @@ impl PureTermApp {
             }
             return;
         }
-        if ctrl && shift && key == "v" {
+        if paste_trigger && key == "v" && !ctrl {
             // Paste from OS clipboard
             let text = if let Ok(mut cb) = arboard::Clipboard::new() {
                 cb.get_text().unwrap_or_else(|_| self.clipboard_text.clone())
@@ -369,9 +373,33 @@ impl PureTermApp {
             return;
         }
 
+        // Select all: Cmd+A on macOS, Ctrl+Shift+A elsewhere
+        let select_all_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
+        if select_all_trigger && key == "a" && !ctrl {
+            if let Some(ref mut pane) = self.focused_pane_mut() {
+                let rows = pane.terminal.rows();
+                let cols = pane.terminal.cols();
+                if rows > 0 && cols > 0 {
+                    pane.selection = Some(Selection {
+                        start_row: 0,
+                        start_col: 0,
+                        end_row: rows - 1,
+                        end_col: cols - 1,
+                        is_block: false,
+                    });
+                    pane.terminal.scroll_to_bottom();
+                    pane.mark_dirty();
+                }
+            }
+            if let Some(ref window) = self.window {
+                window.request_redraw();
+            }
+            return;
+        }
+
         // Delegate to app hotkey service
         if let Some(ref mut app) = self.app {
-            if app.handle_key(key, ctrl, alt, shift) {
+            if app.handle_key(key, ctrl, alt, shift, super_key) {
                 // Hotkey consumed by app
                 if let Some(ref window) = self.window {
                     window.request_redraw();
@@ -381,6 +409,11 @@ impl PureTermApp {
         }
 
         if let Some(ref mut pane) = self.focused_pane_mut() {
+            // On macOS, Command key combinations are app-level shortcuts,
+            // don't forward unrecognized ones to the terminal.
+            if cfg!(target_os = "macos") && super_key {
+                return;
+            }
             pane.handle_key(key, ctrl, alt, shift);
         }
         if let Some(ref window) = self.window {
@@ -1555,6 +1588,7 @@ impl ApplicationHandler for PureTermApp {
                 let ctrl = self.modifiers.control_key();
                 let alt = self.modifiers.alt_key();
                 let shift = self.modifiers.shift_key();
+                let super_key = self.modifiers.super_key();
 
                 // Global hotkey: Ctrl+` toggles quake mode
                 if ctrl && shift {
@@ -1578,13 +1612,13 @@ impl ApplicationHandler for PureTermApp {
                     if !text.is_empty() {
                         let key = text.chars().next().unwrap();
                         if key == '\r' {
-                            self.handle_key_input("Enter", ctrl, alt, shift);
+                            self.handle_key_input("Enter", ctrl, alt, shift, super_key);
                         } else if key == '\t' {
-                            self.handle_key_input("Tab", ctrl, alt, shift);
+                            self.handle_key_input("Tab", ctrl, alt, shift, super_key);
                         } else if key == '\u{7f}' {
-                            self.handle_key_input("Backspace", ctrl, alt, shift);
+                            self.handle_key_input("Backspace", ctrl, alt, shift, super_key);
                         } else if key != '\u{1b}' { // Skip escape prefix
-                            self.handle_key_input(&text.to_string(), ctrl, alt, shift);
+                            self.handle_key_input(&text.to_string(), ctrl, alt, shift, super_key);
                         }
                         return;
                     }
@@ -1622,10 +1656,10 @@ impl ApplicationHandler for PureTermApp {
                             NamedKey::F12 => "F12",
                             _ => return,
                         };
-                        self.handle_key_input(key_str, ctrl, alt, shift);
+                        self.handle_key_input(key_str, ctrl, alt, shift, super_key);
                     }
                     Key::Character(ch) => {
-                        self.handle_key_input(&ch.to_lowercase(), ctrl, alt, shift);
+                        self.handle_key_input(&ch.to_lowercase(), ctrl, alt, shift, super_key);
                     }
                     _ => {
                         log::debug!("KeyboardInput: unhandled logical_key={:?}", event.logical_key);
