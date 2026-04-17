@@ -162,6 +162,11 @@ impl GlyphAtlas {
         std::mem::take(&mut self.dirty)
     }
 
+    /// Mark atlas as dirty to force GPU re-upload on next draw.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
     /// Load a font from bytes into a specific face slot.
     pub fn add_font_to_face(&mut self, font_data: &[u8], face_idx: usize) -> Result<(), String> {
         let font = Font::from_bytes(font_data, fontdue::FontSettings::default())

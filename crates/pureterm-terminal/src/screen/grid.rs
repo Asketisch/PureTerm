@@ -198,14 +198,14 @@ impl Grid {
         }
         self.cols = new_cols;
 
-        // Adjust visible rows
-        if new_rows > self.visible_rows {
-            let extra = new_rows - self.visible_rows;
-            for _ in 0..extra {
-                self.rows.push_back((0..self.cols).map(|_| Cell::blank()).collect());
-                self.marks.push_back(None);
-                self.wrapped.push_back(false);
-            }
+        // Ensure enough rows to fill the visible area.
+        // After reflow, total rows may be less than new_rows even when
+        // new_rows <= old visible_rows (unwrapping reduces row count).
+        while self.rows.len() < new_rows {
+            self.rows.push_back((0..new_cols).map(|_| Cell::blank()).collect());
+            self.marks.push_back(None);
+            self.wrapped.push_back(false);
+            self.double_mode.push_back(DoubleMode::Normal);
         }
         self.visible_rows = new_rows;
 

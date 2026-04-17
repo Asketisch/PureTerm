@@ -121,6 +121,7 @@ impl TerminalRenderer {
         }
 
         self.create_atlas_texture();
+        self.atlas.mark_dirty();
         self.create_pipeline(&config);
     }
 

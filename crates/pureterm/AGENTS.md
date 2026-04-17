@@ -60,7 +60,9 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 | `split_root` | `Option<SplitContainer>` | 当前标签页的分屏树根 |
 | `focused_pane_id` | `Option<u64>` | 当前聚焦窗格 ID |
 | `context_menu` | `ContextMenuState` | 右键菜单状态 |
-| `color_scheme` | `ColorScheme` | 当前配色 |
+| `color_scheme` | `ColorScheme` | 当前配色（也用于标签栏主题色） |
+| `tab_bar` | `TabBarState` | 标签栏渲染状态（布局、悬浮、"+" 按钮） |
+| `tab_list` | `Vec<TabInfo>` | 标签页信息列表 |
 | `modifiers` | `ModifiersState` | 修饰键状态 |
 | `mouse_pos` | `(f32, f32)` | 最后已知鼠标位置（像素） |
 | `clipboard_text` | `String` | 剪贴板内容 |
@@ -93,26 +95,27 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 
 ### 事件循环（`window_event`）
 - `CloseRequested` → 退出
-- `Resized` → 重新配置 surface（传入当前 appearance 配置）+ `resize_all_panes()`
-- `RedrawRequested` → drain 所有窗格 → dirty check → 多窗格 snapshot/render → 可选 egui 覆盖
+- `Resized` → 重新配置 surface（传入当前 appearance 配置，重建图集纹理并标记 dirty）+ `resize_all_panes()` + 更新标签栏布局
+- `RedrawRequested` → drain 所有窗格 → dirty check → 多窗格 snapshot/render → 标签栏覆盖渲染 → 可选 egui 覆盖
 - `ModifiersChanged` → 记录修饰键状态
 - `KeyboardInput` → 设置面板可见时路由给 egui，否则转发给 `handle_key_input`
 
 ### 多窗格渲染（`RedrawRequested`）
 1. `drain_output()` 所有窗格
-2. `compute_layout()` 获取所有窗格的 `PaneRect`
+2. `compute_layout()` 获取所有窗格的 `PaneRect`（减去标签栏高度 TAB_BAR_HEIGHT）
 3. 对每个窗格 `build_vertices(snapshot, ..., viewport)` 生成背景+字形顶点
 4. 合并所有窗格顶点/索引，添加分隔线、焦点边框、上下文菜单顶点
-5. `draw_to_surface()` 渲染终端内容（返回 frame 不 present）
-6. 若设置面板可见 → `egui_backend.run()` + `render()` 用 `LoadOp::Load` 覆盖 → `frame.present()`
-7. 否则直接 `frame.present()`
+5. `render_tab_bar_overlay()` 绘制 Ghostty 风格标签栏（主题色背景、等分标签、悬浮关闭按钮、"+" 按钮）
+6. `draw_to_surface()` 渲染终端内容（返回 frame 不 present）
+7. 若设置面板可见 → `egui_backend.run()` + `render()` 用 `LoadOp::Load` 覆盖 → `frame.present()`
+8. 否则直接 `frame.present()`
 
 ### 键盘处理（`handle_key_input`）
 将 winit `NamedKey` 映射为字符串名称（Escape、Enter、Tab、Backspace、方向键、Home/End、PageUp/PageDown、Insert、Delete、F1-F12），连同 Ctrl+字母和文本输入一起转发给聚焦窗格。
 
 ### 鼠标事件处理
-- `CursorMoved` → 分隔线拖拽（增量 `adjust_ratio`）→ 上下文菜单悬浮 → 分隔线悬浮检测 → 窗格鼠标事件
-- `MouseInput::Pressed(Left)` → 上下文菜单点击 → 分隔线命中检测（`divider_at_point`）→ 窗格点击
+- `CursorMoved` → 分隔线拖拽（增量 `adjust_ratio`）→ 标签栏悬浮检测（tab / "+" 按钮）→ 上下文菜单悬浮 → 分隔线悬浮检测 → 窗格鼠标事件
+- `MouseInput::Pressed(Left)` → 标签栏点击检测（切换标签 / 关闭标签 / "+" 新建标签）→ 上下文菜单点击 → 分隔线命中检测（`divider_at_point`）→ 窗格点击
 - `MouseInput::Pressed(Right)` → 聚焦窗格 → 显示上下文菜单
 - `MouseInput::Released` → 清除分隔线拖拽状态 → 窗格释放
 - `MouseWheel` → 窗格滚动
@@ -140,8 +143,14 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 ### 修改启动流程
 编辑 `resumed` 方法。当前只创建 `LocalSession`，如需支持其他会话类型需在此处根据配置选择。
 
+### 修改标签栏
+- **布局**：编辑 `update_tab_bar_layout()` — 控制标签等分布局、"+" 按钮位置、关闭按钮区域
+- **渲染**：编辑 `render_tab_bar_overlay()` — 控制标签栏背景色、标签样式、悬浮效果、关闭按钮显示逻辑
+- **常量**：编辑 `pureterm-ui/src/tab_bar.rs` — TAB_BAR_HEIGHT、TAB_PADDING_H、TAB_MIN_WIDTH 等
+- **交互**：编辑鼠标事件处理中的 `CursorMoved` / `MouseInput::Pressed(Left)` 分支 — 悬浮检测和点击处理
+
 ### 调试渲染不刷新问题
-检查 `RedrawRequested` 中每个窗格的 `drain_output()` 是否被调用、`is_dirty()` 是否返回 true、`snapshot()` 数据是否正确。
+检查 `RedrawRequested` 中每个窗格的 `drain_output()` 是否被调用、`is_dirty()` 是否返回 true、`snapshot()` 数据是否正确。窗口 resize 后文字消失通常是图集纹理未标记 dirty 导致的——确认 `configure_surface()` 调用了 `self.atlas.mark_dirty()`。
 
 ### 修改鼠标处理
 编辑鼠标事件处理逻辑。注意分隔线拖拽优先于窗格点击，`pixel_to_cell_for_pane()` 用于坐标转换（考虑窗格偏移）。

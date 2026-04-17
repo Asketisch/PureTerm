@@ -4,11 +4,11 @@
 
 ## 功能特性
 
-- **多标签终端** 支持嵌套分屏
+- **多标签终端** 支持嵌套分屏，Ghostty 风格 GPU 渲染标签栏（等分布局、悬浮关闭、"+" 新建按钮）
 - **多种会话类型**：本地 Shell、SSH、串口、Telnet
-- **GPU 加速渲染** 基于 wgpu
+- **GPU 加速渲染** 基于 wgpu，8 pass 管线（背景色→装饰→文字→光标→图片→后处理→调试覆盖）
 - **跨平台**：macOS、Linux、Windows
-- **主题支持** 自定义配色方案
+- **主题支持** 自定义配色方案（28 种内置主题）
 - **可配置快捷键**
 - **插件系统** 支持扩展
 
@@ -25,12 +25,12 @@ PureTerm 由 6 个 crate 组成的工作区：
 
 | Crate | 说明 |
 |-------|------|
-| `pureterm` | 二进制入口，事件循环 |
+| `pureterm` | 二进制入口，事件循环、标签栏渲染 |
 | `pureterm-core` | 配置、主题、快捷键、插件 |
-| `pureterm-terminal` | VTE 解析器、屏幕网格 |
+| `pureterm-terminal` | VTE 解析器、屏幕网格（reflow + VecDeque） |
 | `pureterm-session` | Session trait + Local/SSH/Serial/Telnet 实现 |
-| `pureterm-ui` | egui 组件（标签页、分屏面板） |
-| `pureterm-gui` | wgpu 渲染、字形图集、着色器 |
+| `pureterm-ui` | Surface、标签页、分屏面板、终端面板 |
+| `pureterm-gui` | wgpu 多 pass 渲染、字形图集、Sprite 光栅化 |
 
 ```
 用户输入 → TerminalPane::handle_key → Session::write
@@ -40,10 +40,10 @@ PureTerm 由 6 个 crate 组成的工作区：
 
 ## 技术栈
 
-- **渲染**：wgpu + egui
-- **终端解析**：vte
+- **渲染**：wgpu 29（8 pass GPU 管线）+ egui 0.34
+- **终端解析**：完整 VTE（CSI/ESC/OSC/DCS/APC/PM）
 - **窗口/事件**：winit
-- **本地 Shell**：portable-pty
+- **字体**：fontdue + rustybuzz（HarfBuzz）+ fontdb（5 步回退链）
 - **SSH**：russh
 - **异步运行时**：tokio
 

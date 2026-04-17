@@ -1,32 +1,32 @@
 # pureterm-ui — egui 组件层
 
-基于 egui 的 UI 组件：应用状态管理、标签页、分割面板、终端面板、命令面板、搜索、AI 聊天等。
+基于 egui 的 UI 组件：应用状态管理、Surface 抽象（Ghostty 风格）、标签页、分割面板（SplitTree 不可变树 + SplitContainer 递归容器）、终端面板、命令面板、搜索、AI 聊天、专注模式、跳转提示、在线搜索、快速命令栏等。
 
 ## 关键依赖
 
 内部依赖：`pureterm-core`、`pureterm-terminal`、`pureterm-session`
 
-外部依赖：`egui` + `epaint`（UI）、`tokio`（异步）、`serde`、`thiserror`、`parking_lot`。
+外部依赖：`egui` + `epaint`（UI）、`tokio`（异步）、`serde`、`thiserror`、`parking_lot`、`uuid`（PaneId）。
 
 ## 文件结构
 
 ```
 src/
 ├── lib.rs              # 模块导出
-├── app.rs              # App 主应用状态
+├── app.rs              # App 主应用状态 + AppMessage 消息循环 (178 行)
 ├── ai_chat.rs          # AI 聊天面板
 ├── autocomplete.rs      # 自动补全
 ├── clipboard.rs         # 剪贴板管理
 ├── command_palette.rs   # 命令面板（Ctrl+Shift+P）
 ├── context_menu.rs      # 右键菜单（17 个 MenuAction）
-├── explorer.rs          # 文件浏览器
-├── focus_mode.rs        # 专注模式
+├── explorer.rs          # 文件浏览器（本地 + SFTP）
+├── focus_mode.rs        # 专注模式（隐藏所有 UI 元素）(76 行)
 ├── inspector.rs         # 终端检查器（调试面板）
-├── jump_prompt.rs       # 跳转提示（Ctrl+;）
+├── jump_prompt.rs       # 跳转提示（Ctrl+; / OSC 133 prompt mark）(74 行)
 ├── lock_screen.rs       # 锁屏
-├── online_search.rs     # 在线搜索
+├── online_search.rs     # 在线搜索面板 (135 行)
 ├── profile_selector.rs  # 连接配置选择器
-├── quick_bar.rs         # 快速命令栏
+├── quick_bar.rs         # 快速命令栏（Command/Search/Filter 三模式）(116 行)
 ├── search.rs            # 搜索面板（SlidingWindow + ViewportSearch）
 ├── settings/
 │   ├── mod.rs          # 设置面板
@@ -35,9 +35,9 @@ src/
 │   ├── mod.rs           # 重导出（含 SplitSide、DividerInfo、divider_at_point 等）
 │   ├── container.rs     # SplitContainer + SplitChild + Direction + SplitSide
 │   ├── layout.rs        # compute_pane_rects、compute_divider_rects、divider_at_point、PaneRect
-│   ├── split_tree.rs    # 分割树管理
 │   └── AGENTS.md        # 分割面板布局详解
-├── surface.rs           # Surface 表面管理
+├── split_tree.rs        # SplitTree 不可变持久化二叉树 (288 行)
+├── surface.rs           # Surface 抽象（Ghostty 风格）(583 行)
 ├── tab_bar.rs           # 标签页栏 UI 组件
 ├── tab_recovery.rs      # 标签页恢复
 ├── tabs/
@@ -46,7 +46,7 @@ src/
 │   └── AGENTS.md        # 标签页管理详解
 ├── terminal/
 │   ├── mod.rs           # 重导出
-│   ├── pane.rs          # TerminalPane + Selection + PaneAction（含 4 方向 Split）
+│   ├── pane.rs          # TerminalPane + Selection + ScrollState + PaneAction (1046 行)
 │   └── AGENTS.md        # 终端面板详解
 ├── theme.rs             # 主题管理
 ├── tokens.rs            # UI token 定义
@@ -57,17 +57,51 @@ src/
 
 ### app.rs — 主应用状态
 
+Ghostty `App.zig` 风格的应用状态管理，基于邮箱消息循环：
+
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | `config` | `AppConfig` | 应用配置 |
 | `tab_manager` | `TabManager` | 标签页管理器 |
 | `hotkey_service` | `HotkeyService` | 快捷键服务 |
+| `surfaces` | `Vec<SurfaceId>` | Surface 注册表 |
+| `focused_surface` | `Option<SurfaceId>` | 当前聚焦 Surface |
+| `mailbox` | `Vec<AppMessage>` | 消息队列 |
 | `show_settings` | `bool` | 设置面板可见性 |
 | `search_visible` | `bool` | 搜索栏可见性 |
-| `search_query` | `String` | 搜索查询 |
 | `quitting` | `bool` | 退出标记 |
 
-`handle_key(key, ctrl, alt, shift) -> bool` — 检查快捷键绑定，处理 tab_new、tab_close、search、prev_tab、next_tab。
+**AppMessage 枚举**（15 个变体）：Quit、NewWindow、NewTab、NewSplit、ToggleFullscreen、ConfigChanged、SurfaceDestroyed 等。
+
+`handle_key(key, ctrl, alt, shift, super_key)` — 检查快捷键绑定，处理 tab_new、tab_close、search、prev_tab、next_tab。
+
+### surface.rs — Surface 抽象（583 行）
+
+Ghostty 风格的单终端 Surface 模型，封装 Terminal + 输入处理 + 鼠标/键盘状态 + 动作分发：
+
+| 类型 | 说明 |
+|------|------|
+| `SurfaceId(u64)` | 唯一 Surface 标识 |
+| `Surface` | 核心：Terminal + SurfaceSize + SurfaceMouse + KeyboardState + pending_actions |
+| `SurfaceSize` | cells 和 pixels 双重尺寸 |
+| `SurfaceMouse` / `KeyboardState` | 鼠标位置/拖拽/光标形状 + 按键/IME 状态 |
+| `Action` 枚举 | 20+ 变体：窗口/标签/分屏/字体/剪贴板/滚动/搜索/配置重载 |
+| `ActionTarget` | `App` 或 `Surface`（决定动作路由） |
+
+关键方法：`key_callback`、`mouse_button_callback`、`cursor_pos_callback`、`scroll_callback`、`size_callback`、`perform_action`。
+
+### split_tree.rs — SplitTree 不可变持久化树（288 行）
+
+使用结构共享的不可变二叉树，管理分割终端面板：
+
+| 类型 | 说明 |
+|------|------|
+| `PaneId` | `Uuid` 别名 |
+| `SplitDirection` | Horizontal / Vertical |
+| `SplitNode` | `Leaf { pane_id }` 或 `Split { direction, ratio, first, second }` |
+| `SplitTree` | `Option<SplitNode>` 根 + 有序 `Vec<PaneId>` 列表 |
+
+关键方法：`split()`、`remove()`（折叠父级）、`resize()`（0.1-0.9 钳位）、`adjacent()`（焦点移动）、`compute_layout()`（像素矩形计算）。
 
 ### tabs/ — 标签页管理
 
@@ -75,27 +109,56 @@ src/
 
 包含：Tab/ClosedTab/TabContent/SplitRef 类型，TabManager 管理标签生命周期、选择切换、恢复关闭标签。
 
-### tab_recovery.rs — 标签页恢复
-
-| 类型 | 说明 |
-|------|------|
-| `TabRecovery` | 标签页恢复服务 |
-| `SavedTab` | 保存的标签状态 |
-| `SavedWindowState` | 保存的窗口状态 |
-
-保存和恢复标签页布局。
-
 ### split/ — 分割面板
 
 详细文档：[split/AGENTS.md](src/split/AGENTS.md)
 
 包含：SplitContainer 递归分割容器（Direction/SplitSide/SplitChild）、四方向拆分算法；layout.rs 布局计算（compute_pane_rects、divider_at_point、DIVIDER_WIDTH）。
 
+### tab_bar.rs — Ghostty 风格标签页栏（GPU 渲染）
+
+原生 GPU 渲染的标签栏，不依赖 egui，直接通过 wgpu 顶点绘制。设计参考 Ghostty 的 NSTabBar 实现。
+
+**核心类型：**
+
+| 类型 | 说明 |
+|------|------|
+| `TabBarState` | 标签栏渲染状态：visible、hovered_tab_index、hovered_new_tab、tab_layouts、new_tab_rect、height |
+| `TabLayout` | 单标签布局：tab_id、title、color、rect、close_button_rect |
+| `ViewportRect` | 矩形区域（x、y、w、h），用于命中检测 |
+
+**布局常量：**
+
+| 常量 | 值 | 说明 |
+|------|-----|------|
+| `TAB_BAR_HEIGHT` | 44.0 | 标签栏高度（适配 macOS 标题栏区域 ~28pt + notch ~38pt） |
+| `TAB_PADDING_H` | 12.0 | 标签水平内边距 |
+| `TAB_CLOSE_BTN_WIDTH` | 20.0 | 关闭按钮宽度 |
+| `TAB_NEW_BTN_WIDTH` | 28.0 | "+" 新建标签按钮宽度（匹配 Ghostty NSTabBarNewTabButton） |
+| `TAB_MIN_WIDTH` | 100.0 | 标签最小宽度 |
+| `TAB_MAX_WIDTH` | 250.0 | 标签最大宽度 |
+| `TAB_BAR_BORDER_SIZE` | 1.0 | 底部分隔线宽度 |
+| `TRAFFIC_LIGHT_WIDTH` | 56.0 (macOS) / 0.0 (其他) | macOS 红绿灯按钮保留宽度 |
+
+**等分布局算法：**
+1. 计算可用宽度 = 窗口宽度 - TRAFFIC_LIGHT_WIDTH - TAB_NEW_BTN_WIDTH
+2. 每标签等宽 = 可用宽度 / 标签数（下限 TAB_MIN_WIDTH）
+3. "+" 按钮固定在窗口右侧
+
+**渲染逻辑（在 main.rs 中实现）：**
+- 背景色：终端背景色亮度降低 15%，激活标签使用原始背景色
+- 关闭按钮：仅悬浮时显示（hover-only），命中区域为标签全高
+- "+" 按钮：28px，悬浮时高亮
+
 ### terminal/ — 终端面板
 
 详细文档：[terminal/AGENTS.md](src/terminal/AGENTS.md)
 
-最核心的组件，组合 `Terminal` + `Session`。包含 Selection/SearchState/TerminalPane 类型，输出处理流程（broadcast → buffer → drain），完整按键编码表（Ctrl/Alt/Shift 组合），鼠标事件处理，粘贴处理，右键行为。
+最核心的组件（1046 行），组合 `Terminal` + `Session`。包含：Selection、SearchState、ScrollState（平滑滚动 + 动量）、TerminalPane，输出处理流程（broadcast → buffer → drain，16 MiB 上限，60fps 限速），完整按键编码表，鼠标事件处理（单击/双击选词/三击选行 + 拖拽 + 平滑滚动），粘贴处理。
+
+**ScrollState** — 平滑滚动：ease-out cubic 动画 + 动量滚动。
+
+**PaneAction** 枚举：CopyText、PasteFromClipboard、ShowContextMenu、OpenUrl、SplitRight/Left/Down/Up、EditTabTitle、EditTabColor。
 
 ### command_palette.rs — 命令面板
 
@@ -104,90 +167,82 @@ src/
 | `CommandPalette` | 命令面板，支持搜索和执行命令 |
 | `Command` | 命令描述符：id、name、category、shortcut |
 
-通过 Ctrl+Shift+P 激活。包含 split_right、split_down、split_left、split_up 命令。
+通过 Ctrl+Shift+P 激活。
 
 ### search.rs — 搜索面板
 
 | 类型 | 说明 |
 |------|------|
 | `SearchPanel` | 搜索面板 UI，含大小写敏感和正则模式 |
-| `SearchConfig` | 搜索配置：case_sensitive、regex_mode、direction |
-| `SearchThread` | 后台搜索线程（mpsc 通道通信） |
 | `SlidingWindow` | 跨页搜索滑动窗口（支持 scrollback） |
 | `ViewportSearch` | 可视区域搜索（指纹变更检测） |
+
+### focus_mode.rs — 专注模式（76 行）
+
+隐藏所有 UI 元素（标签栏、标题栏、侧边栏），仅显示终端内容。记忆进入前的可见状态以便恢复。
+
+### jump_prompt.rs — 跳转提示（74 行）
+
+基于 OSC 133 语义 prompt mark 的提示间跳转：
+
+| 方法 | 说明 |
+|------|------|
+| `next_prompt(current_row, marks)` | 跳到下一个 prompt mark |
+| `prev_prompt(current_row, marks)` | 跳到上一个 prompt mark |
+| `get_command_at(row, marks, rows)` | 提取 prompt 处的命令文本 |
+
+### online_search.rs — 在线搜索面板（135 行）
+
+egui 侧边栏，支持选中文本后在线搜索。包含搜索输入、加载动画、错误显示和可滚动结果列表。
+
+| 类型 | 说明 |
+|------|------|
+| `OnlineSearchPanel` | visible、query、results、loading、error |
+| `SearchEntry` | title、url、snippet |
+
+### quick_bar.rs — 快速命令栏（116 行）
+
+终端顶部的浮动内联命令栏，三种模式：
+
+| 模式 | 说明 |
+|------|------|
+| `Command` | 快速命令执行 |
+| `Search` | 搜索 |
+| `Filter` | 过滤 |
 
 ### ai_chat.rs — AI 聊天面板
 
 集成 AI 对话功能，可在侧边栏显示 AI 助手对话。
 
-### autocomplete.rs — 自动补全
-
-终端自动补全功能，支持上下文感知的命令和文件名补全。
-
 ### context_menu.rs — 右键菜单
 
-| 类型 | 说明 |
-|------|------|
-| `ContextMenuState` | 右键上下文菜单状态（位置、悬浮项、可见性） |
-| `MenuAction` | 菜单动作枚举（17 个变体） |
+`MenuAction` 枚举（17 个变体）：Copy、Paste、SelectAll、Clear、Search、SplitRight/Left/Down/Up、ClosePane、NewTab、CloseTab、ZoomIn/Out/Reset、OpenSettings、EditTabTitle、EditTabColor。
 
-`MenuAction` 变体：Copy、Paste、SelectAll、Clear、Search、SplitRight (Ctrl+Shift+D)、SplitLeft、SplitDown (Ctrl+D)、SplitUp、ClosePane、NewTab、CloseTab、ZoomIn、ZoomOut、ZoomReset、OpenSettings、EditTabTitle、EditTabColor。
+### inspector.rs — 终端检查器
 
-### jump_prompt.rs — 跳转提示
-
-Ctrl+; 激活的快速跳转面板，可跳转到指定行号或匹配项。
-
-### clipboard.rs — 剪贴板管理
-
-| 类型 | 说明 |
-|------|------|
-| `ClipboardManager` | 系统剪贴板集成 |
+调试面板：终端状态（光标、尺寸、模式）、渲染器信息（FPS、纹理内存）、键盘事件历史、VT 解析日志。
 
 ### explorer.rs — 文件浏览器
 
 集成文件浏览器面板，支持本地和 SFTP 远程文件浏览。
 
-| 方法 | 说明 |
-|------|------|
-| `set_remote_entries(entries)` | 设置远程文件列表（SFTP） |
-| `set_remote_error(msg)` | 显示远程错误 |
-| `set_loading(loading)` | 设置加载状态 |
+### clipboard.rs — 剪贴板管理
 
-### focus_mode.rs — 专注模式
+`ClipboardManager` 系统剪贴板集成。
 
-隐藏所有 UI 元素，仅显示终端内容。
+### tab_recovery.rs — 标签页恢复
+
+`TabRecovery` / `SavedTab` / `SavedWindowState` 保存和恢复标签页布局。
 
 ### lock_screen.rs — 锁屏
 
 终端锁屏功能，输入密码解锁。
 
-### inspector.rs — 终端检查器
+### theme.rs — 主题管理
 
-调试面板，用于查看终端状态、渲染器信息、键盘事件和 VT 解析日志：
+### tokens.rs — UI token 定义
 
-| 类型 | 说明 |
-|------|------|
-| `InspectorState` | 检查器状态，包含可见性、终端信息、渲染器信息 |
-| `TerminalDebugInfo` | 终端调试信息：光标位置、屏幕尺寸、模式标志、标题、目录 |
-| `RendererDebugInfo` | 渲染器调试信息：帧计数、FPS、纹理内存、绘制调用 |
-| `KeyEventRecord` | 键盘事件历史记录：时间戳、按键、修饰键、是否消费 |
-
-**InspectorState 方法：**
-- `toggle()` — 切换可见性
-- `is_visible()` / `set_visible(bool)` — 检查/设置可见性
-- `update_terminal(info)` — 更新终端调试信息
-- `update_renderer(info)` — 更新渲染器调试信息
-- `record_key(key, mods, consumed)` — 记录键盘事件
-- `log_vt(event)` — 记录 VT 事件
-- `draw(ui)` — 绘制检查器 UI（包含 4 个可折叠部分）
-
-### online_search.rs — 在线搜索
-
-选中文本后在线搜索功能。
-
-### quick_bar.rs — 快速命令栏
-
-快速执行命令的浮动面板。
+### welcome.rs — 欢迎页面
 
 ## 常见任务
 
@@ -195,25 +250,21 @@ Ctrl+; 激活的快速跳转面板，可跳转到指定行号或匹配项。
 1. 在 `pureterm-core` 的 `hotkey.rs` 添加快捷键定义
 2. 在 `app.rs` 的 `handle_key` 中添加匹配和处理逻辑
 
+### 添加新的 Action（Surface 动作）
+1. 在 `surface.rs` 的 `Action` 枚举中添加变体
+2. 在 `Action::target()` 中分类为 App 或 Surface 级别
+3. 在 `Surface::handle_surface_action` 或 `handle_app_action` 中实现处理逻辑
+
 ### 修改标签页行为
 详细文档：[tabs/AGENTS.md](src/tabs/AGENTS.md)
 
 ### 修改分割面板逻辑
 详细文档：[split/AGENTS.md](src/split/AGENTS.md)
 
-### 添加新的拆分方向
-详细文档：[split/AGENTS.md](src/split/AGENTS.md) — 在 `SplitSide` 枚举中添加变体，实现 `direction()` 和 `insert_before()` 方法，更新 context_menu 和 pane 的相关枚举。
-
 ### 修改按键映射
-详细文档：[terminal/AGENTS.md](src/terminal/AGENTS.md) — 编辑 `encode_key` 方法。
+详细文档：[terminal/AGENTS.md](src/terminal/AGENTS.md)
 
 ### 添加新的 UI 组件
-1. 在 `src/` 下创建模块目录
+1. 在 `src/` 下创建模块文件
 2. 在 `lib.rs` 中导出
 3. 在 `app.rs` 中集成到应用状态
-
-### 处理鼠标事件
-`TerminalPane::handle_mouse_event()` 返回需要发送给终端的数据和 PaneAction。详细文档：[terminal/AGENTS.md](src/terminal/AGENTS.md)
-
-### 修改分隔线布局
-详细文档：[split/AGENTS.md](src/split/AGENTS.md) — `DIVIDER_WIDTH` 控制可见宽度，`DIVIDER_HIT_WIDTH` 控制可拖拽区域。

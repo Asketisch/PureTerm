@@ -28,16 +28,18 @@ src/
 │   ├── perform.rs      # VtePerform（vte::Perform 实现）+ ScreenSnapshot
 │   └── AGENTS.md       # VTE 执行引擎详解
 ├── screen/
-│   ├── mod.rs
+│   ├── mod.rs          # 模块重导出
 │   ├── cell.rs         # Cell、CellAttrs、Color、NamedColor
 │   ├── color.rs        # 重导出 Color
+│   ├── color_palette.rs # 256 色调色板（CIELAB 插值、X11 颜色名）
 │   ├── cursor.rs       # Cursor、CursorStyle
+│   ├── grapheme.rs     # Grapheme 边界检测（UAX #29，光标移动和选词）
 │   ├── grid.rs         # Grid（回滚缓冲区 + 可见视口 + wrapped flag + reflow）
+│   ├── page_list.rs    # PageList 分页回滚存储（256 行/页，O(1) 逐出）
+│   ├── ref_counted_set.rs # RefCountedSet<T> 引用计数集合
 │   ├── selection.rs    # 选择区域 + 鼠标事件编码
-│   ├── ref_counted_set.rs  # 引用计数集合
-│   ├── style.rs        # 样式定义
-│   ├── color_palette.rs # 颜色调色板
-│   └── AGENTS.md       # 字符网格与选择区域详解
+│   ├── style.rs        # Style + StylePool 样式去重池
+│   └── AGENTS.md       # 字符网格、样式与选择区域详解
 ├── input/
 │   ├── mod.rs          # 模块重导出
 │   ├── key.rs          # 按键定义

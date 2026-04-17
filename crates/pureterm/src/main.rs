@@ -30,7 +30,7 @@ use quake_mode::QuakeMode;
 use pureterm_ui::split::{SplitContainer, Direction, SplitSide, PaneRect, DividerInfo,
     compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point};
 use pureterm_ui::tabs::{TabContent, SplitRef};
-use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_MIN_WIDTH, TAB_PADDING_H, TAB_CLOSE_BTN_OFFSET_X};
+use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_MIN_WIDTH, TAB_PADDING_H, TAB_CLOSE_BTN_WIDTH, TAB_NEW_BTN_WIDTH, TRAFFIC_LIGHT_WIDTH};
 use pureterm_ui::terminal::pane::{TerminalPane, PaneAction, Selection};
 use pureterm_ui::WelcomePage;
 use pureterm_terminal::screen::selection::{TerminalMouseEvent, MouseButton, MouseModifiers};
@@ -223,6 +223,7 @@ impl PureTermApp {
 
         if !show {
             self.tab_bar.tab_layouts.clear();
+            self.tab_bar.new_tab_rect = TabViewportRect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 };
             return;
         }
 
@@ -232,16 +233,27 @@ impl PureTermApp {
         self.tab_bar.height = TAB_BAR_HEIGHT;
         self.tab_bar.tab_layouts.clear();
 
+        // "+" new tab button at the right end of the tab bar
+        let new_tab_x = screen_w - TAB_NEW_BTN_WIDTH;
+        self.tab_bar.new_tab_rect = TabViewportRect {
+            x: new_tab_x,
+            y: 0.0,
+            w: TAB_NEW_BTN_WIDTH,
+            h: TAB_BAR_HEIGHT,
+        };
+
         let tab_count = tabs.len();
         if tab_count == 0 {
             return;
         }
 
-        let equal_width = (screen_w / tab_count as f32).max(TAB_MIN_WIDTH);
+        // Tabs fill the space between traffic lights and the "+" button
+        let tabs_available_w = new_tab_x - pureterm_ui::tab_bar::TRAFFIC_LIGHT_WIDTH;
+        let equal_width = (tabs_available_w / tab_count as f32).max(TAB_MIN_WIDTH);
 
-        let mut x = 0.0f32;
+        let mut x = pureterm_ui::tab_bar::TRAFFIC_LIGHT_WIDTH;
         for tab in tabs {
-            let close_width = if tab_count > 1 { 20.0 } else { 0.0 };
+            let close_width = if tab_count > 1 { TAB_CLOSE_BTN_WIDTH } else { 0.0 };
 
             let rect = TabViewportRect {
                 x,
@@ -253,9 +265,9 @@ impl PureTermApp {
             let close_rect = if close_width > 0.0 {
                 Some(TabViewportRect {
                     x: x + equal_width - close_width - 4.0,
-                    y: 8.0,
+                    y: 0.0,
                     w: close_width,
-                    h: TAB_BAR_HEIGHT - 16.0,
+                    h: TAB_BAR_HEIGHT,
                 })
             } else {
                 None
@@ -938,57 +950,108 @@ impl PureTermApp {
         tab_bar: &TabBarState,
         active_tab_id: Option<u64>,
         renderer: &mut TerminalRenderer,
+        color_scheme: &pureterm_core::theme::ColorScheme,
         vertices: &mut Vec<pureterm_gui::pipeline::Vertex>,
         indices: &mut Vec<u32>,
     ) {
-        if !tab_bar.visible || tab_bar.tab_layouts.is_empty() {
+        if !tab_bar.visible {
             return;
         }
 
-        let screen_w: f32 = tab_bar.tab_layouts.iter().map(|l| l.rect.x + l.rect.w).fold(0.0, f32::max);
+        let screen_w: f32 = {
+            let tabs_end = tab_bar.tab_layouts.iter().map(|l| l.rect.x + l.rect.w).fold(0.0, f32::max);
+            let new_tab_end = tab_bar.new_tab_rect.x + tab_bar.new_tab_rect.w;
+            tabs_end.max(new_tab_end)
+        };
 
-        // Tab bar background
-        renderer.build_rect_vertices(
-            ViewportRect { x: 0.0, y: 0.0, w: screen_w, h: TAB_BAR_HEIGHT },
-            [0.12, 0.12, 0.14, 1.0],
-            vertices, indices,
-        );
+        // Derive tab bar colors from terminal theme (Ghostty approach)
+        let bg_rgb = pureterm_core::theme::ColorScheme::parse_color(&color_scheme.background);
+        let fg_rgb = pureterm_core::theme::ColorScheme::parse_color(&color_scheme.foreground);
+        let bar_bg = [bg_rgb[0] as f32 / 255.0, bg_rgb[1] as f32 / 255.0, bg_rgb[2] as f32 / 255.0, 1.0];
 
-        // Bottom border
-        renderer.build_rect_vertices(
-            ViewportRect { x: 0.0, y: TAB_BAR_HEIGHT - 1.0, w: screen_w, h: 1.0 },
-            [0.35, 0.35, 0.4, 1.0],
-            vertices, indices,
-        );
+        // Tab bar background — terminal background color slightly darkened
+        {
+            let dim = 0.85;
+            renderer.build_rect_vertices(
+                ViewportRect { x: 0.0, y: 0.0, w: screen_w, h: TAB_BAR_HEIGHT },
+                [bar_bg[0] * dim, bar_bg[1] * dim, bar_bg[2] * dim, 1.0],
+                vertices, indices,
+            );
+        }
+
+        // Bottom border — subtle separator
+        {
+            let border = 0.25;
+            renderer.build_rect_vertices(
+                ViewportRect { x: 0.0, y: TAB_BAR_HEIGHT - 1.0, w: screen_w, h: 1.0 },
+                [border, border, border + 0.03, 1.0],
+                vertices, indices,
+            );
+        }
+
+        // "+" new tab button
+        {
+            let btn = tab_bar.new_tab_rect;
+            if btn.w > 0.0 {
+                // Hover background
+                if tab_bar.hovered_new_tab {
+                    let hover = 0.2;
+                    renderer.build_rect_vertices(
+                        ViewportRect { x: btn.x, y: btn.y, w: btn.w, h: btn.h },
+                        [hover, hover, hover + 0.02, 1.0],
+                        vertices, indices,
+                    );
+                }
+                // "+" glyph centered
+                let plus_y = (TAB_BAR_HEIGHT - 16.0) / 2.0;
+                let plus_color = if tab_bar.hovered_new_tab {
+                    [1.0f32, 1.0, 1.0, 1.0]
+                } else {
+                    [0.55f32, 0.55, 0.6, 1.0]
+                };
+                renderer.build_text_vertices(
+                    "+",
+                    btn.x + (btn.w - 12.0) / 2.0,
+                    plus_y,
+                    plus_color,
+                    vertices, indices,
+                );
+            }
+        }
+
+        // Tabs
+        let text_y = (TAB_BAR_HEIGHT - 16.0) / 2.0;
 
         for (i, layout) in tab_bar.tab_layouts.iter().enumerate() {
             let is_active = active_tab_id == Some(layout.tab_id);
             let is_hovered = tab_bar.hovered_tab_index == Some(i);
 
-            // Tab background (active or hovered)
-            if is_active || is_hovered {
-                let bg_color = if is_active {
-                    [0.2, 0.2, 0.24, 1.0]
-                } else {
-                    [0.18, 0.18, 0.22, 1.0]
-                };
+            // Tab background
+            if is_active {
+                // Active tab: terminal background color (matches content area)
                 renderer.build_rect_vertices(
                     ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
-                    bg_color,
+                    bar_bg,
+                    vertices, indices,
+                );
+            } else if is_hovered {
+                // Hovered inactive: slightly lighter than bar
+                let f = 0.92;
+                renderer.build_rect_vertices(
+                    ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
+                    [bar_bg[0] * f + 0.05, bar_bg[1] * f + 0.05, bar_bg[2] * f + 0.05, 1.0],
                     vertices, indices,
                 );
             }
 
-            // Tab title text (centered)
-            let close_width = layout.close_button_rect.map_or(0.0, |cr| cr.w + TAB_CLOSE_BTN_OFFSET_X);
-            let available_width = layout.rect.w - close_width;
-            let max_text_width = available_width - TAB_PADDING_H;
+            // Tab title text — Ghostty uses labelColor (active) / secondaryLabelColor (inactive)
+            let available_width = layout.rect.w - TAB_PADDING_H;
+            let max_text_width = available_width - TAB_CLOSE_BTN_WIDTH;
             let full_width = renderer.measure_text(&layout.title);
 
             let (display_title, text_width) = if full_width <= max_text_width {
                 (layout.title.clone(), full_width)
             } else {
-                // Truncate character by character
                 let mut byte_end = 0usize;
                 let mut w = 0.0f32;
                 for (i, ch) in layout.title.char_indices() {
@@ -1001,38 +1064,49 @@ impl PureTermApp {
             };
 
             let title_x = layout.rect.x + (available_width - text_width) / 2.0;
-            let title_y = layout.rect.y + (TAB_BAR_HEIGHT - 16.0) / 2.0;
             let fg_color = if is_active {
-                [1.0f32, 1.0, 1.0, 1.0]
+                [fg_rgb[0] as f32 / 255.0, fg_rgb[1] as f32 / 255.0, fg_rgb[2] as f32 / 255.0, 1.0]
             } else {
-                [0.75f32, 0.75, 0.8, 1.0]
+                // Inactive: dimmed foreground (secondary label)
+                let dim = 0.6;
+                [fg_rgb[0] as f32 / 255.0 * dim, fg_rgb[1] as f32 / 255.0 * dim, fg_rgb[2] as f32 / 255.0 * dim, 1.0]
             };
 
             renderer.build_text_vertices(
                 &display_title,
                 title_x,
-                title_y,
+                text_y,
                 fg_color,
                 vertices, indices,
             );
 
-            // Close button
+            // Close button — only visible on hover (Ghostty / native macOS behavior)
             if let Some(ref close_rect) = layout.close_button_rect {
-                let close_color = if is_hovered {
-                    [0.9f32, 0.3, 0.3, 1.0]
-                } else {
-                    [0.6f32, 0.6, 0.65, 1.0]
-                };
-                renderer.build_text_vertices(
-                    "x",
-                    close_rect.x,
-                    close_rect.y,
-                    close_color,
-                    vertices, indices,
-                );
+                if is_hovered {
+                    // Hover background
+                    let close_bg = if is_active { 0.25 } else { 0.18 };
+                    renderer.build_rect_vertices(
+                        ViewportRect {
+                            x: close_rect.x,
+                            y: 0.0,
+                            w: close_rect.w,
+                            h: TAB_BAR_HEIGHT,
+                        },
+                        [close_bg, close_bg * 0.6, close_bg * 0.6, 1.0],
+                        vertices, indices,
+                    );
+                    // "x" glyph
+                    renderer.build_text_vertices(
+                        "x",
+                        close_rect.x + (close_rect.w - 12.0) / 2.0,
+                        text_y,
+                        [0.9f32, 0.3, 0.3, 1.0],
+                        vertices, indices,
+                    );
+                }
             }
 
-            // Tab color indicator stripe
+            // Tab color indicator stripe (bottom)
             if let Some(ref color_hex) = layout.color {
                 let cv = parse_hex_color(color_hex);
                 renderer.build_rect_vertices(
@@ -1201,6 +1275,12 @@ impl ApplicationHandler for PureTermApp {
                         renderer.configure_surface(surface, physical_size.width, physical_size.height, &transparency);
                         renderer.set_corner_radius(self.appearance.corner_radius);
                         self.resize_all_panes();
+
+                        // macOS: 重新定位红绿灯按钮（窗口大小改变后 macOS 可能重置按钮位置）
+                        #[cfg(target_os = "macos")]
+                        if let Some(ref window) = self.window {
+                            platform::macos::reposition_traffic_lights_on_resize(window);
+                        }
                     }
                 }
             }
@@ -1316,7 +1396,7 @@ impl ApplicationHandler for PureTermApp {
 
                     // Render tab bar overlay
                     let active_tab_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
-                    Self::render_tab_bar_overlay(&self.tab_bar, active_tab_id, renderer, &mut all_vertices, &mut all_indices);
+                    Self::render_tab_bar_overlay(&self.tab_bar, active_tab_id, renderer, &self.color_scheme, &mut all_vertices, &mut all_indices);
 
                     // Render context menu overlay
                     Self::render_context_menu_overlay(&self.context_menu, renderer, &mut all_vertices, &mut all_indices);
@@ -1710,17 +1790,23 @@ impl ApplicationHandler for PureTermApp {
 
                 // Check for tab bar hover
                 if self.tab_bar.visible {
+                    // Check "+" new tab button
+                    let hovered_new_tab = self.tab_bar.new_tab_rect.contains(self.mouse_pos.0, self.mouse_pos.1);
+
                     let hovered_idx = self.tab_bar.tab_layouts.iter().position(|l| {
                         l.rect.contains(self.mouse_pos.0, self.mouse_pos.1)
                     });
-                    if hovered_idx != self.tab_bar.hovered_tab_index {
+
+                    let changed = hovered_idx != self.tab_bar.hovered_tab_index
+                        || hovered_new_tab != self.tab_bar.hovered_new_tab;
+                    if changed {
                         self.tab_bar.hovered_tab_index = hovered_idx;
+                        self.tab_bar.hovered_new_tab = hovered_new_tab;
                         if let Some(ref window) = self.window {
                             window.request_redraw();
                         }
                     }
-                    if hovered_idx.is_some() {
-                        // Set cursor to hand when hovering over tab bar
+                    if hovered_idx.is_some() || hovered_new_tab {
                         if let Some(ref window) = self.window {
                             window.set_cursor(winit::window::CursorIcon::Pointer);
                         }
@@ -1857,6 +1943,12 @@ impl ApplicationHandler for PureTermApp {
 
                                 // Check if clicking on a tab bar
                                 if self.tab_bar.visible {
+                                    // macOS: 跳过红绿灯区域，让系统原生处理关闭/最小化/最大化
+                                    #[cfg(target_os = "macos")]
+                                    if self.mouse_pos.0 < TRAFFIC_LIGHT_WIDTH && self.mouse_pos.1 < TAB_BAR_HEIGHT {
+                                        return;
+                                    }
+
                                     if let Some(idx) = self.tab_bar.tab_layouts.iter().position(|l| l.rect.contains(self.mouse_pos.0, self.mouse_pos.1)) {
                                         let layout = &self.tab_bar.tab_layouts[idx];
                                         let tab_id = layout.tab_id;
@@ -1901,6 +1993,12 @@ impl ApplicationHandler for PureTermApp {
                                                 window.request_redraw();
                                             }
                                         }
+                                        return;
+                                    }
+
+                                    // Check if clicking "+" new tab button
+                                    if self.tab_bar.new_tab_rect.contains(self.mouse_pos.0, self.mouse_pos.1) {
+                                        self.handle_new_tab();
                                         return;
                                     }
                                 }

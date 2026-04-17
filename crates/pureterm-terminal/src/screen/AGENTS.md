@@ -1,28 +1,35 @@
-# pureterm-terminal/src/screen — 字符网格与选择区域
+# pureterm-terminal/src/screen — 字符网格、样式与选择区域
 
-终端屏幕的底层实现：字符网格管理（含 reflow 回流）、单元格数据、光标管理、文本选择与鼠标事件编码。
+终端屏幕的底层实现：字符网格管理（含 reflow 回流和分页回滚）、单元格数据与样式池、光标管理、256 色调色板、grapheme 边界检测、文本选择与鼠标事件编码。
 
 ## 文件结构
 
 ```
 src/
-├── mod.rs        # 模块重导出 (13 行)
-├── cell.rs       # Cell、CellAttrs、Color、NamedColor (103 行)
-├── color.rs      # 重导出 Color (1 行)
-├── cursor.rs     # Cursor、CursorStyle (55 行)
-├── grid.rs       # Grid（字符网格 + 回滚缓冲区）(368 行)
-└── selection.rs  # 文本选择 + 鼠标事件编码 (142 行)
+├── mod.rs              # 模块重导出 (13 行)
+├── cell.rs             # Cell、CellAttrs、Color、NamedColor (103 行)
+├── color.rs            # 重导出 Color (1 行)
+├── color_palette.rs    # 256 色调色板生成、CIELAB 插值、X11 颜色名 (469 行)
+├── cursor.rs           # Cursor、CursorStyle (55 行)
+├── grapheme.rs         # Grapheme 边界检测（UAX #29）(454 行)
+├── grid.rs             # Grid（字符网格 + 回滚缓冲区）(441 行，VecDeque)
+├── page_list.rs        # PageList 分页存储（替代 Vec<Vec<Cell>>）(273 行)
+├── ref_counted_set.rs  # RefCountedSet<T> 引用计数集合 (173 行)
+├── selection.rs        # 文本选择 + 鼠标事件编码 (142 行)
+└── style.rs            # Style + StylePool 样式去重池 (217 行)
 ```
 
-**注意：** 无 `history.rs` 文件，回滚历史直接由 `Grid` 管理。
+**注意：** 无 `history.rs` 文件，回滚历史由 `Grid` 管理（底层可选 `PageList` 分页存储）。
 
 ## 模块依赖
 
 ```
 screen/ → hyperlink/（Cell 中的超链接）
+screen/color_palette.rs → （无外部依赖，纯计算）
+screen/grapheme.rs → unicode-segmentation（UAX #29 grapheme 边界）
+screen/style.rs → ref_counted_set.rs
+screen/page_list.rs → cell.rs
 ```
-
-无外部 crate 依赖。
 
 ## 核心类型
 
@@ -34,9 +41,10 @@ screen/ → hyperlink/（Cell 中的超链接）
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `rows` | `Vec<Vec<Cell>>` | 所有行（可见 + 回滚） |
-| `marks` | `Vec<Option<Mark>>` | 每行标记（与 rows 同索引） |
-| `wrapped` | `Vec<bool>` | 每行是否被软换行（reflow 用） |
+| `rows` | `VecDeque<Vec<Cell>>` | 所有行（可见 + 回滚） |
+| `marks` | `VecDeque<Option<Mark>>` | 每行标记（与 rows 同索引） |
+| `wrapped` | `VecDeque<bool>` | 每行是否被软换行（reflow 用） |
+| `double_mode` | `VecDeque<DoubleMode>` | 每行双宽/双高模式 |
 | `cols` | `usize` | 列数 |
 | `visible_rows` | `usize` | 可见行数 |
 | `scrollback_limit` | `usize` | 最大回滚行数 |
@@ -64,9 +72,23 @@ screen/ → hyperlink/（Cell 中的超链接）
 1. 根据 `wrapped` 标志重组合并连续软换行行为逻辑行
 2. 按 `new_cols` 重新分块
 3. 恢复 marks 到首行
-4. 同步更新 `rows`、`marks`、`wrapped` 三个向量
+4. 同步更新 `rows`、`marks`、`wrapped`、`double_mode` 四个向量
+5. **重要**：reflow 后总行数可能少于 `new_rows`（解包合并减少行数），需用 `while` 循环补充空行到 `new_rows`
 
-**重要：** `wrapped` 向量与 `rows` 和 `marks` 必须同步维护。任何修改行的操作都要同时更新三者。
+**重要：** `wrapped`、`marks`、`double_mode` 向量与 `rows` 必须同步维护。任何修改行的操作都要同时更新四者。`scroll_up`/`scroll_down` 使用 `VecDeque` 实现 O(1) 首尾操作。
+
+### PageList（page_list.rs）
+
+分页回滚存储，将行按 256 行一页分组，避免 `Vec` 头部删除的 O(n) 开销：
+
+| 方法 | 说明 |
+|------|------|
+| `push_row(row)` | 追加行，超限时逐出最旧行 |
+| `pop_front_row()` | 删除最旧行 |
+| `get_row(idx) / get_row_mut(idx)` | 二分查找随机访问 |
+| `drain_front(count)` | 批量删除最旧 N 行 |
+| `iter() / iter_mut()` | 正向迭代 |
+| `last_row()` / `clear()` / `page_count()` | 辅助方法 |
 
 ### Cell（cell.rs）
 
@@ -112,6 +134,55 @@ pub enum Color {
 ### NamedColor（cell.rs）
 
 命名颜色枚举：Foreground、Background、Cursor、SelectionBackground、SelectionForeground 以及 16 色调色板（Black、Red、Green、Yellow、Blue、Magenta、Cyan、White + Bright 版本）。
+
+### ColorPalette（color_palette.rs）
+
+256 色调色板生成与颜色空间转换：
+
+| 类型 | 说明 |
+|------|------|
+| `Rgb` | RGB 颜色值，支持 `to_lab()` / `from_lab()` 转换 |
+| `Lab` | CIELAB 表示（L/a/b_val），用于感知均匀插值 |
+
+| 函数 | 说明 |
+|------|------|
+| `generate_256_palette(base_colors)` | 标准 6×6×6 色立方体 + 24 级灰度 |
+| `generate_cielab_palette(base_colors)` | CIELAB 空间插值（感知更平滑） |
+| `lookup_x11_color(name)` | ~140 种 X11/CSS 颜色名查找（不区分大小写） |
+| `ANSI_COLORS` | 标准 16 ANSI 颜色常量 |
+
+### Style 与 StylePool（style.rs）
+
+样式去重与引用计数：
+
+| 类型 | 说明 |
+|------|------|
+| `Style` | fg + bg + CellAttrs，实现 Hash，提供 builder 方法 |
+| `StylePool` | 包装 `RefCountedSet<Style>`，按稳定索引管理样式 |
+
+StylePool 关键方法：`default_style()`（缓存默认样式索引）、`insert(style)` → `(index, is_new)`、`remove(index)`、`get(index)`。
+
+### RefCountedSet（ref_counted_set.rs）
+
+通用引用计数集合，`HashMap<T, (u32, usize)>` 实现：
+
+- `insert(item)` → `(stable_index, is_new)` — 重复项增加引用计数
+- `remove(item)` → 减引用计数，归零时移除
+- `get(index)` / `get_index(item)` — 双向查找
+
+用于 `StylePool` 的底层存储。
+
+### GraphemeBoundary（grapheme.rs）
+
+基于 `unicode-segmentation`（UAX #29）的 grapheme 聚类边界检测：
+
+| 函数 | 说明 |
+|------|------|
+| `grapheme_boundaries(row)` | 返回一行中所有 grapheme 聚类的 `[start, end)` 列范围 |
+| `prev_grapheme_boundary(row, col)` | 左箭头移动：当前聚类的起始列 |
+| `next_grapheme_boundary(row, col)` | 右箭头移动：下一聚类的起始列 |
+
+确保组合字符、emoji ZWJ 序列、宽 CJK 字符作为整体移动。
 
 ### Cursor（cursor.rs）
 

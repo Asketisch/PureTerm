@@ -102,6 +102,12 @@ base64 = "0.22"
 ed25519-dalek = "2.1"
 rsa = "0.9"
 
+# macOS native
+objc2 = "0.5"
+objc2-app-kit = { version = "0.2", features = ["NSWindow", "NSView", "NSButton", "NSControl"] }
+objc2-foundation = { version = "0.2", features = ["NSGeometry"] }
+raw-window-handle = "0.6"
+
 # Workspace crates
 pureterm-core = { path = "crates/pureterm-core" }
 pureterm-terminal = { path = "crates/pureterm-terminal" }
