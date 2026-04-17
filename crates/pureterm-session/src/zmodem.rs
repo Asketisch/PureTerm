@@ -2,7 +2,7 @@ use bytes::Bytes;
 
 use crate::middleware::SessionMiddleware;
 
-/// Current state of Zmodem detection.
+/// Zmodem 检测的当前状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZmodemState {
     /// No transfer in progress.
@@ -15,17 +15,16 @@ pub enum ZmodemState {
     TransferEnd,
 }
 
-/// Middleware that detects Zmodem file-transfer sequences and replaces binary
-/// data with a human-readable placeholder so the terminal doesn't get flooded
-/// with raw bytes.
+/// 检测 Zmodem 文件传输序列的中间件,并将二进制数据替换为人类可读的占位符,
+/// 以防止终端被原始字节淹没。
 pub struct ZmodemMiddleware {
     in_transfer: bool,
 }
 
-/// Zmodem start marker: `**\x18B0` (the ZRQINIT header often appears after `rz\r`).
+/// Zmodem 起始标记: `**\x18B0`(ZRQINIT 头通常出现在 `rz\r` 之后)。
 const ZMODEM_START: &[u8] = b"**\x18B0";
 
-/// Zmodem end marker: `**\x18B0` followed by `OO` (over-and-out).
+/// Zmodem 结束标记: `**\x18B0` 后跟 `OO`(over-and-out)。
 const ZMODEM_END: &[u8] = b"**\x18B0OO";
 
 impl ZmodemMiddleware {
@@ -35,17 +34,16 @@ impl ZmodemMiddleware {
         }
     }
 
-    /// Scan `data` for Zmodem markers and return the detected state alongside
-    /// the (possibly replaced) bytes.
+    /// 在 `data` 中扫描 Zmodem 标记,并返回检测到的状态以及(可能被替换的)字节。
     fn detect_and_replace(&mut self, data: &[u8]) -> (ZmodemState, Bytes) {
-        // Check for end marker first (it is a superset of the start marker).
+        // 首先检查结束标记(它是起始标记的超集)。
         if self.in_transfer && contains_subsequence(data, ZMODEM_END) {
             self.in_transfer = false;
             let msg = b"[Zmodem transfer in progress...]";
             return (ZmodemState::TransferEnd, Bytes::from_static(msg));
         }
 
-        // Check for start marker.
+        // 检查起始标记。
         if contains_subsequence(data, ZMODEM_START) || contains_subsequence(data, b"rz\r") {
             self.in_transfer = true;
             let msg = b"[Zmodem transfer in progress...]";
@@ -74,12 +72,12 @@ impl SessionMiddleware for ZmodemMiddleware {
     }
 
     fn process_output_to_session(&mut self, data: &[u8]) -> Bytes {
-        // User input is never modified.
+        // 用户输入永远不会被修改。
         Bytes::copy_from_slice(data)
     }
 }
 
-/// Simple subsequence search – returns `true` if `needle` appears in `haystack`.
+/// 简单的子序列搜索 - 如果 `needle` 出现在 `haystack` 中则返回 `true`。
 fn contains_subsequence(haystack: &[u8], needle: &[u8]) -> bool {
     if needle.is_empty() {
         return true;

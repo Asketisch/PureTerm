@@ -1,20 +1,20 @@
-//! Immutable persistent split pane tree.
+//! 不可变的持久化分割面板树。
 //!
-//! Uses the `im` crate for structural sharing of the tree structure,
-//! with a plain `Vec` for the ordered pane list.
+//! 使用 `im` crate 实现树结构的结构性共享,
+//! 并使用普通 `Vec` 来维护有序的面板列表。
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-/// Unique identifier for a terminal pane.
+/// 终端面板的唯一标识符。
 pub type PaneId = Uuid;
 
-/// Direction of a split.
+/// 分割方向。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SplitDirection {
-    /// Left and right panes.
+    /// 左右面板。
     Horizontal,
-    /// Top and bottom panes.
+    /// 上下面板。
     Vertical,
 }
 
@@ -27,31 +27,31 @@ impl SplitDirection {
     }
 }
 
-/// A node in the split tree.
+/// 分割树中的一个节点。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SplitNode {
-    /// A leaf holding a single terminal pane.
+    /// 持有单个终端面板的叶子节点。
     Leaf { pane_id: PaneId },
-    /// An internal split node.
+    /// 内部分割节点。
     Split {
         direction: SplitDirection,
-        /// Position of the divider from the left/top edge (0.0–1.0).
+        /// 分隔符从左/上边缘的位置 (0.0–1.0)。
         ratio: f32,
         first: Box<SplitNode>,
         second: Box<SplitNode>,
     },
 }
 
-/// An immutable persistent split pane tree.
+/// 不可变的持久化分割面板树。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SplitTree {
     root: Option<SplitNode>,
-    /// Ordered list of all pane IDs.
+    /// 所有面板 ID 的有序列表。
     panes: Vec<PaneId>,
 }
 
 impl SplitTree {
-    /// Create a new empty tree.
+    /// 创建新的空树。
     pub fn new() -> Self {
         Self {
             root: None,
@@ -59,7 +59,7 @@ impl SplitTree {
         }
     }
 
-    /// Create a tree with a single pane.
+    /// 创建带有单个面板的树。
     pub fn single(pane_id: PaneId) -> Self {
         Self {
             root: Some(SplitNode::Leaf { pane_id }),
@@ -67,8 +67,8 @@ impl SplitTree {
         }
     }
 
-    /// Split an existing pane in the given direction.
-    /// Returns a new tree.
+    /// 在给定方向上分割现有面板。
+    /// 返回新树。
     pub fn split(&self, existing: PaneId, new_pane: PaneId, direction: SplitDirection) -> Self {
         let mut new_panes = self.panes.clone();
         new_panes.push(new_pane);
@@ -114,7 +114,7 @@ impl SplitTree {
         }
     }
 
-    /// Remove a pane.
+    /// 移除一个面板。
     pub fn remove(&self, pane_id: PaneId) -> Self {
         let mut new_panes = self.panes.clone();
         new_panes.retain(|id| *id != pane_id);
@@ -145,7 +145,7 @@ impl SplitTree {
         }
     }
 
-    /// Adjust the split ratio of the split containing `pane_id`.
+    /// 调整包含 `pane_id` 的分割的比率。
     pub fn resize(&self, pane_id: PaneId, delta: f32) -> Self {
         let new_root = self.root.clone().map(|node| {
             Self::resize_node(node, pane_id, delta)
@@ -169,7 +169,7 @@ impl SplitTree {
                         second,
                     };
                 }
-                // Recurse into both children
+                // 递归到两个子节点
                 let new_first = Self::resize_node(*first, target, delta);
                 let new_second = Self::resize_node(*second, target, delta);
                 SplitNode::Split {
@@ -182,7 +182,7 @@ impl SplitTree {
         }
     }
 
-    /// Check if a subtree contains the given pane.
+    /// 检查子树是否包含给定面板。
     fn contains(node: &SplitNode, pane_id: PaneId) -> bool {
         match node {
             SplitNode::Leaf { pane_id: id } => *id == pane_id,
@@ -192,12 +192,12 @@ impl SplitTree {
         }
     }
 
-    /// Get all pane IDs in insertion order.
+    /// 按插入顺序获取所有面板 ID。
     pub fn panes(&self) -> &[PaneId] {
         &self.panes
     }
 
-    /// Get the root node.
+    /// 获取根节点。
     pub fn root(&self) -> Option<&SplitNode> {
         self.root.as_ref()
     }
@@ -206,7 +206,7 @@ impl SplitTree {
         self.root.is_none()
     }
 
-    /// Find the adjacent pane in the given direction.
+    /// 查找给定方向上的相邻面板。
     pub fn adjacent(&self, pane_id: PaneId, direction: SplitDirection) -> Option<PaneId> {
         self.root.as_ref().and_then(|node| Self::find_adjacent(node, pane_id, direction))
     }
@@ -216,14 +216,14 @@ impl SplitTree {
             SplitNode::Leaf { .. } => None,
             SplitNode::Split { direction: dir, first, second, .. } => {
                 if *dir == direction {
-                    // Same direction: navigate into correct child
+                    // 相同方向:导航到正确的子节点
                     if Self::contains(first, target) {
                         return Self::rightmost_pane(second);
                     } else if Self::contains(second, target) {
                         return Self::leftmost_pane(first);
                     }
                 }
-                // Perpendicular: search both children
+                // 垂直方向:搜索两个子节点
                 Self::find_adjacent(first, target, direction)
                     .or_else(|| Self::find_adjacent(second, target, direction))
             }
@@ -244,7 +244,7 @@ impl SplitTree {
         }
     }
 
-    /// Compute pixel rects for all panes given total viewport size.
+    /// 根据总视口大小计算所有面板的像素矩形。
     pub fn compute_layout(&self, width: f32, height: f32) -> Vec<(PaneId, (f32, f32, f32, f32))> {
         let mut result = Vec::new();
         if let Some(ref root) = self.root {

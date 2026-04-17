@@ -1,34 +1,34 @@
-//! PureTerm terminfo definition.
+//! PureTerm terminfo 定义。
 //!
-//! Provides terminal capabilities and TERM environment variable setup.
+//! 提供终端能力和 TERM 环境变量设置。
 
-/// The terminal name for PureTerm
+/// PureTerm 的终端名称
 pub const TERM_NAME: &str = "pureterm";
 
-/// The TERM alias we actually use (xterm-256color compatible with extensions)
+/// 我们实际使用的 TERM 别名（与扩展兼容的 xterm-256color）
 pub const TERM_COMPAT: &str = "xterm-256color";
 
-/// Install PureTerm terminfo if needed.
-/// Sets TERM=pureterm if our terminfo is available, otherwise falls back to xterm-256color.
+/// 必要时安装 PureTerm terminfo。
+/// 如果我们的 terminfo 可用则设置 TERM=pureterm，否则回退到 xterm-256color。
 pub fn install_terminfo() {
-    // For now, use xterm-256color for maximum compatibility
-    // PureTerm supports all xterm-256color capabilities plus extensions
+    // 目前，使用 xterm-256color 以获得最大兼容性
+    // PureTerm 支持所有 xterm-256color 功能加上扩展
     if std::env::var("TERM").is_err() {
         std::env::set_var("TERM", TERM_COMPAT);
     }
 }
 
-/// Get PureTerm's terminal identification string for DA responses
+/// 获取 PureTerm 的终端标识字符串用于 DA 响应
 pub fn version_string() -> String {
     format!("PureTerm/{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Terminal name for xterm compatibility
+/// 用于 xterm 兼容性的终端名称
 pub fn xterm_name() -> &'static str {
     "PureTerm"
 }
 
-/// PureTerm's feature set for DA2 response
+/// PureTerm 的 DA2 响应功能集
 pub fn feature_attributes() -> &'static str {
     "0;95;PureTerm" // VT520 class, 95 columns of features
 }

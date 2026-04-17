@@ -1,28 +1,28 @@
 
-/// Trait for PureTerm plugins.
+/// PureTerm 插件的 trait。
 pub trait Plugin: Send + Sync {
     fn name(&self) -> &str;
     fn version(&self) -> &str;
     fn description(&self) -> &str { "" }
 
-    /// Called when the plugin is loaded.
+    /// 当插件加载时被调用。
     fn on_load(&self, _context: &mut PluginContext) -> anyhow::Result<()> {
         Ok(())
     }
 
-    /// Called when the plugin is unloaded.
+    /// 当插件卸载时被调用。
     fn on_unload(&self) {}
 
-    /// Called to register services.
+    /// 用于注册服务。
     fn register_services(&self, _registry: &mut ServiceRegistry) {}
 }
 
-/// Context provided to plugins during initialization.
+/// 插件初始化期间提供的上下文。
 pub struct PluginContext {
     // Will be expanded as needed
 }
 
-/// Registry for plugin-provided services.
+/// 插件提供服务的注册表。
 pub struct ServiceRegistry {
     commands: Vec<CommandDescriptor>,
 }

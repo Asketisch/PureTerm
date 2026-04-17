@@ -2,11 +2,10 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 
-/// Manager for broadcasting input to multiple sessions simultaneously.
+/// 用于同时向多个会话广播输入的管理器。
 ///
-/// `SyncInputManager` decouples itself from the `Session` trait's `&mut self`
-/// requirement by accepting closures that forward data to the underlying
-/// sessions through channels or other mechanisms.
+/// `SyncInputManager` 通过接受闭包来转发数据到底层会话,从而与 `Session` trait 的 `&mut self`
+/// 要求解耦。
 pub struct SyncInputManager {
     sessions: Vec<SyncSessionHandle>,
     enabled: bool,
@@ -19,7 +18,7 @@ pub struct SyncSessionHandle {
     writer: Arc<Mutex<Box<dyn Fn(&[u8]) -> Result<()> + Send>>>,
 }
 
-/// Result of a sync input broadcast operation.
+/// 同步输入广播操作的结果。
 pub struct SyncInputResult {
     pub total: usize,
     pub succeeded: usize,
@@ -27,7 +26,7 @@ pub struct SyncInputResult {
 }
 
 impl SyncInputManager {
-    /// Create an empty manager with sync mode disabled.
+    /// 创建禁用了同步模式的空管理器。
     pub fn new() -> Self {
         Self {
             sessions: Vec::new(),
@@ -35,11 +34,10 @@ impl SyncInputManager {
         }
     }
 
-    /// Register a session for sync input.
+    /// 注册一个会话以进行同步输入。
     ///
-    /// The `writer` closure is expected to capture a sender channel or similar
-    /// mechanism that forwards data to the actual session, avoiding the need
-    /// to hold a mutable reference to the session itself.
+    /// `writer` 闭包应该捕获一个发送者通道或类似的机制来将数据转发到实际会话,
+    /// 从而避免需要持有对会话本身的可变引用。
     pub fn add_session(
         &mut self,
         id: u64,
@@ -56,15 +54,15 @@ impl SyncInputManager {
         });
     }
 
-    /// Remove a previously registered session by its ID.
+    /// 通过 ID 移除之前注册的会话。
     pub fn remove_session(&mut self, id: u64) {
         self.sessions.retain(|s| s.id != id);
     }
 
-    /// Broadcast `data` to every registered session.
+    /// 向每个已注册的会话广播 `data`。
     ///
-    /// Returns a `SyncInputResult` summarising how many sessions received the
-    /// data and which ones (if any) failed along with an error description.
+    /// 返回一个 `SyncInputResult`,总结有多少会话收到了数据以及哪些(如果有的话)失败了,
+    /// 并附上错误描述。
     pub fn broadcast(&self, data: &[u8]) -> SyncInputResult {
         let total = self.sessions.len();
         let mut succeeded = 0;
@@ -87,22 +85,22 @@ impl SyncInputManager {
         }
     }
 
-    /// Enable or disable sync input mode.
+    /// 启用或禁用同步输入模式。
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
-    /// Whether sync input mode is currently active.
+    /// 当前是否激活了同步输入模式。
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }
 
-    /// Return a slice of all registered session handles.
+    /// 返回所有已注册会话句柄的切片。
     pub fn sessions(&self) -> &[SyncSessionHandle] {
         &self.sessions
     }
 
-    /// Number of sessions currently registered.
+    /// 当前注册的会话数量。
     pub fn session_count(&self) -> usize {
         self.sessions.len()
     }

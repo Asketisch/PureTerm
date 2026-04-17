@@ -1,25 +1,25 @@
 use serde::{Deserialize, Serialize};
 
-/// The kind of mark on a row.
+/// 行的标记类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MarkKind {
-    /// Shell prompt start (OSC 133;A).
+    /// Shell 提示符开始 (OSC 133;A)。
     PromptStart,
-    /// Command start (OSC 133;B).
+    /// 命令开始 (OSC 133;B)。
     CommandStart,
-    /// Command output start (OSC 133;C).
+    /// 命令输出开始 (OSC 133;C)。
     OutputStart,
-    /// Command output end (OSC 133;D).
+    /// 命令输出结束 (OSC 133;D)。
     OutputEnd,
-    /// User-defined mark.
+    /// 用户定义的标记。
     User,
 }
 
-/// A mark associated with a row in the grid.
+/// 与网格中一行关联的标记。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mark {
     pub kind: MarkKind,
-    /// Optional label for user marks.
+    /// 用户标记的可选标签。
     pub label: Option<String>,
 }
 
@@ -35,7 +35,7 @@ impl Mark {
         }
     }
 
-    /// Parse OSC 133 semicolon-separated marker.
+    /// 解析 OSC 133 分号分隔的标记。
     /// OSC 133 ; <marker> ST
     /// marker: A, B, C, D
     pub fn from_osc133(marker: &str) -> Option<Self> {

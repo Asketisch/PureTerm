@@ -1,10 +1,10 @@
-//! Conditional configuration parsing
+//! 条件配置解析
 //!
-//! Supports if/else blocks based on theme, OS, and other conditions.
+//! 支持基于主题、操作系统和其他条件的 if/else 块。
 
 use std::collections::HashMap;
 
-/// A conditional configuration block
+/// 条件配置块
 #[derive(Debug, Clone)]
 pub enum ConditionalBlock {
     If {
@@ -15,7 +15,7 @@ pub enum ConditionalBlock {
     KeyValue(ConfigEntry),
 }
 
-/// A condition for conditional config
+/// 条件配置的条件
 #[derive(Debug, Clone, PartialEq)]
 pub enum Condition {
     ThemeEqual(String),
@@ -29,22 +29,22 @@ pub enum Condition {
     Always,
 }
 
-/// A key-value config entry
+/// 键值配置条目
 #[derive(Debug, Clone)]
 pub struct ConfigEntry {
     pub key: String,
     pub value: String,
 }
 
-/// Parsed conditional configuration
+/// 解析后的条件配置
 #[derive(Debug, Clone, Default)]
 pub struct ConditionalConfig {
     pub blocks: Vec<ConditionalBlock>,
 }
 
-/// Parse a conditional config string
+/// 解析条件配置字符串
 ///
-/// Example:
+/// 示例：
 /// ```ini
 /// if theme == light {
 ///   background = "#ffffff"
@@ -103,24 +103,24 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_if_block(&mut self) -> Result<ConditionalBlock, ParseError> {
-        // Parse "if"
+        // 解析 "if"
         self.expect("if")?;
 
-        // Parse condition
+        // 解析条件
         let condition = self.parse_condition()?;
 
-        // Parse "{"
+        // 解析 "{"
         self.skip_whitespace();
         self.expect("{")?;
 
-        // Parse then body
+        // 解析 then 体
         let then_body = self.parse_block_body()?;
 
-        // Parse "}"
+        // 解析 "}"
         self.skip_whitespace();
         self.expect("}")?;
 
-        // Check for else
+        // 检查 else
         self.skip_whitespace();
         if self.peek_is("else") {
             self.expect("else")?;
@@ -136,7 +136,7 @@ impl<'a> Parser<'a> {
                     else_body: Some(else_blocks),
                 })
             } else {
-                // else if - parse recursively
+                // else if - 递归解析
                 let nested = self.parse_if_block()?;
                 Ok(ConditionalBlock::If {
                     condition,
@@ -156,7 +156,7 @@ impl<'a> Parser<'a> {
     fn parse_condition(&mut self) -> Result<Condition, ParseError> {
         self.skip_whitespace();
 
-        // Check for theme condition
+        // 检查主题条件
         if self.peek_is("theme") {
             self.expect("theme")?;
             self.skip_whitespace();
@@ -174,7 +174,7 @@ impl<'a> Parser<'a> {
                 Ok(Condition::ThemeEqual(value))
             }
         }
-        // Check for os condition
+        // 检查操作系统条件
         else if self.peek_is("os") {
             self.expect("os")?;
             self.skip_whitespace();
@@ -192,7 +192,7 @@ impl<'a> Parser<'a> {
                 Ok(Condition::OsEqual(value))
             }
         }
-        // Check for env condition
+        // 检查环境条件
         else if self.peek_is("env") {
             self.expect("env")?;
             self.skip_whitespace();
@@ -300,10 +300,10 @@ impl<'a> Parser<'a> {
         self.skip_whitespace();
         let start = self.pos;
 
-        // Check if value starts with a quote
+        // 检查值是否以引号开头
         let quoted = self.content[self.pos..].starts_with('"');
 
-        // Simple value parsing - read until newline or comment
+        // 简单值解析 - 读取到换行符或注释
         while !self.at_end() {
             let ch = self.content[self.pos..].chars().next().unwrap();
             if ch == '\n' {
@@ -322,7 +322,7 @@ impl<'a> Parser<'a> {
             .trim()
             .to_string();
 
-        // Strip surrounding quotes
+        // 去除周围引号
         if value.starts_with('"') && value.ends_with('"') && value.len() >= 2 {
             value = value[1..value.len()-1].to_string();
         }
@@ -385,7 +385,7 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// Evaluate conditional blocks based on context
+/// 基于上下文评估条件块
 pub struct ConditionalEvaluator {
     theme: String,
     os: String,

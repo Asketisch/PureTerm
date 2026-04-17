@@ -1,22 +1,22 @@
-//! Internationalization support for PureTerm.
+//! PureTerm 的国际化支持。
 //!
-//! Provides locale-based string lookup for UI text.
-//! Locales are loaded from TOML files in the config directory.
+//! 提供基于区域设置的 UI 文本字符串查找。
+//! 区域设置从配置目录中的 TOML 文件加载。
 
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
-/// Internationalization service.
+/// 国际化服务。
 pub struct I18n {
-    /// Current locale.
+    /// 当前区域设置。
     locale: String,
-    /// Loaded translations.
+    /// 已加载的翻译。
     translations: HashMap<String, HashMap<String, String>>,
 }
 
 impl I18n {
-    /// Create a new i18n service with the default locale.
+    /// 使用默认区域设置创建新的 i18n 服务。
     pub fn new(locale: &str) -> Self {
         Self {
             locale: locale.to_string(),
@@ -24,17 +24,17 @@ impl I18n {
         }
     }
 
-    /// Set the current locale.
+    /// 设置当前区域设置。
     pub fn set_locale(&mut self, locale: &str) {
         self.locale = locale.to_string();
     }
 
-    /// Get the current locale.
+    /// 获取当前区域设置。
     pub fn locale(&self) -> &str {
         &self.locale
     }
 
-    /// Load translations from a TOML file.
+    /// 从 TOML 文件加载翻译。
     pub fn load_from_file(&mut self, path: &PathBuf) -> std::io::Result<()> {
         let content = fs::read_to_string(path)?;
         let translations: HashMap<String, String> = toml::from_str(&content)
@@ -43,7 +43,7 @@ impl I18n {
         Ok(())
     }
 
-    /// Load translations from the locales directory.
+    /// 从区域设置目录加载翻译。
     pub fn load_from_dir(&mut self, dir: &PathBuf) -> std::io::Result<()> {
         if !dir.exists() {
             return Ok(());
@@ -66,7 +66,7 @@ impl I18n {
         Ok(())
     }
 
-    /// Translate a key, returning the translation or the key itself.
+    /// 翻译一个键,返回翻译或键本身。
     pub fn t(&self, key: &str) -> String {
         self.translations
             .get(&self.locale)
@@ -74,7 +74,7 @@ impl I18n {
             .unwrap_or_else(|| key.to_string())
     }
 
-    /// Get all available locales.
+    /// 获取所有可用的区域设置。
     pub fn available_locales(&self) -> Vec<&str> {
         self.translations.keys().map(|s| s.as_str()).collect()
     }
@@ -86,7 +86,7 @@ impl Default for I18n {
     }
 }
 
-/// Built-in translations for English.
+/// 英语的内置翻译。
 pub fn builtin_en() -> HashMap<String, String> {
     let mut map = HashMap::new();
     map.insert("app.name".to_string(), "PureTerm".to_string());
@@ -123,7 +123,7 @@ pub fn builtin_en() -> HashMap<String, String> {
     map
 }
 
-/// Built-in translations for Chinese.
+/// 中文的内置翻译。
 pub fn builtin_zh() -> HashMap<String, String> {
     let mut map = HashMap::new();
     map.insert("app.name".to_string(), "PureTerm".to_string());
@@ -161,7 +161,7 @@ pub fn builtin_zh() -> HashMap<String, String> {
 }
 
 impl I18n {
-    /// Load built-in translations.
+    /// 加载内置翻译。
     pub fn load_builtins(&mut self) {
         self.translations.insert("en".to_string(), builtin_en());
         self.translations.insert("zh".to_string(), builtin_zh());

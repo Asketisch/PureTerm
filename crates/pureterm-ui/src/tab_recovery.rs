@@ -1,24 +1,24 @@
-//! Tab recovery for PureTerm.
+//! PureTerm 的标签页恢复。
 //!
-//! Persists tab state on exit and restores on launch.
+//! 在退出时持久化标签页状态,在启动时恢复。
 
 use pureterm_core::config::ConfigService;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// Serializable tab state for persistence.
+/// 用于持久化的可序列化标签页状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedTab {
     pub title: String,
     pub session_type: String,
     pub profile_name: Option<String>,
-    /// Session-specific connection params (host, port, etc.)
+    /// 会话特定的连接参数(host, port 等)
     pub connection_info: Option<String>,
-    /// Working directory (for local sessions).
+    /// 工作目录(用于本地会话)。
     pub working_dir: Option<String>,
 }
 
-/// State saved on exit and restored on launch.
+/// 退出时保存并启动时恢复的状态。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SavedWindowState {
     pub tabs: Vec<SavedTab>,
@@ -27,7 +27,7 @@ pub struct SavedWindowState {
     pub window_height: u32,
 }
 
-/// Manages saving and restoring tab state.
+/// 管理标签页状态的保存和恢复。
 pub struct TabRecovery {
     persist_path: PathBuf,
 }
@@ -39,7 +39,7 @@ impl TabRecovery {
         Self { persist_path: path }
     }
 
-    /// Save current window/tab state.
+    /// 保存当前窗口/标签页状态。
     pub fn save(&self, state: &SavedWindowState) -> std::result::Result<(), std::io::Error> {
         let json = serde_json::to_string_pretty(state)?;
         std::fs::write(&self.persist_path, json)?;
@@ -47,7 +47,7 @@ impl TabRecovery {
         Ok(())
     }
 
-    /// Load previously saved state.
+    /// 加载之前保存的状态。
     pub fn load(&self) -> std::result::Result<Option<SavedWindowState>, Box<dyn std::error::Error>> {
         if !self.persist_path.exists() {
             return Ok(None);
@@ -58,7 +58,7 @@ impl TabRecovery {
         Ok(Some(state))
     }
 
-    /// Clear saved state.
+    /// 清除保存的状态。
     pub fn clear(&self) -> std::result::Result<(), std::io::Error> {
         if self.persist_path.exists() {
             std::fs::remove_file(&self.persist_path)?;
@@ -66,7 +66,7 @@ impl TabRecovery {
         Ok(())
     }
 
-    /// Check if saved state exists.
+    /// 检查保存的状态是否存在。
     pub fn has_saved_state(&self) -> bool {
         self.persist_path.exists()
     }

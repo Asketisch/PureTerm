@@ -7,7 +7,7 @@ use tokio::sync::broadcast;
 
 use crate::base::Session;
 
-/// Serial port session.
+/// 串口会话。
 pub struct SerialSession {
     port_name: String,
     baud_rate: u32,
@@ -28,7 +28,7 @@ impl SerialSession {
         }
     }
 
-    /// List available serial ports.
+    /// 列出可用的串口。
     pub fn list_ports() -> Vec<serialport::SerialPortInfo> {
         serialport::available_ports().unwrap_or_default()
     }
@@ -51,7 +51,7 @@ impl Session for SerialSession {
         self.writer = Some(port);
         self.open = true;
 
-        // Spawn thread to read from serial port
+        // 生成线程从串口读取
         let tx = self.output_tx.clone();
         std::thread::spawn(move || {
             let mut buf = [0u8; 4096];
@@ -75,7 +75,7 @@ impl Session for SerialSession {
     }
 
     fn resize(&mut self, _cols: u16, _rows: u16) -> Result<()> {
-        // Serial ports don't have a concept of terminal size
+        // 串口没有终端大小的概念
         Ok(())
     }
 

@@ -1,7 +1,7 @@
-//! Theme system for PureTerm, adapted from notedeck's design.
+//! PureTerm 的主题系统,改编自 notedeck 的设计。
 //!
-//! Provides a semantic color system with dark/light mode support,
-//! integrated with egui's Visuals.
+//! 提供具有深色/浅色模式支持的语义色彩系统,
+//! 与 egui 的 Visuals 集成。
 
 use egui::style::Selection;
 use egui::style::WidgetVisuals;
@@ -11,7 +11,7 @@ use egui::CornerRadius;
 use egui::Stroke;
 use egui::Visuals;
 
-// ── Accent & semantic colors ──
+// ── 强调色和语义颜色 ──
 
 pub const PURPLE: Color32 = Color32::from_rgb(0xCC, 0x43, 0xC5);
 const PURPLE_ALT: Color32 = Color32::from_rgb(0x82, 0x56, 0xDD);
@@ -20,7 +20,7 @@ const BLACK: Color32 = Color32::from_rgb(0x00, 0x00, 0x00);
 const RED_700: Color32 = Color32::from_rgb(0xC7, 0x37, 0x5A);
 const ORANGE_700: Color32 = Color32::from_rgb(0xF6, 0xB1, 0x4A);
 
-// ── Background shades (dark) ──
+// ── 背景色调(深色) ──
 
 const SEMI_DARKER_BG: Color32 = Color32::from_rgb(0x39, 0x39, 0x39);
 const DARKER_BG: Color32 = Color32::from_rgb(0x1F, 0x1F, 0x1F);
@@ -28,14 +28,14 @@ const DARK_BG: Color32 = Color32::from_rgb(0x2C, 0x2C, 0x2C);
 const DARK_ISH_BG: Color32 = Color32::from_rgb(0x25, 0x25, 0x25);
 const SEMI_DARK_BG: Color32 = Color32::from_rgb(0x44, 0x44, 0x44);
 
-// ── Gray shades ──
+// ── 灰色色调 ──
 
 const LIGHTER_GRAY: Color32 = Color32::from_rgb(0xf8, 0xf8, 0xf8);
 const LIGHT_GRAY: Color32 = Color32::from_rgb(0xc8, 0xc8, 0xc8);
 const DARKER_GRAY: Color32 = Color32::from_rgb(0xa5, 0xa5, 0xa5);
 const EVEN_DARKER_GRAY: Color32 = Color32::from_rgb(0x89, 0x89, 0x89);
 
-// ── Semantic color theme ──
+// ── 语义颜色主题 ──
 
 #[derive(Clone, Copy)]
 pub struct ColorTheme {
@@ -48,42 +48,42 @@ pub struct ColorTheme {
     pub hyperlink_color: Color32,
     pub selection_color: Color32,
 
-    // Window
+    // 窗口
     pub window_fill: Color32,
     pub window_stroke_color: Color32,
 
-    // Noninteractive widget
+    // 非交互小部件
     pub noninteractive_bg_fill: Color32,
     pub noninteractive_weak_bg_fill: Color32,
     pub noninteractive_bg_stroke_color: Color32,
     pub noninteractive_fg_stroke_color: Color32,
 
-    // Inactive widget
+    // 非活动小部件
     pub inactive_bg_stroke_color: Color32,
     pub inactive_bg_fill: Color32,
     pub inactive_weak_bg_fill: Color32,
 
-    // Semantic: Surfaces
+    // 语义:表面
     pub surface_primary: Color32,
     pub surface_secondary: Color32,
     pub surface_elevated: Color32,
 
-    // Semantic: Text
+    // 语义:文本
     pub text_primary: Color32,
     pub text_secondary: Color32,
     pub text_muted: Color32,
 
-    // Semantic: Actions
+    // 语义:操作
     pub accent: Color32,
     pub destructive: Color32,
     pub warning: Color32,
     pub success: Color32,
 
-    // Semantic: Borders
+    // 语义:边框
     pub border_default: Color32,
     pub border_strong: Color32,
 
-    // Semantic: Interactive states
+    // 语义:交互状态
     pub interactive_hover: Color32,
     pub interactive_pressed: Color32,
 }
@@ -93,7 +93,7 @@ const THEME_DARK_ID: &str = "pureterm_color_theme_dark";
 const WIDGET_CORNER_RADIUS: CornerRadius = CornerRadius::same(8);
 
 impl ColorTheme {
-    /// Store light and dark themes in egui context for later retrieval.
+    /// 在 egui 上下文中存储深色和浅色主题以便后续检索。
     pub fn store_themes(ctx: &egui::Context, light: ColorTheme, dark: ColorTheme) {
         ctx.data_mut(|d| {
             d.insert_temp(egui::Id::new(THEME_LIGHT_ID), light);
@@ -101,7 +101,7 @@ impl ColorTheme {
         });
     }
 
-    /// Retrieve the active ColorTheme from egui context.
+    /// 从 egui 上下文中检索活动的 ColorTheme。
     pub fn current(ctx: &egui::Context) -> ColorTheme {
         let is_dark = ctx.global_style().visuals.dark_mode;
         let id = if is_dark {
@@ -120,7 +120,7 @@ impl ColorTheme {
     }
 }
 
-// ── Theme constructors ──
+// ── 主题构造函数 ──
 
 pub fn dark_color_theme() -> ColorTheme {
     ColorTheme {
@@ -208,7 +208,7 @@ pub fn light_color_theme() -> ColorTheme {
     }
 }
 
-// ── egui integration ──
+// ── egui 集成 ──
 
 fn create_themed_visuals(theme: ColorTheme, default: Visuals) -> Visuals {
     Visuals {
@@ -266,19 +266,19 @@ fn create_themed_visuals(theme: ColorTheme, default: Visuals) -> Visuals {
     }
 }
 
-/// Create dark mode Visuals with the PureTerm theme.
+/// 使用 PureTerm 主题创建深色模式 Visuals。
 pub fn dark_mode() -> Visuals {
     create_themed_visuals(dark_color_theme(), Visuals::dark())
 }
 
-/// Create light mode Visuals with the PureTerm theme.
+/// 使用 PureTerm 主题创建浅色模式 Visuals。
 pub fn light_mode() -> Visuals {
     create_themed_visuals(light_color_theme(), Visuals::light())
 }
 
-/// Apply the PureTerm theme to an egui context.
+/// 将 PureTerm 主题应用到 egui 上下文。
 ///
-/// Sets up both dark/light visuals and activates the given preference.
+/// 设置深色/浅色 Visuals 并激活给定偏好。
 pub fn apply_theme(ctx: &egui::Context, preference: &str) {
     let dark = dark_color_theme();
     let light = light_color_theme();
@@ -296,7 +296,7 @@ pub fn apply_theme(ctx: &egui::Context, preference: &str) {
     ctx.set_theme(theme);
 }
 
-/// Switch the active egui theme at runtime.
+/// 在运行时切换活动的 egui 主题。
 pub fn set_theme(ctx: &egui::Context, preference: &str) {
     let theme = match preference {
         "light" => egui::ThemePreference::Light,

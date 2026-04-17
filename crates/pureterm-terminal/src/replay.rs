@@ -1,29 +1,29 @@
-//! Instant replay — captures screen snapshots for time-travel debugging.
+//! 即时回放 — 捕获屏幕快照用于时间旅行调试。
 
 use std::collections::VecDeque;
 
-/// A single snapshot in the replay buffer.
+/// 回放缓冲区中的单个快照。
 #[derive(Debug, Clone)]
 pub struct ReplayFrame {
-    /// Grid content as a flat string per row.
+    /// 每行的网格内容,作为扁平字符串。
     pub rows: Vec<String>,
-    /// Cursor row.
+    /// 光标行。
     pub cursor_row: usize,
-    /// Cursor column.
+    /// 光标列。
     pub cursor_col: usize,
-    /// Timestamp of this snapshot.
+    /// 此快照的时间戳。
     pub timestamp: std::time::Instant,
 }
 
-/// Manages a rolling buffer of screen snapshots for instant replay.
+/// 管理用于即时回放的屏幕快照滚动缓冲区。
 pub struct InstantReplay {
-    /// Ring buffer of captured frames.
+    /// 捕获帧的环形缓冲区。
     frames: VecDeque<ReplayFrame>,
-    /// Maximum number of frames to keep.
+    /// 要保留的最大帧数。
     max_frames: usize,
-    /// Minimum interval between captures (to avoid excessive memory usage).
+    /// 捕获之间的最小间隔(以避免过多的内存使用)。
     capture_interval: std::time::Duration,
-    /// Time of the last capture.
+    /// 上次捕获的时间。
     last_capture: Option<std::time::Instant>,
 }
 
@@ -37,7 +37,7 @@ impl InstantReplay {
         }
     }
 
-    /// Try to capture a snapshot. Respects the capture interval.
+    /// 尝试捕获快照。遵守捕获间隔。
     pub fn try_capture(&mut self, rows: Vec<String>, cursor_row: usize, cursor_col: usize) {
         let now = std::time::Instant::now();
         if let Some(last) = self.last_capture {
@@ -60,7 +60,7 @@ impl InstantReplay {
         self.frames.push_back(frame);
     }
 
-    /// Force capture a snapshot regardless of interval.
+    /// 无论间隔如何都强制捕获快照。
     pub fn force_capture(&mut self, rows: Vec<String>, cursor_row: usize, cursor_col: usize) {
         let frame = ReplayFrame {
             rows,
@@ -74,17 +74,17 @@ impl InstantReplay {
         self.frames.push_back(frame);
     }
 
-    /// Get a frame by index (0 = oldest).
+    /// 通过索引获取帧(0 = 最旧的)。
     pub fn get(&self, index: usize) -> Option<&ReplayFrame> {
         self.frames.get(index)
     }
 
-    /// Get the most recent frame.
+    /// 获取最近的帧。
     pub fn latest(&self) -> Option<&ReplayFrame> {
         self.frames.back()
     }
 
-    /// Get the frame just before the latest.
+    /// 获取最新之前的帧。
     pub fn previous(&self) -> Option<&ReplayFrame> {
         if self.frames.len() < 2 {
             None
@@ -93,27 +93,27 @@ impl InstantReplay {
         }
     }
 
-    /// Number of captured frames.
+    /// 已捕获帧的数量。
     pub fn len(&self) -> usize {
         self.frames.len()
     }
 
-    /// Whether there are any captured frames.
+    /// 是否有任何已捕获的帧。
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
 
-    /// Clear all frames.
+    /// 清除所有帧。
     pub fn clear(&mut self) {
         self.frames.clear();
     }
 
-    /// Set the capture interval.
+    /// 设置捕获间隔。
     pub fn set_capture_interval(&mut self, interval: std::time::Duration) {
         self.capture_interval = interval;
     }
 
-    /// Navigate backward in time by N frames.
+    /// 按 N 帧向后导航。
     pub fn step_back(&self, from_latest: usize) -> Option<&ReplayFrame> {
         if from_latest >= self.frames.len() {
             None
@@ -122,7 +122,7 @@ impl InstantReplay {
         }
     }
 
-    /// Get all frames (for diff calculation).
+    /// 获取所有帧(用于差异计算)。
     pub fn frames(&self) -> &VecDeque<ReplayFrame> {
         &self.frames
     }
@@ -130,7 +130,7 @@ impl InstantReplay {
 
 impl Default for InstantReplay {
     fn default() -> Self {
-        Self::new(600) // ~60 seconds at 100ms interval
+        Self::new(600) // ~60 秒,间隔 100ms
     }
 }
 

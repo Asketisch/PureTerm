@@ -1,33 +1,33 @@
-//! Settings UI panels for PureTerm.
+//! PureTerm 的设置 UI 面板。
 //!
-//! Provides egui-based settings panels for configuring appearance,
-//! terminal settings, profiles, and hotkeys.
+//! 提供基于 egui 的设置面板,用于配置外观、
+//! 终端设置、配置文件和快捷键。
 
 use egui::{ComboBox, RichText, Slider, Ui};
 use pureterm_core::config::{AppConfig, AppearanceConfig, GlassEffectStyle, TerminalConfig};
 use pureterm_core::profile::{Profile, ProfileOptions, ProfileType};
 use pureterm_core::theme::ThemeService;
 
-/// Result of editing a profile.
+/// 编辑配置文件的结果。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ProfileEditResult {
-    /// User clicked Save.
+    /// 用户点击了保存。
     Save,
-    /// User clicked Cancel.
+    /// 用户点击了取消。
     Cancel,
-    /// No action taken yet.
+    /// 尚未采取任何操作。
     None,
 }
 
-/// Main settings panel that organizes all sub-panels.
+/// 组织所有子面板的主设置面板。
 pub struct SettingsPanel {
     pub visible: bool,
     pub selected_tab: SettingsTab,
-    /// Index of profile being edited, None if not editing.
+    /// 要编辑的配置文件的索引,如果没有正在编辑则为 None。
     editing_profile: Option<usize>,
-    /// Buffer for new profile being created.
+    /// 为新配置文件创建的缓冲区。
     new_profile: Option<Profile>,
-    /// Profile type to create when adding new profile.
+    /// 添加新配置文件时创建的配置文件的类型。
     new_profile_type: ProfileType,
 }
 
@@ -56,7 +56,7 @@ impl SettingsPanel {
         Self::default()
     }
 
-    /// Show the settings panel. Returns true if config was modified.
+    /// 显示设置面板。如配置被修改则返回 true。
     pub fn show(&mut self, ui: &mut Ui, config: &mut AppConfig) -> bool {
         if !self.visible {
             return false;
@@ -89,7 +89,7 @@ impl SettingsPanel {
                 }
                 SettingsTab::Profiles => {
                     changed |= self.profiles_panel(ui, config);
-                    // Handle new profile creation
+                    // 处理新配置文件的创建
                     if let Some(new_profile) = self.new_profile.take() {
                         config.profiles.push(new_profile);
                         changed = true;

@@ -1,11 +1,11 @@
-//! AI integration client for PureTerm.
+//! PureTerm 的 AI 集成客户端。
 //!
-//! Provides implementations for OpenAI, Claude, and Ollama backends.
+//! 为 OpenAI、Claude 和 Ollama 后端提供实现。
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-/// Message in an AI conversation.
+/// AI 对话中的消息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiMessage {
     pub role: AiRole,
@@ -19,7 +19,7 @@ pub enum AiRole {
     Assistant,
 }
 
-/// Configuration for the AI backend.
+/// AI 后端的配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiConfig {
     pub backend: AiBackend,
@@ -52,7 +52,7 @@ impl Default for AiConfig {
 }
 
 impl AiConfig {
-    /// Returns the effective base URL for the backend.
+    /// 返回后端的有效基础 URL。
     pub fn effective_base_url(&self) -> String {
         match self.backend {
             AiBackend::OpenAi => self.base_url.clone().unwrap_or_else(|| "https://api.openai.com".into()),
@@ -62,7 +62,7 @@ impl AiConfig {
         }
     }
 
-    /// Returns the effective model name.
+    /// 返回有效的模型名称。
     pub fn effective_model(&self) -> String {
         match self.backend {
             AiBackend::OpenAi => self.model.clone().unwrap_or_else(|| "gpt-4".into()),
@@ -73,7 +73,7 @@ impl AiConfig {
     }
 }
 
-/// Response from the AI backend.
+/// AI 后端的响应。
 #[derive(Debug, Clone)]
 pub struct AiResponse {
     pub content: String,
@@ -88,18 +88,18 @@ pub struct TokenUsage {
     pub total_tokens: u32,
 }
 
-/// Trait for AI service backends.
+/// AI 服务后端的 trait。
 pub trait AiService: Send + Sync {
-    /// Send a chat completion request.
+    /// 发送聊天补全请求。
     fn chat(&self, messages: &[AiMessage]) -> Result<AiResponse, AiError>;
 
-    /// Get a command suggestion for the given context.
+    /// 获取给定上下文的命令建议。
     fn suggest_command(&self, context: &str, history: &[String]) -> Result<Vec<String>, AiError>;
 
-    /// Explain an error message.
+    /// 解释错误消息。
     fn explain_error(&self, error_output: &str) -> Result<String, AiError>;
 
-    /// Check if the service is configured and available.
+    /// 检查服务是否已配置且可用。
     fn is_available(&self) -> bool;
 }
 
@@ -126,7 +126,7 @@ impl From<reqwest::Error> for AiError {
     }
 }
 
-// Manual implementation instead of derive since reqwest::Error doesn't support thiserror
+// 手动实现而非派生,因为 reqwest::Error 不支持 thiserror
 impl std::fmt::Display for AiError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -142,7 +142,7 @@ impl std::fmt::Display for AiError {
 impl std::error::Error for AiError {}
 
 // ============================================================================
-// OpenAI Service
+// OpenAI 服务
 // ============================================================================
 
 pub struct OpenAiService {
@@ -307,7 +307,7 @@ impl AiService for OpenAiService {
 }
 
 // ============================================================================
-// Claude Service (Anthropic)
+// Claude 服务 (Anthropic)
 // ============================================================================
 
 pub struct ClaudeService {
@@ -331,10 +331,10 @@ impl ClaudeService {
             "max_tokens": self.config.max_tokens.unwrap_or(1024),
         });
 
-        // Convert messages to Claude format
+        // 将消息转换为 Claude 格式
         let anthropic_messages: Vec<serde_json::Value> = messages
             .iter()
-            .filter(|m| m.role != AiRole::System) // Claude doesn't use system messages in the messages array
+            .filter(|m| m.role != AiRole::System) // Claude 不在 messages 数组中使用系统消息
             .map(|m| {
                 serde_json::json!({
                     "role": match m.role {
@@ -468,7 +468,7 @@ impl AiService for ClaudeService {
 }
 
 // ============================================================================
-// Ollama Service (Local Models)
+// Ollama 服务 (本地模型)
 // ============================================================================
 
 pub struct OllamaService {
@@ -606,13 +606,13 @@ impl AiService for OllamaService {
     }
 
     fn is_available(&self) -> bool {
-        // Ollama doesn't require an API key, just needs to be running
+        // Ollama 不需要 API 密钥,只需要运行即可
         true
     }
 }
 
 // ============================================================================
-// Disabled Service (No-op)
+// 禁用服务 (无操作)
 // ============================================================================
 
 pub struct DisabledAiService;
@@ -636,10 +636,10 @@ impl AiService for DisabledAiService {
 }
 
 // ============================================================================
-// Factory
+// 工厂
 // ============================================================================
 
-/// Factory to create the appropriate AI service.
+/// 工厂,用于创建适当的 AI 服务。
 pub fn create_ai_service(config: &AiConfig) -> Box<dyn AiService> {
     match config.backend {
         AiBackend::Disabled => Box::new(DisabledAiService),
@@ -649,7 +649,7 @@ pub fn create_ai_service(config: &AiConfig) -> Box<dyn AiService> {
     }
 }
 
-/// Create a new AI service wrapped in Arc for shared access.
+/// 创建包装在 Arc 中的新 AI 服务以供共享访问。
 pub fn create_ai_service_arc(config: &AiConfig) -> Arc<dyn AiService> {
     match config.backend {
         AiBackend::Disabled => Arc::new(DisabledAiService) as Arc<dyn AiService>,

@@ -1,24 +1,24 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Action to take when a trigger matches
+/// 触发器匹配时要采取的动作
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TriggerAction {
-    /// Show a desktop notification
+    /// 显示桌面通知
     Notify { title: String, body: String },
-    /// Play a sound (system beep or file)
+    /// 播放声音(系统蜂鸣或文件)
     PlaySound { sound: Option<String> },
-    /// Highlight the matching text
+    /// 高亮匹配的文本
     Highlight { color: String },
-    /// Run a command
+    /// 运行命令
     RunCommand { command: String },
-    /// Copy match to clipboard
+    /// 复制匹配到剪贴板
     CopyMatch,
-    /// Show bell indicator in tab
+    /// 在标签页显示响铃指示器
     Bell,
 }
 
-/// A single trigger rule
+/// 单个触发器规则
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Trigger {
     pub id: String,
@@ -30,7 +30,7 @@ pub struct Trigger {
     pub case_sensitive: bool,
 }
 
-/// A match result from evaluating triggers
+/// 评估触发器的匹配结果
 #[derive(Debug, Clone)]
 pub struct TriggerMatch {
     pub trigger_id: String,
@@ -40,42 +40,42 @@ pub struct TriggerMatch {
     pub action: TriggerAction,
 }
 
-/// Service managing trigger rules
+/// 管理触发器规则的服务
 pub struct TriggerService {
     triggers: HashMap<String, Trigger>,
 }
 
 impl TriggerService {
-    /// Create an empty service with no triggers
+    /// 创建没有触发器的空服务
     pub fn new() -> Self {
         Self {
             triggers: HashMap::new(),
         }
     }
 
-    /// Add or replace a trigger
+    /// 添加或替换触发器
     pub fn add_trigger(&mut self, trigger: Trigger) {
         self.triggers.insert(trigger.id.clone(), trigger);
     }
 
-    /// Remove a trigger by id, returning it if it existed
+    /// 通过 id 移除触发器,如果存在则返回它
     pub fn remove_trigger(&mut self, id: &str) -> Option<Trigger> {
         self.triggers.remove(id)
     }
 
-    /// Get a reference to a trigger by id
+    /// 通过 id 获取触发器的引用
     pub fn get_trigger(&self, id: &str) -> Option<&Trigger> {
         self.triggers.get(id)
     }
 
-    /// List all registered triggers
+    /// 列出所有已注册的触发器
     pub fn list_triggers(&self) -> Vec<&Trigger> {
         self.triggers.values().collect()
     }
 
-    /// Run all enabled triggers against text, returning matches
+    /// 对文本运行所有已启用的触发器,返回匹配项
     ///
-    /// Invalid regex patterns are skipped with a warning log.
+    /// 无效的正则表达式模式会被跳过并记录警告日志。
     pub fn evaluate(&self, text: &str) -> Vec<TriggerMatch> {
         let mut matches = Vec::new();
 
@@ -111,7 +111,7 @@ impl TriggerService {
         matches
     }
 
-    /// Built-in default triggers
+    /// 内置默认触发器
     pub fn default_triggers() -> Vec<Trigger> {
         vec![
             Trigger {

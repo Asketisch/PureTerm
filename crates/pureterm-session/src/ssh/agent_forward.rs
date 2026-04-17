@@ -1,13 +1,13 @@
-//! SSH Agent forwarding support.
+//! SSH Agent 转发支持。
 
-/// Manages SSH agent forwarding for a session.
+/// 管理会话的 SSH agent 转发。
 ///
-/// Agent forwarding allows the remote host to use the local SSH agent
-/// for authentication, enabling hopping between servers without copying keys.
+/// Agent 转发允许远程主机使用本地 SSH agent 进行身份验证,
+/// 从而能够在服务器之间跳转而无需复制密钥。
 pub struct AgentForwardManager {
-    /// Whether agent forwarding has been requested.
+    /// 是否已请求 agent 转发。
     requested: bool,
-    /// Whether the server confirmed agent forwarding.
+    /// 服务器是否确认了 agent 转发。
     active: bool,
 }
 
@@ -19,19 +19,19 @@ impl AgentForwardManager {
         }
     }
 
-    /// Request agent forwarding on a channel.
-    /// The actual request is sent via `channel.request_agent_forward()`.
+    /// 在通道上请求 agent 转发。
+    /// 实际请求通过 `channel.request_agent_forward()` 发送。
     pub fn request(&mut self) {
         self.requested = true;
     }
 
-    /// Mark agent forwarding as confirmed by the server.
+    /// 标记 agent 转发已被服务器确认。
     pub fn confirm(&mut self) {
         self.active = true;
         log::info!("SSH agent forwarding confirmed");
     }
 
-    /// Mark agent forwarding as denied by the server.
+    /// 标记 agent 转发已被服务器拒绝。
     pub fn deny(&mut self) {
         self.active = false;
         log::warn!("SSH agent forwarding denied by server");

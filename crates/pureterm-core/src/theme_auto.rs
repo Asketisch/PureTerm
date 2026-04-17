@@ -1,14 +1,14 @@
-//! Automatic theme switching between light and dark modes.
+//! 浅色和深色模式之间的自动主题切换。
 
 
-/// Detects system dark/light mode preference.
+/// 检测系统深色/浅色模式偏好。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ColorMode {
     Light,
     Dark,
 }
 
-/// Configuration for automatic theme switching.
+/// 自动主题切换的配置。
 pub struct ThemeAutoSwitch {
     light_theme: String,
     dark_theme: String,
@@ -25,8 +25,8 @@ impl ThemeAutoSwitch {
         }
     }
 
-    /// Detect the system's current color mode.
-    /// On macOS this checks the NSUserDefaults; on Linux it checks GTK settings.
+    /// 检测系统当前的颜色模式。
+    /// 在 macOS 上这会检查 NSUserDefaults；在 Linux 上检查 GTK 设置。
     pub fn detect_system_mode() -> ColorMode {
         #[cfg(target_os = "macos")]
         {
@@ -40,10 +40,10 @@ impl ThemeAutoSwitch {
                         return ColorMode::Dark;
                     }
                 }
-                // If the command succeeds with empty output or "Light", it's light mode
+                // 如果命令成功但输出为空或为"Light"，则是浅色模式
                 return ColorMode::Light;
             }
-            ColorMode::Dark // default fallback
+            ColorMode::Dark // 默认回退
         }
 
         #[cfg(not(target_os = "macos"))]
@@ -52,7 +52,7 @@ impl ThemeAutoSwitch {
         }
     }
 
-    /// Get the theme name for the current mode.
+    /// 获取当前模式的主题名称。
     pub fn current_theme(&self) -> &str {
         match self.current_mode {
             ColorMode::Light => &self.light_theme,
@@ -60,8 +60,8 @@ impl ThemeAutoSwitch {
         }
     }
 
-    /// Check if the mode has changed and update.
-    /// Returns true if the mode changed.
+    /// 检查模式是否已更改并更新。
+    /// 如果模式更改了则返回 true。
     pub fn check_and_update(&mut self) -> bool {
         let new_mode = Self::detect_system_mode();
         if new_mode != self.current_mode {
@@ -73,7 +73,7 @@ impl ThemeAutoSwitch {
         }
     }
 
-    /// Force set the color mode.
+    /// 强制设置颜色模式。
     pub fn set_mode(&mut self, mode: ColorMode) {
         self.current_mode = mode;
     }

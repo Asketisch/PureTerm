@@ -1,8 +1,8 @@
-//! Layout computation for split panes.
+//! 分割面板的布局计算。
 
 use super::container::{SplitChild, SplitContainer, Direction};
 
-/// A rectangle in pixel space for a pane.
+/// 面板的像素空间矩形。
 #[derive(Debug, Clone, Copy)]
 pub struct PaneRect {
     pub x: f32,
@@ -11,29 +11,29 @@ pub struct PaneRect {
     pub h: f32,
 }
 
-/// Width of the divider between panes in pixels.
+/// 面板之间分隔条的宽度(像素)。
 pub const DIVIDER_WIDTH: f32 = 4.0;
 
-/// Width of the hit-test area for divider dragging (larger for easier grabbing).
+/// 分隔条拖拽的命中测试区域宽度(更大以便于抓取)。
 pub const DIVIDER_HIT_WIDTH: f32 = 8.0;
 
-/// Information about a divider found during hit-testing.
+/// 命中测试期间发现的分隔条信息。
 #[derive(Debug, Clone, Copy)]
 pub struct DividerInfo {
-    /// The container ID that owns this divider.
+    /// 拥有此分隔条的容器 ID。
     pub container_id: u64,
-    /// The index of the left/top child whose right/bottom edge is the divider.
+    /// 左/上子项的索引,其右/下边缘是分隔条。
     pub child_index: usize,
-    /// Whether the divider is in a Vertical (left-right) or Horizontal (top-bottom) direction.
+    /// 分隔条是垂直(左右)还是水平(上下)方向。
     pub direction: Direction,
-    /// The visible divider rectangle.
+    /// 可见的分隔条矩形。
     pub rect: PaneRect,
-    /// The total usable size (in pixels) of the owning container in the split direction.
-    /// Used for computing ratio adjustments during drag.
+    /// 拥有容器在分割方向上的总可用大小(像素)。
+    /// 用于计算拖拽期间的比率调整。
     pub container_size: f32,
 }
 
-/// Recursively compute the pixel rectangle for each pane in a split container.
+/// 递归计算分割容器中每个面板的像素矩形。
 ///
 /// Returns `Vec<(pane_id, PaneRect)>` with one entry per leaf pane.
 pub fn compute_pane_rects(
@@ -49,12 +49,12 @@ pub fn compute_pane_rects(
         return result;
     }
 
-    // Total space consumed by dividers between children
+    // 子项之间分隔条消耗的总空间
     let num_gaps = container.children.len().saturating_sub(1);
     let divider_total = DIVIDER_WIDTH * num_gaps as f32;
 
     match container.direction {
-        // Vertical split: children are side by side (left-right)
+        // 垂直分割:子项并排(左右)
         Direction::Vertical => {
             let usable_w = total_w - divider_total;
             let mut cursor_x = x;
@@ -72,7 +72,7 @@ pub fn compute_pane_rects(
                 cursor_x += child_w + DIVIDER_WIDTH;
             }
         }
-        // Horizontal split: children are stacked (top-bottom)
+        // 水平分割:子项堆叠(上下)
         Direction::Horizontal => {
             let usable_h = total_h - divider_total;
             let mut cursor_y = y;
@@ -114,7 +114,7 @@ fn collect_rects(
     }
 }
 
-/// Find which pane contains the given point.
+/// 查找包含给定点的面板。
 pub fn pane_at_point(rects: &[(u64, PaneRect)], px: f32, py: f32) -> Option<u64> {
     for (id, rect) in rects {
         if px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + rect.h {
@@ -124,7 +124,7 @@ pub fn pane_at_point(rects: &[(u64, PaneRect)], px: f32, py: f32) -> Option<u64>
     None
 }
 
-/// Compute divider rectangles for rendering.
+/// 计算用于渲染的分隔条矩形。
 pub fn compute_divider_rects(
     container: &SplitContainer,
     x: f32,
@@ -178,7 +178,7 @@ pub fn compute_divider_rects(
         }
     }
 
-    // Recurse into nested containers
+    // 递归到嵌套容器
     let usable_size = match container.direction {
         Direction::Vertical => total_w - divider_total,
         Direction::Horizontal => total_h - divider_total,
@@ -204,7 +204,7 @@ pub fn compute_divider_rects(
     dividers
 }
 
-/// Find which divider (if any) is at the given point.
+/// 查找给定点的分隔条(如果有)。
 /// Returns information about the divider for use in drag-to-resize.
 pub fn divider_at_point(
     container: &SplitContainer,
@@ -236,7 +236,7 @@ pub fn divider_at_point(
                 let child_w = usable_w * container.ratios[i];
                 cursor_x += child_w;
                 if i < container.children.len() - 1 {
-                    // Check hit on this divider (expanded hit area)
+                    // 检查此分隔条的命中(扩展的命中区域)
                     let hit_x = cursor_x - half_hit;
                     let hit_w = DIVIDER_HIT_WIDTH;
                     if px >= hit_x && px < hit_x + hit_w && py >= y && py < y + total_h {
@@ -286,7 +286,7 @@ pub fn divider_at_point(
         }
     }
 
-    // Recurse into nested containers
+    // 递归到嵌套容器
     let usable_size = match container.direction {
         Direction::Vertical => total_w - divider_total,
         Direction::Horizontal => total_h - divider_total,

@@ -1,8 +1,8 @@
-//! Quake mode — dropdown terminal that slides from the top of the screen.
+//! Quake 模式 - 从屏幕顶部滑出的下拉终端。
 
 use winit::window::Window;
 
-/// Quake mode configuration and state.
+/// Quake 模式配置和状态。
 #[allow(dead_code)]
 pub struct QuakeMode {
     /// Whether quake mode is enabled.
@@ -37,7 +37,7 @@ impl QuakeMode {
         Self::default()
     }
 
-    /// Toggle the quake window visibility.
+    /// 切换 quake 窗口可见性。
     pub fn toggle(&mut self) -> QuakeAction {
         if self.visible {
             self.visible = false;
@@ -48,21 +48,21 @@ impl QuakeMode {
         }
     }
 
-    /// Show the quake window.
+    /// 显示 quake 窗口。
     #[allow(dead_code)]
     pub fn show(&mut self) -> QuakeAction {
         self.visible = true;
         QuakeAction::Show
     }
 
-    /// Hide the quake window.
+    /// 隐藏 quake 窗口。
     #[allow(dead_code)]
     pub fn hide(&mut self) -> QuakeAction {
         self.visible = false;
         QuakeAction::Hide
     }
 
-    /// Apply quake mode window attributes to a winit Window.
+    /// 应用 quake 模式窗口属性到 winit Window。
     #[allow(dead_code)]
     pub fn apply_window_attrs(&self, window: &Window) {
         if !self.enabled {
@@ -87,7 +87,7 @@ impl QuakeMode {
         }
     }
 
-    /// Whether the window should be shown (for the event loop to decide).
+    /// 窗口是否应该显示（供事件循环判断）。
     #[allow(dead_code)]
     pub fn should_show(&self) -> bool {
         self.enabled && self.visible

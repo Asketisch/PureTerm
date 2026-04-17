@@ -1,11 +1,11 @@
-//! Terminal search system.
+//! 终端搜索系统。
 //!
-//! Supports regex search across visible content and scrollback.
-//! Based on Ghostty's terminal/search/ architecture.
+//! 支持跨可见内容和回滚的正则表达式搜索。
+//! 基于 Ghostty 的 terminal/search/ 架构。
 
 use regex::Regex;
 
-/// Position in the grid (row, col).
+/// 网格中的位置（行，列）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct GridPos {
     pub row: usize,
@@ -18,12 +18,12 @@ impl GridPos {
     }
 }
 
-/// A single search match.
+/// 单个搜索匹配。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchMatch {
-    /// Start position of the match.
+    /// 匹配的起始位置。
     pub start: GridPos,
-    /// End position of the match (inclusive).
+    /// 匹配的结束位置（包含）。
     pub end: GridPos,
 }
 
@@ -33,23 +33,23 @@ impl SearchMatch {
     }
 }
 
-/// Search direction.
+/// 搜索方向。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchDirection {
     Forward,
     Backward,
 }
 
-/// Search state tracking.
+/// 搜索状态跟踪。
 #[derive(Debug, Clone)]
 pub struct SearchState {
-    /// Compiled regex query.
+    /// 编译后的正则表达式查询。
     pub(crate) query: Option<Regex>,
-    /// All matches found.
+    /// 所有找到的匹配项。
     pub(crate) matches: Vec<SearchMatch>,
-    /// Index of currently selected match.
+    /// 当前选中匹配项的索引。
     pub(crate) selected: Option<usize>,
-    /// Last search direction.
+    /// 上次搜索方向。
     pub(crate) direction: SearchDirection,
 }
 
@@ -69,37 +69,37 @@ impl SearchState {
         }
     }
 
-    /// Get the current query string.
+    /// 获取当前查询字符串。
     pub fn query_str(&self) -> Option<&str> {
         self.query.as_ref().map(|r| r.as_str())
     }
 
-    /// Get all matches.
+    /// 获取所有匹配项。
     pub fn matches(&self) -> &[SearchMatch] {
         &self.matches
     }
 
-    /// Get the selected match index.
+    /// 获取选中匹配项的索引。
     pub fn selected_index(&self) -> Option<usize> {
         self.selected
     }
 
-    /// Get the selected match.
+    /// 获取选中的匹配项。
     pub fn selected_match(&self) -> Option<&SearchMatch> {
         self.selected.and_then(|i| self.matches.get(i))
     }
 
-    /// Check if search is active.
+    /// 检查搜索是否处于活动状态。
     pub fn is_active(&self) -> bool {
         self.query.is_some()
     }
 
-    /// Number of matches.
+    /// 匹配项数量。
     pub fn count(&self) -> usize {
         self.matches.len()
     }
 
-    /// Clear the search state.
+    /// 清除搜索状态。
     pub fn clear(&mut self) {
         self.query = None;
         self.matches.clear();
@@ -107,7 +107,7 @@ impl SearchState {
     }
 }
 
-/// Extract text from a grid row, skipping spacer cells.
+/// 从网格行提取文本，跳过填充符单元格。
 fn extract_row_text(cells: &[crate::screen::Cell]) -> String {
     let mut text = String::with_capacity(cells.len());
     for cell in cells {
@@ -121,12 +121,12 @@ fn extract_row_text(cells: &[crate::screen::Cell]) -> String {
     text
 }
 
-/// Get trailing length (excluding trailing spaces).
+/// 获取尾随长度（不包括尾随空格）。
 fn trim_trailing_len(text: &str) -> usize {
     text.trim_end().len()
 }
 
-/// Build a char-position map for a row: maps char index to column index.
+/// 为行构建字符位置映射：将字符索引映射到列索引。
 fn build_char_to_col_map(cells: &[crate::screen::Cell]) -> Vec<usize> {
     let mut map = Vec::with_capacity(cells.len());
     for (col, cell) in cells.iter().enumerate() {
@@ -139,9 +139,9 @@ fn build_char_to_col_map(cells: &[crate::screen::Cell]) -> Vec<usize> {
     map
 }
 
-/// Perform a regex search on visible rows and scrollback.
+/// 在可见行和回滚上执行正则表达式搜索。
 ///
-/// Returns a list of matches with grid positions.
+/// 返回带有网格位置的匹配项列表。
 pub fn search_grid(
     regex: &Regex,
     visible_cells: &[Vec<crate::screen::Cell>],
@@ -151,17 +151,17 @@ pub fn search_grid(
     let mut matches = Vec::new();
     let history_len = history_rows.len();
 
-    // Search history rows (oldest to newest)
+    // 搜索历史行（从最旧到最新）
     for (i, row) in history_rows.iter().enumerate() {
-        let row_idx = history_len - 1 - i; // history rows are indexed from top
-        // History rows use negative offset from visible area
-        // We store them as (visible_rows + offset)
+        let row_idx = history_len - 1 - i; // 历史行从顶部开始索引
+        // 历史行使用相对于可见区域的负偏移
+        // 我们将它们存储为 (visible_rows + offset)
         let text = extract_row_text(row);
         let col_map = build_char_to_col_map(row);
         find_matches_in_row(regex, &text, &col_map, row_idx + visible_rows, &mut matches);
     }
 
-    // Search visible rows
+    // 搜索可见行
     for (row_idx, row) in visible_cells.iter().enumerate() {
         let text = extract_row_text(row);
         let col_map = build_char_to_col_map(row);
@@ -171,7 +171,7 @@ pub fn search_grid(
     matches
 }
 
-/// Search only visible rows.
+/// 仅搜索可见行。
 pub fn search_visible(
     regex: &Regex,
     visible_cells: &[Vec<crate::screen::Cell>],
@@ -185,7 +185,7 @@ pub fn search_visible(
     matches
 }
 
-/// Find all matches in a single row of text.
+/// 在单行文本中找到所有匹配项。
 fn find_matches_in_row(
     regex: &Regex,
     text: &str,
@@ -201,7 +201,7 @@ fn find_matches_in_row(
 
     for mat in regex.find_iter(search_text) {
         let start_char = mat.start();
-        let end_char = mat.end().saturating_sub(1); // inclusive end
+        let end_char = mat.end().saturating_sub(1); // 包含结束
 
         let start_col = col_map.get(start_char).copied().unwrap_or(start_char);
         let end_col = col_map.get(end_char).copied().unwrap_or(end_char);

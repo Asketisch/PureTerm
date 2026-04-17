@@ -1,16 +1,16 @@
-//! Welcome page — shown when no tabs are open or on first launch.
+//! 欢迎页面 — 当没有打开标签页或首次启动时显示。
 
 use egui::{Id, RichText, Vec2};
 use pureterm_core::config::AppConfig;
 use pureterm_core::profile::{Profile, ProfileOptions, ProfileType};
 
-/// State for the welcome page.
+/// 欢迎页面的状态。
 pub struct WelcomePage {
-    /// Whether the welcome page is visible.
+    /// 欢迎页面是否可见。
     pub visible: bool,
-    /// Quick connect input field.
+    /// 快速连接输入字段。
     pub quick_connect: String,
-    /// Selected profile index for connection.
+    /// 用于连接的被选中的配置索引。
     selected_profile: Option<usize>,
 }
 
@@ -29,7 +29,7 @@ impl WelcomePage {
         Self::default()
     }
 
-    /// Parse a hex color string to egui color.
+    /// 将十六进制颜色字符串解析为 egui 颜色。
     fn parse_color(hex: &str) -> egui::Color32 {
         let hex = hex.trim_start_matches('#');
         if hex.len() >= 6 {
@@ -42,7 +42,7 @@ impl WelcomePage {
         }
     }
 
-    /// Show the welcome page and return a profile to connect to if selected.
+    /// 显示欢迎页面并在选择时返回要连接的配置。
     pub fn show_page(&mut self, ctx: &egui::Context, config: &AppConfig) -> Option<Profile> {
         let mut result = None;
 
@@ -200,7 +200,7 @@ impl WelcomePage {
             });
         }
 
-        // /dev/tty* or COM* -> Serial
+        // /dev/tty* 或 COM* -> 串口
         if input.starts_with("/dev/tty") || input.starts_with("COM") {
             let path = input.to_string();
             return Some(Profile {
@@ -221,7 +221,7 @@ impl WelcomePage {
             });
         }
 
-        // host:port -> TCP (Telnet style)
+        // host:port -> TCP (Telnet 风格)
         if let Some(colon) = input.find(':') {
             let host = input[..colon].to_string();
             if let Ok(port) = input[colon + 1..].parse::<u16>() {
@@ -241,7 +241,7 @@ impl WelcomePage {
             }
         }
 
-        // Just a host -> SSH on default port
+        // 只是一个 host -> 默认端口的 SSH
         let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
         Some(Profile {
             id: uuid::Uuid::new_v4().to_string(),
@@ -260,7 +260,7 @@ impl WelcomePage {
         })
     }
 
-    /// Create a default local profile.
+    /// 创建默认的本地配置。
     fn create_local_profile(&self) -> Profile {
         Profile {
             id: uuid::Uuid::new_v4().to_string(),
@@ -273,12 +273,12 @@ impl WelcomePage {
         }
     }
 
-    /// Hide the welcome page.
+    /// 隐藏欢迎页面。
     pub fn hide(&mut self) {
         self.visible = false;
     }
 
-    /// Show the welcome page.
+    /// 显示欢迎页面。
     pub fn show(&mut self) {
         self.visible = true;
     }

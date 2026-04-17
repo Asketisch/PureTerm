@@ -1,13 +1,13 @@
-//! Profile selector panel for PureTerm.
+//! PureTerm 的配置文件选择面板。
 //!
-//! Provides a searchable list of connection profiles for quick session creation.
-//! Supports quick connect via user@host, host:port, etc.
+//! 提供可搜索的连接配置列表,用于快速创建会话。
+//! 支持快速连接 via user@host, host:port 等。
 
 use egui::{Id, RichText, TextEdit};
 use pureterm_core::config::AppConfig;
 use pureterm_core::profile::{Profile, ProfileOptions, ProfileType};
 
-/// Profile selector state.
+/// 配置文件选择器状态。
 pub struct ProfileSelector {
     pub visible: bool,
     pub query: String,
@@ -25,11 +25,11 @@ impl Default for ProfileSelector {
 }
 
 impl ProfileSelector {
-    /// Show the profile selector. Returns a Profile if the user selected one.
+    /// 显示配置文件选择器。如用户选择一个则返回 Profile。
     pub fn show(&mut self, ctx: &egui::Context, config: &AppConfig) -> Option<Profile> {
         let mut result = None;
 
-        // Close on Escape
+        // 按 Escape 关闭
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.visible = false;
             self.query.clear();
@@ -38,7 +38,7 @@ impl ProfileSelector {
 
         let query_lower = self.query.to_lowercase();
 
-        // Filter profiles by query
+        // 根据查询过滤配置
         let filtered: Vec<&Profile> = config.profiles
             .iter()
             .filter(|p| {
@@ -50,7 +50,7 @@ impl ProfileSelector {
             })
             .collect();
 
-        // Arrow key navigation
+        // 方向键导航
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
             if !filtered.is_empty() {
                 self.selected_index = (self.selected_index + 1).min(filtered.len());
@@ -62,7 +62,7 @@ impl ProfileSelector {
             }
         }
 
-        // Auto-select first match when typing
+        // 输入时自动选择第一个匹配项
         if !query_lower.is_empty() && !filtered.is_empty() && self.selected_index >= filtered.len() {
             self.selected_index = 0;
         }
@@ -81,7 +81,7 @@ impl ProfileSelector {
 
                 egui::Frame::window(ui.style()).show(ui, |ui| {
                     ui.vertical(|ui| {
-                        // Search input
+                        // 搜索输入框
                         let response = ui.add(
                             TextEdit::singleline(&mut self.query)
                                 .hint_text("Search profiles or enter user@host for quick connect...")
@@ -92,7 +92,7 @@ impl ProfileSelector {
 
                         ui.separator();
 
-                        // Quick connect section (if query looks like a connection string)
+                        // 快速连接部分(如果查询看起来像连接字符串)
                         let mut quick_connect_idx = 0;
                         if !self.query.is_empty() && !self.query.contains(' ') {
                             let quick_profiles = self.quick_connect_profiles(&self.query);
@@ -121,7 +121,7 @@ impl ProfileSelector {
                         egui::ScrollArea::vertical()
                             .max_height(selector_height - 120.0)
                             .show(ui, |ui| {
-                                // "New Local Terminal" always available
+                                // 始终可用的"新建本地终端"
                                 {
                                     let local_idx = quick_connect_idx;
                                     let is_selected = self.selected_index == local_idx;
@@ -175,7 +175,7 @@ impl ProfileSelector {
                                     });
                                 }
 
-                                // Clamp selected index
+                                // 限制选中索引范围
                                 let max_idx = quick_connect_idx + filtered.len();
                                 if max_idx > 0 {
                                     self.selected_index = self.selected_index.min(max_idx);
@@ -204,7 +204,7 @@ impl ProfileSelector {
         result
     }
 
-    /// Generate quick-connect profiles from a query string.
+    /// 从查询字符串生成快速连接配置。
     fn quick_connect_profiles(&self, query: &str) -> Vec<Profile> {
         let mut profiles = Vec::new();
         let trimmed = query.trim();

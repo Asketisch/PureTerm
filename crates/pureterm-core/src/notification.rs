@@ -1,8 +1,8 @@
-//! Platform notification abstraction for PureTerm.
+//! PureTerm 的平台通知抽象。
 
 use std::fmt;
 
-/// Priority level for notifications.
+/// 通知的优先级级别。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotificationPriority {
     Low,
@@ -11,7 +11,7 @@ pub enum NotificationPriority {
     Critical,
 }
 
-/// A notification to display to the user.
+/// 显示给用户的通知。
 #[derive(Debug, Clone)]
 pub struct Notification {
     pub title: String,
@@ -22,17 +22,17 @@ pub struct Notification {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotificationCategory {
-    /// A long-running command finished.
+    /// 长时间运行的命令完成。
     CommandFinished,
-    /// Bell triggered in terminal.
+    /// 终端中触发了响铃。
     Bell,
-    /// Trigger matched.
+    /// 触发器匹配。
     Trigger,
-    /// File transfer complete.
+    /// 文件传输完成。
     Transfer,
-    /// System event.
+    /// 系统事件。
     System,
-    /// General purpose.
+    /// 通用。
     General,
 }
 
@@ -42,16 +42,16 @@ impl fmt::Display for Notification {
     }
 }
 
-/// Trait for platform-specific notification dispatch.
+/// 平台特定通知调度的 trait。
 pub trait NotificationService: Send + Sync {
-    /// Show a notification to the user.
+    /// 向用户显示通知。
     fn notify(&self, notification: &Notification);
 
-    /// Check if notifications are supported on this platform.
+    /// 检查此平台上是否支持通知。
     fn is_supported(&self) -> bool;
 }
 
-/// Default notification service using terminal bell / log output.
+/// 使用终端响铃/日志输出的默认通知服务。
 pub struct LogNotificationService;
 
 impl NotificationService for LogNotificationService {
@@ -64,7 +64,7 @@ impl NotificationService for LogNotificationService {
     }
 }
 
-/// macOS notification service using osascript.
+/// 使用 osascript 的 macOS 通知服务。
 pub struct MacOSNotificationService;
 
 impl MacOSNotificationService {

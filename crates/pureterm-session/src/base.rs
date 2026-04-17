@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::broadcast;
 
-/// Parameters for creating a new session connection.
+/// 用于创建新会话连接的参数。
 #[derive(Debug, Clone)]
 pub struct ConnectParams {
     pub session_type: SessionType,
@@ -51,28 +51,28 @@ pub enum SshAuth {
     None,
 }
 
-/// Trait for all session types.
+/// 所有会话类型的 trait。
 #[async_trait]
 pub trait Session: Send {
-    /// Check if the session is still open.
+    /// 检查会话是否仍然打开。
     fn is_open(&self) -> bool;
 
-    /// Start the session.
+    /// 启动会话。
     async fn start(&mut self) -> Result<()>;
 
-    /// Resize the PTY/channel.
+    /// 调整 PTY/通道大小。
     fn resize(&mut self, cols: u16, rows: u16) -> Result<()>;
 
-    /// Write data to the session.
+    /// 向会话写入数据。
     fn write(&mut self, data: &[u8]) -> Result<()>;
 
-    /// Send a signal to the process.
+    /// 向进程发送信号。
     fn kill(&mut self, signal: &str) -> Result<()>;
 
-    /// Subscribe to output data from the session.
-    /// Returns a receiver that will receive all session output.
+    /// 订阅会话的输出数据。
+    /// 返回一个接收器,会接收所有会话输出。
     fn output_stream(&self) -> broadcast::Receiver<Vec<u8>>;
 
-    /// Get the session type name.
+    /// 获取会话类型名称。
     fn session_type_name(&self) -> &'static str;
 }

@@ -1,22 +1,22 @@
-//! Keyboard encoding - converts KeyEvents to escape sequences.
+//! 键盘编码 - 将 KeyEvents 转换为转义序列。
 //!
-//! Three-layer strategy based on Ghostty's key_encode.zig:
-//! 1. Kitty keyboard protocol (when kitty_flags non-empty)
-//! 2. Traditional xterm + modifyOtherKeys
-//! 3. Direct text output
+//! 基于 Ghostty 的 key_encode.zig 的三层策略：
+//! 1. Kitty 键盘协议（当 kitty_flags 非空时）
+//! 2. 传统 xterm + modifyOtherKeys
+//! 3. 直接文本输出
 
 use super::{Key, KeyAction, KeyEvent, Mods};
 
-/// Kitty keyboard protocol flags.
+/// Kitty 键盘协议标志。
 #[derive(Debug, Clone, Copy, Default)]
 pub struct KittyFlags {
-    /// Request modified key output (CSI u format).
+    /// 请求修改后的键输出（CSI u 格式）。
     pub modified: bool,
-    /// Request key/discard events.
+    /// 请求键/丢弃事件。
     pub report_events: bool,
-    /// Request alternate key reporting.
+    /// 请求备用键报告。
     pub alternate: bool,
-    /// Request associated text reporting.
+    /// 请求关联文本报告。
     pub associated_text: bool,
 }
 
@@ -30,18 +30,18 @@ impl KittyFlags {
     }
 }
 
-/// Keyboard encoding options.
+/// 键盘编码选项。
 #[derive(Debug, Clone, Copy)]
 pub enum KeyEncoding {
-    /// No special encoding - direct text for printable chars.
+    /// 无特殊编码 - 可打印字符的直接文本。
     Direct,
-    /// Traditional xterm sequences.
+    /// 传统 xterm 序列。
     Xterm,
-    /// modifyOtherKeys mode 2 (CSI 27 ; mods ; codepoint ~).
+    /// modifyOtherKeys 模式 2（CSI 27 ; mods ; codepoint ~）。
     ModifyOtherKeys,
-    /// fixterms CSI-u format (CSI codepoint ; mods+1 u).
+    /// fixterms CSI-u 格式（CSI codepoint ; mods+1 u）。
     FixTerms,
-    /// Kitty keyboard protocol (CSI key ; mods event final).
+    /// Kitty 键盘协议（CSI key ; mods event final）。
     Kitty,
 }
 
@@ -51,7 +51,7 @@ impl Default for KeyEncoding {
     }
 }
 
-/// PC-style function key mapping for traditional xterm encoding.
+/// 用于传统 xterm 编码的 PC 风格功能键映射。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PcFunctionKey {
     F1,
@@ -81,7 +81,7 @@ pub enum PcFunctionKey {
 }
 
 impl PcFunctionKey {
-    /// Get the escape sequence for this function key without modifiers.
+    /// 获取此功能键不带修饰符的转义序列。
     pub fn sequence(self) -> &'static [u8] {
         match self {
             PcFunctionKey::F1 => b"\x1bOP",
@@ -111,14 +111,14 @@ impl PcFunctionKey {
         }
     }
 
-    /// Get the escape sequence with modifiers.
+    /// 获取带修饰符的转义序列。
     pub fn sequence_with_mods(self, mods: Mods) -> Vec<u8> {
         let base = self.sequence();
         if mods.is_empty() {
             return base.to_vec();
         }
 
-        // For modified function keys, use CSI format
+        // 对于修改后的功能键，使用 CSI 格式
         let key_num = match self {
             PcFunctionKey::F1 => 1,
             PcFunctionKey::F2 => 2,
@@ -148,7 +148,7 @@ impl PcFunctionKey {
 
         let mods_val = mods.kitty_value();
 
-        // SS3-based for F1-F4 with modifiers
+        // 基于 SS3 的 F1-F4 带修饰符
         if matches!(self, PcFunctionKey::F1 | PcFunctionKey::F2 | PcFunctionKey::F3 | PcFunctionKey::F4) {
             let final_char = match self {
                 PcFunctionKey::F1 => b'P',
@@ -159,20 +159,20 @@ impl PcFunctionKey {
             };
 
             if mods.shift() || mods.ctrl() || mods.alt() {
-                // CSI with modifiers
+                // 带修饰符的 CSI
                 format!("\x1b[1;{}{}", mods_val + 1, final_char as char)
                     .into_bytes()
             } else {
                 base.to_vec()
             }
         } else {
-            // CSI format for F5-F24
+            // F5-F24 的 CSI 格式
             format!("\x1b[{};{}~", key_num, mods_val + 1).into_bytes()
         }
     }
 }
 
-/// Map a Key to a PC-style function key if applicable.
+/// 将 Key 映射到 PC 风格的功能键（如果适用）。
 pub fn key_to_pc_function_key(key: Key) -> Option<PcFunctionKey> {
     match key {
         Key::F1 => Some(PcFunctionKey::F1),
@@ -203,36 +203,36 @@ pub fn key_to_pc_function_key(key: Key) -> Option<PcFunctionKey> {
     }
 }
 
-/// Encode a key event using Kitty keyboard protocol.
+/// 使用 Kitty 键盘协议编码键事件。
 ///
-/// Format: CSI <key> ; <mods> <event> <final>
-/// - key: u21 codepoint or Kitty mapped keycode
-/// - mods: bitfield (1=shift, 2=alt, 4=ctrl, 8=super)
-/// - event: u (press), :u (repeat), ;u (release)
-/// - final: u (normal key), ~ (special), A-D/F/H/P/Q/S (cursor keys)
+/// 格式：CSI <key> ; <mods> <event> <final>
+/// - key: u21 码点或 Kitty 映射的键码
+/// - mods: 位字段（1=shift, 2=alt, 4=ctrl, 8=super）
+/// - event: u（按下），：u（重复），；u（释放）
+/// - final: u（普通键），~（特殊），A-D/F/H/P/Q/S（光标键）
 ///
-/// Special keys use different final chars:
-/// - Arrow keys: A, B, C, D
+/// 特殊键使用不同的最终字符：
+/// - 方向键：A, B, C, D
 /// - Home/End: H, F
-/// - Function keys: P, Q, R, S (F1-F4), ~ (F5+)
-/// - Others: ~
+/// - 功能键：P, Q, R, S（F1-F4），~（F5+）
+/// - 其他：~
 pub fn encode_kitty(event: &KeyEvent, _flags: &KittyFlags) -> Option<Vec<u8>> {
     let mods = event.effective_mods();
     let mods_val = mods.kitty_value();
 
-    // Get the action suffix
+    // 获取动作后缀
     let action_suffix = match event.action {
         KeyAction::Press => ":u",
         KeyAction::Repeat => ":u",
         KeyAction::Release => ";u",
     };
 
-    // Handle special keys
+    // 处理特殊键
     if let Some(_pc_key) = key_to_pc_function_key(event.key) {
-        // Function keys F1-F4 use SS3 format
+        // 功能键 F1-F4 使用 SS3 格式
         let is_f1_to_f4 = matches!(event.key, Key::F1 | Key::F2 | Key::F3 | Key::F4);
         if is_f1_to_f4 {
-            // F1-F4 use SS3 format with modifiers
+            // F1-F4 使用带修饰符的 SS3 格式
             let final_char = match event.key {
                 Key::F1 => 'P',
                 Key::F2 => 'Q',
@@ -247,7 +247,7 @@ pub fn encode_kitty(event: &KeyEvent, _flags: &KittyFlags) -> Option<Vec<u8>> {
             }
         }
 
-        // F5+ use CSI format
+        // F5+ 使用 CSI 格式
         let key_num = match event.key {
             Key::F5 => 15,
             Key::F6 => 17,
@@ -279,7 +279,7 @@ pub fn encode_kitty(event: &KeyEvent, _flags: &KittyFlags) -> Option<Vec<u8>> {
         }
     }
 
-    // Arrow keys - Kitty uses CSI format with A/B/C/D final chars
+    // 方向键 - Kitty 使用带 A/B/C/D 最终字符的 CSI 格式
     let arrow = match event.key {
         Key::ArrowUp => Some('A'),
         Key::ArrowDown => Some('B'),
@@ -289,7 +289,7 @@ pub fn encode_kitty(event: &KeyEvent, _flags: &KittyFlags) -> Option<Vec<u8>> {
     };
 
     if let Some(c) = arrow {
-        // For Kitty protocol, arrow keys use CSI format: CSI <char>
+        // 对于 Kitty 协议，方向键使用 CSI 格式：CSI <char>
         if mods.is_empty() {
             return Some(format!("\x1b[{}", c).into_bytes());
         } else {
@@ -297,7 +297,7 @@ pub fn encode_kitty(event: &KeyEvent, _flags: &KittyFlags) -> Option<Vec<u8>> {
         }
     }
 
-    // Home/End - Kitty uses CSI format with H/F final chars
+    // Home/End - Kitty 使用带 H/F 最终字符的 CSI 格式
     let home_end = match event.key {
         Key::Home => Some('H'),
         Key::End => Some('F'),
@@ -346,16 +346,16 @@ pub fn encode_kitty(event: &KeyEvent, _flags: &KittyFlags) -> Option<Vec<u8>> {
     }
 }
 
-/// Encode a key event using traditional xterm sequences.
+/// 使用传统 xterm 序列编码键事件。
 pub fn encode_xterm(event: &KeyEvent, app_keypad: bool) -> Option<Vec<u8>> {
     let mods = event.effective_mods();
 
-    // Function keys
+    // 功能键
     if let Some(pc_key) = key_to_pc_function_key(event.key) {
         return Some(pc_key.sequence_with_mods(mods));
     }
 
-    // Arrow keys
+    // 方向键
     let ss3 = if app_keypad { b"\x1bO" } else { b"\x1b[" };
     let suffix = match event.key {
         Key::ArrowUp => b"A",
@@ -372,7 +372,7 @@ pub fn encode_xterm(event: &KeyEvent, app_keypad: bool) -> Option<Vec<u8>> {
         return Some(result);
     }
 
-    // With modifiers, use CSI format
+    // 带修饰符，使用 CSI 格式
     let base = match event.key {
         Key::ArrowUp => 65,
         Key::ArrowDown => 66,
@@ -384,9 +384,9 @@ pub fn encode_xterm(event: &KeyEvent, app_keypad: bool) -> Option<Vec<u8>> {
     Some(format!("\x1b[{};{}A", base, mods.kitty_value() + 1).into_bytes())
 }
 
-/// Encode a key event using modifyOtherKeys mode 2.
+/// 使用 modifyOtherKeys 模式 2 编码键事件。
 ///
-/// Format: CSI 27 ; mods ; codepoint ~
+/// 格式：CSI 27 ; mods ; codepoint ~
 pub fn encode_modify_other_keys(event: &KeyEvent) -> Option<Vec<u8>> {
     if event.utf8.is_empty() {
         return None;
@@ -402,9 +402,9 @@ pub fn encode_modify_other_keys(event: &KeyEvent) -> Option<Vec<u8>> {
     ).into_bytes())
 }
 
-/// Encode a key event using fixterms CSI-u format.
+/// 使用 fixterms CSI-u 格式编码键事件。
 ///
-/// Format: CSI codepoint ; mods+1 u
+/// 格式：CSI codepoint ; mods+1 u
 pub fn encode_fixterms(event: &KeyEvent) -> Option<Vec<u8>> {
     if event.utf8.is_empty() {
         return None;
@@ -420,9 +420,9 @@ pub fn encode_fixterms(event: &KeyEvent) -> Option<Vec<u8>> {
     ).into_bytes())
 }
 
-/// Encode a key event for direct text output.
+/// 编码键事件以直接文本输出。
 ///
-/// Only valid for printable characters without modifiers.
+/// 仅对不带修饰符的可打印字符有效。
 pub fn encode_direct(event: &KeyEvent) -> Option<Vec<u8>> {
     if event.effective_mods().has_any(Mods::from_bits(Mods::CTRL | Mods::ALT | Mods::SUPER)) {
         return None;
@@ -435,7 +435,7 @@ pub fn encode_direct(event: &KeyEvent) -> Option<Vec<u8>> {
     Some(event.utf8.as_bytes().to_vec())
 }
 
-/// Control character mapping (Ctrl+A → \x01, etc.)
+/// 控制字符映射（Ctrl+A → \x01 等）
 pub fn encode_control_char(c: char) -> Option<u8> {
     match c {
         'a'..='z' => Some((c as u8) - ('a' as u8) + 1),
@@ -450,13 +450,13 @@ pub fn encode_control_char(c: char) -> Option<u8> {
     }
 }
 
-/// Encode a key event using the best available encoding.
+/// 使用最佳可用编码编码键事件。
 ///
-/// Priority:
-/// 1. Kitty protocol (if flags non-empty)
-/// 2. Direct text (for printable chars without modifiers)
-/// 3. Xterm sequences (traditional keys)
-/// 4. Control character mapping (Ctrl+letter)
+/// 优先级：
+/// 1. Kitty 协议（如果 flags 非空）
+/// 2. 直接文本（对于不带修饰符的可打印字符）
+/// 3. Xterm 序列（传统键）
+/// 4. 控制字符映射（Ctrl+字母）
 pub fn encode_key_event(
     event: &KeyEvent,
     kitty_flags: Option<&KittyFlags>,
@@ -464,7 +464,7 @@ pub fn encode_key_event(
     fixterms: bool,
     app_keypad: bool,
 ) -> Option<Vec<u8>> {
-    // Kitty protocol takes priority
+    // Kitty 协议优先
     if let Some(flags) = kitty_flags {
         if !flags.is_empty() {
             return encode_kitty(event, flags);
@@ -473,12 +473,12 @@ pub fn encode_key_event(
 
     let mods = event.effective_mods();
 
-    // Direct text for printable characters
+    // 直接文本用于可打印字符
     if mods.is_empty() && !event.utf8.is_empty() && event.utf8.chars().next()?.is_alphanumeric() {
         return Some(event.utf8.as_bytes().to_vec());
     }
 
-    // Ctrl+letter produces control characters
+    // Ctrl+字母产生控制字符
     if mods.ctrl() && !mods.alt() && !mods.shift() {
         if let Some(c) = event.utf8.chars().next() {
             if let Some(byte) = encode_control_char(c.to_ascii_lowercase()) {
@@ -487,12 +487,12 @@ pub fn encode_key_event(
         }
     }
 
-    // Xterm sequences for special keys
+    // 用于特殊键的 Xterm 序列
     if let Some(encoded) = encode_xterm(event, app_keypad) {
         return Some(encoded);
     }
 
-    // ModifyOtherKeys mode 2
+    // ModifyOtherKeys 模式 2
     if modify_other_keys {
         if let Some(encoded) = encode_modify_other_keys(event) {
             return Some(encoded);
@@ -506,7 +506,7 @@ pub fn encode_key_event(
         }
     }
 
-    // Fallback to direct text
+    // 回退到直接文本
     encode_direct(event)
 }
 

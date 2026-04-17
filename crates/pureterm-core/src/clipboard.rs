@@ -3,12 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// A single clipboard entry
+/// 单个剪贴板条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardEntry {
     pub name: String,
     pub content: String,
-    pub created_at: u64, // unix timestamp
+    pub created_at: u64, // unix 时间戳
     pub source: ClipboardSource,
 }
 
@@ -19,7 +19,7 @@ pub enum ClipboardSource {
     Command,
 }
 
-/// Manager for named clipboard buffers
+/// 命名剪贴板缓冲区的管理器
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ClipboardBuffer {
     buffers: HashMap<String, ClipboardEntry>,
@@ -28,7 +28,7 @@ pub struct ClipboardBuffer {
 }
 
 impl ClipboardBuffer {
-    /// Create a new clipboard buffer manager with the given capacity limit.
+    /// 使用给定的容量限制创建新的剪贴板缓冲区管理器。
     pub fn new(max_entries: usize) -> Self {
         Self {
             buffers: HashMap::new(),
@@ -37,8 +37,8 @@ impl ClipboardBuffer {
         }
     }
 
-    /// Store text under a name. If the name already exists, update the entry.
-    /// If at capacity and the name is new, remove the oldest entry first.
+    /// 使用名称存储文本。如果名称已存在,则更新条目。
+    /// 如果已达到容量且名称是新的,则先移除最旧的条目。
     pub fn set(&mut self, name: &str, content: &str) {
         if self.buffers.contains_key(name) {
             let entry = self.buffers.get_mut(name).unwrap();
@@ -48,7 +48,7 @@ impl ClipboardBuffer {
         }
 
         if self.buffers.len() >= self.max_entries {
-            // Remove the oldest entry
+            // 移除最旧的条目
             if let Some(oldest_key) = self
                 .buffers
                 .iter()
@@ -70,25 +70,25 @@ impl ClipboardBuffer {
         );
     }
 
-    /// Get content by name.
+    /// 通过名称获取内容。
     pub fn get(&self, name: &str) -> Option<&str> {
         self.buffers.get(name).map(|e| e.content.as_str())
     }
 
-    /// Remove a named entry and return it.
+    /// 移除命名条目并返回它。
     pub fn remove(&mut self, name: &str) -> Option<ClipboardEntry> {
         self.buffers.remove(name)
     }
 
-    /// List all entries sorted by creation time (newest first).
+    /// 列出按创建时间排序的所有条目(最新的在前)。
     pub fn list(&self) -> Vec<&ClipboardEntry> {
         let mut entries: Vec<&ClipboardEntry> = self.buffers.values().collect();
         entries.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         entries
     }
 
-    /// Rename a buffer entry. Returns `true` if the rename succeeded.
-    /// Fails if the old name does not exist or the new name already exists.
+    /// 重命名缓冲区条目。如果重命名成功则返回 `true`。
+    /// 如果旧名称不存在或新名称已存在则失败。
     pub fn rename(&mut self, old_name: &str, new_name: &str) -> bool {
         if !self.buffers.contains_key(old_name) || self.buffers.contains_key(new_name) {
             return false;
@@ -99,27 +99,27 @@ impl ClipboardBuffer {
         true
     }
 
-    /// Remove all named buffers.
+    /// 移除所有命名缓冲区。
     pub fn clear(&mut self) {
         self.buffers.clear();
     }
 
-    /// Track what was copied to the system clipboard.
+    /// 跟踪复制到系统剪贴板的内容。
     pub fn set_system_clipboard(&mut self, content: &str) {
         self.system_clipboard = Some(content.to_string());
     }
 
-    /// Get the last content that was copied to the system clipboard.
+    /// 获取最后复制到系统剪贴板的内容。
     pub fn system_clipboard(&self) -> Option<&str> {
         self.system_clipboard.as_deref()
     }
 
-    /// Serialize the entire clipboard buffer state to a JSON string.
+    /// 将整个剪贴板缓冲区状态序列化为 JSON 字符串。
     pub fn persist(&self) -> Result<String> {
         serde_json::to_string(self).map_err(|e| CoreError::Other(e.to_string()))
     }
 
-    /// Deserialize a clipboard buffer from a JSON string.
+    /// 从 JSON 字符串反序列化剪贴板缓冲区。
     pub fn restore(json: &str) -> Result<Self> {
         serde_json::from_str(json).map_err(|e| CoreError::Other(e.to_string()))
     }

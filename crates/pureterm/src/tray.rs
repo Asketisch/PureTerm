@@ -1,9 +1,9 @@
-//! System tray integration for PureTerm.
+//! PureTerm 的系统托盘集成。
 
-/// System tray manager.
-/// On macOS: Uses NSStatusItem via objc messaging.
-/// On Linux: Uses StatusNotifierItem via D-Bus.
-/// On Windows: Uses Shell_NotifyIcon.
+/// 系统托盘管理器。
+/// macOS: 通过 objc 消息使用 NSStatusItem。
+/// Linux: 通过 D-Bus 使用 StatusNotifierItem。
+/// Windows: 使用 Shell_NotifyIcon。
 pub struct SystemTray {
     visible: bool,
     tooltip: String,
@@ -17,30 +17,30 @@ impl SystemTray {
         }
     }
 
-    /// Show the system tray icon.
+    /// 显示系统托盘图标。
     pub fn show(&mut self) {
         self.visible = true;
         log::info!("System tray icon shown");
-        // Platform-specific tray creation would go here
+        // 平台特定的托盘创建将在这里进行
     }
 
-    /// Hide the system tray icon.
+    /// 隐藏系统托盘图标。
     pub fn hide(&mut self) {
         self.visible = false;
         log::info!("System tray icon hidden");
     }
 
-    /// Set the tray tooltip.
+    /// 设置托盘提示。
     pub fn set_tooltip(&mut self, tooltip: &str) {
         self.tooltip = tooltip.to_string();
     }
 
-    /// Whether the tray icon is currently visible.
+    /// 托盘图标当前是否可见。
     pub fn is_visible(&self) -> bool {
         self.visible
     }
 
-    /// Handle tray events. Called from the event loop.
+    /// 处理托盘事件。从事件循环调用。
     pub fn handle_event(&mut self, event: TrayEvent) -> TrayAction {
         match event {
             TrayEvent::Click => TrayAction::ToggleWindow,
@@ -56,7 +56,7 @@ impl Default for SystemTray {
     }
 }
 
-/// Events from the system tray.
+/// 系统托盘的事件。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayEvent {
     Click,
@@ -64,7 +64,7 @@ pub enum TrayEvent {
     DoubleClick,
 }
 
-/// Actions triggered by tray events.
+/// 由托盘事件触发的动作。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
     ToggleWindow,

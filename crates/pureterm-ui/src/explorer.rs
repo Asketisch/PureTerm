@@ -1,8 +1,8 @@
-//! Explorer panel for browsing remote/local files via SFTP or local FS.
+//! 通过 SFTP 或本地 FS 浏览远程/本地文件资源管理器面板。
 
 use egui::Ui;
 
-/// A file or directory entry.
+/// 文件或目录条目。
 #[derive(Debug, Clone)]
 pub struct FileEntry {
     pub name: String,
@@ -12,7 +12,7 @@ pub struct FileEntry {
     pub modified: Option<String>,
 }
 
-/// State for the file explorer panel.
+/// 文件资源管理器面板状态。
 pub struct ExplorerPanel {
     pub visible: bool,
     pub current_path: String,
@@ -20,7 +20,7 @@ pub struct ExplorerPanel {
     pub selected_index: Option<usize>,
     pub loading: bool,
     pub error: Option<String>,
-    /// Whether this is a remote (SFTP) or local explorer.
+    /// 是否为远程(SFTP)或本地资源管理器。
     pub is_remote: bool,
 }
 
@@ -45,7 +45,7 @@ impl ExplorerPanel {
         Self::default()
     }
 
-    /// Refresh the file listing for the current path.
+    /// 刷新当前路径的文件列表。
     pub fn refresh_local(&mut self) {
         self.loading = true;
         self.error = None;
@@ -65,7 +65,7 @@ impl ExplorerPanel {
                             size: metadata.as_ref().and_then(|m| if m.is_file() { Some(m.len()) } else { None }),
                             modified: metadata.as_ref().and_then(|m| {
                                 m.modified().ok().map(|_| {
-                                    // Simplified timestamp — just show that it exists
+                                    // 简化的时间戳 — 只显示存在
                                     "—".to_string()
                                 })
                             }),
@@ -73,12 +73,12 @@ impl ExplorerPanel {
                     })
                     .collect();
 
-                // Sort: directories first, then alphabetical
+                // 排序:目录优先,然后按字母顺序
                 file_entries.sort_by(|a, b| {
                     b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
                 });
 
-                // Add parent directory entry
+                // 添加父目录条目
                 if path.parent().is_some() {
                     self.entries.push(FileEntry {
                         name: "..".into(),
@@ -99,37 +99,37 @@ impl ExplorerPanel {
         }
     }
 
-    /// Navigate to a directory.
+    /// 导航到目录。
     pub fn navigate_to(&mut self, path: &str) {
         self.current_path = path.to_string();
         self.selected_index = None;
         if self.is_remote {
-            // Remote refresh needs SFTP client - handled by caller via refresh_remote()
+            // 远程刷新需要 SFTP 客户端 — 由调用者通过 refresh_remote() 处理
         } else {
             self.refresh_local();
         }
     }
 
-    /// Set remote entries from SFTP listing. Call this after an SFTP read_dir completes.
+    /// 从 SFTP 列表设置远程条目。SFTP read_dir 完成后调用此方法。
     pub fn set_remote_entries(&mut self, entries: Vec<FileEntry>) {
         self.entries = entries;
         self.loading = false;
         self.error = None;
     }
 
-    /// Set remote error from SFTP operation.
+    /// 设置 SFTP 操作中的远程错误。
     pub fn set_remote_error(&mut self, error: String) {
         self.error = Some(error);
         self.loading = false;
     }
 
-    /// Mark as loading (call before starting async SFTP operation).
+    /// 标记为加载中(在启动异步 SFTP 操作前调用)。
     pub fn set_loading(&mut self) {
         self.loading = true;
         self.error = None;
     }
 
-    /// Show the explorer panel. Returns the selected file path if double-clicked.
+    /// 显示资源管理器面板。如双击则返回选中的文件路径。
     pub fn show(&mut self, ui: &mut Ui) -> Option<ExplorerAction> {
         if !self.visible {
             return None;
@@ -144,7 +144,7 @@ impl ExplorerPanel {
                 ui.heading("Explorer");
                 ui.add_space(4.0);
 
-                // Path bar
+                // 路径栏
                 ui.horizontal(|ui| {
                     let response = ui.text_edit_singleline(&mut self.current_path);
                     if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -164,7 +164,7 @@ impl ExplorerPanel {
 
                 ui.separator();
 
-                // File list
+                // 文件列表
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     for (i, entry) in self.entries.iter().enumerate() {
                         let is_selected = self.selected_index == Some(i);
@@ -186,7 +186,7 @@ impl ExplorerPanel {
                 });
             });
 
-        // Handle navigation action
+        // 处理导航操作
         if let Some(ExplorerAction::Navigate(ref path)) = action {
             self.navigate_to(path);
         }
@@ -194,7 +194,7 @@ impl ExplorerPanel {
         action
     }
 
-    /// Get the currently selected file entry.
+    /// 获取当前选中的文件条目。
     pub fn selected_entry(&self) -> Option<&FileEntry> {
         self.selected_index.and_then(|i| self.entries.get(i))
     }

@@ -26,7 +26,7 @@ pub struct Profile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProfileOptions {
-    // Local
+    // 本地
     pub shell: Option<String>,
     pub cwd: Option<String>,
     pub env: Option<HashMap<String, String>>,
@@ -42,7 +42,7 @@ pub struct ProfileOptions {
     pub x11_forward: Option<bool>,
     pub compression: Option<bool>,
 
-    // Serial
+    // 串口
     pub path: Option<String>,
     pub baud_rate: Option<u32>,
     pub data_bits: Option<u8>,

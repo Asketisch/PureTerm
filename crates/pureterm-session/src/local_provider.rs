@@ -38,10 +38,10 @@ impl ProfileProvider for LocalProfileProvider {
         let (shell, cwd) = if trimmed.is_empty() {
             (None, None)
         } else if trimmed.contains('/') || trimmed.starts_with('~') {
-            // Looks like a path
+            // 看起来像路径
             (None, Some(trimmed.to_string()))
         } else {
-            // Treat as shell name
+            // 作为 shell 名称处理
             (Some(trimmed.to_string()), None)
         };
 

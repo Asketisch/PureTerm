@@ -1,17 +1,17 @@
-//! SSH X11 forwarding support.
+//! SSH X11 转发支持。
 
 use std::net::SocketAddr;
 
-/// Configuration for X11 forwarding on an SSH channel.
+/// SSH 通道上 X11 转发的配置。
 #[derive(Debug, Clone)]
 pub struct X11ForwardConfig {
-    /// X11 authentication protocol (typically "MIT-MAGIC-COOKIE-1").
+    /// X11 认证协议(通常为 "MIT-MAGIC-COOKIE-1")。
     pub auth_protocol: String,
-    /// X11 authentication cookie data.
+    /// X11 认证 cookie 数据。
     pub auth_cookie: Vec<u8>,
-    /// Screen number.
+    /// 屏幕编号。
     pub screen_number: u32,
-    /// Single connection mode — only one client can connect.
+    /// 单连接模式 — 只有一个客户端可以连接。
     pub single_connection: bool,
 }
 
@@ -26,24 +26,24 @@ impl Default for X11ForwardConfig {
     }
 }
 
-/// State of an X11 forwarding channel.
+/// X11 转发通道的状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum X11State {
-    /// X11 forwarding requested but not yet confirmed.
+    /// X11 转发已请求但尚未确认。
     Pending,
-    /// X11 forwarding is active.
+    /// X11 转发处于活跃状态。
     Active,
-    /// X11 forwarding was rejected by the server.
+    /// X11 转发被服务器拒绝。
     Rejected,
-    /// X11 forwarding has been closed.
+    /// X11 转发已关闭。
     Closed,
 }
 
-/// Manages X11 forwarding for an SSH session.
+/// 管理 SSH 会话的 X11 转发。
 pub struct X11ForwardManager {
     config: X11ForwardConfig,
     state: X11State,
-    /// Local address of the X11 display (e.g., from $DISPLAY).
+    /// X11 显示的本地地址(例如,来自 $DISPLAY)。
     local_display: Option<SocketAddr>,
 }
 
@@ -56,25 +56,25 @@ impl X11ForwardManager {
         }
     }
 
-    /// Parse the DISPLAY environment variable and resolve to a socket address.
+    /// 解析 DISPLAY 环境变量并解析为套接字地址。
     pub fn resolve_display() -> Option<SocketAddr> {
         let display = std::env::var("DISPLAY").ok()?;
-        // DISPLAY format: hostname:displaynumber.screennumber
-        // or :displaynumber.screennumber (local)
+        // DISPLAY 格式: hostname:displaynumber.screennumber
+        // 或 :displaynumber.screennumber (本地)
         let display = display.trim_start_matches(':');
         let parts: Vec<&str> = display.split('.').collect();
         let display_num: u32 = parts.first()?.parse().ok()?;
 
-        // TCP port = 6000 + display number
+        // TCP 端口 = 6000 + 显示编号
         let port = 6000 + display_num;
         Some(SocketAddr::from(([127, 0, 0, 1], port as u16)))
     }
 
-    /// Create a manager with auto-detected display settings.
+    /// 使用自动检测的显示设置创建管理器。
     pub fn from_env() -> Self {
         let display = Self::resolve_display();
         let mut config = X11ForwardConfig::default();
-        // Generate a random auth cookie
+        // 生成随机认证 cookie
         config.auth_cookie = random_bytes(16);
         Self {
             config,
@@ -83,7 +83,7 @@ impl X11ForwardManager {
         }
     }
 
-    /// Build the X11 auth cookie string for the channel request.
+    /// 为通道请求构建 X11 认证 cookie 字符串。
     pub fn auth_cookie_hex(&self) -> String {
         self.config.auth_cookie.iter()
             .map(|b| format!("{:02x}", b))
@@ -107,7 +107,7 @@ impl X11ForwardManager {
     }
 }
 
-// Simple random byte generation using system time
+// 使用系统时间的简单随机字节生成
 fn random_bytes(len: usize) -> Vec<u8> {
     use std::time::SystemTime;
     let seed = SystemTime::now()

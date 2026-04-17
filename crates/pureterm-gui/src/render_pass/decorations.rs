@@ -1,7 +1,6 @@
-//! Decorations render pass.
+//! 装饰渲染通道。
 //!
-//! Renders underline, strikethrough, and overline quads. Same vertex format as
-//! bg_color (position + color) with corner-radius clipping.
+//! 渲染下划线、删除线和上划线四边形。与 bg_color（位置 + 颜色）相同的顶点格式，带圆角裁剪。
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Device, Queue, RenderPipeline, SurfaceConfiguration};
@@ -11,7 +10,7 @@ use super::{
     PassData, ScreenUniforms,
 };
 
-/// Vertex for decoration quads: position + RGBA color.
+/// 装饰四边形的顶点：位置 + RGBA 颜色。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct DecoVertex {
@@ -42,7 +41,7 @@ impl DecoVertex {
     }
 }
 
-/// Decorations render pass.
+/// 装饰渲染通道。
 pub struct DecorationsPass {
     pipeline: RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -53,7 +52,7 @@ pub struct DecorationsPass {
 }
 
 impl DecorationsPass {
-    /// Create a new decorations pass.
+    /// 创建新的装饰通道。
     pub fn new(device: &Device, queue: &Queue, config: &SurfaceConfiguration, surface_format: wgpu::TextureFormat) -> Self {
         let uniform_bgl = create_uniform_bgl(device, "Decorations Uniform BGL", wgpu::ShaderStages::FRAGMENT);
 
@@ -113,7 +112,7 @@ impl DecorationsPass {
         }
     }
 
-    /// Update vertex/index data and uniforms for this frame.
+    /// 更新此帧的顶点/索引数据和 uniforms。
     pub fn update(&mut self, queue: &Queue, vertices: &[DecoVertex], indices: &[u32], data: &PassData) {
         self.index_count = indices.len() as u32;
 
@@ -128,7 +127,7 @@ impl DecorationsPass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
-    /// Render decoration quads.
+    /// 渲染装饰四边形。
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         if self.index_count == 0 {
             return;
@@ -140,8 +139,8 @@ impl DecorationsPass {
         pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 
-    /// Resize is a no-op for this pass.
+    /// 此通道的 resize 是空操作。
     pub fn resize(&mut self, _device: &Device, _config: &SurfaceConfiguration) {
-        // No-op: pre-allocated buffers handle any size
+        // 空操作：预分配的缓冲区处理任意大小
     }
 }

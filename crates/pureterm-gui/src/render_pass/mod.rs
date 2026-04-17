@@ -1,14 +1,14 @@
-//! Multi-pass rendering module for PureTerm's GPU renderer.
+//! PureTerm GPU 渲染器的多通道渲染模块。
 //!
-//! Replaces the single-pipeline approach with 8 separate render passes:
-//! 1. Background Color - solid color quads for cell backgrounds
-//! 2. Background Image - fullscreen quad with texture
-//! 3. Cell Text - glyph quads sampling the grayscale atlas
-//! 4. Kitty Image - inline image quads with RGBA textures
-//! 5. Decorations - underline, strikethrough, overline quads
-//! 6. Cursor - cursor quad with blink support
-//! 7. Debug Overlay - text overlay without corner clipping
-//! 8. Post Process - fullscreen vignette / effects
+//! 用 8 个独立的渲染通道替代单管线方法：
+//! 1. 背景色 - 单元格背景的纯色四边形
+//! 2. 背景图片 - 带纹理的全屏四边形
+//! 3. 单元格文本 - 从灰度字形图集采样的字形四边形
+//! 4. Kitty 图片 - 带 RGBA 纹理的内联图片四边形
+//! 5. 装饰 - 下划线、删除线、上划线四边形
+//! 6. 光标 - 带闪烁支持的光标四边形
+//! 7. 调试覆盖层 - 无角落裁剪的文本覆盖层
+//! 8. 后处理 - 全屏暗角/效果
 
 pub mod bg_color;
 pub mod bg_image;
@@ -21,7 +21,7 @@ pub mod post_process;
 
 use wgpu::{Device, Queue, RenderPipeline, SurfaceConfiguration};
 
-/// Data shared between all passes for a single frame.
+/// 单帧所有通道共享的数据。
 #[derive(Default)]
 pub struct PassData {
     pub screen_width: f32,
@@ -34,7 +34,7 @@ pub struct PassData {
     pub scene_texture: Option<wgpu::TextureView>,
 }
 
-/// Screen-space uniforms shared by most passes.
+/// 大多数通道共享的屏幕空间 uniforms。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ScreenUniforms {
@@ -55,9 +55,9 @@ impl ScreenUniforms {
     }
 }
 
-/// Create a simple render pipeline with common settings.
+/// 使用通用设置创建简单的渲染管线。
 ///
-/// Uses alpha blending, no depth/stencil, no culling, triangle list topology.
+/// 使用 Alpha 混合，无深度/模板，无剔除，三角形列表拓扑。
 pub fn create_simple_pipeline(
     device: &Device,
     label: &str,
@@ -116,7 +116,7 @@ pub fn create_simple_pipeline(
     })
 }
 
-/// Create a uniform bind group layout with a single uniform buffer at binding 0.
+/// 创建带有单个 uniform 缓冲区（绑定 0）的 uniform 绑定组布局。
 pub fn create_uniform_bgl(device: &Device, label: &str, visibility: wgpu::ShaderStages) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some(label),
@@ -133,7 +133,7 @@ pub fn create_uniform_bgl(device: &Device, label: &str, visibility: wgpu::Shader
     })
 }
 
-/// Create a texture + sampler bind group layout (bindings 0 and 1).
+/// 创建纹理 + 采样器的绑定组布局（绑定 0 和 1）。
 pub fn create_texture_sampler_bgl(
     device: &Device,
     label: &str,
@@ -162,7 +162,7 @@ pub fn create_texture_sampler_bgl(
     })
 }
 
-/// Create the standard nearest-neighbor sampler.
+/// 创建标准最近邻采样器。
 pub fn create_nearest_sampler(device: &Device, label: &str) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some(label),
@@ -175,7 +175,7 @@ pub fn create_nearest_sampler(device: &Device, label: &str) -> wgpu::Sampler {
     })
 }
 
-/// Create the standard linear sampler.
+/// 创建标准线性采样器。
 pub fn create_linear_sampler(device: &Device, label: &str) -> wgpu::Sampler {
     device.create_sampler(&wgpu::SamplerDescriptor {
         label: Some(label),
@@ -188,35 +188,35 @@ pub fn create_linear_sampler(device: &Device, label: &str) -> wgpu::Sampler {
     })
 }
 
-/// Pre-allocated max cells for buffer sizing.
-/// 500×200 = 100K cells is far beyond any realistic terminal size.
+/// 用于缓冲区大小预分配的最大单元格数。
+/// 500×200 = 100K 单元格远超任何实际终端大小。
 const MAX_CELLS: u64 = 500 * 200;
-/// Vertices per quad.
+/// 每个四边形的顶点数。
 const VERTS_PER_QUAD: u64 = 4;
-/// Indices per quad.
+/// 每个四边形的索引数。
 const INDICES_PER_QUAD: u64 = 6;
 
-/// Calculate vertex buffer size for up to MAX_CELLS quads.
+/// 计算最多 MAX_CELLS 个四边形的顶点缓冲区大小。
 pub fn max_vertex_buffer_size<T: bytemuck::Pod>() -> u64 {
     MAX_CELLS * VERTS_PER_QUAD * std::mem::size_of::<T>() as u64
 }
 
-/// Calculate index buffer size for up to MAX_CELLS quads.
+/// 计算最多 MAX_CELLS 个四边形的索引缓冲区大小。
 pub fn max_index_buffer_size() -> u64 {
     MAX_CELLS * INDICES_PER_QUAD * std::mem::size_of::<u32>() as u64
 }
 
-/// Calculate vertex buffer size for a fullscreen quad (4 vertices).
+/// 计算全屏四边形（4 个顶点）的顶点缓冲区大小。
 pub fn fullscreen_vertex_buffer_size<T: bytemuck::Pod>() -> u64 {
     4 * std::mem::size_of::<T>() as u64
 }
 
-/// Calculate index buffer size for a fullscreen quad (6 indices).
+/// 计算全屏四边形（6 个索引）的索引缓冲区大小。
 pub fn fullscreen_index_buffer_size() -> u64 {
     6 * std::mem::size_of::<u32>() as u64
 }
 
-/// A render pass trait. Each pass has its own pipeline and buffers.
+/// 渲染通道特征。每个通道都有自己的管线和缓冲区。
 pub trait RenderPass {
     fn label(&self) -> &'static str;
     fn update_buffers(&mut self, device: &Device, queue: &Queue, data: &PassData);

@@ -2,19 +2,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Entry tracking a directory's visit statistics.
+/// 跟踪目录访问统计的条目。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DirEntry {
     pub path: String,
     pub visit_count: u64,
-    pub last_visited: u64, // unix timestamp (seconds)
+    pub last_visited: u64, // unix 时间戳(秒)
     pub alias: Option<String>,
 }
 
-/// Directory frequency tracker.
+/// 目录频率跟踪器。
 ///
-/// Records how often and how recently the user visits directories (typically
-/// reported via OSC 7 CWD sequences) and persists the data to a JSON file.
+/// 记录用户访问目录的频率和最近访问时间(通常通过 OSC 7 CWD 序列报告),
+/// 并将数据持久化到 JSON 文件。
 pub struct DirFrequencyService {
     entries: HashMap<String, DirEntry>,
     max_entries: usize,
@@ -23,20 +23,20 @@ pub struct DirFrequencyService {
     save_counter: u32,
 }
 
-/// Number of visits between automatic saves.
+/// 自动保存之间的访问次数。
 const SAVE_INTERVAL: u32 = 10;
 
 impl DirFrequencyService {
-    /// Create a new service, loading persisted data from disk if available.
+    /// 创建新服务,如果可用则从磁盘加载持久化数据。
     ///
-    /// Defaults to a maximum of 500 entries and a persist path of
-    /// `~/.config/pureterm/dirfreq.json`.
+    /// 默认为最多 500 个条目,持久化路径为
+    /// `~/.config/pureterm/dirfreq.json`。
     pub fn new() -> Self {
         let persist_path = Self::default_persist_path();
         Self::with_persist_path(persist_path)
     }
 
-    /// Create a service with a custom persist path (useful for testing).
+    /// 使用自定义持久化路径创建服务(用于测试)。
     pub fn with_persist_path(persist_path: PathBuf) -> Self {
         let entries = Self::load(&persist_path).unwrap_or_default();
         Self {
@@ -48,10 +48,10 @@ impl DirFrequencyService {
         }
     }
 
-    /// Record a visit to the given directory path.
+    /// 记录对给定目录路径的访问。
     ///
-    /// The path is normalised (trailing `/` removed except for root `/`).
-    /// After every `SAVE_INTERVAL` visits the data is automatically persisted.
+    /// 路径被规范化(移除尾随的 `/`,根 `/` 除外)。
+    /// 每当 `SAVE_INTERVAL` 次访问后,数据会自动持久化。
     pub fn record_visit(&mut self, path: &str) {
         let normalized = Self::normalize_path(path);
 
@@ -82,7 +82,7 @@ impl DirFrequencyService {
         }
     }
 
-    /// Get the top `limit` directories sorted by visit count (descending).
+    /// 获取按访问次数排序(降序)的顶部 `limit` 个目录。
     pub fn get_frequent(&self, limit: usize) -> Vec<&DirEntry> {
         let mut refs: Vec<&DirEntry> = self.entries.values().collect();
         refs.sort_by(|a, b| b.visit_count.cmp(&a.visit_count));
@@ -90,7 +90,7 @@ impl DirFrequencyService {
         refs
     }
 
-    /// Get the `limit` most recently visited directories.
+    /// 获取最近访问的 `limit` 个目录。
     pub fn get_recent(&self, limit: usize) -> Vec<&DirEntry> {
         let mut refs: Vec<&DirEntry> = self.entries.values().collect();
         refs.sort_by(|a, b| b.last_visited.cmp(&a.last_visited));
@@ -98,7 +98,7 @@ impl DirFrequencyService {
         refs
     }
 
-    /// Case-insensitive prefix search over directory paths.
+    /// 对目录路径进行不区分大小写的前缀搜索。
     pub fn search(&self, query: &str) -> Vec<&DirEntry> {
         let lower = query.to_lowercase();
         self.entries
@@ -107,7 +107,7 @@ impl DirFrequencyService {
             .collect()
     }
 
-    /// Set a user-defined alias for a directory.
+    /// 为目录设置用户定义的别名。
     pub fn set_alias(&mut self, path: &str, alias: &str) {
         let normalized = Self::normalize_path(path);
         if let Some(entry) = self.entries.get_mut(&normalized) {
@@ -116,7 +116,7 @@ impl DirFrequencyService {
         }
     }
 
-    /// Remove a directory entry, returning it if it existed.
+    /// 移除目录条目,如果存在则返回。
     pub fn remove(&mut self, path: &str) -> Option<DirEntry> {
         let normalized = Self::normalize_path(path);
         let removed = self.entries.remove(&normalized);
@@ -126,13 +126,13 @@ impl DirFrequencyService {
         removed
     }
 
-    /// Persist the current entries to the JSON file at `persist_path`.
+    /// 将当前条目持久化到 `persist_path` 的 JSON 文件。
     pub fn persist(&self) -> Result<(), std::io::Error> {
         if !self.dirty {
             return Ok(());
         }
 
-        // Ensure the parent directory exists.
+        // 确保父目录存在。
         if let Some(parent) = self.persist_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -143,7 +143,7 @@ impl DirFrequencyService {
         Ok(())
     }
 
-    /// Remove the least-visited entries to stay under `max_entries`.
+    /// 移除访问次数最少的条目以保持在 `max_entries` 以下。
     pub fn prune(&mut self) {
         if self.entries.len() <= self.max_entries {
             return;
@@ -151,7 +151,7 @@ impl DirFrequencyService {
 
         let excess = self.entries.len() - self.max_entries;
 
-        // Collect paths sorted by visit count ascending (least-visited first).
+        // 收集按访问次数升序排序的路径(访问次数最少的在前)。
         let mut sorted: Vec<String> = self
             .entries
             .values()
@@ -163,7 +163,7 @@ impl DirFrequencyService {
             va.cmp(&vb)
         });
 
-        // Take only as many as we need to remove.
+        // 只取需要移除的数量。
         sorted.truncate(excess);
 
         for path in sorted {
@@ -173,9 +173,9 @@ impl DirFrequencyService {
         self.dirty = true;
     }
 
-    // ---- helpers ----
+    // ---- 辅助函数 ----
 
-    /// Default file path for persistence: `~/.config/pureterm/dirfreq.json`.
+    /// 持久化的默认文件路径: `~/.config/pureterm/dirfreq.json`。
     fn default_persist_path() -> PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| PathBuf::from("."))
@@ -183,7 +183,7 @@ impl DirFrequencyService {
             .join("dirfreq.json")
     }
 
-    /// Load entries from a JSON file on disk.
+    /// 从磁盘上的 JSON 文件加载条目。
     fn load(path: &PathBuf) -> Option<HashMap<String, DirEntry>> {
         let data = std::fs::read_to_string(path).ok()?;
         let entries: Vec<DirEntry> = serde_json::from_str(&data).ok()?;
@@ -194,7 +194,7 @@ impl DirFrequencyService {
         Some(map)
     }
 
-    /// Normalize a path: remove trailing `/` unless the path is exactly `/`.
+    /// 规范化路径:移除尾随的 `/`,除非路径正好是 `/`。
     fn normalize_path(path: &str) -> String {
         if path.len() > 1 && path.ends_with('/') {
             path.trim_end_matches('/').to_string()
@@ -203,7 +203,7 @@ impl DirFrequencyService {
         }
     }
 
-    /// Current unix timestamp in seconds.
+    /// 当前 unix 时间戳(秒)。
     fn current_timestamp() -> u64 {
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

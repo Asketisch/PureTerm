@@ -41,92 +41,92 @@ use winit::event_loop::ActiveEventLoop;
 use winit::keyboard::ModifiersState;
 use winit::window::Window;
 
-/// Application state for the event loop.
+/// 事件循环的应用程序状态。
 struct PureTermApp {
     window: Option<Arc<Window>>,
     renderer: Option<TerminalRenderer>,
     surface: Option<wgpu::Surface<'static>>,
     app: Option<App>,
-    /// Pane registry: maps pane ID to TerminalPane.
+    /// 面板注册表：将面板 ID 映射到 TerminalPane。
     panes: HashMap<u64, TerminalPane>,
-    /// Split container tree for the active tab.
+    /// 活动标签页的分割容器树。
     split_root: Option<SplitContainer>,
-    /// Currently focused pane (receives keyboard input).
+    /// 当前聚焦的面板（接收键盘输入）。
     focused_pane_id: Option<u64>,
-    /// Native context menu state.
+    /// 原生上下文菜单状态。
     context_menu: ContextMenuState,
     color_scheme: pureterm_core::theme::ColorScheme,
     modifiers: ModifiersState,
-    /// Last known mouse position in pixels.
+    /// 上次已知鼠标位置（像素）。
     mouse_pos: (f32, f32),
-    /// Clipboard content for copy/paste.
+    /// 用于复制/粘贴的剪贴板内容。
     clipboard_text: String,
-    /// Active divider drag state.
+    /// 活动分隔符拖拽状态。
     divider_drag: Option<DividerDrag>,
-    /// Hovered divider info for cursor highlighting.
+    /// 悬停分隔符信息，用于光标高亮。
     hovered_divider: Option<DividerInfo>,
-    /// egui backend for settings overlay.
+    /// 用于设置覆盖层的 egui 后端。
     egui_backend: Option<EguiBackend>,
-    /// Settings panel state.
+    /// 设置面板状态。
     settings_panel: SettingsPanel,
-    /// Profile selector for quick connect / session selection.
+    /// 用于快速连接/会话选择的配置文件选择器。
     profile_selector: ProfileSelector,
-    /// Welcome page for first launch or no tabs.
+    /// 首次启动或没有标签页时的欢迎页面。
     welcome_page: WelcomePage,
-    /// Tab title rename modal state.
+    /// 标签页标题重命名模态框状态。
     rename_modal: Option<RenameModalState>,
-    /// Tab color edit modal state.
+    /// 标签页颜色编辑模态框状态。
     color_modal: Option<ColorModalState>,
-    /// Quake mode (dropdown terminal) state.
+    /// Quake 模式（下拉终端）状态。
     quake_mode: QuakeMode,
-    /// Tab bar state.
+    /// 标签栏状态。
     tab_bar: TabBarState,
-    /// Appearance config for resize handling.
+    /// 用于处理调整大小的外观配置。
     appearance: pureterm_core::config::AppearanceConfig,
-    /// Event loop proxy for waking the event loop from background threads.
+    /// 用于从后台线程唤醒事件循环的事件循环代理。
     proxy: winit::event_loop::EventLoopProxy<()>,
 }
 
-/// State for the tab title rename modal.
+/// 标签页标题重命名模态框的状态。
 struct RenameModalState {
     tab_id: u64,
     new_title: String,
 }
 
-/// State for the tab color edit modal.
+/// 标签页颜色编辑模态框的状态。
 struct ColorModalState {
     tab_id: u64,
     color: String,
 }
 
-/// State for an active divider drag.
+/// 活动分隔符拖拽的状态。
 struct DividerDrag {
-    /// The container ID that owns the divider being dragged.
+    /// 拥有被拖拽分隔符的容器 ID。
     container_id: u64,
-    /// The index of the left/top child whose right/bottom edge is the divider.
+    /// 左侧/顶部子节点的索引，其右/下边缘是分隔符。
     child_index: usize,
-    /// Whether the divider is in a Vertical (left-right) or Horizontal (top-bottom) direction.
+    /// 分隔符是垂直（左右）还是水平（上下）方向。
     direction: Direction,
-    /// The pixel position where the drag started.
+    /// 拖拽开始的像素位置。
     start_pos: (f32, f32),
-    /// The total available size in the split direction at the container level.
+    /// 容器级别在分割方向上的可用总大小。
     total_size: f32,
-    /// The visible rectangle of the divider being dragged (for highlight matching).
+    /// 被拖拽分隔符的可见矩形（用于高亮匹配）。
     divider_rect: PaneRect,
 }
 
 impl PureTermApp {
-    /// Get a reference to the focused pane.
+    /// 获取聚焦面板的引用。
     fn focused_pane(&self) -> Option<&TerminalPane> {
         self.focused_pane_id.and_then(|id| self.panes.get(&id))
     }
 
-    /// Get a mutable reference to the focused pane.
+    /// 获取聚焦面板的可变引用。
     fn focused_pane_mut(&mut self) -> Option<&mut TerminalPane> {
         self.focused_pane_id.and_then(move |id| self.panes.get_mut(&id))
     }
 
-    /// Show context menu and measure its width based on current font.
+    /// 显示上下文菜单并根据当前字体测量其宽度。
     fn show_context_menu(&mut self, x: f32, y: f32, pane_id: u64) {
         let char_width = self.renderer.as_ref()
             .map(|r| r.cell_size().0)
@@ -138,7 +138,7 @@ impl PureTermApp {
         }
     }
 
-    /// Create a new terminal pane with a local session (convenience method).
+    /// 创建带有本地会话的新终端面板（便捷方法）。
     fn create_pane(&mut self, cols: usize, rows: usize) -> u64 {
         self.create_pane_with_session(cols, rows, ConnectParams {
             session_type: SessionType::Local { shell: None, args: Vec::new() },
@@ -147,7 +147,7 @@ impl PureTermApp {
         })
     }
 
-    /// Create a new terminal pane with the given session type.
+    /// 使用给定会话类型创建新的终端面板。
     fn create_pane_with_session(&mut self, cols: usize, rows: usize, params: ConnectParams) -> u64 {
         let mut session: Box<dyn Session> = match &params.session_type {
             SessionType::Local { .. } => {
@@ -191,13 +191,13 @@ impl PureTermApp {
         pane_id
     }
 
-    /// Compute the current layout (pane rects).
+    /// 计算当前布局（面板矩形）。
     fn compute_layout(&self, screen_w: f32, screen_h: f32) -> Vec<(u64, PaneRect)> {
         let tab_bar_offset_y = if self.show_tab_bar() { TAB_BAR_HEIGHT } else { 0.0 };
         if let Some(ref root) = self.split_root {
             compute_pane_rects(root, 0.0, tab_bar_offset_y, screen_w, screen_h - tab_bar_offset_y)
         } else {
-            // Single pane fills the window
+            // 单个面板填充整个窗口
             let pane_id = match self.focused_pane_id {
                 Some(id) => id,
                 None => return Vec::new(),
@@ -206,7 +206,7 @@ impl PureTermApp {
         }
     }
 
-    /// Check if tab bar should be shown.
+    /// 检查是否应显示标签栏。
     fn show_tab_bar(&self) -> bool {
         let config = self.app.as_ref().map(|a| &a.config.appearance);
         let show = config.map(|c| c.show_tab_bar).unwrap_or(true);
@@ -214,7 +214,7 @@ impl PureTermApp {
         show && location == "top"
     }
 
-    /// Update tab bar layout before rendering.
+    /// 渲染前更新标签栏布局。
     fn update_tab_bar_layout(&mut self) {
         let (screen_w, _screen_h) = self.screen_size();
         let show = self.show_tab_bar();
@@ -233,7 +233,7 @@ impl PureTermApp {
         self.tab_bar.height = TAB_BAR_HEIGHT;
         self.tab_bar.tab_layouts.clear();
 
-        // "+" new tab button at the right end of the tab bar
+        // "+" 新标签按钮位于标签栏右端
         let new_tab_x = screen_w - TAB_NEW_BTN_WIDTH;
         self.tab_bar.new_tab_rect = TabViewportRect {
             x: new_tab_x,
@@ -247,7 +247,7 @@ impl PureTermApp {
             return;
         }
 
-        // Tabs fill the space between traffic lights and the "+" button
+        // 标签填充红绿灯和"+"按钮之间的空间
         let tabs_available_w = new_tab_x - pureterm_ui::tab_bar::TRAFFIC_LIGHT_WIDTH;
         let equal_width = (tabs_available_w / tab_count as f32).max(TAB_MIN_WIDTH);
 
@@ -285,14 +285,14 @@ impl PureTermApp {
         }
     }
 
-    /// Find which pane is at the given pixel position.
+    /// 查找给定像素位置处的面板。
     #[allow(dead_code)]
     fn pane_at_point(&self, px: f32, py: f32, screen_w: f32, screen_h: f32) -> Option<u64> {
         let layout = self.compute_layout(screen_w, screen_h);
         pane_at_point(&layout, px, py)
     }
 
-    /// Convert pixel position to cell coordinates for a specific pane.
+    /// 将像素位置转换为特定面板的单元格坐标。
     fn pixel_to_cell_for_pane(&self, pane_id: u64, px: f32, py: f32, layout: &[(u64, PaneRect)]) -> (usize, usize) {
         let renderer = match &self.renderer {
             Some(r) => r,
@@ -300,7 +300,7 @@ impl PureTermApp {
         };
         let (cell_w, cell_h) = renderer.cell_size();
 
-        // Find the pane's rect to compute local coordinates
+        // 查找面板矩形以计算局部坐标
         let rect = layout.iter().find(|(id, _)| *id == pane_id).map(|(_, r)| r);
         let (local_x, local_y) = match rect {
             Some(r) => (px - r.x, py - r.y),
@@ -312,7 +312,7 @@ impl PureTermApp {
         (row.max(0), col.max(0))
     }
 
-    /// Get the screen dimensions.
+    /// 获取屏幕尺寸。
     fn screen_size(&self) -> (f32, f32) {
         self.renderer.as_ref()
             .and_then(|r| r.surface_config())
@@ -320,7 +320,7 @@ impl PureTermApp {
             .unwrap_or((0.0, 0.0))
     }
 
-    /// Resize all panes to fit their allocated space.
+    /// 调整所有面板大小以适应其分配的空间。
     fn resize_all_panes(&mut self) {
         let (screen_w, screen_h) = self.screen_size();
         if screen_w <= 0.0 || screen_h <= 0.0 {
@@ -343,17 +343,17 @@ impl PureTermApp {
         }
     }
 
-    /// Handle keyboard input - route to focused pane.
+    /// 处理键盘输入 - 路由到聚焦面板。
     fn handle_key_input(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool, super_key: bool) {
         log::debug!("handle_key_input: key={:?}, ctrl={}, alt={}, shift={}, super={}", key, ctrl, alt, shift, super_key);
 
-        // Global hotkeys handled at app level
-        // On macOS, use Super (Command) key; on other platforms, use Ctrl+Shift
+        // 全局热键在应用级别处理
+        // 在 macOS 上，使用 Super（Command）键；在其他平台上，使用 Ctrl+Shift
         let copy_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
         let paste_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
 
         if copy_trigger && key == "c" && !ctrl {
-            // Copy selection to OS clipboard
+            // 复制选区到系统剪贴板
             let text = self.focused_pane().and_then(|p| p.copy_selection());
             if let Some(text) = text {
                 self.clipboard_text = text.clone();
@@ -364,7 +364,7 @@ impl PureTermApp {
             return;
         }
         if paste_trigger && key == "v" && !ctrl {
-            // Paste from OS clipboard
+            // 从系统剪贴板粘贴
             let text = if let Ok(mut cb) = arboard::Clipboard::new() {
                 cb.get_text().unwrap_or_else(|_| self.clipboard_text.clone())
             } else {
@@ -385,7 +385,7 @@ impl PureTermApp {
             return;
         }
 
-        // Select all: Cmd+A on macOS, Ctrl+Shift+A elsewhere
+        // 全选：macOS 上为 Cmd+A，其他地方为 Ctrl+Shift+A
         let select_all_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
         if select_all_trigger && key == "a" && !ctrl {
             if let Some(ref mut pane) = self.focused_pane_mut() {
@@ -409,10 +409,10 @@ impl PureTermApp {
             return;
         }
 
-        // Delegate to app hotkey service
+        // 委托给应用热键服务
         if let Some(ref mut app) = self.app {
             if app.handle_key(key, ctrl, alt, shift, super_key) {
-                // Hotkey consumed by app
+                // 热键已被应用消耗
                 if let Some(ref window) = self.window {
                     window.request_redraw();
                 }
@@ -421,8 +421,8 @@ impl PureTermApp {
         }
 
         if let Some(ref mut pane) = self.focused_pane_mut() {
-            // On macOS, Command key combinations are app-level shortcuts,
-            // don't forward unrecognized ones to the terminal.
+            // 在 macOS 上，Command 键组合是应用级快捷键，
+            // 不要将无法识别的组合转发到终端。
             if cfg!(target_os = "macos") && super_key {
                 return;
             }
@@ -433,7 +433,7 @@ impl PureTermApp {
         }
     }
 
-    /// Handle a pane action (from mouse events, context menu, etc.)
+    /// 处理面板动作（来自鼠标事件、上下文菜单等）
     fn handle_pane_action(&mut self, action: PaneAction) {
         match action {
             PaneAction::CopyText(text) => {
@@ -506,7 +506,7 @@ impl PureTermApp {
         }
     }
 
-    /// Connect using a profile from the profile selector.
+    /// 使用配置文件选择器中的配置文件进行连接。
     fn connect_with_profile(&mut self, profile: &Profile) {
         let (screen_w, screen_h) = self.screen_size();
         let renderer = match &self.renderer {
@@ -532,7 +532,7 @@ impl PureTermApp {
             );
         }
 
-        // Hide welcome page when a tab is opened
+        // 打开标签页时隐藏欢迎页面
         self.welcome_page.visible = false;
 
         if let Some(ref window) = self.window {
@@ -542,7 +542,7 @@ impl PureTermApp {
         log::info!("Connected to profile '{}' with pane {}", profile.name, pane_id);
     }
 
-    /// Handle split action in the given side direction.
+    /// 处理给定方向侧的分割动作。
     fn handle_split(&mut self, side: SplitSide) {
         let focused_id = match self.focused_pane_id {
             Some(id) => id,
@@ -557,13 +557,13 @@ impl PureTermApp {
         let (cell_w, cell_h) = renderer.cell_size();
         let direction = side.direction();
 
-        // Calculate new pane size from the focused pane's current rect
+        // 从聚焦面板的当前矩形计算新面板大小
         let layout = self.compute_layout(screen_w, screen_h);
         let focused_rect = layout.iter().find(|(id, _)| *id == focused_id)
             .map(|(_, r)| *r)
             .unwrap_or(PaneRect { x: 0.0, y: 0.0, w: screen_w, h: screen_h });
 
-        // New pane gets half the space of the focused pane
+        // 新面板获得聚焦面板一半的空间
         let (new_cols, new_rows) = match direction {
             Direction::Vertical => {
                 let new_w = focused_rect.w / 2.0;
@@ -585,7 +585,7 @@ impl PureTermApp {
         let new_pane_id = self.create_pane(new_cols, new_rows);
         log::info!("Created new pane {}", new_pane_id);
 
-        // Update the split tree using directional split
+        // 使用方向分割更新分割树
         match &mut self.split_root {
             None => {
                 let mut container = SplitContainer::single(focused_id);
@@ -597,12 +597,12 @@ impl PureTermApp {
             }
         }
 
-        // Equalize all panes so they share space equally
+        // 平均分配所有面板的空间
         if let Some(ref mut root) = self.split_root {
             root.equalize();
         }
 
-        // Update tab content
+        // 更新标签页内容
         if let Some(ref mut app) = self.app {
             if let Some(tab) = app.tab_manager.active_tab_mut() {
                 tab.content = TabContent::Split(SplitRef {
@@ -611,13 +611,13 @@ impl PureTermApp {
             }
         }
 
-        // Focus the new pane
+        // 聚焦新面板
         self.focused_pane_id = Some(new_pane_id);
 
-        // Resize all panes to fit the new layout
+        // 调整所有面板大小以适应新布局
         self.resize_all_panes();
 
-        // Log the new layout
+        // 记录新布局
         let new_layout = self.compute_layout(screen_w, screen_h);
         for (pid, rect) in &new_layout {
             log::info!("  Pane {} => rect ({},{},{},{})", pid, rect.x, rect.y, rect.w, rect.h);
@@ -629,10 +629,10 @@ impl PureTermApp {
         }
     }
 
-    /// Handle close pane action.
+    /// 处理关闭面板动作。
     fn handle_close_pane(&mut self, pane_id: u64) {
         if self.panes.len() <= 1 {
-            return; // Don't close the last pane
+            return; // 不要关闭最后一个面板
         }
 
         if let Some(ref mut root) = self.split_root {
@@ -648,7 +648,7 @@ impl PureTermApp {
 
         self.panes.remove(&pane_id);
 
-        // If the closed pane was focused, switch focus to another pane
+        // 如果关闭的面板处于聚焦状态，切换到另一个面板
         if self.focused_pane_id == Some(pane_id) {
             self.focused_pane_id = self.panes.keys().next().copied();
         }
@@ -662,7 +662,7 @@ impl PureTermApp {
         log::info!("Closed pane {}", pane_id);
     }
 
-    /// Handle a context menu action.
+    /// 处理上下文菜单动作。
     fn handle_menu_action(&mut self, action: MenuAction) {
         match action {
             MenuAction::Copy => {
@@ -711,8 +711,8 @@ impl PureTermApp {
                 }
             }
             MenuAction::Search => {
-                // Toggle search mode: send Ctrl+F to terminal to trigger shell reverse search
-                // or just show a visual indicator
+                // 切换搜索模式：发送 Ctrl+F 到终端以触发 shell 反向搜索
+                // 或仅显示视觉指示器
                 if let Some(ref mut pane) = self.focused_pane_mut() {
                     pane.write_input(b"\x1b[1;5F"); // Ctrl+F
                 }
@@ -790,7 +790,7 @@ impl PureTermApp {
         }
     }
 
-    /// Create a new tab with a fresh terminal pane.
+    /// 创建带有新终端面板的标签页。
     fn handle_new_tab(&mut self) {
         let (screen_w, screen_h) = self.screen_size();
         let renderer = match &self.renderer {
@@ -803,7 +803,7 @@ impl PureTermApp {
 
         let pane_id = self.create_pane(cols, rows);
 
-        // Close current split state for the new tab
+        // 关闭新标签页的当前分割状态
         self.split_root = None;
         self.focused_pane_id = Some(pane_id);
 
@@ -815,7 +815,7 @@ impl PureTermApp {
             );
         }
 
-        // Hide welcome page when a tab is opened
+        // 打开标签页时隐藏欢迎页面
         self.welcome_page.visible = false;
 
         if let Some(ref window) = self.window {
@@ -825,18 +825,18 @@ impl PureTermApp {
         log::info!("New tab created with pane {}", pane_id);
     }
 
-    /// Close the active tab and switch to the nearest one.
+    /// 关闭活动标签页并切换到最近的一个。
     fn handle_close_tab(&mut self) {
-        // Get the active tab's pane IDs before closing
+        // 关闭前获取活动标签页的面板 ID
         let tab_pane_ids: Vec<u64> = if let Some(ref app) = self.app {
             if let Some(tab) = app.tab_manager.active_tab() {
                 match &tab.content {
                     TabContent::Pane(id) => vec![*id],
                     TabContent::Split(_root) => {
-                        // We need the split container to get all pane IDs
-                        // For now, remove all panes in self.panes that belong to this tab
-                        // Since we don't track which panes belong to which tab separately,
-                        // just collect all pane IDs from the split_root
+                        // 我们需要分割容器来获取所有面板 ID
+                        // 目前，删除 self.panes 中属于此标签页的所有面板
+                        // 由于我们没有单独跟踪哪些面板属于哪个标签页，
+                        // 只从 split_root 收集所有面板 ID
                         self.split_root.as_ref()
                             .map(|root| root.pane_ids())
                             .unwrap_or_default()
@@ -849,18 +849,18 @@ impl PureTermApp {
             return;
         };
 
-        // Close the tab
+        // 关闭标签页
         if let Some(ref mut app) = self.app {
             app.tab_manager.close_active_tab();
         }
 
-        // Remove panes that belonged to the closed tab
+        // 删除属于已关闭标签页的面板
         for pane_id in &tab_pane_ids {
             self.panes.remove(pane_id);
         }
         self.split_root = None;
 
-        // Switch to the new active tab's pane
+        // 切换到新活动标签页的面板
         if let Some(ref app) = self.app {
             if let Some(tab) = app.tab_manager.active_tab() {
                 match &tab.content {
@@ -868,12 +868,12 @@ impl PureTermApp {
                         self.focused_pane_id = Some(*id);
                     }
                     TabContent::Split(_) => {
-                        // Restore split state if needed
+                        // 需要时恢复分割状态
                         self.focused_pane_id = self.panes.keys().next().copied();
                     }
                 }
             } else {
-                // No tabs left - create a new one
+                // 没有剩余标签页 - 创建新标签页
                 drop(tab_pane_ids); // release borrow
                 self.handle_new_tab();
                 return;
@@ -885,7 +885,7 @@ impl PureTermApp {
         }
     }
 
-    /// Render the context menu overlay using the renderer's glyph atlas.
+    /// 使用渲染器的字形图集渲染上下文菜单覆盖层。
     fn render_context_menu_overlay(
         context_menu: &ContextMenuState,
         renderer: &mut TerminalRenderer,
@@ -896,7 +896,7 @@ impl PureTermApp {
             return;
         }
 
-        // Background with rounded appearance
+        // 带圆角外观的背景
         let (mx, my, mw, mh) = context_menu.menu_rect();
         renderer.build_rect_vertices(
             ViewportRect { x: mx, y: my, w: mw, h: mh },
@@ -908,7 +908,7 @@ impl PureTermApp {
         let hover_bg = [0.25f32, 0.5, 0.85, 1.0];
 
         for (i, item, ix, iy) in context_menu.items_with_positions() {
-            // Separator
+            // 分隔符
             if item.separator_before {
                 let sep_y = iy - MENU_SEPARATOR_HEIGHT + 2.0;
                 renderer.build_rect_vertices(
@@ -918,7 +918,7 @@ impl PureTermApp {
                 );
             }
 
-            // Hover highlight (full row)
+            // 悬停高亮（整行）
             if context_menu.hovered_index == Some(i) {
                 renderer.build_rect_vertices(
                     ViewportRect { x: mx, y: iy, w: mw, h: MENU_ITEM_HEIGHT },
@@ -927,7 +927,7 @@ impl PureTermApp {
                 );
             }
 
-            // Text
+            // 文本
             renderer.build_text_vertices(
                 &item.label,
                 ix,
@@ -937,7 +937,7 @@ impl PureTermApp {
             );
         }
 
-        // Border around menu
+        // 菜单边框
         renderer.build_focus_border(
             ViewportRect { x: mx, y: my, w: mw, h: mh },
             [0.45, 0.45, 0.5, 1.0],
@@ -964,12 +964,12 @@ impl PureTermApp {
             tabs_end.max(new_tab_end)
         };
 
-        // Derive tab bar colors from terminal theme (Ghostty approach)
+        // 从终端主题派生标签栏颜色（Ghostty 方式）
         let bg_rgb = pureterm_core::theme::ColorScheme::parse_color(&color_scheme.background);
         let fg_rgb = pureterm_core::theme::ColorScheme::parse_color(&color_scheme.foreground);
         let bar_bg = [bg_rgb[0] as f32 / 255.0, bg_rgb[1] as f32 / 255.0, bg_rgb[2] as f32 / 255.0, 1.0];
 
-        // Tab bar background — terminal background color slightly darkened
+        // 标签栏背景 — 终端背景色略微变暗
         {
             let dim = 0.85;
             renderer.build_rect_vertices(
@@ -979,7 +979,7 @@ impl PureTermApp {
             );
         }
 
-        // Bottom border — subtle separator
+        // 底部边框 — 微妙的分隔符
         {
             let border = 0.25;
             renderer.build_rect_vertices(
@@ -989,11 +989,11 @@ impl PureTermApp {
             );
         }
 
-        // "+" new tab button
+        // "+" 新标签按钮
         {
             let btn = tab_bar.new_tab_rect;
             if btn.w > 0.0 {
-                // Hover background
+                // 悬停背景
                 if tab_bar.hovered_new_tab {
                     let hover = 0.2;
                     renderer.build_rect_vertices(
@@ -1002,7 +1002,7 @@ impl PureTermApp {
                         vertices, indices,
                     );
                 }
-                // "+" glyph centered
+                // "+" 符号居中
                 let plus_y = (TAB_BAR_HEIGHT - 16.0) / 2.0;
                 let plus_color = if tab_bar.hovered_new_tab {
                     [1.0f32, 1.0, 1.0, 1.0]
@@ -1019,23 +1019,23 @@ impl PureTermApp {
             }
         }
 
-        // Tabs
+        // 标签页
         let text_y = (TAB_BAR_HEIGHT - 16.0) / 2.0;
 
         for (i, layout) in tab_bar.tab_layouts.iter().enumerate() {
             let is_active = active_tab_id == Some(layout.tab_id);
             let is_hovered = tab_bar.hovered_tab_index == Some(i);
 
-            // Tab background
+            // 标签页背景
             if is_active {
-                // Active tab: terminal background color (matches content area)
+                // 活动标签页：终端背景色（与内容区域匹配）
                 renderer.build_rect_vertices(
                     ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
                     bar_bg,
                     vertices, indices,
                 );
             } else if is_hovered {
-                // Hovered inactive: slightly lighter than bar
+                // 悬停的非活动标签：比标签栏略亮
                 let f = 0.92;
                 renderer.build_rect_vertices(
                     ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
@@ -1044,7 +1044,7 @@ impl PureTermApp {
                 );
             }
 
-            // Tab title text — Ghostty uses labelColor (active) / secondaryLabelColor (inactive)
+            // 标签页标题文本 — Ghostty 使用 labelColor（活动）/ secondaryLabelColor（非活动）
             let available_width = layout.rect.w - TAB_PADDING_H;
             let max_text_width = available_width - TAB_CLOSE_BTN_WIDTH;
             let full_width = renderer.measure_text(&layout.title);
@@ -1067,7 +1067,7 @@ impl PureTermApp {
             let fg_color = if is_active {
                 [fg_rgb[0] as f32 / 255.0, fg_rgb[1] as f32 / 255.0, fg_rgb[2] as f32 / 255.0, 1.0]
             } else {
-                // Inactive: dimmed foreground (secondary label)
+                // 非活动：暗淡的前景色（次要标签）
                 let dim = 0.6;
                 [fg_rgb[0] as f32 / 255.0 * dim, fg_rgb[1] as f32 / 255.0 * dim, fg_rgb[2] as f32 / 255.0 * dim, 1.0]
             };
@@ -1080,10 +1080,10 @@ impl PureTermApp {
                 vertices, indices,
             );
 
-            // Close button — only visible on hover (Ghostty / native macOS behavior)
+            // 关闭按钮 — 仅在悬停时可见（Ghostty / 原生 macOS 行为）
             if let Some(ref close_rect) = layout.close_button_rect {
                 if is_hovered {
-                    // Hover background
+                    // 悬停背景
                     let close_bg = if is_active { 0.25 } else { 0.18 };
                     renderer.build_rect_vertices(
                         ViewportRect {
@@ -1095,7 +1095,7 @@ impl PureTermApp {
                         [close_bg, close_bg * 0.6, close_bg * 0.6, 1.0],
                         vertices, indices,
                     );
-                    // "x" glyph
+                    // "x" 符号
                     renderer.build_text_vertices(
                         "x",
                         close_rect.x + (close_rect.w - 12.0) / 2.0,
@@ -1106,7 +1106,7 @@ impl PureTermApp {
                 }
             }
 
-            // Tab color indicator stripe (bottom)
+            // 标签页颜色指示条（底部）
             if let Some(ref color_hex) = layout.color {
                 let cv = parse_hex_color(color_hex);
                 renderer.build_rect_vertices(
@@ -1131,7 +1131,7 @@ impl ApplicationHandler for PureTermApp {
                 .with_title("PureTerm")
                 .with_inner_size(winit::dpi::LogicalSize::new(1024, 768));
 
-            // Apply quake mode settings if enabled
+            // 如果启用则应用 quake 模式设置
             if self.quake_mode.enabled {
                 if let Some(monitor) = event_loop.available_monitors().next() {
                     let screen_size = monitor.size();
@@ -1142,14 +1142,14 @@ impl ApplicationHandler for PureTermApp {
                             monitor.position().x,
                             monitor.position().y,
                         ));
-                    // Note: always_on_top requires platform-specific APIs
+                    // 注意：always_on_top 需要平台特定的 API
                 }
             }
 
             let window = Arc::new(event_loop.create_window(window_attrs).unwrap());
             let size = window.inner_size();
 
-            // Load config first to get appearance settings
+            // 首先加载配置以获取外观设置
             let config = ConfigService::load().expect("Failed to load config");
             let appearance = &config.get().appearance;
             let terminal_config = &config.get().terminal;
@@ -1163,7 +1163,7 @@ impl ApplicationHandler for PureTermApp {
                     || appearance.opacity < 1.0,
             };
 
-            // Initialize renderer with custom font path if configured
+            // 如果配置了自定义字体路径，则使用它初始化渲染器
             let renderer = pollster::block_on(async {
                 TerminalRenderer::new(terminal_config.font_path.as_deref()).await
             }).expect("Failed to initialize renderer");
@@ -1176,13 +1176,13 @@ impl ApplicationHandler for PureTermApp {
             renderer.configure_surface(&surface, size.width, size.height, &transparency);
             renderer.set_corner_radius(appearance.corner_radius);
 
-            // Apply platform-specific window styling (macOS: corner radius, glass effect)
+            // 应用平台特定的窗口样式（macOS：圆角、玻璃效果）
             #[cfg(target_os = "macos")]
             {
                 platform::macos::apply_platform_styling(&window, appearance.corner_radius, &appearance.glass_effect);
             }
 
-            // Initialize egui backend for settings overlay
+            // 初始化 egui 后端用于设置覆盖层
             let surface_format = renderer.surface_config()
                 .map(|c| c.format)
                 .unwrap_or(wgpu::TextureFormat::Bgra8UnormSrgb);
@@ -1192,15 +1192,15 @@ impl ApplicationHandler for PureTermApp {
                 Arc::clone(&window),
             );
 
-            // Apply PureTerm theme to egui context (notedeck-inspired design system)
+            // 将 PureTerm 主题应用到 egui 上下文（notedeck 启发的设计系统）
             apply_theme(&egui_backend.context, &config.get().appearance.ui_theme);
 
             let (cols, rows) = renderer.pixel_to_cells(size.width, size.height);
 
-            // Create initial pane
+            // 创建初始面板
             let pane_id = self.create_pane(cols, rows);
 
-            // Create app and open initial tab (use already loaded config)
+            // 创建应用并打开初始标签页（使用已加载的配置）
             let mut app = App::new(config.get().clone());
             app.tab_manager.open_tab(
                 TabContent::Pane(pane_id),
@@ -1210,7 +1210,7 @@ impl ApplicationHandler for PureTermApp {
             self.focused_pane_id = Some(pane_id);
             self.app = Some(app);
 
-            // Hide welcome page since we have an initial tab
+            // 由于已有初始标签页，隐藏欢迎页面
             self.welcome_page.visible = false;
             self.renderer = Some(renderer);
             self.surface = Some(surface);
@@ -1218,7 +1218,7 @@ impl ApplicationHandler for PureTermApp {
             self.egui_backend = Some(egui_backend);
             self.appearance = appearance.clone();
 
-            // Request initial render after setup
+            // 设置完成后请求初始渲染
             if let Some(ref win) = self.window {
                 win.request_redraw();
             }
@@ -1234,7 +1234,7 @@ impl ApplicationHandler for PureTermApp {
         event: WindowEvent,
     ) {
         match event {
-            // Route events to egui when any overlay panel is visible
+            // 当任何覆盖面板可见时，将事件路由到 egui
             ref evt @ WindowEvent::KeyboardInput { .. }
             | ref evt @ WindowEvent::MouseInput { .. }
             | ref evt @ WindowEvent::CursorMoved { .. }
@@ -1285,7 +1285,7 @@ impl ApplicationHandler for PureTermApp {
                 }
             }
             WindowEvent::RedrawRequested => {
-                // Drain output from ALL panes
+                // 排出所有面板的输出
                 for pane in self.panes.values_mut() {
                     pane.drain_output();
                 }
@@ -1296,7 +1296,7 @@ impl ApplicationHandler for PureTermApp {
                     self.profile_selector.visible, self.welcome_page.visible,
                     self.rename_modal.is_some(), self.color_modal.is_some());
                 if !any_dirty && !self.context_menu.visible && !self.settings_panel.visible && !self.profile_selector.visible && !self.welcome_page.visible && self.rename_modal.is_none() && self.color_modal.is_none() {
-                    log::debug!("RedrawRequested: early return due to no dirty panes and all panels hidden");
+                    log::debug!("RedrawRequested: 由于没有脏面板且所有面板都隐藏，提前返回");
                     return;
                 }
 
@@ -1304,10 +1304,10 @@ impl ApplicationHandler for PureTermApp {
                 let layout = self.compute_layout(screen_w, screen_h);
                 let bg = pureterm_core::theme::ColorScheme::parse_color(&self.color_scheme.background);
 
-                // Update tab bar layout before rendering
+                // 渲染前更新标签栏布局
                 self.update_tab_bar_layout();
 
-                // Collect snapshots and selection state before borrowing renderer
+                // 在借用渲染器之前收集快照和选择状态
                 let mut snapshots: Vec<(u64, ViewportRect, pureterm_terminal::ScreenSnapshot, Option<pureterm_ui::terminal::Selection>)> = Vec::new();
                 for (pane_id, rect) in &layout {
                     if let Some(pane) = self.panes.get_mut(pane_id) {
@@ -1328,13 +1328,13 @@ impl ApplicationHandler for PureTermApp {
                     }
                 }
 
-                // Collect divider rects
+                // 收集分隔符矩形
                 let tab_bar_offset_y = if self.show_tab_bar() { TAB_BAR_HEIGHT } else { 0.0 };
                 let dividers = self.split_root.as_ref()
                     .map(|root| compute_divider_rects(root, 0.0, tab_bar_offset_y, screen_w, screen_h - tab_bar_offset_y))
                     .unwrap_or_default();
 
-                // Collect focus border info
+                // 收集焦点边框信息
                 let focus_rect = self.focused_pane_id
                     .and_then(|fid| layout.iter().find(|(id, _)| *id == fid).map(|(_, r)| *r));
 
@@ -1343,7 +1343,7 @@ impl ApplicationHandler for PureTermApp {
                     let mut all_vertices = Vec::new();
                     let mut all_indices = Vec::new();
 
-                    // Render each pane snapshot
+                    // 渲染每个面板快照
                     log::debug!("Rendering {} snapshots", snapshots.len());
                     for (_pane_id, viewport, snapshot, selection) in &snapshots {
                         let offset = all_vertices.len() as u32;
@@ -1360,9 +1360,9 @@ impl ApplicationHandler for PureTermApp {
                         all_indices.extend(idx.iter().map(|i| i + offset));
                     }
 
-                    // Render dividers
+                    // 渲染分隔符
                     for div in &dividers {
-                        // Highlight the divider if it's being dragged or hovered
+                        // 如果分隔符正在被拖拽或悬停，则高亮显示
                         let is_active = self.divider_drag.as_ref()
                             .map_or(false, |d| {
                                 (d.divider_rect.x - div.x).abs() < 1.0
@@ -1384,7 +1384,7 @@ impl ApplicationHandler for PureTermApp {
                         );
                     }
 
-                    // Render focus border
+                    // 渲染焦点边框
                     if let Some(rect) = focus_rect {
                         renderer.build_focus_border(
                             ViewportRect { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
@@ -1394,18 +1394,18 @@ impl ApplicationHandler for PureTermApp {
                         );
                     }
 
-                    // Render tab bar overlay
+                    // 渲染标签栏覆盖层
                     let active_tab_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
                     Self::render_tab_bar_overlay(&self.tab_bar, active_tab_id, renderer, &self.color_scheme, &mut all_vertices, &mut all_indices);
 
-                    // Render context menu overlay
+                    // 渲染上下文菜单覆盖层
                     Self::render_context_menu_overlay(&self.context_menu, renderer, &mut all_vertices, &mut all_indices);
 
-                    // Draw terminal content (returns frame without presenting)
+                    // 绘制终端内容（返回帧但不呈现）
                     let frame = renderer.draw_to_surface(surface, &all_vertices, &all_indices, bg);
                     if frame.is_none() {
-                        log::warn!("draw_to_surface returned None, will retry on next redraw");
-                        // Re-mark all panes dirty so we retry rendering
+                        log::warn!("draw_to_surface 返回 None，将在下一次重绘时重试");
+                        // 重新标记所有面板为脏，以便重试渲染
                         for pane in self.panes.values_mut() {
                             pane.mark_dirty();
                         }
@@ -1415,8 +1415,8 @@ impl ApplicationHandler for PureTermApp {
                         return;
                     }
 
-                    // Render egui overlay if any panel/modal is visible
-                    // Note: welcome page only actually needs rendering when there are no tabs
+                    // 如果任何面板/模态框可见，则渲染 egui 覆盖层
+                    // 注意：欢迎页面仅在没有任何标签页时才需要渲染
                     let needs_egui = self.settings_panel.visible || self.profile_selector.visible
                         || self.rename_modal.is_some() || self.color_modal.is_some();
                     let show_welcome = self.welcome_page.visible && self.app.as_ref().map(|a| a.tab_manager.is_empty()).unwrap_or(false);
@@ -1427,7 +1427,7 @@ impl ApplicationHandler for PureTermApp {
                         if let (Some(frame), Some(ref mut egui_backend), Some(ref mut app)) = (frame, &mut self.egui_backend, &mut self.app) {
                             let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-                            // Extract state that the egui closure will need to read/write
+                            // 提取 egui 闭包需要读写的状态
                             let settings_visible = self.settings_panel.visible;
                             let profile_visible = self.profile_selector.visible;
                             let welcome_visible = self.welcome_page.visible;
@@ -1440,7 +1440,7 @@ impl ApplicationHandler for PureTermApp {
                             let mut color_done = false;
                             #[allow(deprecated)]
                             let full_output = egui_backend.run(raw_input, |ctx| {
-                                // Settings panel
+                                // 设置面板
                                 if settings_visible {
 #[allow(deprecated)]
                                     egui::CentralPanel::default().show(ctx, |ui| {
@@ -1451,21 +1451,21 @@ impl ApplicationHandler for PureTermApp {
                                     });
                                 }
 
-                                // Profile selector
+                                // 配置文件选择器
                                 if profile_visible {
                                     if let Some(selected_profile) = self.profile_selector.show(ctx, &app.config) {
                                         profile_connect_request = Some(selected_profile);
                                     }
                                 }
 
-                                // Welcome page - show when no tabs are open
+                                // 欢迎页面 - 当没有打开标签页时显示
                                 if welcome_visible && app.tab_manager.is_empty() {
                                     if let Some(selected_profile) = self.welcome_page.show_page(ctx, &app.config) {
                                         profile_connect_request = Some(selected_profile);
                                     }
                                 }
 
-                                // Rename modal
+                                // 重命名模态框
                                 if let Some(ref rc_modal) = rename_modal_rc {
                                     let mut modal = rc_modal.borrow_mut();
                                     let tab_id = modal.tab_id;
@@ -1504,7 +1504,7 @@ impl ApplicationHandler for PureTermApp {
                                     }
                                 }
 
-                                // Color modal
+                                // 颜色模态框
                                 if let Some(ref rc_modal) = color_modal_rc {
                                     let mut modal = rc_modal.borrow_mut();
                                     let tab_id = modal.tab_id;
@@ -1522,7 +1522,7 @@ impl ApplicationHandler for PureTermApp {
                                                         .desired_width(120.0)
                                                 );
                                             });
-                                            // Color preview swatch
+                                            // 颜色预览色块
                                             let color_vec = parse_hex_color(&modal.color);
                                             ui.horizontal(|ui| {
                                                 ui.painter().rect_filled(
@@ -1533,7 +1533,7 @@ impl ApplicationHandler for PureTermApp {
                                                 ui.add_space(44.0);
                                             });
                                             ui.add_space(4.0);
-                                            // Quick color presets
+                                            // 快速颜色预设
                                             ui.horizontal(|ui| {
                                                 for &color in &["#e06c75", "#61afef", "#98c379", "#d19a66", "#c678dd", "#56b6c2", "#e5c07b", "#be5046"] {
                                                     let cv = parse_hex_color(color);
@@ -1574,16 +1574,16 @@ impl ApplicationHandler for PureTermApp {
                                 }
                             });
 
-                            // Apply results from modals
-                            // Apply rename modal result (only set when OK was clicked)
+                            // 应用模态框的结果
+                            // 应用重命名模态框结果（仅在点击确定时设置）
                             if let Some(rename_state) = self.rename_modal.take() {
                                 app.tab_manager.set_title(rename_state.tab_id, rename_state.new_title);
                             }
-                            // Apply color modal result (only set when OK was clicked)
+                            // 应用颜色模态框结果（仅在点击确定时设置）
                             if let Some(color_state) = self.color_modal.take() {
                                 app.tab_manager.set_color(color_state.tab_id, Some(color_state.color));
                             }
-                            // Restore modal state if still active (neither OK nor Cancel was clicked)
+                            // 如果仍然活跃则恢复模态框状态（既没有点击确定也没有点击取消）
                             if !rename_done && rename_modal_rc.is_some() {
                                 let m = rename_modal_rc.as_ref().unwrap().borrow();
                                 self.rename_modal = Some(RenameModalState {
@@ -1598,7 +1598,7 @@ impl ApplicationHandler for PureTermApp {
                                     color: m.color.clone(),
                                 });
                             }
-                            // Check if theme changed and re-resolve color scheme
+                            // 检查主题是否改变并重新解析颜色方案
                             if app.config.appearance.theme != self.color_scheme.name {
                                 let theme_service = pureterm_core::theme::ThemeService::new();
                                 if let Some(scheme) = theme_service.get_scheme(&app.config.appearance.theme) {
@@ -1607,7 +1607,7 @@ impl ApplicationHandler for PureTermApp {
                             }
 
                             if let Some(profile) = profile_connect_request {
-                                // Connect with profile and request redraw
+                                // 使用配置文件连接并请求重绘
                                 drop(full_output);
                                 drop(view);
                                 self.connect_with_profile(&profile);
@@ -1639,10 +1639,10 @@ impl ApplicationHandler for PureTermApp {
                             frame.present();
                         }
                     } else if let Some(frame) = frame {
-                        log::debug!("Presenting frame directly (needs_egui=false, show_welcome=false)");
+                        log::debug!("直接呈现帧 (needs_egui=false, show_welcome=false)");
                         frame.present();
                     } else {
-                        log::warn!("No frame to present and no egui needed!");
+                        log::warn!("没有要呈现的帧，也不需要 egui！");
                     }
                 }
             }
@@ -1653,12 +1653,12 @@ impl ApplicationHandler for PureTermApp {
                 self.modifiers = state;
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                // Only process key press events, ignore releases
+                // 仅处理按键按下事件，忽略释放
                 if event.state != ElementState::Pressed {
                     return;
                 }
 
-                // Skip terminal input when a modal is open (let egui handle it)
+                // 当模态框打开时跳过终端输入（让 egui 处理）
                 if self.rename_modal.is_some() || self.color_modal.is_some() {
                     return;
                 }
@@ -1670,11 +1670,11 @@ impl ApplicationHandler for PureTermApp {
                 let shift = self.modifiers.shift_key();
                 let super_key = self.modifiers.super_key();
 
-                // Global hotkey: Ctrl+` toggles quake mode
+                // 全局热键：Ctrl+` 切换 quake 模式
                 if ctrl && shift {
                     if let winit::keyboard::Key::Character(ref ch) = event.logical_key {
                         if ch == "`" {
-                            // Toggle quake mode visibility
+                            // 切换 quake 模式可见性
                             if self.quake_mode.enabled {
                                 self.quake_mode.toggle();
                                 log::info!("Quake mode toggled: visible={}", self.quake_mode.visible);
@@ -1687,7 +1687,7 @@ impl ApplicationHandler for PureTermApp {
                 log::debug!("KeyboardInput: logical_key={:?}, text={:?}, ctrl={}, alt={}, shift={}",
                     event.logical_key, event.text, ctrl, alt, shift);
 
-                // Handle character input with text
+                // 处理带文本的字符输入
                 if let Some(text) = event.text {
                     if !text.is_empty() {
                         let key = text.chars().next().unwrap();
@@ -1704,7 +1704,7 @@ impl ApplicationHandler for PureTermApp {
                     }
                 }
 
-                // Handle keys without text (special keys, Ctrl+letter combos)
+                // 处理不带文本的键（特殊键、Ctrl+字母组合）
                 match &event.logical_key {
                     Key::Named(named_key) => {
                         let key_str = match named_key {
@@ -1742,17 +1742,17 @@ impl ApplicationHandler for PureTermApp {
                         self.handle_key_input(&ch.to_lowercase(), ctrl, alt, shift, super_key);
                     }
                     _ => {
-                        log::debug!("KeyboardInput: unhandled logical_key={:?}", event.logical_key);
+                        log::debug!("KeyboardInput: 未处理的 logical_key={:?}", event.logical_key);
                     }
                 }
             }
 
-            // ── Mouse events ──
+            // ── 鼠标事件 ──
 
             WindowEvent::CursorMoved { position, .. } => {
                 self.mouse_pos = (position.x as f32, position.y as f32);
 
-                // Handle active divider drag
+                // 处理活动分隔符拖拽
                 if let Some(ref drag) = self.divider_drag {
                     let (_screen_w, _screen_h) = self.screen_size();
                     let delta = match drag.direction {
@@ -1768,7 +1768,7 @@ impl ApplicationHandler for PureTermApp {
                             container.adjust_ratio(child_index, delta_ratio);
                         }
                     }
-                    // Update start_pos for incremental adjustment
+                    // 更新 start_pos 以进行增量调整
                     if let Some(ref mut drag) = self.divider_drag {
                         drag.start_pos = self.mouse_pos;
                     }
@@ -1779,7 +1779,7 @@ impl ApplicationHandler for PureTermApp {
                     return;
                 }
 
-                // Update context menu hover
+                // 更新上下文菜单悬停状态
                 if self.context_menu.visible {
                     self.context_menu.update_hover(self.mouse_pos.0, self.mouse_pos.1);
                     if let Some(ref window) = self.window {
@@ -1788,9 +1788,9 @@ impl ApplicationHandler for PureTermApp {
                     return;
                 }
 
-                // Check for tab bar hover
+                // 检查标签栏悬停状态
                 if self.tab_bar.visible {
-                    // Check "+" new tab button
+                    // 检查"+"新标签按钮
                     let hovered_new_tab = self.tab_bar.new_tab_rect.contains(self.mouse_pos.0, self.mouse_pos.1);
 
                     let hovered_idx = self.tab_bar.tab_layouts.iter().position(|l| {
@@ -1814,7 +1814,7 @@ impl ApplicationHandler for PureTermApp {
                     }
                 }
 
-                // Check for divider hover (cursor style)
+                // 检查分隔符悬停（光标样式）
                 let (screen_w, screen_h) = self.screen_size();
                 self.hovered_divider = if let Some(ref root) = self.split_root {
                     divider_at_point(root, self.mouse_pos.0, self.mouse_pos.1, 0.0, 0.0, screen_w, screen_h)
@@ -1925,9 +1925,9 @@ impl ApplicationHandler for PureTermApp {
                                 }
                             }
                             MouseButton::Left => {
-                                // Left click
+                                // 左键点击
 
-                                // Check context menu first (if visible and hit)
+                                // 首先检查上下文菜单（如果可见且点击命中）
                                 if self.context_menu.visible {
                                     if let Some(action) = self.context_menu.hit_test(self.mouse_pos.0, self.mouse_pos.1) {
                                         self.context_menu.hide();
@@ -1937,11 +1937,11 @@ impl ApplicationHandler for PureTermApp {
                                         }
                                         return;
                                     }
-                                    // Click was outside menu - hide menu and continue to tab bar/other handling
+                                    // 点击在菜单外部 - 隐藏菜单并继续处理标签栏/其他
                                     self.context_menu.hide();
                                 }
 
-                                // Check if clicking on a tab bar
+                                // 检查是否点击了标签栏
                                 if self.tab_bar.visible {
                                     // macOS: 跳过红绿灯区域，让系统原生处理关闭/最小化/最大化
                                     #[cfg(target_os = "macos")]
@@ -1953,10 +1953,10 @@ impl ApplicationHandler for PureTermApp {
                                         let layout = &self.tab_bar.tab_layouts[idx];
                                         let tab_id = layout.tab_id;
 
-                                        // Check if clicking close button
+                                        // 检查是否点击了关闭按钮
                                         if let Some(ref close_rect) = layout.close_button_rect {
                                             if close_rect.contains(self.mouse_pos.0, self.mouse_pos.1) {
-                                                // Close this tab
+                                                // 关闭此标签页
                                                 if let Some(ref mut app) = self.app {
                                                     app.tab_manager.close_tab(tab_id);
                                                 }
@@ -1967,12 +1967,12 @@ impl ApplicationHandler for PureTermApp {
                                             }
                                         }
 
-                                        // Switch to this tab
+                                        // 切换到此标签页
                                         let current_active = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
                                         if current_active != Some(tab_id) {
                                             if let Some(ref mut app) = self.app {
                                                 app.tab_manager.select_tab(tab_id);
-                                                // Update focused_pane_id from tab content
+                                                // 从标签页内容更新 focused_pane_id
                                                 if let Some(tab) = app.tab_manager.active_tab() {
                                                     match &tab.content {
                                                         TabContent::Pane(pane_id) => {
@@ -1996,14 +1996,14 @@ impl ApplicationHandler for PureTermApp {
                                         return;
                                     }
 
-                                    // Check if clicking "+" new tab button
+                                    // 检查是否点击了"+"新标签按钮
                                     if self.tab_bar.new_tab_rect.contains(self.mouse_pos.0, self.mouse_pos.1) {
                                         self.handle_new_tab();
                                         return;
                                     }
                                 }
 
-                                // Check if clicking on a divider
+                                // 检查是否点击了分隔符
                                 if let Some(ref root) = self.split_root {
                                     if let Some(info) = divider_at_point(root, self.mouse_pos.0, self.mouse_pos.1, 0.0, 0.0, screen_w, screen_h) {
                                         self.divider_drag = Some(DividerDrag {
@@ -2044,7 +2044,7 @@ impl ApplicationHandler for PureTermApp {
                                                 pane.write_input(&data);
                                             }
                                             let mut acts: Vec<PaneAction> = action.into_iter().collect();
-                                            // Handle Ctrl+Click on URL/hyperlink
+                                            // 处理 Ctrl+点击 URL/超链接
                                             if ctrl {
                                                 if let Some(url) = pane.url_at(row, col) {
                                                     acts.push(PaneAction::OpenUrl(url));
@@ -2100,7 +2100,7 @@ impl ApplicationHandler for PureTermApp {
                         }
                     }
                     ElementState::Released => {
-                        // End divider drag
+                        // 结束分隔符拖拽
                         if self.divider_drag.is_some() {
                             self.divider_drag = None;
                             return;
@@ -2197,7 +2197,7 @@ impl ApplicationHandler for PureTermApp {
                 }
             }
 
-            // ── Drag and drop ──
+            // ── 拖放 ──
 
             WindowEvent::DroppedFile(path) => {
                 let path_str = path.to_string_lossy().to_string();
@@ -2216,13 +2216,13 @@ impl ApplicationHandler for PureTermApp {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Don't unconditionally request redraw here - it causes RedrawRequested events
-        // to pile up and block other events (like mouse clicks) from being processed.
-        // Instead, request redraw only when something actually changes.
+        // 不要无条件地在这里请求重绘 - 这会导致 RedrawRequested 事件
+        // 堆积并阻塞其他事件（如鼠标点击）的处理。
+        // 相反，只在实际情况发生变化时才请求重绘。
     }
 
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, _event: ()) {
-        // Woken by PTY output thread — request a redraw to display new terminal content.
+        // 被 PTY 输出线程唤醒 — 请求重绘以显示新的终端内容。
         if let Some(window) = &self.window {
             window.request_redraw();
         }
@@ -2231,46 +2231,46 @@ impl ApplicationHandler for PureTermApp {
 
 use clap::{Parser, Subcommand};
 
-/// PureTerm CLI arguments.
+/// PureTerm CLI 参数。
 #[derive(Parser, Debug)]
 #[command(name = "pureterm")]
 #[command(version = "0.1.0")]
 #[command(about = "GPU-accelerated terminal emulator")]
 struct Cli {
-    /// Connect to a profile by name.
+    /// 通过名称连接到配置文件。
     #[arg(short, long)]
     profile: Option<String>,
 
-    /// Quick SSH connect (user@host or user@host:port).
+    /// 快速 SSH 连接（user@host 或 user@host:port）。
     #[arg(short, long)]
     ssh: Option<String>,
 
-    /// Open a new tab (for IPC).
+    /// 打开新标签页（用于 IPC）。
     #[arg(long)]
     new_tab: bool,
 
-    /// Start with quake mode (dropdown terminal).
+    /// 启动 quake 模式（下拉终端）。
     #[arg(long)]
     quake: bool,
 
-    /// Subcommand for additional actions.
+    /// 用于额外操作的子命令。
     #[command(subcommand)]
     command: Option<Commands>,
 }
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// List available profiles.
+    /// 列出可用配置文件。
     List,
-    /// Open settings.
+    /// 打开设置。
     Settings,
-    /// List all available fonts.
+    /// 列出所有可用字体。
     ListFonts,
-    /// List all available themes.
+    /// 列出所有可用主题。
     ListThemes,
-    /// Show current configuration.
+    /// 显示当前配置。
     ShowConfig,
-    /// Show version information.
+    /// 显示版本信息。
     Version,
 }
 
@@ -2284,18 +2284,18 @@ fn main() -> Result<()> {
         env_logger::Env::default().default_filter_or(default_level)
     ).init();
 
-    // Initialize crash reporting (local storage only, does not send to network)
-    // Use a local crash directory
+    // 初始化崩溃报告（仅本地存储，不发送到网络）
+    // 使用本地崩溃目录
     let crash_dir = std::env::temp_dir().join("pureterm-crashes");
     std::fs::create_dir_all(&crash_dir).ok();
 
-    // Initialize sentry - empty DSN disables network transport
+    // 初始化 sentry - 空 DSN 禁用网络传输
     let _guard = sentry::init(sentry::ClientOptions {
         dsn: None,
         release: Some(env!("CARGO_PKG_VERSION").into()),
         ..Default::default()
     });
-    // Set up panic hook to capture crashes
+    // 设置 panic 钩子以捕获崩溃
     std::panic::set_hook(Box::new(|panic_info| {
         let payload = panic_info.payload();
         let message = if let Some(s) = payload.downcast_ref::<&str>() {
@@ -2316,23 +2316,23 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Handle subcommands
+    // 处理子命令
     match cli.command {
         Some(Commands::List) => {
             println!("Available profiles:");
-            // Would load and list profiles here
+            // 在这里加载并列出配置文件
             println!("  (use --profile to connect)");
             return Ok(());
         }
         Some(Commands::Settings) => {
             println!("Opening settings...");
-            // Would trigger settings open here
+            // 在这里触发设置打开
             return Ok(());
         }
         Some(Commands::ListFonts) => {
             println!("Available fonts:");
             println!("  JetBrainsMono Nerd Font (embedded)");
-            println!("  (custom fonts can be configured in settings)");
+            println!("  (custom fonts can be configured in settings)"); // (custom fonts can be configured in settings)
             return Ok(());
         }
         Some(Commands::ListThemes) => {
@@ -2363,7 +2363,7 @@ fn main() -> Result<()> {
     let theme_service = ThemeService::new();
     let mut config = config_service.get().clone();
 
-    // Handle quick SSH connect
+    // 处理快速 SSH 连接
     if let Some(ssh_spec) = cli.ssh {
         if let Some(profile) = parse_ssh_spec(&ssh_spec) {
             config.profiles.push(profile);
@@ -2411,7 +2411,7 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// Parse SSH specification string (user@host:port) into a Profile.
+/// 将 SSH 规范字符串（user@host:port）解析为 Profile。
 fn parse_ssh_spec(spec: &str) -> Option<Profile> {
     let spec = spec.trim();
     if spec.is_empty() {
@@ -2451,7 +2451,7 @@ fn parse_ssh_spec(spec: &str) -> Option<Profile> {
     })
 }
 
-/// Convert a Profile to ConnectParams for session creation.
+/// 将 Profile 转换为 ConnectParams 以创建会话。
 fn profile_to_connect_params(profile: &Profile) -> ConnectParams {
     let session_type = match profile.profile_type {
         ProfileType::Local => {
@@ -2510,7 +2510,7 @@ fn profile_to_connect_params(profile: &Profile) -> ConnectParams {
     }
 }
 
-/// Generate a tab title from a profile.
+/// 从配置文件生成标签页标题。
 fn profile_title(profile: &Profile) -> String {
     match profile.profile_type {
         ProfileType::Ssh => {
@@ -2533,7 +2533,7 @@ fn profile_title(profile: &Profile) -> String {
     }
 }
 
-/// Parse a hex color string like "#ff0000" to [u8; 3].
+/// 将十六进制颜色字符串（如 "#ff0000"）解析为 [u8; 3]。
 fn parse_hex_color(s: &str) -> [u8; 3] {
     let s = s.trim_start_matches('#');
     if s.len() >= 6 {

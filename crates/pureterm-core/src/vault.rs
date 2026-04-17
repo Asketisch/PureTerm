@@ -5,23 +5,23 @@ use base64::Engine;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-/// Encrypted value stored in config.
+/// 存储在配置中的加密值。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptedValue {
-    /// Base64-encoded ciphertext.
+    /// Base64 编码的密文。
     pub ciphertext: String,
-    /// Base64-encoded nonce.
+    /// Base64 编码的 nonce。
     pub nonce: String,
-    /// Version for future migration.
+    /// 用于未来迁移的版本。
     pub version: u8,
 }
 
-/// Vault service for encrypting/decrypting sensitive config values.
+/// 用于加密/解密敏感配置值的保险库服务。
 pub struct VaultService {
     key: [u8; 32],
 }
 
-/// Error type for vault operations.
+/// 保险库操作的错误类型。
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
     #[error("Encryption failed: {0}")]
@@ -35,15 +35,15 @@ pub enum VaultError {
 }
 
 impl VaultService {
-    /// Derive a 32-byte AES-256 key from a master password using SHA-256.
+    /// 使用 SHA-256 从主密码派生 32 字节的 AES-256 密钥。
     pub fn new(master_password: &str) -> Self {
         let key: [u8; 32] = Sha256::digest(master_password.as_bytes()).into();
         Self { key }
     }
 
-    /// Encrypt a plaintext string with AES-256-GCM.
+    /// 使用 AES-256-GCM 加密明文字符串。
     ///
-    /// Returns an `EncryptedValue` containing base64-encoded ciphertext and nonce.
+    /// 返回包含 base64 编码密文和 nonce 的 `EncryptedValue`。
     pub fn encrypt(&self, plaintext: &str) -> Result<EncryptedValue, VaultError> {
         let cipher = Aes256Gcm::new_from_slice(&self.key)
             .map_err(|e| VaultError::EncryptionFailed(e.to_string()))?;
@@ -62,7 +62,7 @@ impl VaultService {
         })
     }
 
-    /// Decrypt an `EncryptedValue` back to the original plaintext string.
+    /// 将 `EncryptedValue` 解密回原始明文字符串。
     pub fn decrypt(&self, encrypted: &EncryptedValue) -> Result<String, VaultError> {
         let cipher = Aes256Gcm::new_from_slice(&self.key)
             .map_err(|e| VaultError::DecryptionFailed(e.to_string()))?;
@@ -87,25 +87,24 @@ impl VaultService {
             .map_err(|e| VaultError::DecryptionFailed(format!("Invalid UTF-8: {}", e)))
     }
 
-    /// Encrypt a plaintext string and return the JSON-serialized `EncryptedValue`.
+    /// 加密明文字符串并返回 JSON 序列化的 `EncryptedValue`。
     pub fn encrypt_to_string(&self, plaintext: &str) -> Result<String, VaultError> {
         let encrypted = self.encrypt(plaintext)?;
         serde_json::to_string(&encrypted)
             .map_err(|e| VaultError::EncryptionFailed(format!("JSON serialization: {}", e)))
     }
 
-    /// Deserialize a JSON string as `EncryptedValue` and decrypt it.
+    /// 将 JSON 字符串反序列化为 `EncryptedValue` 并解密。
     pub fn decrypt_from_string(&self, json: &str) -> Result<String, VaultError> {
         let encrypted: EncryptedValue = serde_json::from_str(json)
             .map_err(|e| VaultError::DecryptionFailed(format!("JSON deserialization: {}", e)))?;
         self.decrypt(&encrypted)
     }
 
-    /// Re-derive a key from a new password.
+    /// 从新密码重新派生密钥。
     ///
-    /// Returns the new 32-byte key so the caller can construct a new `VaultService`.
-    /// The old password is mixed in so that knowledge of the new password alone
-    /// is not sufficient to derive the same key.
+    /// 返回新的 32 字节密钥,以便调用者可以构造新的 `VaultService`。
+    /// 旧密码被混合在内,因此仅知道新密码不足以派生相同的密钥。
     pub fn change_password(old_password: &str, new_password: &str) -> [u8; 32] {
         let mut hasher = Sha256::new();
         hasher.update(old_password.as_bytes());
@@ -114,11 +113,10 @@ impl VaultService {
     }
 }
 
-/// Generate a 12-byte nonce.
+/// 生成 12 字节的 nonce。
 ///
-/// Uses the current system time in nanoseconds. This is acceptable for a
-/// config-file encryption scenario where operations are infrequent, but a
-/// cryptographically random source should be preferred in production.
+/// 使用当前系统时间的纳秒。这对于配置文件的加密场景是可以接受的,
+/// 因为操作不频繁,但在生产环境中应该优先使用加密随机源。
 fn generate_nonce() -> [u8; 12] {
     let mut nonce = [0u8; 12];
     let time = std::time::SystemTime::now()

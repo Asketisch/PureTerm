@@ -1,30 +1,28 @@
-//! Telnet IAC (Interpret As Command) protocol negotiation.
+//! Telnet IAC (Interpret As Command) 协议协商。
 //!
-//! Handles parsing of Telnet IAC sequences from the data stream, responding
-//! to option negotiations, sub-negotiations (SB/SE), and providing clean
-//! data bytes stripped of all IAC commands.
+//! 处理从数据流中解析 Telnet IAC 序列,响应选项协商、子协商 (SB/SE),
+//! 并提供剥离所有 IAC 命令的干净数据字节。
 
-// ── IAC command bytes ────────────────────────────────────────────────
+// ── IAC 命令字节 ────────────────────────────────────────────────
 const IAC: u8 = 255;
 const WILL: u8 = 251;
 const WONT: u8 = 252;
 const DO: u8 = 253;
 const DONT: u8 = 254;
-const SB: u8 = 250; // Subnegotiation Begin
-const SE: u8 = 240; // Subnegotiation End
+const SB: u8 = 250; // 子协商开始
+const SE: u8 = 240; // 子协商结束
 
-// ── Well-known Telnet options ────────────────────────────────────────
+// ── 已知 Telnet 选项 ────────────────────────────────────────
 const OPT_ECHO: u8 = 1;
 const OPT_SUPPRESS_GA: u8 = 3;
 const OPT_TERMINAL_TYPE: u8 = 24;
-const OPT_NAWS: u8 = 31; // Negotiate About Window Size
+const OPT_NAWS: u8 = 31; // 协商窗口大小
 const OPT_TERMINAL_SPEED: u8 = 32;
 
 /// Terminal type string advertised to remote hosts.
 const TERMINAL_TYPE: &[u8] = b"xterm-256color";
 
-/// Parser state used inside `process_input` to track where we are in an
-/// IAC sequence across calls.
+/// `process_input` 中使用的解析器状态,用于跟踪我们在 IAC 序列中的位置。
 #[derive(Debug, Clone, PartialEq)]
 enum IacState {
     /// Normal data processing.
@@ -54,7 +52,7 @@ enum IacState {
     },
 }
 
-/// Tracks which options we have agreed to with the remote side.
+/// 跟踪我们与远程端协商一致的选项。
 #[derive(Debug, Clone)]
 struct NegotiatedOptions {
     /// We sent WILL <opt> and it was accepted (or we just decided to).
@@ -63,12 +61,11 @@ struct NegotiatedOptions {
     will_terminal_type: bool,
 }
 
-/// IAC negotiator that processes raw Telnet bytes and produces clean data
-/// along with any responses that should be sent back.
+/// IAC 协商器,处理原始 Telnet 字节并产生干净的数据以及任何应该发送回的响应。
 pub struct IacNegotiator {
     state: IacState,
     options: NegotiatedOptions,
-    /// Current terminal dimensions (cols, rows). Used for NAWS responses.
+    /// 当前终端尺寸 (cols, rows)。用于 NAWS 响应。
     window_size: (u16, u16),
 }
 
@@ -79,7 +76,7 @@ impl Default for IacNegotiator {
 }
 
 impl IacNegotiator {
-    /// Create a new negotiator with default window size (80x24).
+    /// 创建具有默认窗口大小 (80x24) 的新协商器。
     pub fn new() -> Self {
         Self {
             state: IacState::Data,
@@ -91,8 +88,7 @@ impl IacNegotiator {
         }
     }
 
-    /// Update the stored window dimensions. Returns IAC NAWS bytes to send
-    /// if NAWS was previously negotiated, or an empty vec otherwise.
+    /// 更新存储的窗口尺寸。如果之前协商过 NAWS,则返回要发送的 IAC NAWS 字节,否则返回空 vec。
     pub fn set_window_size(&mut self, cols: u16, rows: u16) -> Vec<u8> {
         self.window_size = (cols, rows);
         if self.options.will_naws {
@@ -102,14 +98,12 @@ impl IacNegotiator {
         }
     }
 
-    /// Process a chunk of raw bytes received from the Telnet server.
+    /// 处理从 Telnet 服务器接收的原始字节块。
     ///
-    /// Returns a tuple of `(clean_data, responses_to_send)`.
+    /// 返回元组 `(clean_data, responses_to_send)`。
     ///
-    /// - `clean_data`: the original bytes with all IAC sequences removed.
-    /// - `responses_to_send`: IAC command bytes that should be written back
-    ///   to the server (e.g. DO/DONT/WILL/WONT replies, subnegotiation
-    ///   responses).
+    /// - `clean_data`: 原始字节,所有 IAC 序列已被移除。
+    /// - `responses_to_send`: 应该写回服务器的 IAC 命令字节(例如 DO/DONT/WILL/WONT 回复,子协商响应)。
     pub fn process_input(&mut self, data: &[u8]) -> (Vec<u8>, Vec<u8>) {
         let mut clean = Vec::new();
         let mut responses = Vec::new();
@@ -127,7 +121,7 @@ impl IacNegotiator {
                 IacState::Iac => {
                     match byte {
                         IAC => {
-                            // Escaped 0xFF – literal byte in data.
+                            // 转义的 0xFF - 数据中的字面字节。
                             clean.push(IAC);
                             self.state = IacState::Data;
                         }
@@ -144,19 +138,19 @@ impl IacNegotiator {
                             self.state = IacState::Dont;
                         }
                         SB => {
-                            // Next byte will be the subnegotiation option.
+                            // 下一个字节是子协商选项。
                             self.state = IacState::Subneg {
                                 option: 0,
                                 data: Vec::new(),
                             };
-                            // We'll set the real option on the next byte.
-                            // Use a temporary marker – handled below.
+                            // 我们会在下一个字节设置真正的选项。
+                            // 使用临时标记 - 在下面处理。
                         }
                         SE => {
-                            // Stray SE outside subnegotiation – ignore.
+                            // 子协商之外的 stray SE - 忽略。
                             self.state = IacState::Data;
                         }
-                        // Other two-byte IAC commands (AYT, NOP, etc.): ignore.
+                        // 其他双字节 IAC 命令 (AYT, NOP 等): 忽略。
                         _ => {
                             self.state = IacState::Data;
                         }
@@ -169,7 +163,7 @@ impl IacNegotiator {
                 }
 
                 IacState::Wont => {
-                    // The server won't do something – acknowledge with DONT.
+                    // 服务器不会做某事 - 用 DONT 确认。
                     responses.push(IAC);
                     responses.push(DONT);
                     responses.push(byte);
@@ -182,7 +176,7 @@ impl IacNegotiator {
                 }
 
                 IacState::Dont => {
-                    // Server says don't – we comply with WONT.
+                    // 服务器说不要 - 我们遵从 WONT。
                     if byte == OPT_NAWS {
                         self.options.will_naws = false;
                     }
@@ -197,7 +191,7 @@ impl IacNegotiator {
 
                 IacState::Subneg { option, .. } => {
                     if option == 0 {
-                        // First byte of subnegotiation is the option code.
+                        // 子协商的第一个字节是选项代码。
                         self.state = IacState::Subneg {
                             option: byte,
                             data: Vec::new(),
@@ -208,8 +202,7 @@ impl IacNegotiator {
                             data: Vec::new(),
                         };
                     } else {
-                        // Accumulate subnegotiation data – we rebuild the vec
-                        // each time to avoid borrowing issues.
+                        // 累积子协商数据 - 我们每次重新构建 vec 以避免借用问题。
                         let mut d = Vec::new();
                         d.push(byte);
                         self.state = IacState::Subneg { option, data: d };
@@ -218,16 +211,16 @@ impl IacNegotiator {
 
                 IacState::SubnegIac { option, data } => {
                     if byte == SE {
-                        // End of subnegotiation.
+                        // 子协商结束。
                         responses.extend(self.handle_subneg(option, &data));
                         self.state = IacState::Data;
                     } else if byte == IAC {
-                        // Escaped 0xFF inside subneg data.
+                        // 子协商数据内的转义 0xFF。
                         let mut d = data.clone();
                         d.push(IAC);
                         self.state = IacState::Subneg { option, data: d };
                     } else {
-                        // Unexpected – treat as data inside subneg.
+                        // 意外情况 - 当作子协商内的数据处理。
                         let mut d = data.clone();
                         d.push(IAC);
                         d.push(byte);
@@ -240,28 +233,27 @@ impl IacNegotiator {
         (clean, responses)
     }
 
-    // ── Negotiation helpers ──────────────────────────────────────────
+    // ── 协商辅助函数 ──────────────────────────────────────────
 
-    /// Handle `IAC WILL <option>` from the server.
+    /// 处理来自服务器的 `IAC WILL <option>`。
     fn handle_will(&mut self, option: u8) -> Vec<u8> {
         match option {
             OPT_SUPPRESS_GA => {
-                // Accept: we want the server to suppress Go-Ahead.
+                // 接受: 我们希望服务器抑制 Go-Ahead。
                 vec![IAC, DO, option]
             }
             OPT_ECHO => {
-                // We don't want remote echo – refuse.
+                // 我们不想要远程回显 - 拒绝。
                 vec![IAC, DONT, option]
             }
             _ => {
-                // Unknown option – refuse.
+                // 未知选项 - 拒绝。
                 vec![IAC, DONT, option]
             }
         }
     }
 
-    /// Handle `IAC DO <option>` from the server (server asks us to enable
-    /// an option).
+    /// 处理来自服务器的 `IAC DO <option>` (服务器要求我们启用一个选项)。
     fn handle_do(&mut self, option: u8) -> Vec<u8> {
         match option {
             OPT_TERMINAL_TYPE => {
@@ -278,7 +270,7 @@ impl IacNegotiator {
                 vec![IAC, WILL, option]
             }
             OPT_TERMINAL_SPEED => {
-                // We don't implement terminal-speed reporting.
+                // 我们不实现终端速度报告。
                 vec![IAC, WONT, option]
             }
             _ => {
@@ -287,15 +279,14 @@ impl IacNegotiator {
         }
     }
 
-    /// Handle a completed subnegotiation for `option` with the given
-    /// `sub_data`.
+    /// 处理给定 `sub_data` 的 `option` 的已完成子协商。
     fn handle_subneg(&mut self, option: u8, sub_data: &[u8]) -> Vec<u8> {
         match option {
             OPT_TERMINAL_TYPE => {
-                // RFC 1091: server sends IAC SB TERMINAL-TYPE 1 (SEND) IAC SE
-                // We respond with IAC SB TERMINAL-TYPE 0 (IS) <type> IAC SE
+                // RFC 1091: 服务器发送 IAC SB TERMINAL-TYPE 1 (SEND) IAC SE
+                // 我们用 IAC SB TERMINAL-TYPE 0 (IS) <type> IAC SE 响应
                 if sub_data.first() == Some(&1) {
-                    // SEND request
+                    // SEND 请求
                     let mut resp = vec![IAC, SB, OPT_TERMINAL_TYPE, 0]; // 0 = IS
                     resp.extend_from_slice(TERMINAL_TYPE);
                     resp.push(IAC);
@@ -309,14 +300,13 @@ impl IacNegotiator {
         }
     }
 
-    /// Build a NAWS (Negotiate About Window Size) subnegotiation message
-    /// with the current window dimensions.
+    /// 使用当前窗口尺寸构建 NAWS (Negotiate About Window Size) 子协商消息。
     ///
-    /// Format per RFC 1073:
+    /// RFC 1073 格式:
     /// `IAC SB NAWS <width-hi> <width-lo> <height-hi> <height-lo> IAC SE`
     ///
-    /// Each 16-bit value is sent in network byte order (big-endian). Any
-    /// 0xFF bytes must be escaped as `IAC IAC` per Telnet convention.
+    /// 每个 16 位值以网络字节序 (big-endian) 发送。根据 Telnet 约定,
+    /// 任何 0xFF 字节必须转义为 `IAC IAC`。
     fn build_naws_response(&self) -> Vec<u8> {
         let (cols, rows) = self.window_size;
         let mut resp = vec![IAC, SB, OPT_NAWS];
@@ -328,9 +318,8 @@ impl IacNegotiator {
     }
 }
 
-/// Encode a u16 as two big-endian bytes, escaping any 0xFF values per
-/// Telnet rules (a literal 0xFF in a subnegotiation must be sent as
-/// `IAC IAC`, i.e. `255 255`).
+/// 将 u16 编码为两个 big-endian 字节,根据 Telnet 规则转义任何 0xFF 值
+/// (子协商中的字面 0xFF 必须发送为 `IAC IAC`,即 `255 255`)。
 fn escape_u16_be(value: u16) -> Vec<u8> {
     let hi = (value >> 8) as u8;
     let lo = (value & 0xFF) as u8;

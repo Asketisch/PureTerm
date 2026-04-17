@@ -3,15 +3,15 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-/// Configuration for session logging.
+/// 会话日志配置。
 #[derive(Debug, Clone)]
 pub struct SessionLogConfig {
     pub enabled: bool,
-    /// Directory for log files. Defaults to `~/.config/pureterm/logs/`.
+    /// 日志文件目录。默认为 `~/.config/pureterm/logs/`。
     pub log_dir: Option<PathBuf>,
-    /// Whether to log user input as well.
+    /// 是否也记录用户输入。
     pub log_input: bool,
-    /// Maximum log file size in bytes; rotates when exceeded.
+    /// 最大日志文件大小(字节);超过时轮转。
     pub max_file_size: Option<u64>,
 }
 
@@ -26,7 +26,7 @@ impl Default for SessionLogConfig {
     }
 }
 
-/// Session log writer that records terminal output (and optionally input) with timestamps.
+/// 会话日志写入器,记录带时间戳的终端输出(和可选的输入)。
 #[allow(dead_code)]
 pub struct SessionLog {
     file: Option<File>,
@@ -40,10 +40,10 @@ pub struct SessionLog {
 }
 
 impl SessionLog {
-    /// Create a new session logger.
+    /// 创建新的会话日志记录器。
     ///
-    /// If `config.enabled` is false, the logger is inert (all write calls are no-ops).
-    /// The log file is created with a name based on `session_name` and the current timestamp.
+    /// 如果 `config.enabled` 为 false,则记录器是惰性的(所有写操作都是空操作)。
+    /// 日志文件基于 `session_name` 和当前时间戳创建。
     pub fn new(session_name: &str, config: &SessionLogConfig) -> Self {
         let log_dir = config
             .log_dir
@@ -74,7 +74,7 @@ impl SessionLog {
         }
     }
 
-    /// Default log directory: `~/.config/pureterm/logs/`
+    /// 默认日志目录: `~/.config/pureterm/logs/`
     pub fn default_log_dir() -> PathBuf {
         dirs_home()
             .join(".config")
@@ -82,7 +82,7 @@ impl SessionLog {
             .join("logs")
     }
 
-    /// Generate a log filename.
+    /// 生成日志文件名。
     ///
     /// - index 0: `{name}_{YYYYMMDD_HHMMSS}.log`
     /// - index > 0: `{name}_{YYYYMMDD_HHMMSS}_{index}.log`
@@ -100,10 +100,10 @@ impl SessionLog {
         }
     }
 
-    /// Write terminal output with a timestamp prefix.
+    /// 写带时间戳前缀的终端输出。
     ///
-    /// Each chunk is prefixed with `[HH:MM:SS.mmm] `.
-    /// Non-UTF-8 bytes are written as-is after the timestamp.
+    /// 每个数据块前缀为 `[HH:MM:SS.mmm] `。
+    /// 非 UTF-8 字节在时间戳后原样写入。
     pub fn log_output(&mut self, data: &[u8]) {
         if self.file.is_none() {
             return;
@@ -112,9 +112,9 @@ impl SessionLog {
         self.write_chunk(prefix.as_bytes(), data);
     }
 
-    /// Write user input with a timestamp prefix.
+    /// 写带时间戳前缀的用户输入。
     ///
-    /// Each chunk is prefixed with `[HH:MM:SS.mmm] < ` (only if `log_input` is enabled).
+    /// 每个数据块前缀为 `[HH:MM:SS.mmm] < ` (仅在 `log_input` 启用时)。
     pub fn log_input(&mut self, data: &[u8]) {
         if !self.log_input || self.file.is_none() {
             return;
@@ -123,16 +123,16 @@ impl SessionLog {
         self.write_chunk(prefix.as_bytes(), data);
     }
 
-    /// Flush buffered data to disk.
+    /// 刷新缓冲数据到磁盘。
     pub fn flush(&mut self) {
         if let Some(ref mut f) = self.file {
             let _ = f.flush();
         }
     }
 
-    /// Check file size and rotate if the max is exceeded.
+    /// 检查文件大小并在超过最大值时轮转。
     ///
-    /// Closes the current file and opens a new one with an incremented index.
+    /// 关闭当前文件并打开一个新的带递增索引的文件。
     pub fn rotate_if_needed(&mut self) {
         let max = match self.max_file_size {
             Some(m) => m,
@@ -156,7 +156,7 @@ impl SessionLog {
         }
     }
 
-    // -- internal helpers --
+    // -- 内部辅助函数 --
 
     fn write_chunk(&mut self, prefix: &[u8], data: &[u8]) {
         if let Some(ref mut f) = self.file {
@@ -183,8 +183,8 @@ impl Drop for SessionLog {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal helpers to avoid pulling in a full chrono dependency.
-// Uses std APIs so that only the standard library is required.
+// 轻量级辅助函数,避免引入完整的 chrono 依赖。
+// 使用 std API 以便只需要标准库。
 // ---------------------------------------------------------------------------
 
 mod dirs {
@@ -202,7 +202,7 @@ fn dirs_home() -> PathBuf {
     dirs::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
-/// Lightweight timestamp struct to avoid a chrono dependency.
+/// 轻量级时间戳结构,避免依赖 chrono。
 mod chrono_like {
     #[derive(Debug)]
     pub struct DateTime {
@@ -220,7 +220,7 @@ mod chrono_like {
             .unwrap_or_default()
             .as_secs();
 
-        // Simple algorithm; good enough for filenames.
+        // 简单算法;对文件名来说足够好。
         let (year, month, day, hour, minute, second) = unix_to_date(secs);
         DateTime {
             year,
@@ -240,10 +240,10 @@ mod chrono_like {
         let minute = ((time_of_day % 3600) / 60) as u32;
         let second = (time_of_day % 60) as u32;
 
-        // Convert days since epoch to year/month/day (copied from clock algorithms).
+        // 将自 epoch 以来的天数转换为年/月/日(从时钟算法复制)。
         let days = days_since_epoch as i64;
 
-        // Shift to March-based year so that leap day is at end of year.
+        // 转换为基于 3 月的年份,这样闰日在年末。
         let z = days + 719468;
         let era: i64;
         let doe: i64; // day of era

@@ -1,60 +1,60 @@
-//! Command-line argument parsing for PureTerm
+//! PureTerm 的命令行参数解析
 //!
-//! Supports both long options (--option=value) and positional arguments.
+//! 支持长选项（--option=value）和位置参数。
 
 use std::collections::HashMap;
 use std::env;
 use std::path::PathBuf;
 
-/// CLI arguments parsed from command line
+/// 从命令行解析的 CLI 参数
 #[derive(Debug, Clone, Default)]
 pub struct CliArgs {
-    /// Positional arguments (usually the shell/command to run)
+    /// 位置参数（通常是 shell/要运行的命令）
     pub positional: Vec<String>,
-    /// Key-value pairs from --option=value
+    /// 来自 --option=value 的键值对
     pub options: HashMap<String, String>,
-    /// Config file path (from -c/--config)
+    /// 配置文件路径（来自 -c/--config）
     pub config_file: Option<PathBuf>,
-    /// Display help and exit
+    /// 显示帮助并退出
     pub help: bool,
-    /// Display version and exit
+    /// 显示版本并退出
     pub version: bool,
 }
 
 impl CliArgs {
-    /// Parse command line arguments
+    /// 解析命令行参数
     pub fn parse() -> Self {
         Self::parse_from(env::args().skip(1).collect())
     }
 
-    /// Parse from a vector of arguments (useful for testing)
+    /// 从参数向量解析（对测试有用）
     pub fn parse_from(args: Vec<String>) -> Self {
         let mut cli = Self::default();
         let mut args = args.into_iter().peekable();
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
-                // Special flags
+                // 特殊标志
                 "-h" | "--help" => {
                     cli.help = true;
                 }
                 "-v" | "--version" => {
                     cli.version = true;
                 }
-                // Config file option
+                // 配置文件选项
                 "-c" | "--config" => {
                     if let Some(path) = args.next() {
                         cli.config_file = Some(PathBuf::from(path));
                     }
                 }
-                // Long options with = syntax
+                // 带 = 语法的长选项
                 s if s.starts_with("--") => {
                     if let Some(eq_pos) = s.find('=') {
                         let key = s[2..eq_pos].to_string();
                         let value = s[eq_pos + 1..].to_string();
                         cli.options.insert(key, value);
                     } else {
-                        // Check if next arg is a value (not a flag)
+                        // 检查下一个参数是否是值（不是标志）
                         let key = s[2..].to_string();
                         if let Some(next) = args.peek() {
                             if !next.starts_with('-') {
@@ -63,7 +63,7 @@ impl CliArgs {
                         }
                     }
                 }
-                // Short options (single dash, single char)
+                // 短选项（单破折号，单字符）
                 s if s.starts_with('-') && s.len() == 2 => {
                     let key = s[1..].to_string();
                     if let Some(next) = args.peek() {
@@ -72,7 +72,7 @@ impl CliArgs {
                         }
                     }
                 }
-                // Positional arguments
+                // 位置参数
                 _ => {
                     cli.positional.push(arg);
                 }
@@ -82,22 +82,22 @@ impl CliArgs {
         cli
     }
 
-    /// Get an option value by key
+    /// 按键获取选项值
     pub fn get(&self, key: &str) -> Option<&str> {
         self.options.get(key).map(|s| s.as_str())
     }
 
-    /// Check if an option was provided
+    /// 检查是否提供了选项
     pub fn contains(&self, key: &str) -> bool {
         self.options.contains_key(key)
     }
 
-    /// Get the first positional argument
+    /// 获取第一个位置参数
     pub fn command(&self) -> Option<&str> {
         self.positional.first().map(|s| s.as_str())
     }
 
-    /// Get remaining positional arguments (after command)
+    /// 获取剩余的位置参数（在命令之后）
     pub fn args(&self) -> &[String] {
         &self.positional
     }

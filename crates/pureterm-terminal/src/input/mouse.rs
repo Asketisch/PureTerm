@@ -1,11 +1,11 @@
-//! Mouse event handling and encoding.
+//! 鼠标事件处理和编码。
 //!
-//! Supports 5 encoding formats: X10, UTF-8, SGR, URXVT, SGR-Pixels.
+//! 支持 5 种编码格式：X10、UTF-8、SGR、URXVT、SGR-Pixels。
 
 use serde::{Deserialize, Serialize};
 use super::mods::Mods;
 
-/// Mouse button.
+/// 鼠标按钮。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MouseButton {
     Left,
@@ -16,7 +16,7 @@ pub enum MouseButton {
     WheelDown,
 }
 
-/// Mouse event type.
+/// 鼠标事件类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MouseEventType {
     Press,
@@ -25,33 +25,33 @@ pub enum MouseEventType {
     Wheel,
 }
 
-/// Mouse event with position.
+/// 带位置的鼠标事件。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MouseEvent {
-    /// The event type.
+    /// 事件类型。
     pub event: MouseEventType,
-    /// The button (if applicable).
+    /// 按钮（如适用）。
     pub button: MouseButton,
-    /// Row (0-based, adjusted for scrollback offset).
+    /// 行（从 0 开始，已调整以适应回滚偏移）。
     pub row: usize,
-    /// Column (0-based).
+    /// 列（从 0 开始）。
     pub col: usize,
-    /// Modifier state.
+    /// 修饰符状态。
     pub mods: Mods,
 }
 
-/// Mouse encoding format.
+/// 鼠标编码格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MouseEncoding {
-    /// X10 encoding - traditional, limited to 223 columns/rows.
+    /// X10 编码 - 传统格式，最多 223 列/行。
     X10,
-    /// UTF-8 encoding - X10 with UTF-8 coordinate encoding.
+    /// UTF-8 编码 - 带 UTF-8 坐标编码的 X10。
     Utf8,
-    /// SGR encoding - modern, supports modifiers and release.
+    /// SGR 编码 - 现代格式，支持修饰符和释放。
     Sgr,
-    /// URXVT encoding - intermediate format.
+    /// URXVT 编码 - 中间格式。
     Urxvt,
-    /// SGR-Pixels encoding - SGR with pixel coordinates.
+    /// SGR-Pixels 编码 - 带像素坐标的 SGR。
     SgrPixels,
 }
 
@@ -61,18 +61,18 @@ impl Default for MouseEncoding {
     }
 }
 
-/// Encode a mouse event as X10 format.
+/// 将鼠标事件编码为 X10 格式。
 ///
-/// X10 format: `ESC [ M Cb Cx Cy`
-/// - Cb: button byte (button + 32)
-/// - Cx: column byte (col + 33, max 255)
-/// - Cy: row byte (row + 33, max 255)
+/// X10 格式：`ESC [ M Cb Cx Cy`
+/// - Cb: 按钮字节 (button + 32)
+/// - Cx: 列字节 (col + 33, 最大 255)
+/// - Cy: 行字节 (row + 33, 最大 255)
 ///
-/// X10 only supports press events and button 0-2.
-/// Motion events use button 3.
+/// X10 仅支持按下事件和按钮 0-2。
+/// 运动事件使用按钮 3。
 pub fn encode_mouse_x10(event: &MouseEvent) -> Option<Vec<u8>> {
     if event.row > 223 || event.col > 223 {
-        return None; // X10 can only handle values up to 223
+        return None; // X10 只能处理最大 223 的值
     }
 
     let cb = match event.event {
@@ -80,13 +80,13 @@ pub fn encode_mouse_x10(event: &MouseEvent) -> Option<Vec<u8>> {
             MouseButton::Left => 0,
             MouseButton::Middle => 1,
             MouseButton::Right => 2,
-            _ => return None, // X10 doesn't support wheel/release
+            _ => return None, // X10 不支持滚轮/释放
         },
         MouseEventType::Motion => 3,
         _ => return None,
     };
 
-    // X10 doesn't support modifiers, but we can encode motion with button 3
+    // X10 不支持修饰符，但可以用按钮 3 编码运动
     let cb_byte = (cb + 32) as u8;
     let col_byte = (event.col + 33).min(255) as u8;
     let row_byte = (event.row + 33).min(255) as u8;
@@ -94,13 +94,13 @@ pub fn encode_mouse_x10(event: &MouseEvent) -> Option<Vec<u8>> {
     Some(vec![0x1b, b'[', b'M', cb_byte, col_byte, row_byte])
 }
 
-/// Encode a mouse event as UTF-8 format.
+/// 将鼠标事件编码为 UTF-8 格式。
 ///
-/// UTF-8 format: `ESC [ M Cb UtfX UtfY`
-/// Same as X10 but coordinates are UTF-8 encoded.
+/// UTF-8 格式：`ESC [ M Cb UtfX UtfY`
+/// 与 X10 相同，但坐标是 UTF-8 编码的。
 pub fn encode_mouse_utf8(event: &MouseEvent) -> Option<Vec<u8>> {
     if event.row > 2015 || event.col > 2015 {
-        return None; // UTF-8 encoding supports up to 2015
+        return None; // UTF-8 编码最多支持 2015
     }
 
     let cb = match event.event {
@@ -124,28 +124,28 @@ pub fn encode_mouse_utf8(event: &MouseEvent) -> Option<Vec<u8>> {
     Some(result)
 }
 
-/// Encode a mouse event as SGR format.
+/// 将鼠标事件编码为 SGR 格式。
 ///
-/// SGR format: `ESC [ < Cb ; Cx ; Cy M/m`
-/// - Cb: button code (0-2 press, 3 release, +32 motion, +4 shift, +8 alt, +16 ctrl)
-/// - Cx: column (1-based)
-/// - Cy: row (1-based)
-/// - M = press, m = release
+/// SGR 格式：`ESC [ < Cb ; Cx ; Cy M/m`
+/// - Cb: 按钮码 (0-2 按下，3 释放，+32 运动，+4 Shift，+8 Alt，+16 Ctrl)
+/// - Cx: 列（从 1 开始）
+/// - Cy: 行（从 1 开始）
+/// - M = 按下，m = 释放
 pub fn encode_mouse_sgr(event: &MouseEvent) -> Vec<u8> {
-    // For release and motion events, use the same button codes as press
-    // Motion is indicated by bit 5 (32) in the button code, not by suffix
+    // 对于释放和运动事件，使用与按下相同的按钮码
+    // 运动由按钮码中的第 5 位 (32) 表示，而不是后缀
     let cb_base = match event.button {
         MouseButton::Left => 0,
         MouseButton::Middle => 1,
         MouseButton::Right => 2,
-        MouseButton::Release => 0, // Release uses same button as press
+        MouseButton::Release => 0, // 释放使用与按下相同的按钮
         MouseButton::WheelUp => 4,
         MouseButton::WheelDown => 5,
     };
 
     let mut cb = cb_base;
 
-    // Add modifier bits
+    // 添加修饰符位
     if event.mods.shift() {
         cb += 4;
     }
@@ -156,7 +156,7 @@ pub fn encode_mouse_sgr(event: &MouseEvent) -> Vec<u8> {
         cb += 16;
     }
 
-    // For motion events, add motion bit (bit 5 = 32)
+    // 对于运动事件，添加运动位（第 5 位 = 32）
     if event.event == MouseEventType::Motion {
         cb += 32;
     }
@@ -164,8 +164,8 @@ pub fn encode_mouse_sgr(event: &MouseEvent) -> Vec<u8> {
     let col = event.col + 1;
     let row = event.row + 1;
 
-    // Press and wheel use 'M', release uses 'm'
-    // Motion also uses 'M' (it's encoded in the button code)
+    // 按下和滚轮使用 'M'，释放使用 'm'
+    // 运动也使用 'M'（它编码在按钮码中）
     let is_release = event.event == MouseEventType::Release;
     let suffix = if is_release { 'm' } else { 'M' };
 
@@ -173,10 +173,10 @@ pub fn encode_mouse_sgr(event: &MouseEvent) -> Vec<u8> {
         .into_bytes()
 }
 
-/// Encode a mouse event as URXVT format.
+/// 将鼠标事件编码为 URXVT 格式。
 ///
-/// URXVT format: `ESC [ Cb ; Cx ; Cy M`
-/// Similar to SGR but always uses 'M' suffix.
+/// URXVT 格式：`ESC [ Cb ; Cx ; Cy M`
+/// 类似于 SGR，但始终使用 'M' 后缀。
 pub fn encode_mouse_urxvt(event: &MouseEvent) -> Option<Vec<u8>> {
     let cb = match event.event {
         MouseEventType::Press | MouseEventType::Wheel => match event.button {
@@ -191,13 +191,13 @@ pub fn encode_mouse_urxvt(event: &MouseEvent) -> Option<Vec<u8>> {
         MouseEventType::Release => 3,
     };
 
-    // URXVT doesn't support modifier bits in the same way
-    // Motion bit is set differently
+    // URXVT 不以相同方式支持修饰符位
+    // 运动位的设置方式不同
 
     let col = event.col + 1;
     let row = event.row + 1;
 
-    // For motion, add 32 to indicate motion
+    // 对于运动，添加 32 以表示运动
     let actual_cb = if event.event == MouseEventType::Motion {
         cb + 32
     } else {
@@ -207,10 +207,10 @@ pub fn encode_mouse_urxvt(event: &MouseEvent) -> Option<Vec<u8>> {
     Some(format!("\x1b[{};{};{}M", actual_cb, col, row).into_bytes())
 }
 
-/// Encode a mouse event as SGR-Pixels format.
+/// 将鼠标事件编码为 SGR-Pixels 格式。
 ///
-/// SGR-Pixels format: `ESC [ < Cb ; Px ; Py M/m`
-/// Same as SGR but uses pixel coordinates instead of cell coordinates.
+/// SGR-Pixels 格式：`ESC [ < Cb ; Px ; Py M/m`
+/// 与 SGR 相同，但使用像素坐标而不是单元格坐标。
 pub fn encode_mouse_sgr_pixels(event: &MouseEvent, cell_width: usize, cell_height: usize) -> Vec<u8> {
     let mut cb = match event.event {
         MouseEventType::Press | MouseEventType::Motion | MouseEventType::Wheel => match event.button {
@@ -238,11 +238,11 @@ pub fn encode_mouse_sgr_pixels(event: &MouseEvent, cell_width: usize, cell_heigh
         cb += 32;
     }
 
-    // Convert cell coordinates to pixel coordinates
+    // 将单元格坐标转换为像素坐标
     let px = (event.col * cell_width) + 1;
     let py = (event.row * cell_height) + 1;
 
-    // Wheel events are treated as press events
+    // 滚轮事件被视为按下事件
     let is_press = event.event == MouseEventType::Press
         || matches!(event.button, MouseButton::WheelUp | MouseButton::WheelDown);
     let suffix = if is_press { 'M' } else { 'm' };
@@ -251,7 +251,7 @@ pub fn encode_mouse_sgr_pixels(event: &MouseEvent, cell_width: usize, cell_heigh
         .into_bytes()
 }
 
-/// Encode a number as UTF-8 bytes.
+/// 将数字编码为 UTF-8 字节。
 fn encode_utf8(val: usize) -> Vec<u8> {
     if val <= 0x7F {
         vec![val as u8]
@@ -276,7 +276,7 @@ fn encode_utf8(val: usize) -> Vec<u8> {
     }
 }
 
-/// Encode a mouse event in the specified format.
+/// 以指定格式编码鼠标事件。
 pub fn encode_mouse(event: &MouseEvent, encoding: MouseEncoding, cell_size: Option<(usize, usize)>) -> Option<Vec<u8>> {
     match encoding {
         MouseEncoding::X10 => encode_mouse_x10(event),
@@ -284,15 +284,15 @@ pub fn encode_mouse(event: &MouseEvent, encoding: MouseEncoding, cell_size: Opti
         MouseEncoding::Sgr => Some(encode_mouse_sgr(event)),
         MouseEncoding::Urxvt => encode_mouse_urxvt(event),
         MouseEncoding::SgrPixels => {
-            let (w, h) = cell_size.unwrap_or((8, 20)); // Default cell size
+            let (w, h) = cell_size.unwrap_or((8, 20)); // 默认单元格大小
             Some(encode_mouse_sgr_pixels(event, w, h))
         }
     }
 }
 
-/// Motion deduplication state for non-SGR encodings.
+/// 非 SGR 编码的运动去重状态。
 ///
-/// Tracks the last cell position to avoid sending redundant motion events.
+/// 跟踪上一个单元格位置以避免发送冗余的运动事件。
 #[derive(Debug, Clone, Default)]
 pub struct MouseMotionDedup {
     last_row: Option<usize>,
@@ -304,7 +304,7 @@ impl MouseMotionDedup {
         Self::default()
     }
 
-    /// Check if we should send a motion event (not a duplicate).
+    /// 检查是否应该发送运动事件（不是重复的）。
     pub fn should_send(&mut self, row: usize, col: usize) -> bool {
         let should = Some((row, col)) != self.last_position();
         self.last_row = Some(row);
@@ -312,7 +312,7 @@ impl MouseMotionDedup {
         should
     }
 
-    /// Get the last position.
+    /// 获取上一个位置。
     pub fn last_position(&self) -> Option<(usize, usize)> {
         match (self.last_row, self.last_col) {
             (Some(r), Some(c)) => Some((r, c)),
@@ -320,7 +320,7 @@ impl MouseMotionDedup {
         }
     }
 
-    /// Reset the state.
+    /// 重置状态。
     pub fn reset(&mut self) {
         self.last_row = None;
         self.last_col = None;

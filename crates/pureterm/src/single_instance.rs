@@ -1,19 +1,19 @@
-//! Single instance enforcement for PureTerm.
+//! PureTerm 的单实例强制执行。
 //!
-//! Ensures only one instance of PureTerm runs at a time.
-//! If a second instance starts, it sends its arguments to the
-//! running instance via IPC and exits.
+//! 确保一次只运行一个 PureTerm 实例。
+//! 如果第二个实例启动,它通过 IPC 将其参数发送到
+//! 运行中的实例并退出。
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::time::Duration;
 
-/// Default port for single-instance IPC.
+/// 单实例 IPC 的默认端口。
 const SINGLE_INSTANCE_PORT: u16 = 19538;
 
-/// Manages single instance enforcement.
+/// 管理单实例强制执行。
 pub struct SingleInstance {
-    /// The TCP listener for IPC (held to keep the port bound).
+    /// 用于 IPC 的 TCP 监听器(保持端口绑定)。
     listener: Option<TcpListener>,
     port: u16,
 }
@@ -26,8 +26,8 @@ impl SingleInstance {
         }
     }
 
-    /// Try to claim the single instance lock.
-    /// Returns true if this is the first instance.
+    /// 尝试获取单实例锁。
+    /// 如果是第一个实例则返回 true。
     pub fn try_claim(&mut self) -> bool {
         let addr: SocketAddr = format!("127.0.0.1:{}", self.port).parse().unwrap();
 
@@ -45,7 +45,7 @@ impl SingleInstance {
         }
     }
 
-    /// Send arguments to the running instance.
+    /// 将参数发送到运行中的实例。
     pub fn send_to_running(&self, args: &[String]) -> bool {
         let addr = format!("127.0.0.1:{}", self.port);
         if let Ok(mut stream) = TcpStream::connect_timeout(
@@ -59,8 +59,8 @@ impl SingleInstance {
         }
     }
 
-    /// Check for messages from other instances (non-blocking).
-    /// Returns the arguments sent by the other instance.
+    /// 检查来自其他实例的消息(非阻塞)。
+    /// 返回由其他实例发送的参数。
     pub fn check_incoming(&self) -> Option<Vec<String>> {
         let listener = self.listener.as_ref()?;
         let mut stream = match listener.accept() {
@@ -76,14 +76,14 @@ impl SingleInstance {
         let args: Vec<String> = message.split('\0').map(String::from).collect();
 
         if args.is_empty() || (args.len() == 1 && args[0].is_empty()) {
-            // Just a ping — bring window to front
+            // 只是 ping — 将窗口带到前台
             Some(vec!["--bring-to-front".to_string()])
         } else {
             Some(args)
         }
     }
 
-    /// Release the single instance lock.
+    /// 释放单实例锁。
     pub fn release(&mut self) {
         self.listener = None;
         log::info!("Single instance lock released");

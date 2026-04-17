@@ -1,8 +1,8 @@
-//! Lock screen — password-protect the terminal when away.
+//! 锁定屏幕 — 离开时密码保护终端。
 
 use egui::{TextEdit, Ui};
 
-/// Lock screen state.
+/// 锁定屏幕状态。
 pub struct LockScreen {
     pub active: bool,
     password_hash: Option<String>,
@@ -28,7 +28,7 @@ impl LockScreen {
         Self::default()
     }
 
-    /// Set the lock password.
+    /// 设置锁定密码。
     pub fn set_password(&mut self, password: &str) {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -37,7 +37,7 @@ impl LockScreen {
         self.password_hash = Some(format!("{:016x}", hasher.finish()));
     }
 
-    /// Lock the screen.
+    /// 锁定屏幕。
     pub fn lock(&mut self) {
         if self.password_hash.is_some() {
             self.active = true;
@@ -47,7 +47,7 @@ impl LockScreen {
         }
     }
 
-    /// Unlock the screen (check password).
+    /// 解锁屏幕(验证密码)。
     pub fn try_unlock(&mut self) -> bool {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -68,24 +68,24 @@ impl LockScreen {
         }
     }
 
-    /// Whether the lock screen has a password set.
+    /// 锁定屏幕是否已设置密码。
     pub fn has_password(&self) -> bool {
         self.password_hash.is_some()
     }
 
-    /// Remove the password.
+    /// 清除密码。
     pub fn clear_password(&mut self) {
         self.password_hash = None;
         self.active = false;
     }
 
-    /// Show the lock screen overlay. Returns true if unlocked.
+    /// 显示锁定屏幕覆盖层。返回是否已解锁。
     pub fn show(&mut self, ui: &mut Ui) -> bool {
         if !self.active {
             return true;
         }
 
-        // Shake animation decay
+        // 抖动动画衰减
         if self.shake_offset > 0.0 {
             self.shake_offset *= 0.9;
             if self.shake_offset < 0.1 {
@@ -134,7 +134,7 @@ impl LockScreen {
                         self.try_unlock();
                     }
 
-                    // Enter to unlock
+                    // 回车解锁
                     if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         self.try_unlock();
                     }

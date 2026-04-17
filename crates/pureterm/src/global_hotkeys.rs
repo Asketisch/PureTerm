@@ -1,19 +1,19 @@
-//! Global hotkey support for PureTerm.
+//! PureTerm 的全局热键支持。
 //!
-//! Registers system-wide keyboard shortcuts that work even when PureTerm
-//! is not focused. Uses platform-specific APIs:
+//! 注册系统范围的键盘快捷键,即使 PureTerm
+//! 未聚焦时也能工作。使用平台特定的 API:
 //! - macOS: CGEventTap
 //! - Linux: X11 grab_key
 //! - Windows: RegisterHotKey
 
-/// A global hotkey registration.
+/// 全局热键注册。
 #[derive(Debug, Clone)]
 pub struct GlobalHotkey {
-    /// Unique identifier.
+    /// 唯一标识符。
     pub id: u32,
-    /// Key combination.
+    /// 键组合。
     pub key: HotkeyCombo,
-    /// Action to perform.
+    /// 要执行的动作。
     pub action: GlobalHotkeyAction,
 }
 
@@ -28,17 +28,17 @@ pub struct HotkeyCombo {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GlobalHotkeyAction {
-    /// Toggle window visibility (show/hide).
+    /// 切换窗口可见性(显示/隐藏)。
     ToggleVisibility,
-    /// Show Quake-style dropdown.
+    /// 显示 Quake 风格的下拉菜单。
     ShowQuake,
-    /// Create a new tab.
+    /// 创建新标签页。
     NewTab,
-    /// Open command palette.
+    /// 打开命令面板。
     CommandPalette,
 }
 
-/// Manages global hotkey registrations.
+/// 管理全局热键注册。
 pub struct GlobalHotkeyManager {
     hotkeys: Vec<GlobalHotkey>,
     registered: bool,
@@ -52,13 +52,13 @@ impl GlobalHotkeyManager {
         }
     }
 
-    /// Register a global hotkey.
+    /// 注册全局热键。
     pub fn register(&mut self, hotkey: GlobalHotkey) {
         log::info!("Registering global hotkey: {:?} -> {:?}", hotkey.key, hotkey.action);
         self.hotkeys.push(hotkey);
     }
 
-    /// Register the default global hotkeys.
+    /// 注册默认的全局热键。
     pub fn register_defaults(&mut self) {
         self.register(GlobalHotkey {
             id: 1,
@@ -84,20 +84,20 @@ impl GlobalHotkeyManager {
         });
     }
 
-    /// Start listening for global hotkeys.
+    /// 开始监听全局热键。
     pub fn start(&mut self) {
         self.registered = true;
         log::info!("Global hotkey listener started with {} hotkeys", self.hotkeys.len());
-        // Platform-specific registration would go here
+        // 平台特定的注册将在这里进行
     }
 
-    /// Stop listening for global hotkeys.
+    /// 停止监听全局热键。
     pub fn stop(&mut self) {
         self.registered = false;
         log::info!("Global hotkey listener stopped");
     }
 
-    /// Check if a key combo matches any registered hotkey.
+    /// 检查按键组合是否匹配任何已注册的热键。
     pub fn check(&self, ctrl: bool, alt: bool, shift: bool, super_key: bool, key: &str) -> Option<GlobalHotkeyAction> {
         self.hotkeys.iter().find(|h| {
             h.key.ctrl == ctrl
@@ -112,7 +112,7 @@ impl GlobalHotkeyManager {
         self.registered
     }
 
-    /// List all registered hotkeys.
+    /// 列出所有已注册的热键。
     pub fn hotkeys(&self) -> &[GlobalHotkey] {
         &self.hotkeys
     }

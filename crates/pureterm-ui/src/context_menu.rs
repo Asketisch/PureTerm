@@ -1,7 +1,7 @@
-//! Context menu (right-click) for PureTerm.
-//! Native implementation without egui dependency.
+//! PureTerm 的上下文菜单(右键点击)。
+//! 不依赖 egui 的原生实现。
 
-/// Actions available from the context menu.
+/// 上下文菜单中可用的动作。
 #[derive(Debug, Clone)]
 pub enum MenuAction {
     Copy,
@@ -24,7 +24,7 @@ pub enum MenuAction {
     EditTabColor,
 }
 
-/// A single item in the context menu.
+/// 上下文菜单中的单个项。
 #[derive(Debug, Clone)]
 pub struct MenuItem {
     pub label: String,
@@ -33,19 +33,19 @@ pub struct MenuItem {
     pub separator_before: bool,
 }
 
-/// Context menu state for native rendering (no egui).
+/// 用于原生渲染的上下文菜单状态(无 egui)。
 pub struct ContextMenuState {
     pub visible: bool,
     pub position: (f32, f32),
     pub hovered_index: Option<usize>,
     pub items: Vec<MenuItem>,
-    /// Which pane was right-clicked (for context-dependent actions).
+    /// 右键点击的面板(用于上下文相关的动作)。
     pub target_pane_id: Option<u64>,
-    /// Cached menu width in pixels (recalculated with measure_width).
+    /// 缓存的菜单宽度(像素)(通过 measure_width 重新计算)。
     menu_width: f32,
 }
 
-/// Menu layout constants.
+/// 菜单布局常量。
 pub const MENU_ITEM_HEIGHT: f32 = 26.0;
 pub const MENU_PADDING_H: f32 = 12.0;
 pub const MENU_PADDING_V: f32 = 6.0;
@@ -93,7 +93,7 @@ impl ContextMenuState {
         ]
     }
 
-    /// Show the menu at the given position.
+    /// 在给定位置显示菜单。
     pub fn show_at(&mut self, x: f32, y: f32, target_pane_id: u64) {
         self.visible = true;
         self.position = (x, y);
@@ -101,18 +101,18 @@ impl ContextMenuState {
         self.target_pane_id = Some(target_pane_id);
     }
 
-    /// Hide the menu.
+    /// 隐藏菜单。
     pub fn hide(&mut self) {
         self.visible = false;
         self.hovered_index = None;
     }
 
-    /// Recalculate menu width based on character width from the renderer.
-    /// Call this before rendering or hit-testing if char_width changes.
+    /// 根据渲染器的字符宽度重新计算菜单宽度。
+    /// 如果 char_width 发生变化,在渲染或命中测试前调用此方法。
     pub fn measure_width(&mut self, char_width: f32) {
         let mut max_w = 0.0f32;
         for item in &self.items {
-            // Monospace font: each character is char_width pixels wide
+            // 等宽字体:每个字符宽 char_width 像素
             let w = item.label.len() as f32 * char_width;
             if w > max_w {
                 max_w = w;
@@ -121,18 +121,18 @@ impl ContextMenuState {
         self.menu_width = (max_w + MENU_PADDING_H * 2.0 + 8.0).max(MENU_MIN_WIDTH);
     }
 
-    /// Get the current menu width.
+    /// 获取当前菜单宽度。
     pub fn width(&self) -> f32 {
         self.menu_width
     }
 
-    /// Compute the bounding rectangle of the entire menu.
+    /// 计算整个菜单的边界矩形。
     pub fn menu_rect(&self) -> (f32, f32, f32, f32) {
         let total_h = self.total_height();
         (self.position.0, self.position.1, self.menu_width, total_h)
     }
 
-    /// Total height of the menu including separators and padding.
+    /// 包括分隔符和填充的菜单总高度。
     pub fn total_height(&self) -> f32 {
         let mut h = MENU_PADDING_V * 2.0;
         for item in &self.items {
@@ -144,7 +144,7 @@ impl ContextMenuState {
         h
     }
 
-    /// Get the rectangle for a specific menu item.
+    /// 获取特定菜单项的矩形。
     pub fn item_rect(&self, index: usize) -> Option<(f32, f32, f32, f32)> {
         if index >= self.items.len() {
             return None;
@@ -168,7 +168,7 @@ impl ContextMenuState {
         None
     }
 
-    /// Test if a point hits a menu item, return its action.
+    /// 测试点是否命中菜单项,返回其动作。
     pub fn hit_test(&self, px: f32, py: f32) -> Option<MenuAction> {
         if !self.visible {
             return None;
@@ -190,7 +190,7 @@ impl ContextMenuState {
         None
     }
 
-    /// Check if the point is within the menu bounds.
+    /// 检查点是否在菜单边界内。
     pub fn contains_point(&self, px: f32, py: f32) -> bool {
         if !self.visible {
             return false;
@@ -199,7 +199,7 @@ impl ContextMenuState {
         px >= mx && px <= mx + mw && py >= my && py <= my + mh
     }
 
-    /// Update hovered index based on mouse position.
+    /// 根据鼠标位置更新悬停索引。
     pub fn update_hover(&mut self, px: f32, py: f32) {
         if !self.visible {
             self.hovered_index = None;
@@ -216,7 +216,7 @@ impl ContextMenuState {
         self.hovered_index = None;
     }
 
-    /// Iterate over items with their positions for rendering.
+    /// 迭代带有渲染位置的项目。
     pub fn items_with_positions(&self) -> Vec<(usize, &MenuItem, f32, f32)> {
         let mut result = Vec::new();
         let mut y = self.position.1 + MENU_PADDING_V;
@@ -231,5 +231,5 @@ impl ContextMenuState {
     }
 }
 
-/// Legacy ContextMenu type alias for backwards compatibility.
+/// 兼容性的旧版 ContextMenu 类型别名。
 pub type ContextMenu = ContextMenuState;

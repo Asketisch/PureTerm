@@ -1,7 +1,7 @@
-//! Kitty image render pass.
+//! Kitty 图片渲染通道。
 //!
-//! Renders inline image quads (Kitty protocol) with RGBA texture sampling.
-//! Each image quad maps to an RGBA texture.
+//! 使用 RGBA 纹理采样渲染内联图片四边形（Kitty 协议）。
+//! 每个图片四边形映射到一个 RGBA 纹理。
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Device, Queue, RenderPipeline, SurfaceConfiguration};
@@ -11,7 +11,7 @@ use super::{
     max_index_buffer_size, max_vertex_buffer_size, PassData, ScreenUniforms,
 };
 
-/// Vertex for image quads: position + tex_coords + tint color.
+/// 图片四边形的顶点：位置 + 纹理坐标 + 色调颜色。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct ImageVertex {
@@ -48,7 +48,7 @@ impl ImageVertex {
     }
 }
 
-/// Kitty image render pass.
+/// Kitty 图片渲染通道。
 pub struct KittyImagePass {
     pipeline: RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -61,7 +61,7 @@ pub struct KittyImagePass {
 }
 
 impl KittyImagePass {
-    /// Create a new kitty image pass.
+    /// 创建新的 Kitty 图片通道。
     pub fn new(device: &Device, queue: &Queue, config: &SurfaceConfiguration, surface_format: wgpu::TextureFormat) -> Self {
         let uniform_bgl = create_uniform_bgl(device, "KittyImage Uniform BGL", wgpu::ShaderStages::FRAGMENT);
         let tex_sampler_bgl = create_texture_sampler_bgl(device, "KittyImage Texture Sampler BGL", wgpu::ShaderStages::FRAGMENT);
@@ -126,7 +126,7 @@ impl KittyImagePass {
         }
     }
 
-    /// Set the current image texture to render. Call before `update()` if the image changes.
+    /// 设置要渲染的当前图片纹理。如果图片变化，在 `update()` 之前调用。
     pub fn set_image_texture(&mut self, device: &Device, texture_view: &wgpu::TextureView) {
         let tex_sampler_bgl = create_texture_sampler_bgl(device, "KittyImage Texture Sampler BGL", wgpu::ShaderStages::FRAGMENT);
         self.image_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -145,7 +145,7 @@ impl KittyImagePass {
         }));
     }
 
-    /// Update vertex/index data and uniforms for this frame.
+    /// 更新此帧的顶点/索引数据和 uniforms。
     pub fn update(&mut self, queue: &Queue, vertices: &[ImageVertex], indices: &[u32], data: &PassData) {
         self.index_count = indices.len() as u32;
 
@@ -160,7 +160,7 @@ impl KittyImagePass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
-    /// Render image quads.
+    /// 渲染图片四边形。
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         if self.index_count == 0 {
             return;
@@ -176,8 +176,8 @@ impl KittyImagePass {
         pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 
-    /// Resize is a no-op for this pass.
+    /// 此通道的 resize 是空操作。
     pub fn resize(&mut self, _device: &Device, _config: &SurfaceConfiguration) {
-        // No-op: pre-allocated buffers handle any size
+        // 空操作：预分配的缓冲区处理任意大小
     }
 }

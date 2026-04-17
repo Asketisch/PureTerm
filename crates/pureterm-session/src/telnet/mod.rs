@@ -11,7 +11,7 @@ use tokio::sync::{broadcast, Mutex};
 use crate::base::Session;
 use iac::IacNegotiator;
 
-/// Telnet session with IAC protocol negotiation support.
+/// 支持 IAC 协议协商的 Telnet 会话。
 pub struct TelnetSession {
     host: String,
     port: u16,
@@ -51,8 +51,7 @@ impl Session for TelnetSession {
         self.writer = Some(Arc::new(Mutex::new(write_half)));
         self.open = true;
 
-        // Spawn task to read from socket, processing data through the IAC
-        // negotiator before forwarding clean data to the output channel.
+        // 生成任务从套接字读取,通过 IAC 协商器处理数据,然后将干净的数据转发到输出通道。
         let tx = self.output_tx.clone();
         let iac = Arc::clone(&self.iac);
         let writer = Arc::clone(self.writer.as_ref().unwrap());
@@ -66,13 +65,13 @@ impl Session for TelnetSession {
                     Ok(n) => {
                         let raw = &buf[..n];
 
-                        // Process through IAC negotiator.
+                        // 通过 IAC 协商器处理。
                         let (clean_data, responses) = {
                             let mut guard = iac.lock().await;
                             guard.process_input(raw)
                         };
 
-                        // Send any IAC responses back to the server.
+                        // 将任何 IAC 响应发送回服务器。
                         if !responses.is_empty() {
                             let mut w = writer.lock().await;
                             if w.write_all(&responses).await.is_err() {
@@ -80,7 +79,7 @@ impl Session for TelnetSession {
                             }
                         }
 
-                        // Forward clean data to output subscribers.
+                        // 将干净的数据转发给输出订阅者。
                         if !clean_data.is_empty() {
                             if tx.send(clean_data).is_err() {
                                 break;
@@ -96,11 +95,11 @@ impl Session for TelnetSession {
     }
 
     fn resize(&mut self, cols: u16, rows: u16) -> Result<()> {
-        // Attempt to send a NAWS update via IAC if the option was negotiated.
+        // 如果协商了该选项,则尝试通过 IAC 发送 NAWS 更新。
         if let Some(ref writer) = self.writer {
             let iac = Arc::clone(&self.iac);
             let writer = Arc::clone(writer);
-            // We need an async context for the Mutex, so spawn a task.
+            // 我们需要一个异步上下文来使用 Mutex,所以生成一个任务。
             tokio::spawn(async move {
                 let naws_data = {
                     let mut guard = iac.lock().await;

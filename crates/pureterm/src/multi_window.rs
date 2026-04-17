@@ -1,9 +1,9 @@
-//! Multi-window support for PureTerm.
+//! PureTerm 的多窗口支持。
 
 use std::collections::HashMap;
 use winit::window::WindowId;
 
-/// Manages multiple terminal windows.
+/// 管理多个终端窗口。
 pub struct MultiWindowManager {
     windows: HashMap<WindowId, WindowState>,
     active_window: Option<WindowId>,
@@ -25,7 +25,7 @@ impl MultiWindowManager {
         }
     }
 
-    /// Register a new window.
+    /// 注册新窗口。
     pub fn register(&mut self, id: WindowId, title: &str) {
         self.windows.insert(id, WindowState {
             id,
@@ -36,7 +36,7 @@ impl MultiWindowManager {
         self.active_window = Some(id);
     }
 
-    /// Unregister a window (when it closes).
+    /// 注销窗口(当它关闭时)。
     pub fn unregister(&mut self, id: WindowId) {
         self.windows.remove(&id);
         if self.active_window == Some(id) {
@@ -44,7 +44,7 @@ impl MultiWindowManager {
         }
     }
 
-    /// Set the active (focused) window.
+    /// 设置活动(聚焦)窗口。
     pub fn set_active(&mut self, id: WindowId) {
         if let Some(active) = self.active_window {
             if let Some(state) = self.windows.get_mut(&active) {
@@ -57,41 +57,41 @@ impl MultiWindowManager {
         self.active_window = Some(id);
     }
 
-    /// Mark a window as the quake window.
+    /// 将窗口标记为 quake 窗口。
     pub fn set_quake(&mut self, id: WindowId, is_quake: bool) {
         if let Some(state) = self.windows.get_mut(&id) {
             state.is_quake = is_quake;
         }
     }
 
-    /// Get the active window ID.
+    /// 获取活动窗口 ID。
     pub fn active_window(&self) -> Option<WindowId> {
         self.active_window
     }
 
-    /// Get a window's state.
+    /// 获取窗口的状态。
     pub fn get(&self, id: WindowId) -> Option<&WindowState> {
         self.windows.get(&id)
     }
 
-    /// Number of open windows.
+    /// 打开窗口的数量。
     pub fn count(&self) -> usize {
         self.windows.len()
     }
 
-    /// Whether there are any windows.
+    /// 是否存在任何窗口。
     pub fn is_empty(&self) -> bool {
         self.windows.is_empty()
     }
 
-    /// Get the quake window if one exists.
+    /// 获取 quake 窗口(如果存在)。
     pub fn quake_window(&self) -> Option<WindowId> {
         self.windows.values()
             .find(|w| w.is_quake)
             .map(|w| w.id)
     }
 
-    /// List all windows.
+    /// 列出所有窗口。
     pub fn windows(&self) -> &HashMap<WindowId, WindowState> {
         &self.windows
     }

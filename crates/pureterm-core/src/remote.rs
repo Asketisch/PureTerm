@@ -6,49 +6,49 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
-/// Remote control commands that can be sent to PureTerm.
+/// 可发送到 PureTerm 的远程控制命令。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum RemoteCommand {
-    /// Open a new tab with given profile.
+    /// 使用给定配置文件打开新标签页。
     OpenTab {
         profile_name: Option<String>,
         session_type: Option<String>,
     },
-    /// Close a tab by index or id.
+    /// 按索引或 ID 关闭标签页。
     CloseTab {
         tab_id: Option<u64>,
         index: Option<usize>,
     },
-    /// Send text to active terminal.
+    /// 发送文本到活动终端。
     SendText { text: String },
-    /// Run a command in active terminal.
+    /// 在活动终端中运行命令。
     RunCommand { command: String },
-    /// Get current state.
+    /// 获取当前状态。
     GetState,
-    /// List profiles.
+    /// 列出配置文件。
     ListProfiles,
-    /// Set theme.
+    /// 设置主题。
     SetTheme { name: String },
-    /// Toggle fullscreen.
+    /// 切换全屏。
     ToggleFullscreen,
-    /// Quit application.
+    /// 退出应用程序。
     Quit,
 }
 
 impl RemoteCommand {
-    /// Parse a command from a JSON string.
+    /// 从 JSON 字符串解析命令。
     pub fn parse(json: &str) -> Result<Self> {
         serde_json::from_str(json).context("failed to parse RemoteCommand from JSON")
     }
 
-    /// Serialize this command to a JSON string.
+    /// 将此命令序列化为 JSON 字符串。
     pub fn to_json(&self) -> Result<String> {
         serde_json::to_string(self).context("failed to serialize RemoteCommand to JSON")
     }
 }
 
-/// Response from PureTerm.
+/// 来自 PureTerm 的响应。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum RemoteResponse {
@@ -63,18 +63,18 @@ pub enum RemoteResponse {
 }
 
 impl RemoteResponse {
-    /// Parse a response from a JSON string.
+    /// 从 JSON 字符串解析响应。
     pub fn parse(json: &str) -> Result<Self> {
         serde_json::from_str(json).context("failed to parse RemoteResponse from JSON")
     }
 
-    /// Serialize this response to a JSON string.
+    /// 将此响应序列化为 JSON 字符串。
     pub fn to_json(&self) -> Result<String> {
         serde_json::to_string(self).context("failed to serialize RemoteResponse to JSON")
     }
 }
 
-/// Information about a single tab.
+/// 关于单个标签页的信息。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TabInfo {
     pub id: u64,
@@ -82,12 +82,12 @@ pub struct TabInfo {
     pub session_type: String,
 }
 
-/// Returns the platform-specific IPC socket path for PureTerm.
+/// 返回 PureTerm 的平台特定 IPC 套接字路径。
 ///
-/// On Unix the path is `$XDG_RUNTIME_DIR/pureterm.sock`, falling back to
-/// `/tmp/pureterm-{uid}.sock` when the runtime directory is unavailable.
+/// 在 Unix 上，路径是 `$XDG_RUNTIME_DIR/pureterm.sock`，当运行时目录不可用时，
+/// 回退到 `/tmp/pureterm-{uid}.sock`。
 pub fn socket_path() -> PathBuf {
-    // Try XDG_RUNTIME_DIR first.
+    // 首先尝试 XDG_RUNTIME_DIR。
     if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
         let path = PathBuf::from(runtime_dir);
         if path.is_dir() {
@@ -95,22 +95,22 @@ pub fn socket_path() -> PathBuf {
         }
     }
 
-    // Fallback: /tmp/pureterm-{uid}.sock
+    // 回退：/tmp/pureterm-{uid}.sock
     let uid = unsafe { libc::getuid() };
     PathBuf::from(format!("/tmp/pureterm-{uid}.sock"))
 }
 
-/// Synchronous client for the PureTerm remote control protocol.
+/// PureTerm 远程控制协议的同步客户端。
 ///
-/// Connects to the running PureTerm instance over a Unix domain socket and
-/// sends one command per connection, reading back the JSON response.
+/// 通过 Unix 域套接字连接到正在运行的 PureTerm 实例，
+/// 每次连接发送一个命令，并读取 JSON 响应。
 pub struct RemoteClient {
     socket: PathBuf,
     timeout: Duration,
 }
 
 impl RemoteClient {
-    /// Create a new client using the default socket path and a 5-second timeout.
+    /// 使用默认套接字路径和 5 秒超时创建新客户端。
     pub fn new() -> Self {
         Self {
             socket: socket_path(),
@@ -118,7 +118,7 @@ impl RemoteClient {
         }
     }
 
-    /// Create a client pointed at an explicit socket path.
+    /// 创建指向明确套接字路径的客户端。
     pub fn with_socket(socket: PathBuf) -> Self {
         Self {
             socket,
@@ -126,20 +126,20 @@ impl RemoteClient {
         }
     }
 
-    /// Override the connect/read/write timeout.
+    /// 覆盖连接/读取/写入超时。
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
-    /// Send a command to the running PureTerm instance and return its response.
+    /// 发送命令到正在运行的 PureTerm 实例并返回其响应。
     ///
-    /// Returns an error if the server socket is not present (i.e. PureTerm is
-    /// not running) or if the connection / protocol exchange fails.
+    /// 如果服务器套接字不存在（即 PureTerm 未运行）
+    /// 或连接/协议交换失败，则返回错误。
     pub fn send_command(&self, cmd: &RemoteCommand) -> Result<RemoteResponse> {
         let json = cmd.to_json()?;
 
-        // Connect synchronously.
+        // 同步连接。
         let stream = UnixStream::connect(&self.socket).with_context(|| {
             format!(
                 "failed to connect to PureTerm at {} – is the server running?",
@@ -154,18 +154,18 @@ impl RemoteClient {
             .context("failed to set write timeout")?;
 
         let mut writer = &stream;
-        // Protocol: one JSON line terminated by '\n'.
+        // 协议：一条以 '\n' 终止的 JSON 行。
         writeln!(writer, "{json}").context("failed to write command to socket")?;
         writer.flush().context("failed to flush socket")?;
 
-        // Read one JSON response line.
+        // 读取一条 JSON 响应行。
         let reader = BufReader::new(stream);
         let line: String;
         let mut lines = reader.lines();
         match lines.next() {
             Some(Ok(l)) => line = l,
             Some(Err(e)) => bail!("failed to read response from PureTerm: {e}"),
-            None => bail!("PureTerm closed the connection without sending a response"),
+            None => bail!("PureTerm 关闭了连接而没有发送响应"),
         }
 
         RemoteResponse::parse(&line)
@@ -260,7 +260,7 @@ mod tests {
         assert!(matches!(parsed, RemoteCommand::Quit));
     }
 
-    // --- Response round-trip tests ---
+    // --- 响应往返测试 ---
 
     #[test]
     fn roundtrip_response_ok() {

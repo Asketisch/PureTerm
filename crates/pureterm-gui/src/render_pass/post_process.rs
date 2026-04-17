@@ -1,7 +1,6 @@
-//! Post-processing render pass.
+//! 后处理渲染通道。
 //!
-//! Applies fullscreen effects (vignette, ShaderToy custom shaders) to the
-//! rendered scene. Samples the scene texture and writes to the surface.
+//! 对渲染的场景应用全屏效果（暗角、ShaderToy 自定义着色器）。采样场景纹理并写入表面。
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
@@ -13,7 +12,7 @@ use super::{
     PassData,
 };
 
-/// Vertex for fullscreen post-process quad: position + tex_coords.
+/// 后处理全屏四边形的顶点：位置 + 纹理坐标。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct PostProcessVertex {
@@ -44,7 +43,7 @@ impl PostProcessVertex {
     }
 }
 
-/// Post-process uniforms: time + screen size + enabled flag.
+/// 后处理 uniforms：时间 + 屏幕大小 + 启用标志。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct PostProcessUniforms {
@@ -65,7 +64,7 @@ impl PostProcessUniforms {
     }
 }
 
-/// Fullscreen quad vertices (NDC coordinates with UV mapping).
+/// 全屏四边形顶点（带 UV 映射的 NDC 坐标）。
 const FULLSCREEN_VERTICES: [PostProcessVertex; 4] = [
     PostProcessVertex { position: [-1.0, -1.0], tex_coords: [0.0, 1.0] },
     PostProcessVertex { position: [ 1.0, -1.0], tex_coords: [1.0, 1.0] },
@@ -75,7 +74,7 @@ const FULLSCREEN_VERTICES: [PostProcessVertex; 4] = [
 
 const FULLSCREEN_INDICES: [u32; 6] = [0, 1, 2, 2, 1, 3];
 
-/// Post-processing render pass.
+/// 后处理渲染通道。
 pub struct PostProcessPass {
     pipeline: RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -90,7 +89,7 @@ pub struct PostProcessPass {
 }
 
 impl PostProcessPass {
-    /// Create a new post-processing pass.
+    /// 创建新的后处理通道。
     pub fn new(device: &Device, _config: &SurfaceConfiguration, surface_format: wgpu::TextureFormat) -> Self {
         let scene_bgl = create_texture_sampler_bgl(
             device,
@@ -161,12 +160,12 @@ impl PostProcessPass {
         }
     }
 
-    /// Enable or disable post-processing effects.
+    /// 启用或禁用后处理效果。
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
     }
 
-    /// Set the scene texture to sample from.
+    /// 设置要采样的场景纹理。
     pub fn set_scene_texture(&mut self, device: &Device, view: wgpu::TextureView) {
         self.scene_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("PostProcess Scene BG"),
@@ -184,14 +183,14 @@ impl PostProcessPass {
         }));
     }
 
-    /// Update uniforms for this frame.
+    /// 更新此帧的 uniforms。
     pub fn update(&mut self, queue: &Queue, data: &PassData) {
         let elapsed = self.start_time.elapsed().as_secs_f32();
         let uniforms = PostProcessUniforms::new(elapsed, data.screen_width, data.screen_height, self.enabled);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
-    /// Render the post-processing fullscreen quad.
+    /// 渲染后处理全屏四边形。
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         let scene_bg = match &self.scene_bind_group {
             Some(bg) => bg,
@@ -206,7 +205,7 @@ impl PostProcessPass {
         pass.draw_indexed(0..6, 0, 0..1);
     }
 
-    /// Resize handler.
+    /// 调整大小处理程序。
     pub fn resize(&mut self, _device: &Device, _config: &SurfaceConfiguration) {
         self.scene_bind_group = None;
     }

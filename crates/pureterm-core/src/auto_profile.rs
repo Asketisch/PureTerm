@@ -1,27 +1,27 @@
-//! Auto profile switching based on working directory or SSH host.
+//! 基于工作目录或 SSH 主机的自动配置文件切换。
 
 use crate::profile::Profile;
 
-/// Rule for automatically switching profiles.
+/// 自动切换配置文件的规则。
 #[derive(Debug, Clone)]
 pub struct AutoProfileRule {
-    /// Pattern to match (directory path prefix or hostname).
+    /// 要匹配的模式（目录路径前缀或主机名）。
     pub pattern: String,
-    /// Profile ID to switch to.
+    /// 要切换到的配置文件 ID。
     pub profile_id: String,
-    /// Match type: directory or hostname.
+    /// 匹配类型：目录或主机名。
     pub match_type: MatchType,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MatchType {
-    /// Match against the current working directory.
+    /// 与当前工作目录匹配。
     Directory,
-    /// Match against the SSH hostname.
+    /// 与 SSH 主机名匹配。
     Hostname,
 }
 
-/// Service for automatically switching profiles based on context.
+/// 基于上下文自动切换配置文件的服务。
 pub struct AutoProfileSwitch {
     rules: Vec<AutoProfileRule>,
 }
@@ -31,17 +31,17 @@ impl AutoProfileSwitch {
         Self { rules: Vec::new() }
     }
 
-    /// Add a switching rule.
+    /// 添加切换规则。
     pub fn add_rule(&mut self, rule: AutoProfileRule) {
         self.rules.push(rule);
     }
 
-    /// Remove a rule by pattern.
+    /// 按模式移除规则。
     pub fn remove_rule(&mut self, pattern: &str) {
         self.rules.retain(|r| r.pattern != pattern);
     }
 
-    /// Find the matching profile ID for a given directory.
+    /// 查找给定目录的匹配配置文件 ID。
     pub fn match_directory<'a>(&self, cwd: &str, profiles: &'a [Profile]) -> Option<&'a Profile> {
         let profile_id = self.rules.iter()
             .filter(|r| r.match_type == MatchType::Directory)
@@ -52,7 +52,7 @@ impl AutoProfileSwitch {
         profiles.iter().find(|p| p.id == profile_id)
     }
 
-    /// Find the matching profile ID for a given hostname.
+    /// 查找给定主机名的匹配配置文件 ID。
     pub fn match_hostname<'a>(&self, hostname: &str, profiles: &'a [Profile]) -> Option<&'a Profile> {
         let profile_id = self.rules.iter()
             .filter(|r| r.match_type == MatchType::Hostname)
@@ -63,7 +63,7 @@ impl AutoProfileSwitch {
         profiles.iter().find(|p| p.id == profile_id)
     }
 
-    /// Get all rules.
+    /// 获取所有规则。
     pub fn rules(&self) -> &[AutoProfileRule] {
         &self.rules
     }

@@ -1,25 +1,25 @@
-//! HTTP/SOCKS5 proxy support for SSH sessions.
+//! SSH 会话的 HTTP/SOCKS5 代理支持。
 
 use std::net::SocketAddr;
 
-/// Proxy configuration for a session.
+/// 会话的代理配置。
 #[derive(Debug, Clone)]
 pub enum ProxyConfig {
-    /// No proxy.
+    /// 无代理。
     None,
-    /// HTTP CONNECT proxy.
+    /// HTTP CONNECT 代理。
     Http {
         addr: SocketAddr,
         auth: Option<ProxyAuth>,
     },
-    /// SOCKS5 proxy.
+    /// SOCKS5 代理。
     Socks5 {
         addr: SocketAddr,
         auth: Option<ProxyAuth>,
     },
 }
 
-/// Proxy authentication credentials.
+/// 代理认证凭据。
 #[derive(Debug, Clone)]
 pub struct ProxyAuth {
     pub username: String,
@@ -27,8 +27,8 @@ pub struct ProxyAuth {
 }
 
 impl ProxyConfig {
-    /// Parse a proxy URL into a ProxyConfig.
-    /// Supports: http://host:port, socks5://host:port, with optional user:pass@.
+    /// 将代理 URL 解析为 ProxyConfig。
+    /// 支持: http://host:port, socks5://host:port, 可选 user:pass@。
     pub fn from_url(url: &str) -> Option<Self> {
         if url.starts_with("http://") {
             Self::parse_http(url)
@@ -90,11 +90,11 @@ impl Default for ProxyConfig {
     }
 }
 
-/// TCP connection through a proxy.
+/// 通过代理的 TCP 连接。
 pub struct ProxyConnection;
 
 impl ProxyConnection {
-    /// Connect to target through an HTTP CONNECT proxy.
+    /// 通过 HTTP CONNECT 代理连接到目标。
     pub async fn connect_http(
         proxy: SocketAddr,
         target: &str,
@@ -135,7 +135,7 @@ impl ProxyConnection {
         }
     }
 
-    /// Connect to target through a SOCKS5 proxy.
+    /// 通过 SOCKS5 代理连接到目标。
     pub async fn connect_socks5(
         proxy: SocketAddr,
         target: &str,
@@ -145,7 +145,7 @@ impl ProxyConnection {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let mut stream = tokio::net::TcpStream::connect(proxy).await?;
 
-        // SOCKS5 greeting
+        // SOCKS5 问候
         let greeting = if auth.is_some() {
             vec![0x05, 0x02, 0x00, 0x02] // version 5, 2 methods: no-auth, username/password
         } else {
@@ -159,7 +159,7 @@ impl ProxyConnection {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Not SOCKS5"));
         }
 
-        // Auth if required
+        // 需要时进行认证
         if buf[1] == 0x02 {
             let auth = auth.ok_or_else(|| {
                 std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Proxy requires auth")
@@ -177,7 +177,7 @@ impl ProxyConnection {
             }
         }
 
-        // Connect request
+        // 连接请求
         let target_bytes = target.as_bytes();
         let mut connect_msg = vec![
             0x05, 0x01, 0x00, 0x03, // version, connect, reserved, domain

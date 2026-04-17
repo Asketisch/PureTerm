@@ -1,10 +1,10 @@
-//! Focus mode — hide all UI chrome except the terminal content.
+//! 专注模式 — 隐藏除终端内容外的所有 UI 界面。
 
 
-/// Manages focus mode state.
+/// 管理专注模式状态。
 pub struct FocusMode {
     pub active: bool,
-    /// Remember what was visible before entering focus mode.
+    /// 进入专注模式前记住哪些是可见的。
     was_tab_bar_visible: bool,
     was_title_bar_visible: bool,
     was_sidebar_visible: bool,
@@ -26,41 +26,41 @@ impl FocusMode {
         Self::default()
     }
 
-    /// Toggle focus mode on/off.
+    /// 切换专注模式的开关。
     pub fn toggle(&mut self, tab_bar_visible: bool, title_bar_visible: bool, sidebar_visible: bool) {
         if !self.active {
-            // Entering focus mode — save current state
+            // 进入专注模式 — 保存当前状态
             self.was_tab_bar_visible = tab_bar_visible;
             self.was_title_bar_visible = title_bar_visible;
             self.was_sidebar_visible = sidebar_visible;
             self.active = true;
         } else {
-            // Exiting focus mode
+            // 退出专注模式
             self.active = false;
         }
     }
 
-    /// Whether the tab bar should be visible.
+    /// 标签栏是否应该可见。
     pub fn show_tab_bar(&self, original: bool) -> bool {
         if self.active { false } else { original }
     }
 
-    /// Whether the title bar should be visible.
+    /// 标题栏是否应该可见。
     pub fn show_title_bar(&self, original: bool) -> bool {
         if self.active { false } else { original }
     }
 
-    /// Whether the sidebar should be visible.
+    /// 侧边栏是否应该可见。
     pub fn show_sidebar(&self, original: bool) -> bool {
         if self.active { false } else { original }
     }
 
-    /// Whether to show the command palette toggle hint in focus mode.
+    /// 是否在专注模式显示命令面板切换提示。
     pub fn show_focus_hint(&self) -> bool {
         self.active
     }
 
-    /// Restore state (call after exiting focus mode).
+    /// 恢复状态(退出专注模式后调用)。
     pub fn restore_tab_bar(&self) -> bool {
         self.was_tab_bar_visible
     }

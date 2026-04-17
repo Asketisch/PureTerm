@@ -1,7 +1,7 @@
-//! App - Application runtime
+//! 应用 — 应用程序运行时
 //!
-//! Based on Ghostty's App.zig: manages all surfaces, shared font grid,
-//! message routing, and configuration.
+//! 基于 Ghostty 的 App.zig:管理所有 surface、共享字体网格、
+//! 消息路由和配置。
 
 use pureterm_core::config::AppConfig;
 use pureterm_core::hotkey::HotkeyService;
@@ -9,7 +9,7 @@ use pureterm_core::hotkey::HotkeyService;
 use crate::surface::{SurfaceId, SplitDirection, SplitResizeParameter};
 use crate::tabs::TabManager;
 
-/// App-level messages (mailbox pattern from Ghostty)
+/// 应用级消息(来自 Ghostty 的邮箱模式)
 #[derive(Debug, Clone)]
 pub enum AppMessage {
     Quit,
@@ -32,7 +32,7 @@ pub enum AppMessage {
     SurfaceDestroyed(SurfaceId),
 }
 
-/// Main application state.
+/// 主应用程序状态。
 pub struct App {
     pub config: AppConfig,
     pub tab_manager: TabManager,
@@ -42,14 +42,14 @@ pub struct App {
     pub search_query: String,
     pub quitting: bool,
 
-    // ── Ghostty-style App fields ──────────────────────────────────────────
-    /// All active surface IDs
+    // ── Ghostty 风格的 App 字段 ──────────────────────────────────────────
+    /// 所有活动 surface ID
     pub surfaces: Vec<SurfaceId>,
-    /// Currently focused surface
+    /// 当前聚焦的 surface
     pub focused_surface: Option<SurfaceId>,
-    /// Application-level mailbox for messages
+    /// 应用程序级邮箱,用于消息传递
     pub mailbox: Vec<AppMessage>,
-    /// Next surface ID
+    /// 下一个 surface ID
     next_surface_id: u64,
 }
 
@@ -71,14 +71,14 @@ impl App {
         }
     }
 
-    /// Generate a unique surface ID
+    /// 生成唯一的 surface ID
     pub fn allocate_surface_id(&mut self) -> SurfaceId {
         let id = self.next_surface_id;
         self.next_surface_id += 1;
         SurfaceId(id)
     }
 
-    /// Register a new surface
+    /// 注册新 surface
     pub fn add_surface(&mut self, id: SurfaceId) {
         if !self.surfaces.contains(&id) {
             self.surfaces.push(id);
@@ -86,7 +86,7 @@ impl App {
         self.focused_surface = Some(id);
     }
 
-    /// Remove a surface
+    /// 移除 surface
     pub fn remove_surface(&mut self, id: SurfaceId) {
         self.surfaces.retain(|s| *s != id);
         if self.focused_surface == Some(id) {
@@ -94,7 +94,7 @@ impl App {
         }
     }
 
-    /// Process all pending messages in the mailbox
+    /// 处理邮箱中的所有待处理消息
     pub fn process_messages(&mut self) {
         let messages: Vec<AppMessage> = self.mailbox.drain(..).collect();
         for msg in messages {
@@ -102,20 +102,20 @@ impl App {
         }
     }
 
-    /// Handle a single app message
+    /// 处理单个应用消息
     fn handle_message(&mut self, msg: AppMessage) {
         match msg {
             AppMessage::Quit => {
                 self.quitting = true;
             }
             AppMessage::NewTab => {
-                // Handled by main loop
+                // 由主循环处理
             }
             AppMessage::CloseTab => {
                 self.tab_manager.close_active_tab();
             }
             AppMessage::ReloadConfig => {
-                // Config reload handled by main loop
+                // 配置重新加载由主循环处理
             }
             AppMessage::ToggleSearch => {
                 self.search_visible = !self.search_visible;
@@ -128,12 +128,12 @@ impl App {
                 self.remove_surface(id);
             }
             _ => {
-                // Other messages handled by main loop
+                // 其他消息由主循环处理
             }
         }
     }
 
-    /// Process a key event and return if consumed.
+    /// 处理按键事件并返回是否已消费。
     pub fn handle_key(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool, super_key: bool) -> bool {
         let modifiers = pureterm_core::hotkey::Modifiers {
             ctrl,
@@ -165,12 +165,12 @@ impl App {
         false
     }
 
-    /// Toggle settings panel.
+    /// 切换设置面板。
     pub fn toggle_settings(&mut self) {
         self.show_settings = !self.show_settings;
     }
 
-    /// Quit the application.
+    /// 退出应用程序。
     pub fn quit(&mut self) {
         self.quitting = true;
     }

@@ -8,7 +8,7 @@ use tokio::sync::broadcast;
 use crate::base::{ConnectParams, Session};
 use crate::shell_integration::{self, Shell};
 
-/// Local shell session using PTY.
+/// 使用 PTY 的本地 shell 会话。
 pub struct LocalSession {
     master: Option<Box<dyn MasterPty + Send>>,
     writer: Option<Box<dyn Write + Send>>,
@@ -58,19 +58,19 @@ impl Session for LocalSession {
 
         let mut cmd = CommandBuilder::new(shell_path);
 
-        // Set working directory
+        // 设置工作目录
         if let Ok(cwd) = std::env::var("HOME") {
             cmd.cwd(cwd);
         }
 
-        // Build child environment: start from inherited env, then ensure
-        // critical variables are set. When launched from Finder (double-click),
-        // the inherited env is minimal — LANG, PATH, etc. may be missing.
+        // 构建子进程环境：从继承的环境开始，然后确保设置了
+        // 关键变量。当从 Finder 启动时（双击），
+        // 继承的环境是最小化的 — LANG、PATH 等可能缺失。
         let mut env: HashMap<String, String> = std::env::vars().collect();
         env.insert("TERM".to_string(), "xterm-256color".to_string());
         env.insert("COLORTERM".to_string(), "truecolor".to_string());
 
-        // Ensure UTF-8 locale — required for correct Unicode rendering
+        // 确保 UTF-8 locale — 正确的 Unicode 渲染所必需的
         if !env.contains_key("LANG") {
             env.insert("LANG".to_string(), "en_US.UTF-8".to_string());
         }
@@ -80,7 +80,7 @@ impl Session for LocalSession {
             }
         }
 
-        // Ensure PATH includes common tool directories (Homebrew, local bins)
+        // 确保 PATH 包含常用工具目录（Homebrew、本地 bin）
         if let Some(path) = env.get("PATH") {
             if !path.contains("/usr/local/bin") {
                 let mut extended = path.clone();
@@ -93,10 +93,10 @@ impl Session for LocalSession {
             }
         }
 
-        // Apply shell integration if supported
+        // 如果支持则应用 shell 集成
         shell_integration::apply_env(shell, &mut env);
 
-        // Set the environment for the command
+        // 为命令设置环境
         for (key, value) in &env {
             cmd.env(key, value);
         }
@@ -110,7 +110,7 @@ impl Session for LocalSession {
         self.master = Some(pair.master);
         self.open = true;
 
-        // Spawn a thread to read from PTY
+        // 生成一个线程来从 PTY 读取
         let tx = self.output_tx.clone();
         let mut reader = self.master.as_ref().unwrap().try_clone_reader()?;
         std::thread::spawn(move || {
@@ -157,7 +157,7 @@ impl Session for LocalSession {
     }
 
     fn kill(&mut self, _signal: &str) -> Result<()> {
-        // The PTY child will be killed when dropped
+        // PTY 子进程将在 drop 时被终止
         self.open = false;
         Ok(())
     }

@@ -1,15 +1,15 @@
 use bytes::Bytes;
 
-/// Middleware that processes data between the terminal and session.
+/// 在终端和会话之间处理数据的中间件。
 pub trait SessionMiddleware: Send {
-    /// Process data coming from the session to the terminal.
+    /// 处理从会话发送到终端的数据。
     fn process_output_to_terminal(&mut self, data: &[u8]) -> Bytes;
 
-    /// Process data coming from the terminal to the session.
+    /// 处理从终端发送到会话的数据。
     fn process_output_to_session(&mut self, data: &[u8]) -> Bytes;
 }
 
-/// Stack of middleware processors.
+/// 中间件处理器栈。
 pub struct MiddlewareStack {
     middlewares: Vec<Box<dyn SessionMiddleware>>,
 }
@@ -25,7 +25,7 @@ impl MiddlewareStack {
         self.middlewares.push(mw);
     }
 
-    /// Process data from session to terminal through all middleware.
+    /// 通过所有中间件处理从会话到终端的数据。
     pub fn process_output_to_terminal(&mut self, data: &[u8]) -> Bytes {
         let mut current = Bytes::copy_from_slice(data);
         for mw in &mut self.middlewares {
@@ -34,7 +34,7 @@ impl MiddlewareStack {
         current
     }
 
-    /// Process data from terminal to session through all middleware.
+    /// 通过所有中间件处理从终端到会话的数据。
     pub fn process_output_to_session(&mut self, data: &[u8]) -> Bytes {
         let mut current = Bytes::copy_from_slice(data);
         for mw in &mut self.middlewares {

@@ -71,7 +71,7 @@ impl ProfileProvider for TelnetProfileProvider {
 }
 
 fn parse_telnet_query(query: &str) -> Result<(String, u16)> {
-    // Handle IPv6 addresses like [::1]:23
+    // 处理 IPv6 地址,如 [::1]:23
     if query.starts_with('[') {
         if let Some(bracket_end) = query.find(']') {
             let host = query[1..bracket_end].to_string();
@@ -87,7 +87,7 @@ fn parse_telnet_query(query: &str) -> Result<(String, u16)> {
         }
     }
 
-    // Regular host:port or just host
+    // 常规的 host:port 或仅 host
     let (host, port) = if let Some((h, p)) = query.rsplit_once(':') {
         let port: u16 = p
             .parse()

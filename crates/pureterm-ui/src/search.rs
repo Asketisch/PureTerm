@@ -1,10 +1,10 @@
-//! Search system for terminal content
+//! 终端内容的搜索系统
 //!
-//! Based on Ghostty's search architecture:
-//! - SlidingWindow for cross-page search
-//! - Background search thread
-//! - Viewport search with fingerprinting
-//! - Multiple search types (active, pagelist, viewport)
+//! 基于 Ghostty 的搜索架构:
+//! - SlidingWindow 用于跨页搜索
+//! - 后台搜索线程
+//! - 带指纹识别的视口搜索
+//! - 多种搜索类型(活动、分页列表、视口)
 
 use std::collections::VecDeque;
 use std::sync::mpsc;
@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use regex::Regex;
 
-/// Direction for search
+/// 搜索方向
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SearchDirection {
     #[default]
@@ -21,25 +21,25 @@ pub enum SearchDirection {
     Backward,
 }
 
-/// Search mode
+/// 搜索模式
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchMode {
-    /// Search visible viewport only
+    /// 仅搜索可见视口
     Viewport,
-    /// Search entire scrollback buffer
+    /// 搜索整个回滚缓冲区
     Scrollback,
-    /// Search both viewport and scrollback
+    /// 同时搜索视口和回滚
     All,
 }
 
-/// Search result with position information
+/// 带位置信息的搜索结果
 #[derive(Debug, Clone)]
 pub struct SearchMatch {
-    /// Grid position (row, col)
+    /// Grid 位置 (行, 列)
     pub grid_pos: GridPosition,
-    /// Byte range in the text
+    /// 文本中的字节范围
     pub byte_range: (usize, usize),
-    /// Matched text
+    /// 匹配的文本
     pub text: String,
 }
 
@@ -50,29 +50,29 @@ pub struct GridPosition {
     pub col: usize,
 }
 
-/// Page entry for sliding window
+/// 滑动窗口的页面条目
 #[derive(Debug, Clone)]
 struct PageEntry {
-    /// Page number (from scrollback start)
+    /// 页码(从回滚开始)
     page_num: usize,
-    /// Text content
+    /// 文本内容
     text: String,
-    /// Grid positions for each byte offset
+    /// 每个字节偏移对应的 Grid 位置
     positions: Vec<GridPosition>,
 }
 
-/// Sliding window for efficient cross-page search
+/// 用于高效跨页搜索的滑动窗口
 pub struct SlidingWindow {
-    /// Circular buffer of pages
+    /// 页面循环缓冲区
     buffer: VecDeque<PageEntry>,
-    /// Maximum number of pages to keep
+    /// 要保留的最大页数
     capacity: usize,
-    /// Overlap in bytes between windows
+    /// 窗口之间的字节重叠
     #[allow(dead_code)]
     overlap: usize,
-    /// Direction of search
+    /// 搜索方向
     direction: SearchDirection,
-    /// Total pages seen
+    /// 总页面数
     total_pages: usize,
 }
 
@@ -87,7 +87,7 @@ impl SlidingWindow {
         }
     }
 
-    /// Add a new page to the window
+    /// 将新页面添加到窗口
     pub fn add_page(&mut self, text: String, positions: Vec<GridPosition>) {
         self.total_pages += 1;
         let entry = PageEntry {
@@ -102,7 +102,7 @@ impl SlidingWindow {
         self.buffer.push_front(entry);
     }
 
-    /// Search within the current window
+    /// 在当前窗口中搜索
     pub fn search(&self, regex: &Regex) -> Vec<SearchMatch> {
         let mut matches = Vec::new();
 
@@ -128,29 +128,29 @@ impl SlidingWindow {
         })
     }
 
-    /// Advance window in the given direction
+    /// 按给定方向推进窗口
     pub fn advance(&mut self) {
         match self.direction {
             SearchDirection::Forward => {
-                // In forward direction, we keep pages in order
-                // and advance by removing from back
+                // 在正向中,我们按顺序保留页面
+                // 并从后面移除来推进
             }
             SearchDirection::Backward => {
-                // In backward direction, we might need to load older pages
+                // 在反向中,我们可能需要加载较旧的页面
             }
         }
     }
 }
 
-/// Viewport search with fingerprint-based change detection
+/// 基于指纹变化检测的视口搜索
 pub struct ViewportSearch {
-    /// Fingerprint of last search (for change detection)
+    /// 上次搜索的指纹(用于变化检测)
     last_fingerprint: Option<u64>,
-    /// Dirty pages since last search
+    /// 自上次搜索以来的脏页
     dirty_pages: Vec<usize>,
-    /// Cached results
+    /// 缓存的结果
     cached_results: Vec<SearchMatch>,
-    /// Fingerprint computation
+    /// 指纹计算
     #[allow(dead_code)]
     fingerprint_seed: u64,
 }
@@ -165,7 +165,7 @@ impl ViewportSearch {
         }
     }
 
-    /// Compute a simple fingerprint for content
+    /// 计算内容的简单指纹
     fn compute_fingerprint(content: &str) -> u64 {
         let mut hash = 0xDEADBEEF_u64;
         for byte in content.bytes() {
@@ -174,14 +174,14 @@ impl ViewportSearch {
         hash
     }
 
-    /// Mark a page as dirty
+    /// 将页面标记为脏
     pub fn mark_dirty(&mut self, page_num: usize) {
         if !self.dirty_pages.contains(&page_num) {
             self.dirty_pages.push(page_num);
         }
     }
 
-    /// Search viewport if content changed
+    /// 如果内容已更改则搜索视口
     pub fn search_if_changed(
         &mut self,
         viewport_text: &str,
@@ -204,7 +204,7 @@ impl ViewportSearch {
 
             Some(&self.cached_results)
         } else if !self.dirty_pages.is_empty() {
-            // Re-search only dirty pages
+            // 仅重新搜索脏页
             self.dirty_pages.clear();
             Some(&self.cached_results)
         } else {
@@ -212,13 +212,13 @@ impl ViewportSearch {
         }
     }
 
-    /// Get cached results
+    /// 获取缓存的结果
     pub fn results(&self) -> &[SearchMatch] {
         &self.cached_results
     }
 }
 
-/// Search configuration
+/// 搜索配置
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
     pub case_sensitive: bool,
@@ -238,35 +238,35 @@ impl Default for SearchConfig {
     }
 }
 
-/// Search request for background thread
+/// 后台线程的搜索请求
 #[derive(Debug, Clone)]
 pub enum SearchRequest {
-    /// New search query
+    /// 新搜索查询
     Query {
         query: String,
         config: SearchConfig,
     },
-    /// Add page to scrollback
+    /// 添加页面到回滚
     AddPage {
         text: String,
         positions: Vec<GridPosition>,
     },
-    /// Clear scrollback
+    /// 清除回滚
     Clear,
-    /// Stop search
+    /// 停止搜索
     Stop,
 }
 
-/// Search response from background thread
+/// 后台线程的搜索响应
 #[derive(Debug, Clone)]
 pub enum SearchResponse {
-    /// Search completed with results
+    /// 搜索完成并返回结果
     Results(Vec<SearchMatch>),
-    /// Search progress update
+    /// 搜索进度更新
     Progress { current: usize, total: usize },
-    /// Search error
+    /// 搜索错误
     Error(String),
-    /// Search stopped
+    /// 搜索已停止
     Stopped,
 }
 
@@ -278,7 +278,7 @@ pub struct SearchThread {
 }
 
 impl SearchThread {
-    /// Create and start the search thread
+    /// 创建并启动搜索线程
     pub fn new() -> Self {
         let (req_tx, req_rx) = mpsc::channel();
         let (res_tx, res_rx) = mpsc::channel();
@@ -294,22 +294,22 @@ impl SearchThread {
         }
     }
 
-    /// Send a request to the search thread
+    /// 向搜索线程发送请求
     pub fn send(&self, request: SearchRequest) {
         let _ = self.sender.send(request);
     }
 
-    /// Try to receive a response (non-blocking)
+    /// 尝试接收响应(非阻塞)
     pub fn try_recv(&self) -> Option<SearchResponse> {
         self.receiver.as_ref()?.try_recv().ok()
     }
 
-    /// Block waiting for a response
+    /// 阻塞等待响应
     pub fn recv(&self, timeout: Duration) -> Option<SearchResponse> {
         self.receiver.as_ref()?.recv_timeout(timeout).ok()
     }
 
-    /// Stop the search thread
+    /// 停止搜索线程
     pub fn stop(&self) {
         self.send(SearchRequest::Stop);
     }
@@ -324,7 +324,7 @@ impl Drop for SearchThread {
     }
 }
 
-/// Background search thread main loop
+/// 后台搜索线程主循环
 fn search_thread_main(
     request_rx: mpsc::Receiver<SearchRequest>,
     response_tx: mpsc::Sender<SearchResponse>,
@@ -351,7 +351,7 @@ fn search_thread_main(
 
                 match Regex::new(&pattern) {
                     Ok(regex) => {
-                        // Search first before moving regex into current_query
+                        // 在移动 regex 之前先搜索
                         let results = sliding_window.search(&regex);
                         let _ = response_tx.send(SearchResponse::Results(results));
                         current_query = Some((query, regex));
@@ -363,7 +363,7 @@ fn search_thread_main(
             }
             Ok(SearchRequest::AddPage { text, positions }) => {
                 sliding_window.add_page(text, positions);
-                // Re-search if we have an active query
+                // 如果有活动查询则重新搜索
                 if let Some((_, ref regex)) = current_query {
                     let results = sliding_window.search(regex);
                     let _ = response_tx.send(SearchResponse::Results(results));
@@ -378,7 +378,7 @@ fn search_thread_main(
                 let _ = response_tx.send(SearchResponse::Stopped);
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Continue polling
+                // 继续轮询
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 running = false;
@@ -391,7 +391,7 @@ fn search_thread_main(
 
 use egui::{TextEdit, Ui};
 
-/// Search panel state for UI
+/// 搜索面板状态
 pub struct SearchPanel {
     pub visible: bool,
     pub query: String,
@@ -431,7 +431,7 @@ impl SearchPanel {
         Self::default()
     }
 
-    /// Open the search panel
+    /// 打开发索面板
     pub fn open(&mut self) {
         self.visible = true;
         if self.search_thread.is_none() {
@@ -439,7 +439,7 @@ impl SearchPanel {
         }
     }
 
-    /// Close the search panel
+    /// 关闭搜索面板
     pub fn close(&mut self) {
         self.visible = false;
         if let Some(ref thread) = self.search_thread {
@@ -448,7 +448,7 @@ impl SearchPanel {
         self.search_thread = None;
     }
 
-    /// Search within the given lines of terminal text.
+    /// 在给定的终端文本行中搜索。
     pub fn search(&mut self, lines: &[String]) {
         self.results.clear();
         if self.query.is_empty() {
@@ -484,7 +484,7 @@ impl SearchPanel {
         self.current_index = 0;
     }
 
-    /// Show the search panel. Returns navigation actions.
+    /// 显示搜索面板。返回导航操作。
     pub fn show(&mut self, ui: &mut Ui) -> Option<SearchAction> {
         if !self.visible {
             return None;
@@ -548,14 +548,14 @@ impl SearchPanel {
         action
     }
 
-    /// Navigate to the next result.
+    /// 导航到下一个结果。
     pub fn next(&mut self) {
         if !self.results.is_empty() {
             self.current_index = (self.current_index + 1) % self.results.len();
         }
     }
 
-    /// Navigate to the previous result.
+    /// 导航到上一个结果。
     pub fn prev(&mut self) {
         if !self.results.is_empty() {
             self.current_index = if self.current_index == 0 {
@@ -566,7 +566,7 @@ impl SearchPanel {
         }
     }
 
-    /// Get the current search result position.
+    /// 获取当前搜索结果位置。
     pub fn current_result(&self) -> Option<&SearchResult> {
         self.results.get(self.current_index)
     }

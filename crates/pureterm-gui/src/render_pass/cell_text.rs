@@ -1,7 +1,6 @@
-//! Cell text render pass.
+//! 单元格文本渲染通道。
 //!
-//! Renders glyph quads by sampling the grayscale glyph atlas. Uses position +
-//! tex_coords + color vertices.
+//! 通过从灰度字形图集采样来渲染字形四边形。使用位置 + 纹理坐标 + 颜色顶点。
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Device, Queue, RenderPipeline, SurfaceConfiguration};
@@ -11,7 +10,7 @@ use super::{
     max_index_buffer_size, max_vertex_buffer_size, PassData, ScreenUniforms,
 };
 
-/// Vertex for text glyph quads: position + tex_coords + RGBA color.
+/// 文本字形四边形的顶点：位置 + 纹理坐标 + RGBA 颜色。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct TextVertex {
@@ -48,7 +47,7 @@ impl TextVertex {
     }
 }
 
-/// Cell text render pass.
+/// 单元格文本渲染通道。
 pub struct CellTextPass {
     pipeline: RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -61,7 +60,7 @@ pub struct CellTextPass {
 }
 
 impl CellTextPass {
-    /// Create a new cell text pass.
+    /// 创建新的单元格文本通道。
     pub fn new(device: &Device, queue: &Queue, config: &SurfaceConfiguration, surface_format: wgpu::TextureFormat) -> Self {
         let uniform_bgl = create_uniform_bgl(device, "CellText Uniform BGL", wgpu::ShaderStages::FRAGMENT);
         let tex_sampler_bgl = create_texture_sampler_bgl(device, "CellText Texture Sampler BGL", wgpu::ShaderStages::FRAGMENT);
@@ -111,7 +110,7 @@ impl CellTextPass {
             mapped_at_creation: false,
         });
 
-        // Initialize uniforms
+        // 初始化 uniforms
         let uniforms = ScreenUniforms::new(0.0, config.width as f32, config.height as f32);
         queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
@@ -127,7 +126,7 @@ impl CellTextPass {
         }
     }
 
-    /// Set the grayscale atlas texture view. Call when atlas is created or updated.
+    /// 设置灰度图集纹理视图。在图集创建或更新时调用。
     pub fn set_atlas_texture(&mut self, device: &Device, atlas_view: &wgpu::TextureView) {
         let tex_sampler_bgl = create_texture_sampler_bgl(device, "CellText Texture Sampler BGL", wgpu::ShaderStages::FRAGMENT);
         self.atlas_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -146,7 +145,7 @@ impl CellTextPass {
         }));
     }
 
-    /// Update vertex/index data and uniforms for this frame.
+    /// 更新此帧的顶点/索引数据和 uniforms。
     pub fn update(&mut self, queue: &Queue, vertices: &[TextVertex], indices: &[u32], data: &PassData) {
         self.index_count = indices.len() as u32;
 
@@ -161,7 +160,7 @@ impl CellTextPass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
-    /// Render the text glyph quads.
+    /// 渲染文本字形四边形。
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         if self.index_count == 0 {
             return;
@@ -176,8 +175,8 @@ impl CellTextPass {
         pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 
-    /// Resize is a no-op for this pass.
+    /// 此通道的 resize 是空操作。
     pub fn resize(&mut self, _device: &Device, _config: &SurfaceConfiguration) {
-        // No-op: pre-allocated buffers handle any size
+        // 空操作：预分配的缓冲区处理任意大小
     }
 }

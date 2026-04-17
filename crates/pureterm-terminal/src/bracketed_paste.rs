@@ -1,12 +1,11 @@
-//! Bracketed paste input handling.
+//! 括号粘贴输入处理。
 
-/// Wraps pasted content with bracketed paste escape sequences if the
-/// terminal has enabled bracketed paste mode (CSI ? 2004 h).
+/// 如果终端启用了括号粘贴模式 (CSI ? 2004 h),则用括号粘贴转义序列包装粘贴内容。
 pub struct BracketedPasteHandler;
 
 impl BracketedPasteHandler {
-    /// Wrap content for bracketed paste mode.
-    /// Returns the content wrapped with ESC[200~ and ESC[201~ if enabled.
+    /// 为括号粘贴模式包装内容。
+    /// 如果启用,返回用 ESC[200~ 和 ESC[201~ 包装的内容。
     pub fn wrap(content: &[u8], bracketed_paste_enabled: bool) -> Vec<u8> {
         if !bracketed_paste_enabled {
             return content.to_vec();
@@ -19,15 +18,15 @@ impl BracketedPasteHandler {
         result
     }
 
-    /// Process incoming data to detect and extract bracketed paste content.
-    /// Returns a list of paste events and raw input segments.
+    /// 处理传入数据以检测和提取括号粘贴内容。
+    /// 返回粘贴事件和原始输入段的列表。
     pub fn process_input(data: &[u8]) -> Vec<InputSegment> {
         let mut segments = Vec::new();
         let mut i = 0;
         let mut raw_start = 0;
 
         while i < data.len() {
-            // Look for ESC[200~ (paste start)
+            // 查找 ESC[200~ (粘贴开始)
             if i + 6 <= data.len()
                 && data[i] == 0x1b
                 && data[i + 1] == b'['
@@ -36,12 +35,12 @@ impl BracketedPasteHandler {
                 && data[i + 4] == b'0'
                 && data[i + 5] == b'~'
             {
-                // Emit any raw data before paste start
+                // 发出粘贴开始前的任何原始数据
                 if i > raw_start {
                     segments.push(InputSegment::Raw(data[raw_start..i].to_vec()));
                 }
 
-                // Find paste end: ESC[201~
+                // 查找粘贴结束: ESC[201~
                 let paste_start = i + 6;
                 let mut paste_end = paste_start;
                 let mut found_end = false;
@@ -65,7 +64,7 @@ impl BracketedPasteHandler {
                     i = paste_end + 6;
                     raw_start = i;
                 } else {
-                    // No end marker found — treat rest as incomplete paste
+                    // 未找到结束标记 — 将剩余部分视为不完整的粘贴
                     segments.push(InputSegment::Paste(data[paste_start..].to_vec()));
                     return segments;
                 }
@@ -82,12 +81,12 @@ impl BracketedPasteHandler {
     }
 }
 
-/// A segment of input data, either raw keystrokes or pasted content.
+/// 输入数据的一段,可以是原始按键或粘贴内容。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSegment {
-    /// Raw keyboard input.
+    /// 原始键盘输入。
     Raw(Vec<u8>),
-    /// Content from a bracketed paste.
+    /// 来自括号粘贴的内容。
     Paste(Vec<u8>),
 }
 

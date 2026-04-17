@@ -1,37 +1,36 @@
-//! Sprite font drawing for terminal-specific characters.
+//! 终端特定字符的 Sprite 字体绘制。
 //!
-//! This module provides custom drawing for terminal-specific characters that
-//! are typically rendered as block graphics. Instead of relying on font rasterization,
-//! we draw these characters directly using simple geometric primitives.
+//! 此模块为通常渲染为块图形的终端特定字符提供自定义绘制。
+//! 不依赖字体光栅化，我们直接使用简单的几何原语绘制这些字符。
 //!
-//! Supported character ranges:
-//! - Block Elements (U+2580-U+259F)
-//! - Box Drawing (U+2500-U+257F)
-//! - Braille Patterns (U+2800-U+28FF)
-//! - Powerline symbols (U+E0B0-U+E0BF)
+//! 支持的字符范围：
+//! - 块元素 (U+2580-U+259F)
+//! - 框绘制 (U+2500-U+257F)
+//! - 盲文模式 (U+2800-U+28FF)
+//! - Powerline 符号 (U+E0B0-U+E0BF)
 //!
-//! Reference implementations:
+//! 参考实现：
 //! - Ghostty: src/font/sprite/draw/block.zig, box.zig, braille.zig, powerline.zig
 //! - iTerm2: iTermBoxDrawingBezierCurveFactory.m
 
 use crate::fonts::GlyphInfo;
 
-/// Sprite drawing metrics for a terminal cell.
+/// 终端单元格的 Sprite 绘制指标。
 #[derive(Debug, Clone)]
 pub struct SpriteMetrics {
-    /// Cell width in pixels
+    /// 单元格宽度（像素）
     pub cell_width: u32,
-    /// Cell height in pixels
+    /// 单元格高度（像素）
     pub cell_height: u32,
-    /// Descent (positive value going down)
+    /// 下延（正值向下）
     pub descent: f32,
-    /// Ascent (positive value going up)
+    /// 上延（正值向上）
     pub ascent: f32,
 }
 
 impl SpriteMetrics {
     pub fn new(cell_width: u32, cell_height: u32, font_size: f32) -> Self {
-        // Typical terminal metrics: ascent is ~80% of font size, descent ~20%
+        // 典型终端指标：上延约为字号的 80%，下延约为 20%
         let ascent = font_size * 0.8;
         let descent = font_size * 0.2;
         Self {
@@ -43,7 +42,7 @@ impl SpriteMetrics {
     }
 }
 
-/// Shade levels for block elements.
+/// 块元素的阴影级别。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Shade {
     Light = 0x40,    // 25%
@@ -58,7 +57,7 @@ impl Shade {
     }
 }
 
-/// Draw a filled rectangle into the atlas data.
+/// 将填充的矩形绘制到图集数据中。
 #[inline]
 pub fn draw_rect(
     atlas_data: &mut [u8],
@@ -84,7 +83,7 @@ pub fn draw_rect(
     }
 }
 
-/// Fill a quadrant of the cell.
+/// 填充单元格的一个象限。
 #[inline]
 fn fill_quadrant(
     atlas_data: &mut [u8],
@@ -116,7 +115,7 @@ fn fill_quadrant(
     }
 }
 
-/// Draw a half block (horizontal or vertical split).
+/// 绘制半块（水平或垂直分割）。
 #[allow(dead_code)]
 #[inline]
 fn draw_half_block(
@@ -129,38 +128,38 @@ fn draw_half_block(
     shade: Shade,
 ) {
     if horizontal {
-        // Upper half (top half filled)
+        // 上半部分（填充上半部分）
         let half_h = metrics.cell_height / 2;
         draw_rect(atlas_data, atlas_width, offset_x as i32, offset_y as i32, metrics.cell_width, half_h, shade);
     } else {
-        // Right half filled
+        // 右半部分填充
         let half_w = metrics.cell_width / 2;
         draw_rect(atlas_data, atlas_width, (offset_x + half_w) as i32, offset_y as i32, metrics.cell_width - half_w, metrics.cell_height, shade);
     }
 }
 
-/// Check if a character is a Block Element (U+2580-U+259F).
+/// 检查字符是否为块元素 (U+2580-U+259F)。
 #[inline]
 pub fn is_block_element(c: char) -> bool {
     let code = c as u32;
     (0x2580..=0x259F).contains(&code)
 }
 
-/// Cursor style for terminal rendering.
+/// 终端渲染的光标样式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorStyle {
-    /// Block cursor (filled rectangle): █
+    /// 块光标（填充矩形）：█
     Block,
-    /// Underline cursor (horizontal line): ▁
+    /// 下划线光标（水平线）：▁
     Underline,
-    /// Beam cursor (vertical bar): ▏
+    /// 横梁光标（垂直条）：▏
     Beam,
-    /// Bar cursor (vertical line, like Underline but positioned at the character edge)
+    /// 条形光标（垂直线，类似于下划线但位于字符边缘）
     Bar,
 }
 
 impl CursorStyle {
-    /// Draw a cursor sprite at the given position.
+    /// 在给定位置绘制光标 sprite。
     pub fn draw(
         &self,
         atlas_data: &mut [u8],
@@ -177,29 +176,29 @@ impl CursorStyle {
 
         match self {
             CursorStyle::Block => {
-                // Full block cursor - use existing block element drawing
+                // 块光标 - 使用现有的块元素绘制
                 return draw_block_element(atlas_data, atlas_width, metrics, '█', cursor_x, cursor_y);
             }
             CursorStyle::Underline => {
-                // Underline cursor - thin horizontal line at bottom
+                // 下划线光标 - 底部细水平线
                 let thickness = std::cmp::max(1, height / 10);
                 let y = offset_y + height - thickness;
                 draw_horizontal_line(atlas_data, atlas_width, offset_x as i32, y as i32, width, thickness);
             }
             CursorStyle::Beam => {
-                // Beam cursor - thin vertical bar on the left
+                // 横梁光标 - 左侧细垂直条
                 let thickness = std::cmp::max(1, width / 10);
                 draw_vertical_line(atlas_data, atlas_width, offset_x as i32, offset_y as i32, height, thickness);
             }
             CursorStyle::Bar => {
-                // Bar cursor - thin vertical bar at the right edge of the character
+                // 条形光标 - 字符右边缘的细垂直条
                 let thickness = std::cmp::max(1, width / 10);
                 let x = offset_x as i32 + (width as i32 - thickness as i32);
                 draw_vertical_line(atlas_data, atlas_width, x, offset_y as i32, height, thickness);
             }
         }
 
-        // Advance cursor
+        // 推进光标
         *cursor_x += width + 1;
 
         Some(GlyphInfo {
@@ -216,32 +215,31 @@ impl CursorStyle {
     }
 }
 
-/// Check if a character is a Box Drawing character (U+2500-U+257F).
+/// 检查字符是否为框绘制字符 (U+2500-U+257F)。
 #[inline]
 pub fn is_box_drawing(c: char) -> bool {
     let code = c as u32;
     (0x2500..=0x257F).contains(&code)
 }
 
-/// Check if a character is a Braille Pattern (U+2800-U+28FF).
+/// 检查字符是否为盲文模式 (U+2800-U+28FF)。
 #[inline]
 pub fn is_braille(c: char) -> bool {
     let code = c as u32;
     (0x2800..=0x28FF).contains(&code)
 }
 
-/// Check if a character is a Powerline symbol (U+E0B0-U+E0BF).
+/// 检查字符是否为 Powerline 符号 (U+E0B0-U+E0BF)。
 #[inline]
 pub fn is_powerline(c: char) -> bool {
     let code = c as u32;
     (0xE0B0..=0xE0BF).contains(&code)
 }
 
-/// Draw a Block Element character into the atlas data.
-/// Returns Some(GlyphInfo) if the character was drawn, None if not supported.
+/// 将块元素字符绘制到图集数据中。
+/// 如果字符被绘制则返回 Some(GlyphInfo)，如果不支持则返回 None。
 ///
-/// This function draws the character directly into the atlas at the current cursor position
-/// and updates the cursor position.
+/// 此函数将字符直接绘制到图集中当前光标位置，并更新光标位置。
 pub fn draw_block_element(
     atlas_data: &mut [u8],
     atlas_width: u32,
@@ -358,9 +356,9 @@ pub fn draw_block_element(
             draw_rect(atlas_data, atlas_width, (offset_x + w) as i32, offset_y as i32, width - w, height, Shade::On);
         }
 
-        // ░ U+2591: LIGHT SHADE
+        // ░ U+2591: 浅色阴影
         0x2591 => {
-            // Draw a checkerboard pattern with 25% density
+            // 绘制 25% 密度的棋盘格图案
             let cell_size = 2;
             for py in 0..height {
                 for px in 0..width {
@@ -372,7 +370,7 @@ pub fn draw_block_element(
                     }
                 }
             }
-            // Return early - already drawn
+            // 提前返回 - 已绘制
             *cursor_x += width + 1;
             return Some(GlyphInfo {
                 x: offset_x,
@@ -510,7 +508,7 @@ pub fn draw_block_element(
         _ => return None,
     }
 
-    // Advance cursor
+    // 推进光标
     *cursor_x += width + 1;
 
     Some(GlyphInfo {
@@ -526,7 +524,7 @@ pub fn draw_block_element(
     })
 }
 
-/// Draw a horizontal line segment with proper thickness.
+/// 绘制具有适当厚度的水平线段。
 #[inline]
 fn draw_horizontal_line(
     atlas_data: &mut [u8],
@@ -539,7 +537,7 @@ fn draw_horizontal_line(
     draw_rect(atlas_data, atlas_width, x, y, width, thickness, Shade::On);
 }
 
-/// Draw a vertical line segment with proper thickness.
+/// 绘制具有适当厚度的垂直线段。
 #[inline]
 fn draw_vertical_line(
     atlas_data: &mut [u8],
@@ -552,8 +550,8 @@ fn draw_vertical_line(
     draw_rect(atlas_data, atlas_width, x, y, thickness, height, Shade::On);
 }
 
-/// Edge weights for parametric box drawing.
-/// 0 = no edge, 1 = light, 2 = heavy.
+/// 参数化框绘制的边缘权重。
+/// 0 = 无边缘，1 = 细，2 = 粗。
 struct BoxEdges {
     top: u8,
     right: u8,
@@ -561,11 +559,11 @@ struct BoxEdges {
     left: u8,
 }
 
-/// Map a box drawing codepoint (U+2500-U+257F) to its edge configuration.
-/// Returns None for codepoints outside the range.
+/// 将框绘制码点 (U+2500-U+257F) 映射到其边缘配置。
+/// 范围外的码点返回 None。
 fn box_drawing_edges(code: u32) -> Option<BoxEdges> {
     match code {
-        // Dashed lines (approximate as solid)
+        // 虚线（近似为实线）
         0x2504..=0x2505 => Some(BoxEdges { top: 0, right: 0, bottom: 0, left: 1 }), // approximated
         0x2506..=0x2507 => Some(BoxEdges { top: 1, right: 0, bottom: 1, left: 0 }), // approximated
         0x2508..=0x2509 => Some(BoxEdges { top: 0, right: 0, bottom: 0, left: 1 }), // approximated
@@ -669,8 +667,8 @@ fn box_drawing_edges(code: u32) -> Option<BoxEdges> {
     }
 }
 
-/// Draw a Box Drawing character into the atlas data.
-/// Returns Some(GlyphInfo) if the character was drawn, None if not supported.
+/// 将框绘制字符绘制到图集数据中。
+/// 如果字符被绘制则返回 Some(GlyphInfo)，如果不支持则返回 None。
 pub fn draw_box_drawing(
     atlas_data: &mut [u8],
     atlas_width: u32,
@@ -685,7 +683,7 @@ pub fn draw_box_drawing(
     let offset_x = *cursor_x;
     let offset_y = *cursor_y;
 
-    // Line thickness is typically 1/10 of cell dimension
+    // 线宽通常为单元格尺寸的 1/10
     let line_thickness = std::cmp::max(1, width.min(height) / 10);
     let half_thickness = line_thickness / 2;
 
@@ -931,48 +929,48 @@ pub fn draw_box_drawing(
                 draw_rect(atlas_data, atlas_width, px2 as i32, (offset_y + i) as i32, t, 1, Shade::On);
             }
         }
-        // For other box drawing characters, use parametric edge-based drawing
+        // 对于其他框绘制字符，使用参数化边缘绘制
         _ => {
-            // Each box drawing char has up to 4 edges (top, right, bottom, left)
-            // with weight None(0), Light(1), or Heavy(2).
-            // We decode the edges from the codepoint and draw accordingly.
+            // 每个框绘制字符最多有 4 条边缘（上、右、下、左）
+            // 权重为无(0)、细(1) 或粗(2)。
+            // 我们从码点解码边缘并相应绘制。
             if let Some(edges) = box_drawing_edges(code) {
                 let mid_x = offset_x as i32 + (width as i32 - line_thickness as i32) / 2;
                 let mid_y = offset_y as i32 + (height as i32 - line_thickness as i32) / 2;
 
-                // Top edge (vertical line from top to center)
+                // 上边缘（从上到中心的垂直线）
                 if edges.top > 0 {
                     let t = if edges.top == 2 { line_thickness * 2 } else { line_thickness };
                     let x = offset_x as i32 + (width as i32 - t as i32) / 2;
                     draw_vertical_line(atlas_data, atlas_width, x, offset_y as i32, height / 2, t);
                 }
-                // Bottom edge (vertical line from center to bottom)
+                // 下边缘（从中心到底部的垂直线）
                 if edges.bottom > 0 {
                     let t = if edges.bottom == 2 { line_thickness * 2 } else { line_thickness };
                     let x = offset_x as i32 + (width as i32 - t as i32) / 2;
                     draw_vertical_line(atlas_data, atlas_width, x, mid_y, height / 2, t);
                 }
-                // Left edge (horizontal line from left to center)
+                // 左边缘（从左到中心的水平线）
                 if edges.left > 0 {
                     let t = if edges.left == 2 { line_thickness * 2 } else { line_thickness };
                     let y = offset_y as i32 + (height as i32 - t as i32) / 2;
                     draw_horizontal_line(atlas_data, atlas_width, offset_x as i32, y, width / 2, t);
                 }
-                // Right edge (horizontal line from center to right)
+                // 右边缘（从中心到右的水平线）
                 if edges.right > 0 {
                     let t = if edges.right == 2 { line_thickness * 2 } else { line_thickness };
                     let y = offset_y as i32 + (height as i32 - t as i32) / 2;
                     draw_horizontal_line(atlas_data, atlas_width, mid_x, y, width / 2, t);
                 }
             } else {
-                // Fallback: draw a light horizontal line
+                // 回退：绘制细水平线
                 let y = offset_y as i32 + (height as i32 - line_thickness as i32) / 2;
                 draw_horizontal_line(atlas_data, atlas_width, offset_x as i32, y, width, line_thickness);
             }
         }
     }
 
-    // Advance cursor
+    // 推进光标
     *cursor_x += width + 1;
 
     Some(GlyphInfo {
@@ -988,7 +986,7 @@ pub fn draw_box_drawing(
     })
 }
 
-/// Draw a single braille dot.
+/// 绘制单个盲文点。
 #[inline]
 fn draw_braille_dot(
     atlas_data: &mut [u8],
@@ -1002,15 +1000,15 @@ fn draw_braille_dot(
     dot_row: u32,
     dot_radius: u32,
 ) {
-    // Braille dots are arranged in 2 columns x 3 rows
-    // Dot positions are offset from cell edges
+    // 盲文点排列为 2 列 x 3 行
+    // 点位置从单元格边缘偏移
     let dot_spacing_x = cell_width / 4;
     let dot_spacing_y = cell_height / 6;
 
     let cx = offset_x + dot_spacing_x + (dot_col * dot_spacing_x * 2);
     let cy = offset_y + dot_spacing_y + (dot_row * dot_spacing_y * 2);
 
-    // Draw a small filled circle
+    // 绘制一个小的填充圆
     for py in 0..dot_radius * 2 {
         for px in 0..dot_radius * 2 {
             let dx = px as i32 - dot_radius as i32;
@@ -1029,8 +1027,8 @@ fn draw_braille_dot(
     }
 }
 
-/// Draw a Braille Pattern character into the atlas data.
-/// Returns Some(GlyphInfo) if the character was drawn, None if not supported.
+/// 将盲文模式字符绘制到图集数据中。
+/// 如果字符被绘制则返回 Some(GlyphInfo)，如果不支持则返回 None。
 pub fn draw_braille(
     atlas_data: &mut [u8],
     atlas_width: u32,
@@ -1046,20 +1044,20 @@ pub fn draw_braille(
     let offset_x = *cursor_x;
     let offset_y = *cursor_y;
 
-    // Braille base is U+2800
+    // 盲文基础是 U+2800
     let pattern = code - 0x2800;
 
-    // Dot positions: each bit represents a dot (0-7)
+    // 点位置：每个位代表一个点 (0-7)
     // 0  3
     // 1  4
     // 2  5
-    // 6  7 (rarely used)
+    // 6  7（很少使用）
     let dot_radius = std::cmp::max(1, width.min(height) / 8);
 
-    // Draw dots based on pattern
-    // Bit 0 -> dot (0,0), Bit 1 -> dot (0,1), Bit 2 -> dot (0,2)
-    // Bit 3 -> dot (1,0), Bit 4 -> dot (1,1), Bit 5 -> dot (1,2)
-    // Bit 6 -> dot (0,3), Bit 7 -> dot (1,3)
+    // 根据模式绘制点
+    // 位 0 -> 点 (0,0), 位 1 -> 点 (0,1), 位 2 -> 点 (0,2)
+    // 位 3 -> 点 (1,0), 位 4 -> 点 (1,1), 位 5 -> 点 (1,2)
+    // 位 6 -> 点 (0,3), 位 7 -> 点 (1,3)
     if pattern & 0x001 != 0 {
         draw_braille_dot(atlas_data, atlas_width, atlas_height, offset_x, offset_y, width, height, 0, 0, dot_radius);
     }
@@ -1085,7 +1083,7 @@ pub fn draw_braille(
         draw_braille_dot(atlas_data, atlas_width, atlas_height, offset_x, offset_y, width, height, 1, 3, dot_radius);
     }
 
-    // Advance cursor
+    // 推进光标
     *cursor_x += width + 1;
 
     Some(GlyphInfo {
@@ -1101,8 +1099,8 @@ pub fn draw_braille(
     })
 }
 
-/// Draw a Powerline symbol into the atlas data.
-/// Returns Some(GlyphInfo) if the character was drawn, None if not supported.
+/// 将 Powerline 符号绘制到图集数据中。
+/// 如果字符被绘制则返回 Some(GlyphInfo)，如果不支持则返回 None。
 pub fn draw_powerline(
     atlas_data: &mut [u8],
     atlas_width: u32,
@@ -1118,27 +1116,27 @@ pub fn draw_powerline(
     let offset_x = *cursor_x;
     let offset_y = *cursor_y;
 
-    // Powerline symbols are triangular separators
-    // Common ones:                
-    // They are in the Private Use Area, offset from U+E0B0
+    // Powerline 符号是三角形分隔符
+    // 常见的有：               
+    // 它们在私人使用区，从 U+E0B0 偏移
 
     match code {
-        //  U+E0B0: RIGHT ARROW
+        //  U+E0B0: 右箭头
         0xE0B0 => {
-            // Draw a simple right-pointing triangle
+            // 绘制一个简单的右指三角形
             let tri_height = height / 2;
             let tri_width = width / 2;
             let _start_x = offset_x;
             let start_y = offset_y + (height - tri_height) / 2;
 
             for py in 0..tri_height {
-                // Each row has progressively more pixels
+                // 每一行的像素逐渐增加
                 let row_width = ((py + 1) * tri_width) / tri_height;
                 let row_start_x = offset_x + width - row_width;
                 draw_rect(atlas_data, atlas_width, row_start_x as i32, (start_y + py) as i32, row_width, 1, Shade::On);
             }
         }
-        //  U+E0B1: LEFT ARROW (reverse)
+        //  U+E0B1: 左箭头（反向）
         0xE0B1 => {
             let tri_height = height / 2;
             let tri_width = width / 2;
@@ -1149,9 +1147,9 @@ pub fn draw_powerline(
                 draw_rect(atlas_data, atlas_width, offset_x as i32, (start_y + py) as i32, row_width, 1, Shade::On);
             }
         }
-        //  U+E0B2: LIGHT RIGHT ARROW
+        //  U+E0B2: 细右箭头
         0xE0B2 => {
-            // Thinner triangle
+            // 更细的三角形
             let tri_height = height / 3;
             let tri_width = width / 3;
             let start_y = offset_y + (height - tri_height) / 2;
@@ -1162,9 +1160,9 @@ pub fn draw_powerline(
                 draw_rect(atlas_data, atlas_width, row_start_x as i32, (start_y + py) as i32, row_width, 1, Shade::On);
             }
         }
-        //  U+E0B4: FLAME (bottom-left to top-right)
+        //  U+E0B4: 火焰（左下到右上）
         0xE0B4 => {
-            // Draw a diagonal stripe
+            // 绘制对角条纹
             for py in 0..height {
                 let stripe_x = offset_x + ((py * width) / height);
                 draw_rect(atlas_data, atlas_width, stripe_x as i32, (offset_y + py) as i32, 1, 1, Shade::On);
@@ -1179,18 +1177,18 @@ pub fn draw_powerline(
                 }
             }
         }
-        //  U+E0B6: RECessed mode line arrow
+        //  U+E0B6: 凹入模式行箭头
         0xE0B6 => {
-            // Draw a bottom-left to top-right diagonal
+            // 绘制左下到右上的对角线
             let thickness = std::cmp::max(1, width.min(height) / 10);
             for py in 0..height {
                 let stripe_x = offset_x + ((py * width) / height);
                 draw_rect(atlas_data, atlas_width, stripe_x as i32, (offset_y + py) as i32, thickness, 1, Shade::On);
             }
         }
-        //  U+E0B7: MODE LINE incomplete flag
+        //  U+E0B7: 模式行不完整标志
         0xE0B7 => {
-            // Similar to  but shorter
+            // 类似于  但更短
             let thickness = std::cmp::max(1, width.min(height) / 10);
             let half_h = height / 2;
             for py in 0..half_h {
@@ -1198,9 +1196,9 @@ pub fn draw_powerline(
                 draw_rect(atlas_data, atlas_width, stripe_x as i32, (offset_y + py) as i32, thickness, 1, Shade::On);
             }
         }
-        //  U+E0B8: MODE LINE left arrow
+        //  U+E0B8: 模式行左箭头
         0xE0B8 => {
-            // Bottom-right to top-left diagonal
+            // 右下到左上的对角线
             let thickness = std::cmp::max(1, width.min(height) / 10);
             for py in 0..height {
                 let stripe_x = offset_x + width - ((py * width) / height) - thickness;
@@ -1209,7 +1207,7 @@ pub fn draw_powerline(
                 }
             }
         }
-        //  U+E0B9: MODE LINE波浪 arrow
+        //  U+E0B9: 模式行波浪箭头
         0xE0B9 => {
             // Draw a wavy pattern
             let thickness = std::cmp::max(1, width.min(height) / 10);
@@ -1220,7 +1218,7 @@ pub fn draw_powerline(
                 draw_rect(atlas_data, atlas_width, (offset_x + px) as i32, (offset_y + py) as i32, 1, thickness, Shade::On);
             }
         }
-        //  U+E0BA: MODE LINE波浪 right arrow
+        //  U+E0BA: 模式行波浪右箭头
         0xE0BA => {
             let thickness = std::cmp::max(1, width.min(height) / 10);
             for px in 0..width {
@@ -1230,14 +1228,14 @@ pub fn draw_powerline(
                 draw_rect(atlas_data, atlas_width, (offset_x + px) as i32, (offset_y + py) as i32, 1, thickness, Shade::On);
             }
         }
-        //  U+E0BC: BRANCH git branch
+        //  U+E0BC: 分支 git 分支
         0xE0BC => {
-            // Draw a circle with a line (simplified branch symbol)
+            // 绘制带一条线的圆（简化的分支符号）
             let radius = width.min(height) / 3;
             let cx = offset_x + width / 2;
             let cy = offset_y + height / 2;
 
-            // Draw circle outline
+            // 绘制圆轮廓
             for angle in 0..360 {
                 let rad = (angle as f32) * std::f32::consts::PI / 180.0;
                 let px = cx as i32 + (rad.cos() * radius as f32) as i32;
@@ -1250,13 +1248,13 @@ pub fn draw_powerline(
                 }
             }
 
-            // Draw vertical line at bottom
+            // 在底部绘制垂直线
             let thickness = std::cmp::max(1, width.min(height) / 10);
             draw_vertical_line(atlas_data, atlas_width, cx as i32 - thickness as i32 / 2, cy as i32, radius, thickness);
         }
-        //  U+E0BD: GIT MODIFIED
+        //  U+E0BD: GIT 已修改
         0xE0BD => {
-            // Draw a simple '>' shape
+            // 绘制一个简单的 '>' 形状
             let tri_height = height / 2;
             let tri_width = width / 2;
             let start_y = offset_y + (height - tri_height) / 2;
@@ -1267,9 +1265,9 @@ pub fn draw_powerline(
                 draw_rect(atlas_data, atlas_width, row_start_x as i32, (start_y + py) as i32, row_width, 1, Shade::On);
             }
         }
-        //  U+E0BE: GIT STAGED
+        //  U+E0BE: GIT 已暂存
         0xE0BE => {
-            // Draw an inverse triangle pointing left
+            // 绘制一个指向左边的倒三角形
             let tri_height = height / 2;
             let tri_width = width / 2;
             let start_y = offset_y + (height - tri_height) / 2;
@@ -1279,22 +1277,22 @@ pub fn draw_powerline(
                 draw_rect(atlas_data, atlas_width, offset_x as i32, (start_y + py) as i32, row_width, 1, Shade::On);
             }
         }
-        //  U+E0BF: GIT UNTRACKED
+        //  U+E0BF: GIT 未跟踪
         0xE0BF => {
-            // Draw a star-like shape (simplified)
+            // 绘制一个星形（简化版）
             let thickness = std::cmp::max(1, width.min(height) / 12);
-            // Vertical line
+            // 垂直线
             draw_vertical_line(atlas_data, atlas_width, (offset_x + width / 2) as i32 - thickness as i32 / 2, offset_y as i32, height, thickness);
-            // Horizontal line
+            // 水平线
             draw_horizontal_line(atlas_data, atlas_width, offset_x as i32, (offset_y + height / 2) as i32, width, thickness);
-            // Diagonal lines
+            // 对角线
             for i in 0..height {
                 let offset = (i * width) / height;
                 draw_rect(atlas_data, atlas_width, (offset_x + offset) as i32, (offset_y + i) as i32, thickness, 1, Shade::On);
                 draw_rect(atlas_data, atlas_width, (offset_x + width - offset - thickness as u32) as i32, (offset_y + i) as i32, thickness, 1, Shade::On);
             }
         }
-        // For unknown powerline chars, draw a simple vertical line
+        // 对于未知的 powerline 字符，绘制一个简单的垂直线
         _ => {
             let thickness = std::cmp::max(1, width.min(height) / 6);
             let x = offset_x as i32 + (width as i32 - thickness as i32) / 2;
@@ -1302,7 +1300,7 @@ pub fn draw_powerline(
         }
     }
 
-    // Advance cursor
+    // 推进光标
     *cursor_x += width + 1;
 
     Some(GlyphInfo {

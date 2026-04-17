@@ -1,7 +1,6 @@
-//! Cursor render pass.
+//! 光标渲染通道。
 //!
-//! Renders the terminal cursor quad with blink support. Toggles visibility every
-//! 500ms via `update_blink()`.
+//! 渲染带闪烁支持的终端光标四边形。通过 `update_blink()` 每 500ms 切换一次可见性。
 
 use bytemuck::{Pod, Zeroable};
 use std::time::{Duration, Instant};
@@ -12,7 +11,7 @@ use super::{
     PassData,
 };
 
-/// Vertex for cursor quads: position + RGBA color.
+/// 光标四边形的顶点：位置 + RGBA 颜色。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct CursorVertex {
@@ -43,7 +42,7 @@ impl CursorVertex {
     }
 }
 
-/// Cursor-specific uniforms with blink visibility.
+/// 带闪烁可见性的光标特定 uniforms。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct CursorUniforms {
@@ -53,7 +52,7 @@ pub struct CursorUniforms {
     pub blink_visible: f32,
 }
 
-/// Cursor render pass.
+/// 光标渲染通道。
 pub struct CursorPass {
     pipeline: RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -65,11 +64,11 @@ pub struct CursorPass {
     blink_timer: Instant,
 }
 
-/// Blink interval in milliseconds.
+/// 闪烁间隔（毫秒）。
 const BLINK_INTERVAL_MS: u64 = 500;
 
 impl CursorPass {
-    /// Create a new cursor pass.
+    /// 创建新的光标通道。
     pub fn new(device: &Device, queue: &Queue, config: &SurfaceConfiguration, surface_format: wgpu::TextureFormat) -> Self {
         let uniform_bgl = create_uniform_bgl(device, "Cursor Uniform BGL", wgpu::ShaderStages::FRAGMENT);
 
@@ -116,7 +115,7 @@ impl CursorPass {
             mapped_at_creation: false,
         });
 
-        // Initialize uniforms
+        // 初始化 uniforms
         let uniforms = CursorUniforms {
             corner_radius: 0.0,
             screen_width: config.width as f32,
@@ -137,8 +136,8 @@ impl CursorPass {
         }
     }
 
-    /// Update the blink timer. Call once per frame.
-    /// Toggles `blink_visible` every 500ms.
+    /// 更新闪烁计时器。每帧调用一次。
+    /// 每 500ms 切换一次 `blink_visible`。
     pub fn update_blink(&mut self) {
         if self.blink_timer.elapsed() >= Duration::from_millis(BLINK_INTERVAL_MS) {
             self.blink_visible = !self.blink_visible;
@@ -146,7 +145,7 @@ impl CursorPass {
         }
     }
 
-    /// Update vertex/index data and uniforms for this frame.
+    /// 更新此帧的顶点/索引数据和 uniforms。
     pub fn update(&mut self, queue: &Queue, vertices: &[CursorVertex], indices: &[u32], data: &PassData) {
         self.index_count = indices.len() as u32;
 
@@ -160,7 +159,7 @@ impl CursorPass {
         let blink = if data.cursor_blink_visible {
             self.blink_visible as u32 as f32
         } else {
-            1.0 // Always visible when blink is disabled
+            1.0 // 禁用闪烁时始终可见
         };
 
         let uniforms = CursorUniforms {
@@ -172,7 +171,7 @@ impl CursorPass {
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
-    /// Render the cursor quad.
+    /// 渲染光标四边形。
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         if self.index_count == 0 {
             return;
@@ -184,17 +183,17 @@ impl CursorPass {
         pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 
-    /// Resize is a no-op for this pass.
+    /// 此通道的 resize 是空操作。
     pub fn resize(&mut self, _device: &Device, _config: &SurfaceConfiguration) {
-        // No-op: pre-allocated buffers handle any size
+        // 空操作：预分配的缓冲区处理任意大小
     }
 
-    /// Get current blink visibility state.
+    /// 获取当前闪烁可见性状态。
     pub fn is_blink_visible(&self) -> bool {
         self.blink_visible
     }
 
-    /// Force set blink visibility (e.g., reset on key press).
+    /// 强制设置闪烁可见性（例如，按键时重置）。
     pub fn reset_blink(&mut self) {
         self.blink_visible = true;
         self.blink_timer = Instant::now();

@@ -1,8 +1,8 @@
-//! AI chat panel for terminal assistance.
+//! AI 聊天面板,用于终端辅助。
 
 use egui::{RichText, ScrollArea, TextEdit, Ui};
 
-/// AI chat panel state.
+/// AI 聊天面板状态。
 pub struct AiChatPanel {
     pub visible: bool,
     pub messages: Vec<ChatMessage>,
@@ -51,7 +51,7 @@ impl AiChatPanel {
         format!("{:02}:{:02}", (secs / 60) % 60, secs % 60)
     }
 
-    /// Show the AI chat panel.
+    /// 显示 AI 聊天面板。
     pub fn show(&mut self, ui: &mut Ui) -> Option<AiChatAction> {
         if !self.visible {
             return None;
@@ -66,7 +66,7 @@ impl AiChatPanel {
                 ui.heading("AI Assistant");
                 ui.add_space(4.0);
 
-                // Quick action buttons
+                // 快捷操作按钮
                 ui.horizontal(|ui| {
                     if ui.button("Explain Error").clicked() {
                         action = Some(AiChatAction::ExplainLastError);
@@ -81,7 +81,7 @@ impl AiChatPanel {
 
                 ui.separator();
 
-                // Chat messages
+                // 聊天消息
                 ScrollArea::vertical()
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
@@ -102,7 +102,7 @@ impl AiChatPanel {
 
                 ui.separator();
 
-                // Input
+                // 输入框
                 ui.horizontal(|ui| {
                     let response = ui.add(
                         TextEdit::singleline(&mut self.input)
@@ -129,7 +129,7 @@ impl AiChatPanel {
         action
     }
 
-    /// Add an assistant message.
+    /// 添加助手消息。
     pub fn add_assistant_message(&mut self, content: &str) {
         self.messages.push(ChatMessage {
             role: ChatRole::Assistant,
@@ -139,12 +139,12 @@ impl AiChatPanel {
         self.loading = false;
     }
 
-    /// Open the chat panel.
+    /// 打开发聊天面板。
     pub fn open(&mut self) {
         self.visible = true;
     }
 
-    /// Close the chat panel.
+    /// 关闭聊天面板。
     pub fn close(&mut self) {
         self.visible = false;
     }

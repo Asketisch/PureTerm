@@ -1,11 +1,11 @@
-//! Terminal inspector -- debugging tool for terminal state.
+//! 终端检查器 — 用于终端状态调试的调试工具。
 //!
 //! 提供一个调试面板来查看终端状态、渲染器信息、
 //! 键盘事件和 VT 解析细节。
 
 use egui::{CollapsingHeader, ScrollArea, TextEdit, Ui};
 
-/// Terminal state information for debugging.
+/// 用于调试的终端状态信息。
 #[derive(Debug, Clone, Default)]
 pub struct TerminalDebugInfo {
     /// 当前光标位置。
@@ -22,7 +22,7 @@ pub struct TerminalDebugInfo {
     pub cwd: Option<String>,
 }
 
-/// Renderer debug information.
+/// 渲染器调试信息。
 #[derive(Debug, Clone, Default)]
 pub struct RendererDebugInfo {
     /// 帧计数。
@@ -35,102 +35,102 @@ pub struct RendererDebugInfo {
     pub draw_calls: usize,
 }
 
-/// Grid state information for the inspector.
+/// Grid 状态信息。
 #[derive(Debug, Clone, Default)]
 pub struct GridDebugInfo {
-    /// Grid rows.
+    /// Grid 行数。
     pub rows: usize,
-    /// Grid columns.
+    /// Grid 列数。
     pub cols: usize,
-    /// Scrollback history size.
+    /// 回滚历史大小。
     pub scrollback_size: usize,
-    /// Current scroll offset (how far the viewport is scrolled into history).
+    /// 当前滚动偏移量(视口在历史中滚动了多远)。
     pub scroll_offset: usize,
-    /// Cursor row position.
+    /// 光标行位置。
     pub cursor_row: usize,
-    /// Cursor column position.
+    /// 光标列位置。
     pub cursor_col: usize,
-    /// Number of wrapped lines in the visible area.
+    /// 可见区域中包裹行的数量。
     pub wrapped_lines: usize,
 }
 
-/// Terminal mode flags for the inspector.
+/// 检查器的终端模式标志。
 #[derive(Debug, Clone, Default)]
 pub struct ModesDebugInfo {
-    /// Mouse reporting mode 1000 (click).
+    /// 鼠标报告模式 1000 (点击)。
     pub mouse_report_click: bool,
-    /// Mouse reporting mode 1002 (drag).
+    /// 鼠标报告模式 1002 (拖拽)。
     pub mouse_drag: bool,
-    /// Mouse reporting mode 1003 (motion).
+    /// 鼠标报告模式 1003 (移动)。
     pub mouse_motion: bool,
-    /// Bracketed paste mode (2004).
+    /// 括号粘贴模式 (2004)。
     pub bracketed_paste: bool,
-    /// Alternate screen active.
+    /// 备用屏幕活动。
     pub alternate_screen: bool,
-    /// Application cursor keys mode.
+    /// 应用光标键模式。
     pub app_cursor: bool,
-    /// Auto wrap mode.
+    /// 自动换行模式。
     pub auto_wrap: bool,
-    /// Origin mode.
+    /// 原点模式。
     pub origin_mode: bool,
-    /// Focus tracking mode (1004).
+    /// 焦点跟踪模式 (1004)。
     pub focus_tracking: bool,
-    /// Kitty keyboard protocol flags bitmask.
+    /// Kitty 键盘协议标志位掩码。
     pub kitty_keyboard_flags: u8,
 }
 
-/// Font and atlas debug information.
+/// 字体和 atlas 调试信息。
 #[derive(Debug, Clone, Default)]
 pub struct FontAtlasDebugInfo {
-    /// Configured font size in points.
+    /// 配置的字体大小(磅)。
     pub font_size: f32,
-    /// Cell width in pixels.
+    /// 单元格宽度(像素)。
     pub cell_width: f32,
-    /// Cell height in pixels.
+    /// 单元格高度(像素)。
     pub cell_height: f32,
-    /// Font ascent in pixels.
+    /// 字体上升量(像素)。
     pub ascent: f32,
-    /// Number of loaded font faces.
+    /// 已加载字体面的数量。
     pub loaded_faces: usize,
-    /// Atlas width in pixels.
+    /// Atlas 宽度(像素)。
     pub atlas_width: u32,
-    /// Atlas height in pixels.
+    /// Atlas 高度(像素)。
     pub atlas_height: u32,
-    /// Number of cached glyphs in the atlas.
+    /// Atlas 中缓存的字形数量。
     pub cached_glyphs: usize,
 }
 
-/// Performance debug information.
+/// 性能调试信息。
 #[derive(Debug, Clone, Default)]
 pub struct PerfDebugInfo {
-    /// Total frame count since start.
+    /// 启动以来的总帧数。
     pub frame_count: u64,
-    /// Current frames per second.
+    /// 当前每秒帧数。
     pub fps: f32,
-    /// Vertex count for the last frame.
+    /// 上一帧的顶点数量。
     pub vertex_count: usize,
-    /// Estimated draw calls.
+    /// 估计的绘制调用次数。
     pub draw_calls: usize,
 }
 
-/// Configuration debug information shown in the inspector.
+/// 检查器中显示的配置调试信息。
 #[derive(Debug, Clone, Default)]
 pub struct ConfigDebugInfo {
-    /// Font family name.
+    /// 字体族名称。
     pub font_family: String,
-    /// Font size in points.
+    /// 字体大小(磅)。
     pub font_size: f32,
-    /// Active theme name.
+    /// 活动主题名称。
     pub theme: String,
-    /// Scrollback line limit.
+    /// 回滚行限制。
     pub scrollback_limit: u32,
-    /// Cursor style name.
+    /// 光标样式名称。
     pub cursor_style: String,
-    /// Whether cursor blink is enabled.
+    /// 光标闪烁是否启用。
     pub cursor_blink: bool,
 }
 
-/// Keyboard event for history.
+/// 键盘事件历史记录。
 #[derive(Debug, Clone)]
 pub struct KeyEventRecord {
     /// 事件时间戳。
@@ -143,7 +143,7 @@ pub struct KeyEventRecord {
     pub consumed: bool,
 }
 
-/// Inspector state.
+/// 检查器状态。
 pub struct InspectorState {
     /// 检查器是否可见。
     visible: bool,
@@ -151,17 +151,17 @@ pub struct InspectorState {
     pub terminal: TerminalDebugInfo,
     /// 渲染器调试信息。
     pub renderer: RendererDebugInfo,
-    /// Grid state debug info.
+    /// Grid 状态调试信息。
     pub grid: GridDebugInfo,
-    /// Terminal modes debug info.
+    /// 终端模式调试信息。
     pub modes: ModesDebugInfo,
-    /// Font and atlas debug info.
+    /// 字体和 atlas 调试信息。
     pub font_atlas: FontAtlasDebugInfo,
-    /// Performance debug info.
+    /// 性能调试信息。
     pub perf: PerfDebugInfo,
-    /// Configuration debug info.
+    /// 配置调试信息。
     pub config: ConfigDebugInfo,
-    /// 键盘事件历史（循环缓冲区）。
+    /// 键盘事件历史(循环缓冲区)。
     key_history: Vec<KeyEventRecord>,
     /// 最大键盘历史大小。
     max_key_history: usize,
@@ -191,7 +191,7 @@ impl Default for InspectorState {
 }
 
 impl InspectorState {
-    /// Create a new inspector state.
+    /// 创建新的检查器状态。
     pub fn new() -> Self {
         Self::default()
     }
@@ -221,27 +221,27 @@ impl InspectorState {
         self.renderer = info;
     }
 
-    /// Update grid state debug info.
+    /// 更新 Grid 状态调试信息。
     pub fn update_grid(&mut self, info: GridDebugInfo) {
         self.grid = info;
     }
 
-    /// Update terminal modes debug info.
+    /// 更新终端模式调试信息。
     pub fn update_modes(&mut self, info: ModesDebugInfo) {
         self.modes = info;
     }
 
-    /// Update font and atlas debug info.
+    /// 更新字体和 atlas 调试信息。
     pub fn update_font_atlas(&mut self, info: FontAtlasDebugInfo) {
         self.font_atlas = info;
     }
 
-    /// Update performance debug info.
+    /// 更新性能调试信息。
     pub fn update_perf(&mut self, info: PerfDebugInfo) {
         self.perf = info;
     }
 
-    /// Update configuration debug info.
+    /// 更新配置调试信息。
     pub fn update_config(&mut self, info: ConfigDebugInfo) {
         self.config = info;
     }
@@ -620,7 +620,7 @@ impl InspectorState {
     }
 }
 
-/// Format a bool as a colored string label.
+/// 将布尔值格式化为彩色字符串标签。
 fn bool_str(value: bool) -> &'static str {
     if value { "on" } else { "off" }
 }

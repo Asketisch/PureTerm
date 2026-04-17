@@ -1,22 +1,22 @@
-//! Quick bar — inline command input at the top of the terminal.
+//! 快速栏 — 终端顶部的内联命令输入。
 
 use egui::{TextEdit, Ui};
 
-/// Quick bar state.
+/// 快速栏状态。
 pub struct QuickBar {
     pub visible: bool,
     pub query: String,
-    /// Mode: command input, search, or filter.
+    /// 模式:命令输入、搜索或过滤。
     pub mode: QuickBarMode,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuickBarMode {
-    /// Quick command input.
+    /// 快速命令输入。
     Command,
-    /// Search within terminal output.
+    /// 在终端输出中搜索。
     Search,
-    /// Filter terminal output.
+    /// 过滤终端输出。
     Filter,
 }
 
@@ -35,7 +35,7 @@ impl QuickBar {
         Self::default()
     }
 
-    /// Show the quick bar. Returns the submitted query if Enter was pressed.
+    /// 显示快速栏。如按下回车则返回提交的查询。
     pub fn show(&mut self, ui: &mut Ui) -> Option<QuickBarAction> {
         if !self.visible {
             return None;
@@ -76,7 +76,7 @@ impl QuickBar {
             });
         });
 
-        // Escape to close
+        // Escape 关闭
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.visible = false;
             self.query.clear();
@@ -86,21 +86,21 @@ impl QuickBar {
         result
     }
 
-    /// Open the quick bar in command mode.
+    /// 以命令模式打开发快速栏。
     pub fn open_command(&mut self) {
         self.mode = QuickBarMode::Command;
         self.visible = true;
         self.query.clear();
     }
 
-    /// Open the quick bar in search mode.
+    /// 以搜索模式打开发快速栏。
     pub fn open_search(&mut self) {
         self.mode = QuickBarMode::Search;
         self.visible = true;
         self.query.clear();
     }
 
-    /// Open the quick bar in filter mode.
+    /// 以过滤模式打开发快速栏。
     pub fn open_filter(&mut self) {
         self.mode = QuickBarMode::Filter;
         self.visible = true;

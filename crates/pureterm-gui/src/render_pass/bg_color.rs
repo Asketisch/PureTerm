@@ -1,7 +1,6 @@
-//! Background color render pass.
+//! 背景色渲染通道。
 //!
-//! Renders solid-color quads for cell backgrounds. Uses position + color vertices
-//! with corner-radius clipping via a uniform buffer.
+//! 为单元格背景渲染纯色四边形。使用位置 + 颜色顶点，通过 uniform 缓冲区进行圆角裁剪。
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Device, Queue, RenderPipeline, SurfaceConfiguration};
@@ -11,7 +10,7 @@ use super::{
     PassData, ScreenUniforms,
 };
 
-/// Vertex for background color quads: position + RGBA color.
+/// 背景色四边形的顶点：位置 + RGBA 颜色。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct BgVertex {
@@ -42,7 +41,7 @@ impl BgVertex {
     }
 }
 
-/// Background color render pass.
+/// 背景色渲染通道。
 pub struct BgColorPass {
     pipeline: RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -53,7 +52,7 @@ pub struct BgColorPass {
 }
 
 impl BgColorPass {
-    /// Create a new background color pass.
+    /// 创建新的背景色通道。
     pub fn new(device: &Device, queue: &Queue, config: &SurfaceConfiguration, surface_format: wgpu::TextureFormat) -> Self {
         let uniform_bgl = create_uniform_bgl(device, "BgColor Uniform BGL", wgpu::ShaderStages::FRAGMENT);
 
@@ -100,7 +99,7 @@ impl BgColorPass {
             mapped_at_creation: false,
         });
 
-        // Initialize uniforms with current screen size
+        // 使用当前屏幕大小初始化 uniforms
         let uniforms = ScreenUniforms::new(0.0, config.width as f32, config.height as f32);
         queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
@@ -114,7 +113,7 @@ impl BgColorPass {
         }
     }
 
-    /// Update vertex/index data and uniforms for this frame.
+    /// 更新此帧的顶点/索引数据和 uniforms。
     pub fn update(&mut self, queue: &Queue, vertices: &[BgVertex], indices: &[u32], data: &PassData) {
         self.index_count = indices.len() as u32;
 
@@ -125,12 +124,12 @@ impl BgColorPass {
             queue.write_buffer(&self.index_buffer, 0, bytemuck::cast_slice(indices));
         }
 
-        // Update uniforms
+        // 更新 uniforms
         let uniforms = ScreenUniforms::new(data.corner_radius, data.screen_width, data.screen_height);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
-    /// Render the background color quads.
+    /// 渲染背景色四边形。
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         if self.index_count == 0 {
             return;
@@ -142,8 +141,8 @@ impl BgColorPass {
         pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 
-    /// Resize is a no-op for this pass (buffers are pre-allocated).
+    /// 此通道的 resize 是空操作（缓冲区已预分配）。
     pub fn resize(&mut self, _device: &Device, _config: &SurfaceConfiguration) {
-        // No-op: pre-allocated buffers handle any size
+        // 空操作：预分配的缓冲区处理任意大小
     }
 }

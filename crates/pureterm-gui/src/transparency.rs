@@ -1,20 +1,20 @@
-//! Window transparency and blur effects.
+//! 窗口透明度和模糊效果。
 
 use serde::{Deserialize, Serialize};
 
-/// Configuration for window transparency and blur.
+/// 窗口透明度和模糊配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransparencyConfig {
-    /// Window opacity (0.0 = fully transparent, 1.0 = opaque).
+    /// 窗口不透明度 (0.0 = 完全透明, 1.0 = 不透明)。
     #[serde(default = "default_opacity")]
     pub opacity: f32,
-    /// Whether to enable blur behind the window.
+    /// 是否启用窗口后面的模糊。
     #[serde(default)]
     pub blur: bool,
-    /// Blur radius in pixels (if supported by platform).
+    /// 模糊半径(像素)(如果平台支持)。
     #[serde(default = "default_blur_radius")]
     pub blur_radius: u32,
-    /// Whether to use transparent background (without blur).
+    /// 是否使用透明背景(不带模糊)。
     #[serde(default)]
     pub transparent_background: bool,
 }
@@ -41,14 +41,14 @@ impl TransparencyConfig {
         }
     }
 
-    /// Apply transparency to a wgpu surface configuration.
+    /// 将透明度应用到 wgpu 表面配置。
     pub fn configure_surface(&self, config: &mut wgpu::SurfaceConfiguration) {
         if self.opacity < 1.0 || self.transparent_background {
             config.alpha_mode = wgpu::CompositeAlphaMode::PostMultiplied;
         }
     }
 
-    /// Get the clear color with opacity applied.
+    /// 获取应用了不透明度的清除颜色。
     pub fn clear_color(&self, bg: [u8; 3]) -> wgpu::Color {
         let alpha = self.opacity as f64;
         wgpu::Color {
@@ -59,7 +59,7 @@ impl TransparencyConfig {
         }
     }
 
-    /// Check if blur is supported on the current platform.
+    /// 检查当前平台是否支持模糊。
     pub fn is_blur_supported() -> bool {
         #[cfg(target_os = "macos")]
         { true }
@@ -67,8 +67,8 @@ impl TransparencyConfig {
         { false }
     }
 
-    /// Request window blur (macOS: NSVisualEffectView, Linux: KWin blur).
-    /// This returns platform-specific hints for the window manager.
+    /// 请求窗口模糊 (macOS: NSVisualEffectView, Linux: KWin blur)。
+    /// 这会返回用于窗口管理器的平台特定提示。
     pub fn blur_hint(&self) -> Option<BlurHint> {
         if self.blur {
             Some(BlurHint {
@@ -81,7 +81,7 @@ impl TransparencyConfig {
     }
 }
 
-/// Platform hint for window blur.
+/// 窗口模糊的平台提示。
 #[derive(Debug, Clone)]
 pub struct BlurHint {
     pub enabled: bool,

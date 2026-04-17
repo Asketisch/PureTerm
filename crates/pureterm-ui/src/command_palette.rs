@@ -1,10 +1,10 @@
-//! Command palette (Ctrl+Shift+P) for PureTerm.
+//! PureTerm 的命令面板 (Ctrl+Shift+P)。
 //!
-//! Provides a searchable list of commands, settings, and actions.
+//! 提供可搜索的命令、设置和操作列表。
 
 use egui::{Id, RichText, TextEdit, Ui};
 
-/// A command entry in the palette.
+/// 命令面板中的命令条目。
 #[derive(Debug, Clone)]
 pub struct CommandEntry {
     pub id: String,
@@ -13,7 +13,7 @@ pub struct CommandEntry {
     pub shortcut: Option<String>,
 }
 
-/// Command palette state.
+/// 命令面板状态。
 pub struct CommandPalette {
     pub visible: bool,
     pub query: String,
@@ -61,7 +61,7 @@ impl CommandPalette {
         ]
     }
 
-    /// Show the command palette. Returns the selected command ID if any.
+    /// 显示命令面板。如有选中命令则返回其 ID。
     pub fn show(&mut self, ui: &mut Ui) -> Option<String> {
         if !self.visible {
             return None;
@@ -69,7 +69,7 @@ impl CommandPalette {
 
         let mut result = None;
 
-        // Compute filtered commands first (outside the Area closure)
+        // 首先计算过滤后的命令(在 Area 闭包外部)
         let query_lower = self.query.to_lowercase();
         let filtered: Vec<&CommandEntry> = self.commands
             .iter()
@@ -80,17 +80,17 @@ impl CommandPalette {
             })
             .collect();
 
-        // Handle keyboard input (Tab, arrows, Escape)
+        // 处理键盘输入(Tab、方向键、Escape)
         let ctx = ui.ctx();
 
-        // Close on Escape
+        // 按 Escape 关闭
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.visible = false;
             self.query.clear();
             return None;
         }
 
-        // Tab key: select the currently highlighted command
+        // Tab 键:选择当前高亮的命令
         if ctx.input(|i| i.key_pressed(egui::Key::Tab)) {
             if !filtered.is_empty() {
                 result = Some(filtered[self.selected_index].id.clone());
@@ -100,7 +100,7 @@ impl CommandPalette {
             }
         }
 
-        // Arrow key navigation
+        // 方向键导航
         if ctx.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
             if !filtered.is_empty() {
                 self.selected_index = (self.selected_index + 1).min(filtered.len() - 1);
@@ -112,7 +112,7 @@ impl CommandPalette {
             }
         }
 
-        // Auto-select first match when typing
+        // 输入时自动选择第一个匹配项
         if !query_lower.is_empty() && !filtered.is_empty() && self.selected_index >= filtered.len() {
             self.selected_index = 0;
         }
@@ -130,7 +130,7 @@ impl CommandPalette {
                 ui.set_width(palette_width);
 
                 egui::Frame::window(ui.style()).show(ui, |ui| {
-                    // Search input
+                    // 搜索输入框
                     let response = ui.add(
                         TextEdit::singleline(&mut self.query)
                             .hint_text("Type a command...")
@@ -164,7 +164,7 @@ impl CommandPalette {
                                 }
                             }
 
-                            // Clamp selected index
+                            // 限制选中索引范围
                             if !filtered.is_empty() {
                                 self.selected_index = self.selected_index.min(filtered.len() - 1);
                             }

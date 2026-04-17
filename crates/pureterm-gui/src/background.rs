@@ -1,19 +1,19 @@
-//! Background image support for the terminal.
+//! 终端背景图片支持。
 
 use serde::{Deserialize, Serialize};
 
-/// Configuration for terminal background images.
+/// 终端背景图片的配置。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BackgroundConfig {
-    /// Path to the background image file.
+    /// 背景图片文件路径。
     pub image_path: Option<String>,
-    /// How the image should be rendered.
+    /// 图片渲染方式。
     #[serde(default)]
     pub mode: BackgroundMode,
-    /// Opacity of the background image (0.0 = invisible, 1.0 = fully opaque).
+    /// 背景图片不透明度(0.0 = 不可见,1.0 = 完全不透明)。
     #[serde(default = "default_bg_opacity")]
     pub opacity: f32,
-    /// Whether to blur the background image.
+    /// 是否模糊背景图片。
     #[serde(default)]
     pub blur: bool,
 }
@@ -22,15 +22,15 @@ fn default_bg_opacity() -> f32 { 0.3 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackgroundMode {
-    /// Stretch to fill the window.
+    /// 拉伸以填充窗口。
     Stretch,
-    /// Tile the image.
+    /// 平铺图片。
     Tile,
-    /// Center the image at original size.
+    /// 以原始尺寸居中显示图片。
     Center,
-    /// Scale to cover the window while maintaining aspect ratio.
+    /// 缩放以覆盖窗口,同时保持宽高比。
     Cover,
-    /// Scale to fit within the window while maintaining aspect ratio.
+    /// 缩放以适应窗口,同时保持宽高比。
     Fit,
 }
 
@@ -59,13 +59,13 @@ impl BackgroundConfig {
         }
     }
 
-    /// Whether a background image is configured.
+    /// 是否配置了背景图片。
     pub fn has_image(&self) -> bool {
         self.image_path.is_some()
     }
 
-    /// Load the background image and return RGBA pixel data.
-    /// Returns (width, height, rgba_data).
+    /// 加载背景图片并返回 RGBA 像素数据。
+    /// 返回 (宽度, 高度, rgba 数据)。
     pub fn load_image(&self) -> Option<(u32, u32, Vec<u8>)> {
         let path = self.image_path.as_ref()?;
         let img = image::open(path).ok()?;
@@ -74,7 +74,7 @@ impl BackgroundConfig {
         Some((w, h, rgba.into_raw()))
     }
 
-    /// Calculate UV coordinates for the given mode.
+    /// 根据给定模式计算 UV 坐标。
     pub fn calculate_uv(&self, img_w: u32, img_h: u32, win_w: u32, win_h: u32) -> (f32, f32, f32, f32) {
         match self.mode {
             BackgroundMode::Stretch => (0.0, 0.0, 1.0, 1.0),

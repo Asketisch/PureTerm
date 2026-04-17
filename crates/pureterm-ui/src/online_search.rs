@@ -1,8 +1,8 @@
-//! Online search panel for searching the web from the terminal.
+//! 从终端搜索网络的在线搜索面板。
 
 use egui::{RichText, ScrollArea, TextEdit, Ui};
 
-/// Online search panel state.
+/// 在线搜索面板状态。
 pub struct OnlineSearchPanel {
     pub visible: bool,
     pub query: String,
@@ -35,7 +35,7 @@ impl OnlineSearchPanel {
         Self::default()
     }
 
-    /// Show the online search panel.
+    /// 显示在线搜索面板。
     pub fn show(&mut self, ui: &mut Ui) -> Option<OnlineSearchAction> {
         if !self.visible {
             return None;
@@ -50,7 +50,7 @@ impl OnlineSearchPanel {
                 ui.heading("Online Search");
                 ui.add_space(4.0);
 
-                // Search input
+                // 搜索输入
                 ui.horizontal(|ui| {
                     let response = ui.add(
                         TextEdit::singleline(&mut self.query)
@@ -79,7 +79,7 @@ impl OnlineSearchPanel {
 
                 ui.separator();
 
-                // Results
+                // 结果
                 ScrollArea::vertical().show(ui, |ui| {
                     for (_i, entry) in self.results.iter().enumerate() {
                         ui.group(|ui| {
@@ -106,7 +106,7 @@ impl OnlineSearchPanel {
         action
     }
 
-    /// Open the search panel with a pre-filled query.
+    /// 使用预填充查询打开发索面板。
     pub fn open_with_query(&mut self, query: &str) {
         self.query = query.to_string();
         self.visible = true;
@@ -114,7 +114,7 @@ impl OnlineSearchPanel {
         self.error = None;
     }
 
-    /// Open with an empty query.
+    /// 使用空查询打开。
     pub fn open(&mut self) {
         self.visible = true;
         self.query.clear();
@@ -122,7 +122,7 @@ impl OnlineSearchPanel {
         self.error = None;
     }
 
-    /// Close the panel.
+    /// 关闭面板。
     pub fn close(&mut self) {
         self.visible = false;
     }

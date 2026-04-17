@@ -1,7 +1,7 @@
-//! Background image render pass.
+//! 背景图片渲染通道。
 //!
-//! Renders a fullscreen quad with a background texture (wallpaper mode).
-//! Supports the various background modes from BackgroundConfig.
+//! 使用背景纹理（壁纸模式）渲染全屏四边形。
+//! 支持 BackgroundConfig 中的各种背景模式。
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Device, Queue, RenderPipeline, SurfaceConfiguration};
@@ -11,7 +11,7 @@ use super::{
     fullscreen_index_buffer_size, fullscreen_vertex_buffer_size, PassData, ScreenUniforms,
 };
 
-/// Vertex for background image fullscreen quad: position + tex_coords.
+/// 背景图片全屏四边形的顶点：位置 + 纹理坐标。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct BgImageVertex {
@@ -42,10 +42,10 @@ impl BgImageVertex {
     }
 }
 
-/// Fullscreen quad indices.
+/// 全屏四边形索引。
 const FULLSCREEN_INDICES: [u32; 6] = [0, 1, 2, 2, 1, 3];
 
-/// Background image render pass.
+/// 背景图片渲染通道。
 pub struct BgImagePass {
     pipeline: RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -58,7 +58,7 @@ pub struct BgImagePass {
 }
 
 impl BgImagePass {
-    /// Create a new background image pass.
+    /// 创建新的背景图片通道。
     pub fn new(device: &Device, queue: &Queue, config: &SurfaceConfiguration, surface_format: wgpu::TextureFormat) -> Self {
         let uniform_bgl = create_uniform_bgl(device, "BgImage Uniform BGL", wgpu::ShaderStages::FRAGMENT);
         let tex_sampler_bgl = create_texture_sampler_bgl(device, "BgImage Texture Sampler BGL", wgpu::ShaderStages::FRAGMENT);
@@ -94,12 +94,12 @@ impl BgImagePass {
             surface_format,
         );
 
-        // Fullscreen quad vertices (clip-space): covers entire viewport
+        // 全屏四边形顶点（裁剪空间）：覆盖整个视口
         let vertices: [BgImageVertex; 4] = [
-            BgImageVertex { position: [-1.0, -1.0], tex_coords: [0.0, 1.0] }, // bottom-left
-            BgImageVertex { position: [1.0, -1.0], tex_coords: [1.0, 1.0] },  // bottom-right
-            BgImageVertex { position: [-1.0, 1.0], tex_coords: [0.0, 0.0] },  // top-left
-            BgImageVertex { position: [1.0, 1.0], tex_coords: [1.0, 0.0] },   // top-right
+            BgImageVertex { position: [-1.0, -1.0], tex_coords: [0.0, 1.0] }, // 左下
+            BgImageVertex { position: [1.0, -1.0], tex_coords: [1.0, 1.0] },  // 右下
+            BgImageVertex { position: [-1.0, 1.0], tex_coords: [0.0, 0.0] },  // 左上
+            BgImageVertex { position: [1.0, 1.0], tex_coords: [1.0, 0.0] },   // 右上
         ];
 
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -116,7 +116,7 @@ impl BgImagePass {
             mapped_at_creation: false,
         });
 
-        // Write the static fullscreen quad data
+        // 写入静态全屏四边形数据
         queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertices));
         queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&FULLSCREEN_INDICES));
 
@@ -135,7 +135,7 @@ impl BgImagePass {
         }
     }
 
-    /// Set the background image texture view. Pass `None` to hide.
+    /// 设置背景图片纹理视图。传入 `None` 以隐藏。
     pub fn set_background(&mut self, device: &Device, texture_view: Option<&wgpu::TextureView>) {
         match texture_view {
             Some(view) => {
@@ -163,7 +163,7 @@ impl BgImagePass {
         }
     }
 
-    /// Update the UV coordinates for the fullscreen quad (for different background modes).
+    /// 更新全屏四边形的 UV 坐标（用于不同的背景模式）。
     pub fn set_uv_rect(&self, queue: &Queue, u0: f32, v0: f32, u1: f32, v1: f32) {
         let vertices: [BgImageVertex; 4] = [
             BgImageVertex { position: [-1.0, -1.0], tex_coords: [u0, v1] },
@@ -174,13 +174,13 @@ impl BgImagePass {
         queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
     }
 
-    /// Update uniforms for this frame.
+    /// 更新此帧的 uniforms。
     pub fn update(&mut self, queue: &Queue, data: &PassData) {
         let uniforms = ScreenUniforms::new(data.corner_radius, data.screen_width, data.screen_height);
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
     }
 
-    /// Render the background image fullscreen quad.
+    /// 渲染背景图片全屏四边形。
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         if !self.visible {
             return;
@@ -196,12 +196,12 @@ impl BgImagePass {
         pass.draw_indexed(0..6, 0, 0..1);
     }
 
-    /// Resize is a no-op for this pass.
+    /// 此通道的 resize 是空操作。
     pub fn resize(&mut self, _device: &Device, _config: &SurfaceConfiguration) {
-        // No-op: pre-allocated buffers handle any size
+        // 空操作：预分配的缓冲区处理任意大小
     }
 
-    /// Whether the background image is currently visible.
+    /// 背景图片当前是否可见。
     pub fn is_visible(&self) -> bool {
         self.visible
     }

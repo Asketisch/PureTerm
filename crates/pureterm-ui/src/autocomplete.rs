@@ -1,8 +1,8 @@
-//! Auto-complete popup for terminal input.
+//! 终端输入的自动完成弹出窗口。
 
 use egui::{Id, Pos2, RichText, Ui};
 
-/// A completion candidate.
+/// 一个补全候选项。
 #[derive(Debug, Clone)]
 pub struct CompletionCandidate {
     pub text: String,
@@ -21,7 +21,7 @@ pub enum CompletionKind {
     SshProfile,
 }
 
-/// Auto-complete state and rendering.
+/// 自动完成状态和渲染。
 pub struct AutoComplete {
     pub visible: bool,
     pub candidates: Vec<CompletionCandidate>,
@@ -45,7 +45,7 @@ impl AutoComplete {
         Self::default()
     }
 
-    /// Show candidates and return the selected one if chosen.
+    /// 显示候选项并在选择时返回选中的项。
     pub fn show(&mut self, ui: &mut Ui) -> Option<String> {
         if !self.visible || self.candidates.is_empty() {
             return None;
@@ -94,7 +94,7 @@ impl AutoComplete {
                 });
             });
 
-        // Keyboard navigation
+        // 键盘导航
         if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
             self.selected_index = (self.selected_index + 1).min(self.candidates.len() - 1);
         }
@@ -117,7 +117,7 @@ impl AutoComplete {
         result
     }
 
-    /// Update candidates based on the current input prefix.
+    /// 根据当前输入前缀更新候选项。
     pub fn update_candidates(&mut self, prefix: &str, candidates: Vec<CompletionCandidate>) {
         self.candidates = candidates
             .into_iter()
@@ -127,7 +127,7 @@ impl AutoComplete {
         self.visible = !self.candidates.is_empty();
     }
 
-    /// Hide the popup.
+    /// 隐藏弹出窗口。
     pub fn hide(&mut self) {
         self.visible = false;
         self.candidates.clear();

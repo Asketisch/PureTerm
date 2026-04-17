@@ -2,7 +2,7 @@ pub mod perform;
 
 pub use perform::{VtePerform, ScreenSnapshot};
 
-/// VTE Parser wrapper.
+/// VTE 解析器包装器。
 pub struct VteParser {
     parser: vte::Parser,
 }
@@ -14,7 +14,7 @@ impl VteParser {
         }
     }
 
-    /// Parse bytes and forward to the performer.
+    /// 解析字节并转发给 performer。
     pub fn parse(&mut self, data: &[u8], performer: &mut impl vte::Perform) {
         self.parser.advance(performer, data);
     }

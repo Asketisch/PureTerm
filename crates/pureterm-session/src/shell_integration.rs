@@ -1,12 +1,12 @@
-//! Shell integration — inject OSC 133 markers for shell prompt detection.
+//! Shell 集成 — 为 shell 提示符检测注入 OSC 133 标记。
 //!
-//! This module provides shell integration scripts that emit OSC 133 sequences
-//! to mark prompt start (A), command start (B), command execution start (C),
-//! and command output end (D).
+//! 此模块提供发出 OSC 133 序列的 shell 集成脚本，
+//! 用于标记提示符开始 (A)、命令开始 (B)、命令执行开始 (C)
+//! 和命令输出结束 (D)。
 
 use std::collections::HashMap;
 
-/// Shell types that support integration.
+/// 支持集成的 Shell 类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shell {
     Bash,
@@ -18,7 +18,7 @@ pub enum Shell {
 }
 
 impl Shell {
-    /// Detect shell from the SHELL environment variable.
+    /// 从 SHELL 环境变量检测 shell。
     pub fn detect_from_env() -> Self {
         if let Ok(shell) = std::env::var("SHELL") {
             Self::detect_from_path(&shell)
@@ -27,7 +27,7 @@ impl Shell {
         }
     }
 
-    /// Detect shell from a path (例如 "/bin/bash").
+    /// 从路径检测 shell（例如 "/bin/bash"）。
     pub fn detect_from_path(path: &str) -> Self {
         let path_lower = path.to_lowercase();
         if path_lower.contains("bash") {
@@ -45,7 +45,7 @@ impl Shell {
         }
     }
 
-    /// Get the shell name for display.
+    /// 获取用于显示的 shell 名称。
     pub fn name(&self) -> &'static str {
         match self {
             Shell::Bash => "bash",
@@ -58,17 +58,17 @@ impl Shell {
     }
 }
 
-/// Environment variables needed for shell integration.
+/// Shell 集成所需的环境变量。
 #[derive(Debug, Clone)]
 pub struct ShellEnv {
-    /// Environment variables to set.
+    /// 要设置的环境变量。
     pub vars: HashMap<String, String>,
-    /// Files to create (path -> content).
+    /// 要创建的文件（路径 -> 内容）。
     pub files: HashMap<String, String>,
 }
 
 impl ShellEnv {
-    /// Generate environment for zsh shell integration.
+    /// 为 zsh shell 集成生成环境。
     pub fn for_zsh() -> Self {
         let mut vars = HashMap::new();
         let mut files = HashMap::new();
@@ -105,7 +105,7 @@ fi
         Self { vars, files }
     }
 
-    /// Generate environment for bash shell integration.
+    /// 为 bash shell 集成生成环境。
     pub fn for_bash() -> Self {
         let mut vars = HashMap::new();
         let mut files = HashMap::new();
@@ -131,7 +131,7 @@ fi
         Self { vars, files }
     }
 
-    /// Generate environment for fish shell integration.
+    /// 为 fish shell 集成生成环境。
     pub fn for_fish() -> Self {
         let mut vars = HashMap::new();
         let mut files = HashMap::new();
@@ -155,7 +155,7 @@ fi
         Self { vars, files }
     }
 
-    /// Generate environment for nushell shell integration.
+    /// 为 nushell shell 集成生成环境。
     pub fn for_nushell() -> Self {
         let mut vars = HashMap::new();
         let mut files = HashMap::new();
@@ -178,7 +178,7 @@ fi
         Self { vars, files }
     }
 
-    /// Generate environment for elvish shell integration.
+    /// 为 elvish shell 集成生成环境。
     pub fn for_elvish() -> Self {
         let mut vars = HashMap::new();
         let mut files = HashMap::new();
@@ -201,7 +201,7 @@ fi
         Self { vars, files }
     }
 
-    /// Create shell env for the given shell type.
+    /// 为给定 shell 类型创建 shell 环境。
     pub fn for_shell(shell: Shell) -> Self {
         match shell {
             Shell::Zsh => Self::for_zsh(),
@@ -213,7 +213,7 @@ fi
         }
     }
 
-    /// Create an empty shell env.
+    /// 创建一个空的 shell 环境。
     pub fn empty() -> Self {
         Self {
             vars: HashMap::new(),
@@ -222,8 +222,8 @@ fi
     }
 }
 
-/// Zsh integration script content.
-/// Emits OSC 133 sequences for prompt and command tracking.
+/// Zsh 集成脚本内容。
+/// 发出 OSC 133 序列用于提示符和命令跟踪。
 const ZSH_INTEGRATION_SCRIPT: &str = r#"
 # PureTerm Zsh Integration
 # Emits OSC 133 for shell prompt and command tracking
@@ -272,8 +272,8 @@ if [[ -z "$PURETERM_INTEGRATION_SET" ]]; then
 fi
 "#;
 
-/// Bash integration script content.
-/// Emits OSC 133 sequences for prompt and command tracking.
+/// Bash 集成脚本内容。
+/// 发出 OSC 133 序列用于提示符和命令跟踪。
 const BASH_INTEGRATION_SCRIPT: &str = r#"
 # PureTerm Bash Integration
 # Emits OSC 133 for shell prompt and command tracking
@@ -307,8 +307,8 @@ if type command_execute &>/dev/null; then
 fi
 "#;
 
-/// Fish integration script content.
-/// Emits OSC 133 sequences for prompt and command tracking.
+/// Fish 集成脚本内容。
+/// 发出 OSC 133 序列用于提示符和命令跟踪。
 const FISH_INTEGRATION_SCRIPT: &str = r#"
 # PureTerm Fish Integration
 # Emits OSC 133 for shell prompt and command tracking
@@ -343,7 +343,7 @@ end
 __pureterm_prompt_start
 "#;
 
-/// Nushell integration script content.
+/// Nushell 集成脚本内容。
 const NUSHELL_INTEGRATION_SCRIPT: &str = r#"
 # PureTerm Nushell Integration
 # Emits OSC 133 for shell prompt and command tracking
@@ -363,7 +363,7 @@ $env.config = ($env.config | upsert hooks {
 })
 "#;
 
-/// Elvish integration script content.
+/// Elvish 集成脚本内容。
 const ELVISH_INTEGRATION_SCRIPT: &str = r#"
 # PureTerm Elvish Integration
 # Emits OSC 133 for shell prompt and command tracking
@@ -381,7 +381,7 @@ edit:after-readline = [args|{
 }]
 "#;
 
-/// Apply shell integration environment to a session's environment.
+/// 将 shell 集成环境应用到会话的环境。
 pub fn apply_env(shell: Shell, env: &mut HashMap<String, String>) {
     if shell == Shell::Unknown {
         return;

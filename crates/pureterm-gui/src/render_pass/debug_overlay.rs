@@ -1,7 +1,6 @@
-//! Debug overlay render pass.
+//! 调试覆盖层渲染通道。
 //!
-//! Renders text overlay for debug information. Same vertex format as cell_text
-//! but without corner-radius clipping. Binds a grayscale atlas texture.
+//! 渲染调试信息的文本覆盖层。与 cell_text 相同的顶点格式，但无圆角裁剪。绑定灰度图集纹理。
 
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Device, Queue, RenderPipeline, SurfaceConfiguration};
@@ -11,7 +10,7 @@ use super::{
     max_index_buffer_size, max_vertex_buffer_size, PassData,
 };
 
-/// Vertex for debug text quads: position + tex_coords + RGBA color.
+/// 调试文本四边形的顶点：位置 + 纹理坐标 + RGBA 颜色。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct DebugVertex {
@@ -48,7 +47,7 @@ impl DebugVertex {
     }
 }
 
-/// Debug overlay render pass.
+/// 调试覆盖层渲染通道。
 pub struct DebugOverlayPass {
     pipeline: RenderPipeline,
     vertex_buffer: wgpu::Buffer,
@@ -60,7 +59,7 @@ pub struct DebugOverlayPass {
 }
 
 impl DebugOverlayPass {
-    /// Create a new debug overlay pass.
+    /// 创建新的调试覆盖层通道。
     pub fn new(device: &Device, _config: &SurfaceConfiguration, surface_format: wgpu::TextureFormat) -> Self {
         let tex_sampler_bgl = create_texture_sampler_bgl(device, "DebugOverlay Texture Sampler BGL", wgpu::ShaderStages::FRAGMENT);
 
@@ -100,7 +99,7 @@ impl DebugOverlayPass {
         }
     }
 
-    /// Set the atlas texture view for debug text rendering.
+    /// 设置调试文本渲染的图集纹理视图。
     pub fn set_atlas_texture(&mut self, device: &Device, atlas_view: &wgpu::TextureView) {
         let tex_sampler_bgl = create_texture_sampler_bgl(device, "DebugOverlay Texture Sampler BGL", wgpu::ShaderStages::FRAGMENT);
         self.atlas_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -119,7 +118,7 @@ impl DebugOverlayPass {
         }));
     }
 
-    /// Update vertex/index data for this frame.
+    /// 更新此帧的顶点/索引数据。
     pub fn update(&mut self, queue: &Queue, vertices: &[DebugVertex], indices: &[u32], _data: &PassData) {
         self.index_count = indices.len() as u32;
 
@@ -131,7 +130,7 @@ impl DebugOverlayPass {
         }
     }
 
-    /// Render debug overlay text.
+    /// 渲染调试覆盖层文本。
     pub fn render<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
         if self.index_count == 0 || !self.visible {
             return;
@@ -146,17 +145,17 @@ impl DebugOverlayPass {
         pass.draw_indexed(0..self.index_count, 0, 0..1);
     }
 
-    /// Resize is a no-op for this pass.
+    /// 此通道的 resize 是空操作。
     pub fn resize(&mut self, _device: &Device, _config: &SurfaceConfiguration) {
-        // No-op: pre-allocated buffers handle any size
+        // 空操作：预分配的缓冲区处理任意大小
     }
 
-    /// Set visibility of the debug overlay.
+    /// 设置调试覆盖层的可见性。
     pub fn set_visible(&mut self, visible: bool) {
         self.visible = visible;
     }
 
-    /// Get current visibility.
+    /// 获取当前可见性。
     pub fn is_visible(&self) -> bool {
         self.visible
     }

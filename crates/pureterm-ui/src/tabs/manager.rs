@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-/// A single tab in the terminal.
+/// 终端中的单个标签页。
 #[derive(Debug)]
 pub struct Tab {
     pub id: u64,
@@ -13,20 +13,20 @@ pub struct Tab {
     pub created_at: Instant,
 }
 
-/// Content of a tab - either a single pane or a split container.
+/// 标签页内容 - 单个面板或分割容器。
 #[derive(Debug)]
 pub enum TabContent {
     Pane(u64),
     Split(SplitRef),
 }
 
-/// Reference to a split container.
+/// 分割容器的引用。
 #[derive(Debug)]
 pub struct SplitRef {
     pub root_id: u64,
 }
 
-/// Record of a closed tab for restoration.
+/// 已关闭标签页的记录,用于恢复。
 #[derive(Debug, Clone)]
 pub struct ClosedTab {
     pub id: u64,
@@ -34,7 +34,7 @@ pub struct ClosedTab {
     pub closed_at: Instant,
 }
 
-/// Manages open tabs.
+/// 管理打开的标签页。
 pub struct TabManager {
     tabs: Vec<Tab>,
     active_tab: Option<u64>,
@@ -58,7 +58,7 @@ impl TabManager {
         id
     }
 
-    /// Open a new tab with the given content.
+    /// 使用给定内容打开新标签页。
     pub fn open_tab(&mut self, content: TabContent, title: String) -> u64 {
         let id = self.alloc_id();
         let tab = Tab {
@@ -76,7 +76,7 @@ impl TabManager {
         id
     }
 
-    /// Close a tab by ID.
+    /// 通过 ID 关闭标签页。
     pub fn close_tab(&mut self, id: u64) -> Option<ClosedTab> {
         if let Some(pos) = self.tabs.iter().position(|t| t.id == id) {
             let tab = self.tabs.remove(pos);
@@ -87,7 +87,7 @@ impl TabManager {
             };
             self.closed_tabs_stack.push(closed.clone());
 
-            // Update active tab
+            // 更新活动标签页
             if self.active_tab == Some(id) {
                 self.active_tab = if self.tabs.is_empty() {
                     None
@@ -101,7 +101,7 @@ impl TabManager {
         None
     }
 
-    /// Close the currently active tab.
+    /// 关闭当前活动的标签页。
     pub fn close_active_tab(&mut self) -> Option<ClosedTab> {
         if let Some(id) = self.active_tab {
             self.close_tab(id)
@@ -110,15 +110,15 @@ impl TabManager {
         }
     }
 
-    /// Select a tab by ID.
+    /// 通过 ID 选择标签页。
     pub fn select_tab(&mut self, id: u64) {
         if self.tabs.iter().any(|t| t.id == id) {
-            // Remove focus from all tabs
+            // 从所有标签页移除焦点
             for tab in &mut self.tabs {
                 tab.has_focus = false;
                 tab.has_activity = false;
             }
-            // Set focus on the selected tab
+            // 在选定的标签页上设置焦点
             if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
                 tab.has_focus = true;
             }
@@ -126,7 +126,7 @@ impl TabManager {
         }
     }
 
-    /// Switch to the previous tab.
+    /// 切换到上一个标签页。
     pub fn previous_tab(&mut self) {
         if let Some(active_id) = self.active_tab {
             if let Some(pos) = self.tabs.iter().position(|t| t.id == active_id) {
@@ -140,7 +140,7 @@ impl TabManager {
         }
     }
 
-    /// Switch to the next tab.
+    /// 切换到下一个标签页。
     pub fn next_tab(&mut self) {
         if let Some(active_id) = self.active_tab {
             if let Some(pos) = self.tabs.iter().position(|t| t.id == active_id) {
@@ -150,37 +150,37 @@ impl TabManager {
         }
     }
 
-    /// Get the active tab.
+    /// 获取活动的标签页。
     pub fn active_tab(&self) -> Option<&Tab> {
         self.active_tab.and_then(|id| self.tabs.iter().find(|t| t.id == id))
     }
 
-    /// Get the active tab mutably.
+    /// 获取活动标签页的可变引用。
     pub fn active_tab_mut(&mut self) -> Option<&mut Tab> {
         self.active_tab.and_then(move |id| self.tabs.iter_mut().find(|t| t.id == id))
     }
 
-    /// Get all tabs.
+    /// 获取所有标签页。
     pub fn tabs(&self) -> &[Tab] {
         &self.tabs
     }
 
-    /// Get the number of open tabs.
+    /// 获取打开的标签页数量。
     pub fn len(&self) -> usize {
         self.tabs.len()
     }
 
-    /// Check if there are no tabs.
+    /// 检查是否没有标签页。
     pub fn is_empty(&self) -> bool {
         self.tabs.is_empty()
     }
 
-    /// Get the recently closed tabs stack.
+    /// 获取最近关闭的标签页栈。
     pub fn closed_tabs(&self) -> &[ClosedTab] {
         &self.closed_tabs_stack
     }
 
-    /// Restore the most recently closed tab.
+    /// 恢复最近关闭的标签页。
     pub fn restore_last_closed(&mut self) -> Option<u64> {
         let closed = self.closed_tabs_stack.pop()?;
         let pane_id = self.alloc_id();
@@ -192,21 +192,21 @@ impl TabManager {
         Some(id)
     }
 
-    /// Set the title of a tab.
+    /// 设置标签页的标题。
     pub fn set_title(&mut self, id: u64, title: String) {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
             tab.title = title;
         }
     }
 
-    /// Set the color of a tab.
+    /// 设置标签页的颜色。
     pub fn set_color(&mut self, id: u64, color: Option<String>) {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
             tab.color = color;
         }
     }
 
-    /// Mark a tab as having activity.
+    /// 将标签页标记为有活动。
     pub fn mark_activity(&mut self, id: u64) {
         if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == id) {
             if !tab.has_focus {

@@ -49,7 +49,7 @@ impl client::Handler for SshClientHandler {
                 Ok(false)
             }
             KeyVerificationResult::Unknown => {
-                // TOFU: Trust On First Use — accept and save the key
+                // TOFU：首次使用时信任 — 接受并保存密钥
                 log::warn!(
                     "First connection to {}. Accepting key (TOFU).",
                     self.host
@@ -61,7 +61,7 @@ impl client::Handler for SshClientHandler {
     }
 }
 
-/// SSH session using russh.
+/// 使用 russh 的 SSH 会话。
 pub struct SshSession {
     handle: Option<Arc<Mutex<Handle<SshClientHandler>>>>,
     channel_write: Option<Arc<Mutex<russh::ChannelWriteHalf<russh::client::Msg>>>>,
@@ -71,27 +71,27 @@ pub struct SshSession {
     user: String,
     auth: SshAuthType,
     open: bool,
-    /// Whether agent forwarding is enabled.
+    /// 是否启用代理转发。
     agent_forward: bool,
-    /// Pending port forward listeners (local forwards)
+    /// 待处理的端口转发监听器（本地转发）
     listeners: Vec<PortForwardListener>,
 }
 
-/// A port forwarding listener that accepts local connections and forwards through SSH.
+/// 接受本地连接并通过 SSH 转发的端口转发监听器。
 #[allow(dead_code)]
 pub struct PortForwardListener {
-    /// The TCP listener for accepting local connections.
+    /// 用于接受本地连接的 TCP 监听器。
     listener: Arc<TcpListener>,
-    /// The remote host to connect to on the SSH server side.
+    /// SSH 服务器端要连接到的远程主机。
     remote_host: String,
-    /// The remote port.
+    /// 远程端口。
     remote_port: u16,
-    /// Task handle for the accept loop.
+    /// 接受循环的任务句柄。
     _task: tokio::task::JoinHandle<()>,
 }
 
 impl SshSession {
-    /// Open a direct-tcpip channel to the specified host:port through SSH.
+    /// 通过 SSH 打开到指定 host:port 的 direct-tcpip 通道。
     pub async fn open_direct_tcpip(
         &self,
         host: &str,
@@ -113,8 +113,8 @@ impl SshSession {
         Ok((read, write))
     }
 
-    /// Start a local port forward: accepts connections on `local_addr:local_port`
-    /// and forwards them through this SSH session to `remote_host:remote_port`.
+    /// 启动本地端口转发：接受 `local_addr:local_port` 上的连接，
+    /// 并通过此 SSH 会话将它们转发到 `remote_host:remote_port`。
     pub fn start_local_forward(
         &mut self,
         local_addr: &str,
@@ -175,8 +175,8 @@ impl SshSession {
         })
     }
 
-    /// Start a dynamic (SOCKS5) port forward on `local_addr:local_port`.
-    /// This acts as a SOCKS5 proxy through the SSH connection.
+    /// 在 `local_addr:local_port` 上启动动态（SOCKS5）端口转发。
+    /// 这充当通过 SSH 连接的 SOCKS5 代理。
     pub fn start_dynamic_forward(
         &mut self,
         local_addr: &str,
@@ -216,14 +216,14 @@ impl SshSession {
         })
     }
 
-    /// Stop all active port forwards.
+    /// 停止所有活动的端口转发。
     pub fn stop_forwards(&mut self) {
-        // The task will exit when the listener is dropped
+        // 当监听器被 drop 时任务将退出
         self.listeners.clear();
     }
 
-    /// Start a remote port forward: requests the SSH server to listen on
-    /// `remote_addr:remote_port` and forward connections back to `local_addr:local_port`.
+    /// 启动远程端口转发：请求 SSH 服务器在
+    /// `remote_addr:remote_port` 上监听并连接转发回 `local_addr:local_port`。
     pub fn start_remote_forward(
         &mut self,
         remote_addr: &str,
@@ -239,7 +239,7 @@ impl SshSession {
 
         let task = tokio::spawn(async move {
             let h = handle.lock().await;
-            // Request the server to forward connections to remote_addr:remote_port
+            // 请求服务器将连接转发到 remote_addr:remote_port
             match h.tcpip_forward(&remote_addr, remote_port as u32).await {
                 Ok(_) => {
                     log::info!("Remote forward registered: {}:{} -> {}:{}",
@@ -252,14 +252,14 @@ impl SshSession {
             }
         });
 
-        // Wait for the request to complete
+        // 等待请求完成
         pollster::block_on(task)?;
 
         Ok(())
     }
 }
 
-/// Proxy a TCP connection via SSH direct-tcpip.
+/// 通过 SSH direct-tcpip 代理 TCP 连接。
 async fn proxy_tcp_via_ssh(
     client_stream: &mut TcpStream,
     _client_addr: std::net::SocketAddr,
@@ -274,16 +274,16 @@ async fn proxy_tcp_via_ssh(
             .context("Failed to open SSH channel for forward")?
     };
 
-    // Use russh channel's data event loop for bidirectional copy
+    // 使用 russh 通道的数据事件循环进行双向复制
     let mut buf = [0u8; 8192];
     let mut channel = channel;
 
     loop {
         tokio::select! {
-            // Copy from client to SSH channel
+            // 从客户端复制到 SSH 通道
             result = client_stream.read(&mut buf) => {
                 match result {
-                    Ok(0) => break, // Connection closed
+                    Ok(0) => break, // 连接关闭
                     Ok(n) => {
                         if channel.data(&buf[..n]).await.is_err() {
                             break;
@@ -295,7 +295,7 @@ async fn proxy_tcp_via_ssh(
                     }
                 }
             }
-            // Read from SSH channel and forward to client
+            // 从 SSH 通道读取并转发到客户端
             msg = channel.wait() => {
                 match msg {
                     Some(ChannelMsg::Data { data }) => {
@@ -313,7 +313,7 @@ async fn proxy_tcp_via_ssh(
     Ok(())
 }
 
-/// Handle a SOCKS5 connection and proxy it through SSH.
+/// 处理 SOCKS5 连接并通过 SSH 代理它。
 async fn proxy_socks5(
     client_stream: &mut TcpStream,
     _client_addr: std::net::SocketAddr,
@@ -321,7 +321,7 @@ async fn proxy_socks5(
 ) -> Result<()> {
     use std::net::Ipv4Addr;
 
-    // SOCKS5 handshake
+    // SOCKS5 握手
     let mut buf = [0u8; 262];
     let n = client_stream.read(&mut buf).await?;
     if n < 2 {
@@ -333,18 +333,18 @@ async fn proxy_socks5(
         return Ok(());
     }
 
-    // Respond: VER=5, METHOD=NO_AUTHENTICATION_REQUIRED (0)
+    // 响应：VER=5, METHOD=NO_AUTHENTICATION_REQUIRED (0)
     client_stream.write_all(&[0x05, 0x00]).await?;
 
-    // Read connection request: VER=5, CMD=CONNECT, RSV=0, ATYP=1 (IPv4)
+    // 读取连接请求：VER=5, CMD=CONNECT, RSV=0, ATYP=1 (IPv4)
     let n = client_stream.read(&mut buf).await?;
     if n < 10 || buf[0] != 0x05 || buf[1] != 0x01 {
-        // Unsupported: reply with COMMAND_NOT_SUPPORTED
+        // 不支持：回复 COMMAND_NOT_SUPPORTED
         client_stream.write_all(&[0x05, 0x07, 0x00, 0x01]).await?;
         return Ok(());
     }
 
-    // Parse target address (ATYP=1 is IPv4, ATYP=3 is domain name)
+    // 解析目标地址（ATYP=1 是 IPv4，ATYP=3 是域名）
     let (target_host, target_port) = match buf[3] {
         0x01 => {
             // IPv4
@@ -353,7 +353,7 @@ async fn proxy_socks5(
             (ip.to_string(), port)
         }
         0x03 => {
-            // Domain name
+            // 域名
             let len = buf[4] as usize;
             if n < 5 + len + 2 {
                 return Ok(());
@@ -363,7 +363,7 @@ async fn proxy_socks5(
             (domain, port)
         }
         0x04 => {
-            // IPv6 - not supported in direct-tcpip easily, reject
+            // IPv6 - 在 direct-tcpip 中不容易支持，拒绝
             client_stream.write_all(&[0x05, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).await?;
             return Ok(());
         }
@@ -373,7 +373,7 @@ async fn proxy_socks5(
         }
     };
 
-    // Open SSH channel to the target
+    // 打开到目标的 SSH 通道
     let channel = {
         let h = handle.lock().await;
         h.channel_open_direct_tcpip(&target_host, target_port as u32, "127.0.0.1", target_port as u32)
@@ -381,10 +381,10 @@ async fn proxy_socks5(
             .context("Failed to open SSH channel for SOCKS5")?
     };
 
-    // Reply: VER=5, REP=SUCCESS, RSV=0, ATYP=1 (IPv4), BIND=0.0.0.0:0
+    // 回复：VER=5, REP=SUCCESS, RSV=0, ATYP=1 (IPv4), BIND=0.0.0.0:0
     client_stream.write_all(&[0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]).await?;
 
-    // Use russh channel's data event loop for bidirectional copy
+    // 使用 russh 通道的数据事件循环进行双向复制
     let mut buf = [0u8; 8192];
     let mut channel = channel;
 
@@ -455,7 +455,7 @@ impl Session for SshSession {
             .await
             .context("Failed to connect to SSH server")?;
 
-        // Authenticate
+        // 认证
         let auth_result = match &self.auth {
             SshAuthType::None => {
                 session
@@ -482,14 +482,14 @@ impl Session for SshSession {
                     .context("SSH publickey authentication failed")?
             }
             SshAuthType::Agent => {
-                // SSH Agent authentication via russh's agent client.
-                // russh's PrivateKeyWithHashAlg requires a PrivateKey, but agent
-                // only exposes public keys + signing. We use the russh
-                // session's authenticate_future method with an agent signer.
+                // 通过 russh 的 agent 客户端进行 SSH Agent 认证。
+                // russh 的 PrivateKeyWithHashAlg 需要 PrivateKey，但 agent
+                // 只暴露公钥 + 签名。我们使用带 agent 签名器的
+                // russh session 的 authenticate_future 方法。
                 //
-                // For now, fall back to loading the default SSH key from
-                // ~/.ssh/id_rsa or ~/.ssh/id_ed25519 and authenticating with it.
-                // Full agent protocol support will be added in a future iteration.
+                // 目前，回退到从
+                // ~/.ssh/id_rsa 或 ~/.ssh/id_ed25519 加载默认 SSH 密钥并使用它进行认证。
+                // 完整的 agent 协议支持将在未来的迭代中添加。
                 let home = dirs::home_dir().context("Cannot determine home directory")?;
                 let ssh_dir = home.join(".ssh");
 
@@ -530,7 +530,7 @@ impl Session for SshSession {
                 russh::client::AuthResult::Success
             }
             SshAuthType::PromptPassword => {
-                // Interactive password prompt — read from stdin
+                // 交互式密码提示 — 从 stdin 读取
                 eprint!("Password for {}@{}: ", self.user, self.host);
                 let password = rpassword::read_password()
                     .context("Failed to read password from terminal")?;
@@ -545,7 +545,7 @@ impl Session for SshSession {
             anyhow::bail!("SSH authentication rejected");
         }
 
-        // Open a shell channel
+        // 打开一个 shell 通道
         let channel = session
             .channel_open_session()
             .await
@@ -556,20 +556,20 @@ impl Session for SshSession {
             .await
             .context("Failed to request shell")?;
 
-        // Request agent forwarding if configured
+        // 如果配置了则请求 agent 转发
         if self.agent_forward {
-            // Agent forwarding is requested via the channel's extended mechanism.
-            // The russh library handles this internally when the handler supports it.
+            // Agent 转发通过通道的扩展机制请求。
+            // 当处理程序支持时，russh 库会在内部处理。
             log::info!("SSH agent forwarding requested");
         }
 
-        // Split the channel: keep the write half, move the read half to a spawned task
+        // 分割通道：保留写半部分，将读半部分移动到生成的任务
         let (read_half, write_half) = channel.split();
         self.channel_write = Some(Arc::new(Mutex::new(write_half)));
         self.handle = Some(Arc::new(Mutex::new(session)));
         self.open = true;
 
-        // Spawn task to read channel output
+        // 生成任务以读取通道输出
         let tx = self.output_tx.clone();
         tokio::spawn(async move {
             let mut read = read_half;
@@ -581,7 +581,7 @@ impl Session for SshSession {
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, ext }) => {
-                        // ext=1 is stderr
+                        // ext=1 是 stderr
                         if ext == 1 {
                             log::debug!("SSH stderr: {} bytes", data.len());
                             if tx.send(data.to_vec()).is_err() {

@@ -2,8 +2,7 @@ use bytes::Bytes;
 
 use crate::middleware::SessionMiddleware;
 
-/// Middleware that sends login scripts once when the session first receives output
-/// from the terminal (i.e., the user types something for the first time).
+/// 中间件,在会话首次从终端接收输出时(即用户首次输入内容时)发送一次登录脚本。
 pub struct LoginScriptMiddleware {
     scripts: Vec<String>,
     sent: bool,
@@ -20,20 +19,19 @@ impl LoginScriptMiddleware {
 
 impl SessionMiddleware for LoginScriptMiddleware {
     fn process_output_to_terminal(&mut self, data: &[u8]) -> Bytes {
-        // Data from session to terminal passes through unchanged.
+        // 从会话到终端的数据原样传递。
         Bytes::copy_from_slice(data)
     }
 
     fn process_output_to_session(&mut self, data: &[u8]) -> Bytes {
         if self.sent {
-            // Already sent login scripts; pass through unchanged.
+            // 已发送登录脚本;原样传递。
             return Bytes::copy_from_slice(data);
         }
 
         self.sent = true;
 
-        // Build the combined output: each script followed by "\r\n", then the
-        // original user data.
+        // 构建组合输出:每个脚本后跟 "\r\n",然后是原始用户数据。
         let mut out = Vec::new();
         for script in &self.scripts {
             out.extend_from_slice(script.as_bytes());

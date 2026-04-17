@@ -1,7 +1,7 @@
-//! Surface - single terminal instance
+//! Surface - 单个终端实例
 //!
-//! Based on Ghostty's Surface.zig: the core terminal surface that wraps
-//! a terminal instance with renderer, input handling, and UI state.
+//! 基于 Ghostty 的 Surface.zig：核心终端 surface，包装了
+//! 带渲染器、输入处理和 UI 状态的终端实例。
 
 use std::time::Instant;
 
@@ -12,54 +12,54 @@ use pureterm_terminal::term::Terminal;
 
 use crate::app::AppMessage;
 
-/// Unique identifier for a surface
+/// Surface 的唯一标识符
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SurfaceId(pub u64);
 
-/// Surface - a single terminal instance
+/// Surface - 单个终端实例
 pub struct Surface {
-    /// Unique identifier
+    /// 唯一标识符
     pub id: SurfaceId,
-    /// Terminal state
+    /// 终端状态
     pub terminal: Terminal,
-    /// Current size in cells
+    /// 当前大小（单元格）
     pub size: SurfaceSize,
-    /// Mouse state
+    /// 鼠标状态
     pub mouse: SurfaceMouse,
-    /// Keyboard state
+    /// 键盘状态
     pub keyboard: KeyboardState,
-    /// Font size for this surface
+    /// 此 surface 的字体大小
     pub font_size: f32,
-    /// Whether this surface is focused
+    /// 此 surface 是否被聚焦
     pub focused: bool,
-    /// Whether this surface is read-only
+    /// 此 surface 是否为只读
     pub readonly: bool,
-    /// Whether the child process has exited
+    /// 子进程是否已退出
     pub child_exited: bool,
-    /// Whether selection scroll is active
+    /// 选择滚动是否处于活动状态
     pub selection_scroll_active: bool,
-    /// Mouse encoding mode
+    /// 鼠标编码模式
     pub mouse_encoding: MouseEncoding,
-    /// Last render time
+    /// 上次渲染时间
     pub last_render: Instant,
-    /// Pending actions to dispatch
+    /// 待分发的动作
     pub pending_actions: Vec<Action>,
 }
 
-/// Surface size in cells and pixels
+/// Surface 大小（单元格和像素）
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SurfaceSize {
-    /// Width in cells
+    /// 宽度（单元格）
     pub cols: usize,
-    /// Height in cells
+    /// 高度（单元格）
     pub rows: usize,
-    /// Width in pixels
+    /// 宽度（像素）
     pub pixel_width: u32,
-    /// Height in pixels
+    /// 高度（像素）
     pub pixel_height: u32,
-    /// Cell width in pixels
+    /// 单元格宽度（像素）
     pub cell_width: u32,
-    /// Cell height in pixels
+    /// 单元格高度（像素）
     pub cell_height: u32,
 }
 
@@ -79,7 +79,7 @@ impl SurfaceSize {
 }
 
 impl Surface {
-    /// Create a new surface with the given terminal
+    /// 使用给定终端创建新 surface
     pub fn new(id: SurfaceId, terminal: Terminal, size: SurfaceSize) -> Self {
         Self {
             id,
@@ -98,22 +98,22 @@ impl Surface {
         }
     }
 
-    /// Process a key event
+    /// 处理按键事件
     pub fn key_callback(&mut self, event: KeyEvent) {
-        // If read-only, don't forward input
+        // 如果是只读，不转发输入
         if self.readonly {
             return;
         }
 
-        // Record pressed key for tracking
+        // 记录按下的键以进行跟踪
         self.keyboard.pressed_key = Some(event.key);
         self.keyboard.last_binding_trigger = Instant::now();
 
-        // Process through terminal input system
-        // The terminal will encode and write the key
+        // 通过终端输入系统处理
+        // 终端将编码并写入键
     }
 
-    /// Process a mouse button event
+    /// 处理鼠标按钮事件
     pub fn mouse_button_callback(
         &mut self,
         button: MouseButton,
@@ -130,27 +130,27 @@ impl Surface {
             mods,
         };
 
-        // Update mouse state
+        // 更新鼠标状态
         self.mouse.last_row = row;
         self.mouse.last_col = col;
         self.mouse.last_button = Some(button);
 
-        // Handle selection based on click
+        // 根据点击处理选择
         match event_type {
             MouseEventType::Press => {
                 match button {
                     MouseButton::Left => {
                         if mods.shift() {
-                            // Extend selection
+                            // 扩展选择
                         } else {
-                            // Start new selection or clear
+                            // 开始新选择或清除
                         }
                     }
                     MouseButton::Middle => {
-                        // Paste selection
+                        // 粘贴选择
                     }
                     MouseButton::Right => {
-                        // Context menu or extend selection
+                        // 上下文菜单或扩展选择
                     }
                     _ => {}
                 }
@@ -162,7 +162,7 @@ impl Surface {
         }
     }
 
-    /// Process mouse movement
+    /// 处理鼠标移动
     pub fn cursor_pos_callback(&mut self, row: usize, col: usize, mods: Mods) {
         let prev_row = self.mouse.last_row;
         let prev_col = self.mouse.last_col;
@@ -170,24 +170,24 @@ impl Surface {
         self.mouse.last_row = row;
         self.mouse.last_col = col;
 
-        // Update cursor shape based on position
+        // 根据位置更新光标形状
         self.mouse.update_cursor_shape(mods);
 
-        // If dragging, extend selection
+        // 如果正在拖拽，扩展选择
         if self.mouse.dragging {
             // Extend selection to new position
-            let _ = (prev_row, prev_col); // Track selection
+            let _ = (prev_row, prev_col); // 跟踪选择
         }
     }
 
-    /// Process scroll event
+    /// 处理滚动事件
     pub fn scroll_callback(&mut self, delta_rows: f64, mods: Mods) {
-        // Handle scroll with modifiers
+        // 使用修饰符处理滚动
         if !mods.is_empty() {
-            // Shift+scroll = horizontal scroll, etc.
+            // Shift+滚动 = 水平滚动等
         }
 
-        // Scroll terminal
+        // 滚动终端
         let scroll_amount = (delta_rows.abs() as usize).max(1) * 3;
         if delta_rows > 0.0 {
             self.terminal.scroll_up(scroll_amount);
@@ -196,42 +196,42 @@ impl Surface {
         }
     }
 
-    /// Process focus change
+    /// 处理焦点更改
     pub fn focus_callback(&mut self, focused: bool) {
         self.focused = focused;
     }
 
-    /// Process size change
+    /// 处理大小更改
     pub fn size_callback(&mut self, new_size: SurfaceSize) {
         self.size = new_size;
         self.terminal.resize(new_size.cols, new_size.rows);
     }
 
-    /// Process DPI/content scale change
+    /// 处理 DPI/内容比例更改
     pub fn content_scale_callback(&mut self, scale: f32) {
-        // Adjust rendering for new DPI
+        // 为新 DPI 调整渲染
         let _ = scale;
     }
 
-    /// Get the current mouse cursor shape
+    /// 获取当前鼠标光标形状
     pub fn cursor_shape(&self) -> CursorShape {
         self.mouse.cursor_shape
     }
 
-    /// Take all pending actions
+    /// 获取所有待处理的动作
     pub fn take_actions(&mut self) -> Vec<Action> {
         std::mem::take(&mut self.pending_actions)
     }
 
-    /// Dispatch an action from this surface
+    /// 从此 surface 分发动作
     pub fn perform_action(&mut self, action: Action) {
         match action.target() {
             ActionTarget::Surface => {
-                // Handle surface-level actions directly
+                // 直接处理 surface 级动作
                 self.handle_surface_action(action);
             }
             ActionTarget::App => {
-                // Queue for app to handle
+                // 排队让应用处理
                 self.pending_actions.push(action);
             }
         }
@@ -246,16 +246,16 @@ impl Surface {
                 self.font_size = 13.0;
             }
             Action::CopySelection => {
-                // Copy selection to clipboard
+                // 复制选择到剪贴板
             }
             Action::PasteClipboard => {
-                // Paste from clipboard
+                // 从剪贴板粘贴
             }
             Action::ScrollToBottom => {
                 self.terminal.scroll_to_bottom();
             }
             Action::ScrollToTop => {
-                // Scroll to top of scrollback
+                // 滚动到回滚顶部
             }
             Action::ToggleFullscreen => {
                 self.pending_actions.push(Action::ToggleFullscreen);
@@ -265,33 +265,33 @@ impl Surface {
     }
 }
 
-// ── Mouse State ────────────────────────────────────────────────────────────────
+// ── 鼠标状态 ────────────────────────────────────────────────────────────────
 
-/// Mouse cursor shape
+/// 鼠标光标形状
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum CursorShape {
     #[default]
-    Text,     // I-beam
-    Default,  // Arrow
-    Pointer,  // Hand
+    Text,     // I 形
+    Default,  // 箭头
+    Pointer,  // 手形
     Crosshair,
     Hidden,
 }
 
-/// Mouse state for a surface
+/// surface 的鼠标状态
 #[derive(Debug)]
 pub struct SurfaceMouse {
-    /// Last known row position
+    /// 上次已知的行位置
     pub last_row: usize,
-    /// Last known column position
+    /// 上次已知的列位置
     pub last_col: usize,
-    /// Currently pressed button
+    /// 当前按下的按钮
     pub last_button: Option<MouseButton>,
-    /// Whether we're in a drag operation
+    /// 我们是否处于拖拽操作中
     pub dragging: bool,
-    /// Current cursor shape
+    /// 当前光标形状
     pub cursor_shape: CursorShape,
-    /// Motion deduplication state
+    /// 运动去重状态
     pub motion_dedup: pureterm_terminal::input::mouse::MouseMotionDedup,
 }
 
@@ -309,16 +309,16 @@ impl Default for SurfaceMouse {
 }
 
 impl SurfaceMouse {
-    /// Update cursor shape based on modifier state (state machine)
+    /// 根据修饰符状态更新光标形状（状态机）
     pub fn update_cursor_shape(&mut self, mods: Mods) {
-        // Cursor shape state machine (from Ghostty surface_mouse.zig):
-        // Default: text (I-beam)
-        // + Ctrl: default (arrow)
+        // 光标形状状态机（来自 Ghostty surface_mouse.zig）：
+        // 默认：text（I 形）
+        // + Ctrl: default（箭头）
         // + Super: default
-        // On link: pointer
-        // During rectangle selection: crosshair
-        // In mouse mode: default (don't change)
-        // When hidden: don't show
+        // 在链接上：pointer
+        // 矩形选择期间：crosshair
+        // 鼠标模式：default（不改变）
+        // 隐藏时：不显示
         if self.cursor_shape == CursorShape::Hidden {
             return;
         }
@@ -328,24 +328,24 @@ impl SurfaceMouse {
         } else if self.dragging {
             self.cursor_shape = CursorShape::Crosshair;
         } else {
-            // Check if on a link (would need terminal state)
+            // 检查是否在链接上（需要终端状态）
             self.cursor_shape = CursorShape::Text;
         }
     }
 }
 
-// ── Keyboard State ─────────────────────────────────────────────────────────────
+// ── 键盘状态 ─────────────────────────────────────────────────────────────
 
-/// Keyboard state for a surface
+/// surface 的键盘状态
 #[derive(Debug)]
 pub struct KeyboardState {
-    /// Currently pressed key
+    /// 当前按下的键
     pub pressed_key: Option<Key>,
-    /// Time of last binding trigger
+    /// 上次绑定触发的时间
     pub last_binding_trigger: Instant,
-    /// Whether IME preedit is active
+    /// IME 预输入是否处于活动状态
     pub preedit_active: bool,
-    /// Preedit text
+    /// 预输入文本
     pub preedit_text: String,
 }
 
@@ -360,12 +360,12 @@ impl Default for KeyboardState {
     }
 }
 
-// ── Action System ──────────────────────────────────────────────────────────────
+// ── 动作系统 ──────────────────────────────────────────────────────────────
 
-/// Actions that can be dispatched in the app
+/// 可以在应用中分发的动作
 #[derive(Debug, Clone)]
 pub enum Action {
-    // Window management
+    // 窗口管理
     Quit,
     NewWindow,
     NewTab,
@@ -375,47 +375,47 @@ pub enum Action {
     ToggleMaximize,
     ToggleQuickTerminal,
 
-    // Tab management
+    // 标签页管理
     MoveTab(isize),
     GotoTab(usize),
 
-    // Split management
+    // 分割管理
     ResizeSplit(SplitResizeParameter),
     EqualizeSplits,
     MoveFocus(SplitDirection),
 
-    // Font
+    // 字体
     FontSizeDelta(f32),
     FontSizeReset,
 
-    // Clipboard
+    // 剪贴板
     CopySelection,
     PasteClipboard,
 
-    // Scroll
+    // 滚动
     ScrollToBottom,
     ScrollToTop,
     ScrollPageUp,
     ScrollPageDown,
 
-    // View
+    // 视图
     ToggleInspector,
     ToggleSearch,
 
-    // Terminal
+    // 终端
     ResetTerminal,
     ClearScrollback,
 
-    // Config
+    // 配置
     ReloadConfig,
 }
 
-/// Target for an action
+/// 动作的目标
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ActionTarget {
-    /// Action targets the app (window management, tabs, etc.)
+    /// 动作目标是应用（窗口管理、标签页等）
     App,
-    /// Action targets the current surface (font, clipboard, etc.)
+    /// 动作目标是当前 surface（字体、剪贴板等）
     Surface,
 }
 
@@ -453,7 +453,7 @@ impl Action {
     }
 }
 
-/// Direction for split creation and focus movement
+/// 分割创建和焦点移动的方向
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitDirection {
     Left,
@@ -462,16 +462,16 @@ pub enum SplitDirection {
     Bottom,
 }
 
-/// Parameters for split resize
+/// 分割调整大小的参数
 #[derive(Debug, Clone, Copy)]
 pub struct SplitResizeParameter {
     pub direction: SplitDirection,
     pub amount: usize,
 }
 
-// ── App-Level Action Handler ───────────────────────────────────────────────────
+// ── 应用级动作处理器 ───────────────────────────────────────────────────
 
-/// Handle app-level actions
+/// 处理应用级动作
 pub fn handle_app_action(
     action: Action,
     app_mailbox: &mut Vec<AppMessage>,
@@ -526,7 +526,7 @@ pub fn handle_app_action(
             app_mailbox.push(AppMessage::ToggleSearch);
         }
         _ => {
-            // Surface-level actions are not handled here
+            // surface 级动作不在这里处理
         }
     }
 }

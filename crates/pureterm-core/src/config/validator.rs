@@ -1,10 +1,10 @@
-//! Configuration validator
+//! 配置验证器
 //!
-//! Validates config values and provides helpful error messages.
+//! 验证配置值并提供有用的错误消息。
 
 use super::Config;
 
-/// Configuration validation result
+/// 配置验证结果
 #[derive(Debug)]
 pub struct ValidationResult {
     pub errors: Vec<ValidationError>,
@@ -47,30 +47,30 @@ pub struct ValidationWarning {
     pub message: String,
 }
 
-/// Validate a complete configuration
+/// 验证完整配置
 pub struct ConfigValidator;
 
 impl ConfigValidator {
-    /// Validate the entire config
+    /// 验证整个配置
     pub fn validate(config: &Config) -> ValidationResult {
         let mut result = ValidationResult::new();
 
-        // Validate fonts
+        // 验证字体
         result.merge(Self::validate_fonts(config));
 
-        // Validate colors
+        // 验证颜色
         result.merge(Self::validate_colors(config));
 
-        // Validate window settings
+        // 验证窗口设置
         result.merge(Self::validate_window(config));
 
-        // Validate mouse/clipboard
+        // 验证鼠标/剪贴板
         result.merge(Self::validate_input(config));
 
-        // Validate shell/command
+        // 验证 shell/命令
         result.merge(Self::validate_command(config));
 
-        // Validate platform-specific
+        // 验证平台特定设置
         result.merge(Self::validate_platform(config));
 
         result
@@ -237,7 +237,7 @@ impl ConfigValidator {
         #[cfg(not(target_os = "macos"))]
         {
             if !config.macos_non_native_fullscreen {
-                // macOS-specific options on non-macOS platform
+                // 非 macOS 平台上的 macOS 特定选项
             }
         }
 
