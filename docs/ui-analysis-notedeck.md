@@ -2,7 +2,7 @@
 
 ## Context
 
-用户喜欢 notedeck 的美术风格，想知道该项目使用了什么 UI 组件，以及这些组件是否可用于 PureTerm。
+用户喜欢 notedeck(本地路径 /Users/demon/Code/notedeck-master) 的美术风格，想知道该项目使用了什么 UI 组件，以及这些组件是否可用于 PureTerm。
 
 ---
 

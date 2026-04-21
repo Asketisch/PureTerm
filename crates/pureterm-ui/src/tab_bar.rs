@@ -13,6 +13,24 @@ pub struct TabBarState {
     pub new_tab_rect: ViewportRect,
     /// Tab bar height in pixels.
     pub height: f32,
+    /// Whether tab bar state has changed and needs re-rendering.
+    pub tab_bar_dirty: bool,
+    /// Index of the tab whose close button is being hovered.
+    pub hovered_close_tab_index: Option<usize>,
+    /// DPI scale factor (physical pixels per logical point).
+    pub scale: f32,
+    /// Scaled tab bar height (physical pixels).
+    pub bar_h: f32,
+    /// Scaled tab item height (physical pixels).
+    pub item_h: f32,
+    /// Scaled tab item y offset (physical pixels).
+    pub item_y: f32,
+    /// Scaled close button width (physical pixels).
+    pub close_btn_w: f32,
+    /// Scaled new tab button width (physical pixels).
+    pub new_btn_w: f32,
+    /// Scaled horizontal padding (physical pixels).
+    pub padding_h: f32,
 }
 
 impl TabBarState {
@@ -24,6 +42,15 @@ impl TabBarState {
             tab_layouts: Vec::new(),
             new_tab_rect: ViewportRect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 },
             height: TAB_BAR_HEIGHT,
+            tab_bar_dirty: false,
+            hovered_close_tab_index: None,
+            scale: 1.0,
+            bar_h: TAB_BAR_HEIGHT,
+            item_h: TAB_ITEM_HEIGHT,
+            item_y: TAB_ITEM_Y,
+            close_btn_w: TAB_CLOSE_BTN_WIDTH,
+            new_btn_w: TAB_NEW_BTN_WIDTH,
+            padding_h: TAB_PADDING_H,
         }
     }
 }
@@ -68,17 +95,20 @@ impl ViewportRect {
 /// Tab bar height accommodates macOS titlebar area (~28pt, ~38pt with notch)
 /// plus padding for tab text and close button below.
 pub const TAB_BAR_HEIGHT: f32 = 44.0;
+/// Tab item height matches macOS traffic light buttons (28pt).
+pub const TAB_ITEM_HEIGHT: f32 = 28.0;
+/// Vertical offset to center tab items within the tab bar.
+pub const TAB_ITEM_Y: f32 = (TAB_BAR_HEIGHT - TAB_ITEM_HEIGHT) / 2.0;
 pub const TAB_PADDING_H: f32 = 12.0;
-pub const TAB_CLOSE_BTN_WIDTH: f32 = 20.0;
-pub const TAB_NEW_BTN_WIDTH: f32 = 28.0;
-pub const TAB_MIN_WIDTH: f32 = 100.0;
-pub const TAB_MAX_WIDTH: f32 = 250.0;
+pub const TAB_CLOSE_BTN_WIDTH: f32 = 28.0;
+pub const TAB_NEW_BTN_WIDTH: f32 = 36.0;
 pub const TAB_BAR_BORDER_SIZE: f32 = 1.0;
 
 /// Width reserved for macOS traffic light buttons on the left side of the tab bar.
-/// 3 buttons × 12px + 2 gaps × 8px + 7px left margin ≈ 56px
+/// Matches Ghostty's window buttons backdrop width, accounting for actual macOS
+/// traffic light area including left margin, three buttons, gaps, and right padding.
 #[cfg(target_os = "macos")]
-pub const TRAFFIC_LIGHT_WIDTH: f32 = 56.0;
+pub const TRAFFIC_LIGHT_WIDTH: f32 = 92.0;
 
 #[cfg(not(target_os = "macos"))]
 pub const TRAFFIC_LIGHT_WIDTH: f32 = 0.0;

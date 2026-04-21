@@ -1,7 +1,8 @@
 use fontdue::Font;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use crate::font_fallback::FontFallback;
 use crate::sprite::{is_block_element, is_box_drawing, is_braille, is_powerline, draw_block_element, draw_box_drawing, draw_braille, draw_powerline, SpriteMetrics};
 
 // ── Embedded Fonts ─────────────────────────────────────────────────────────
@@ -132,6 +133,10 @@ pub struct GlyphAtlas {
     max_atlas_height: u32,
     /// Whether new glyphs have been rasterized since last upload.
     dirty: bool,
+    /// Font fallback resolver for unsupported characters (CJK, emoji, etc.)
+    font_fallback: FontFallback,
+    /// Cache for loaded fallback font instances (path -> Font)
+    fallback_fonts: HashMap<PathBuf, Font>,
 }
 
 impl GlyphAtlas {
@@ -154,6 +159,8 @@ impl GlyphAtlas {
             ligature_enabled: true,
             max_atlas_height: 8192,
             dirty: true,
+            font_fallback: FontFallback::new(),
+            fallback_fonts: HashMap::new(),
         }
     }
 
@@ -660,10 +667,9 @@ except:
         let height = metrics.height as u16;
 
         // Skip zero-dimension glyphs (font doesn't support this character)
+        // Try fallback fonts for unsupported characters (CJK, emoji, etc.)
         if width == 0 || height == 0 {
-            log::debug!("Glyph for '{}' (U+{:04X}) has zero dimensions ({}x{}), skipping",
-                c, c as u32, width, height);
-            return None;
+            return self.get_fallback_glyph(font_index, c);
         }
 
         // Allocate space in the atlas using skyline bin packing
@@ -701,6 +707,68 @@ except:
         };
 
         self.cache.insert(key, info);
+        self.cache.get(&key)
+    }
+
+    /// Get or rasterize a glyph using fallback fonts when the primary font doesn't support the character.
+    fn get_fallback_glyph(&mut self, font_index: usize, c: char) -> Option<&GlyphInfo> {
+        let key = (font_index, c);
+
+        // Try to find a fallback font that supports this character
+        let fallback = self.font_fallback.find(c)?;
+
+        // Get or create font instance for this fallback font
+        let font = self.fallback_fonts.entry(fallback.path.clone())
+            .or_insert_with(|| {
+                Font::from_bytes(fallback.data.as_slice(), fontdue::FontSettings::default())
+                    .expect("Failed to load fallback font")
+            });
+
+        let (metrics, bitmap) = font.rasterize(c, self.font_size);
+        let width = metrics.width as u16;
+        let height = metrics.height as u16;
+
+        if width == 0 || height == 0 {
+            log::debug!("Fallback font also doesn't support '{}' (U+{:04X})", c, c as u32);
+            return None;
+        }
+
+        // Allocate space in the atlas using skyline bin packing
+        let (ax, ay) = match self.allocate_rect(width as u32, height as u32) {
+            Some(pos) => pos,
+            None => {
+                log::warn!("Glyph atlas full, cannot cache fallback glyphs");
+                return None;
+            }
+        };
+
+        // Write the glyph to the atlas
+        let start_x = ax as usize;
+        let start_y = ay as usize;
+        for (gy, row) in bitmap.chunks(width as usize).enumerate() {
+            for (gx, &val) in row.iter().enumerate() {
+                let px = start_x + gx;
+                let py = start_y + gy;
+                if px < self.atlas_width as usize && py < self.atlas_height as usize {
+                    self.atlas_data[py * self.atlas_width as usize + px] = val;
+                }
+            }
+        }
+
+        let info = GlyphInfo {
+            x: ax,
+            y: ay,
+            width,
+            height,
+            x_offset: metrics.xmin as f32,
+            y_offset: metrics.ymin as f32,
+            advance: metrics.advance_width,
+            is_ligature: false,
+            ligature_len: 1,
+        };
+
+        self.cache.insert(key, info);
+        self.dirty = true;
         self.cache.get(&key)
     }
 

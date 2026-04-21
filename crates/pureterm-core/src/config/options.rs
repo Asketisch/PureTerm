@@ -420,7 +420,7 @@ pub(crate) fn default_font_family_bold_italic() -> RepeatableString {
 }
 
 pub(crate) fn default_font_size() -> f32 {
-    13.0
+    if cfg!(target_os = "macos") { 13.0 } else { 12.0 }
 }
 
 pub(crate) fn default_font_synthetic_style() -> SyntheticStyle {

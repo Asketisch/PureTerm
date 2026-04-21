@@ -14,6 +14,27 @@ use pureterm_core::config::GlassEffectStyle;
 #[cfg(target_os = "macos")]
 use objc2::class;
 
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct CGColor {
+    _private: [u8; 0],
+}
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CGColorSpaceCreateDeviceGray() -> *mut core::ffi::c_void;
+    fn CGColorCreate(
+        space: *mut core::ffi::c_void,
+        components: *const f64,
+    ) -> *mut CGColor;
+    fn CFRelease(cf: *mut core::ffi::c_void);
+}
+
+#[cfg(target_os = "macos")]
+type CGFloat = f64;
+
 /// 获取 NSWindow 指针。
 #[cfg(target_os = "macos")]
 fn get_ns_window(window: &winit::window::Window) -> Option<*mut objc2::runtime::AnyObject> {
@@ -149,9 +170,16 @@ fn create_traffic_light_background(ns_window: *mut objc2::runtime::AnyObject) {
         // 使用 CALayer 设置半透明背景色
         let layer: *mut AnyObject = objc2::msg_send![bg_view, layer];
         if !layer.is_null() {
-            // 创建半透明灰色背景
-            let bg_color: *mut AnyObject = objc2::msg_send![class!(NSColor), colorWithWhite:0.2 alpha:0.85];
-            let _: () = objc2::msg_send![layer, setBackgroundColor: bg_color];
+            // 创建半透明灰色背景 — 直接使用 CoreGraphics 创建 CGColor，
+            // 避免 NSColor 的 tagged pointer 在 objc2 debug 模式下类型编码不匹配
+            {
+                let color_space = unsafe { CGColorSpaceCreateDeviceGray() };
+                let components: [CGFloat; 2] = [0.2, 0.85]; // gray, alpha
+                let cg_color = unsafe { CGColorCreate(color_space, components.as_ptr()) };
+                unsafe { CFRelease(color_space as *mut core::ffi::c_void) };
+                let _: () = objc2::msg_send![layer, setBackgroundColor: cg_color];
+                unsafe { CFRelease(cg_color as *mut core::ffi::c_void) };
+            }
         }
 
         // 添加到 contentView（层级在按钮下方）
@@ -188,6 +216,36 @@ pub fn apply_platform_styling(
 pub fn reposition_traffic_lights_on_resize(window: &winit::window::Window) {
     // 不需要重新定位，macOS 自动管理红绿灯按钮位置
     let _ = window;
+}
+
+/// 获取红绿灯按钮区域实际占用的宽度（像素，已乘 scale factor）。
+/// 通过查询三个标准窗口按钮的 frame 来计算。
+#[cfg(target_os = "macos")]
+pub fn traffic_light_width(window: &winit::window::Window) -> f32 {
+    use objc2_foundation::NSRect;
+
+    if let Some(ns_window) = get_ns_window(window) {
+        unsafe {
+            let mut max_right: f64 = 0.0;
+            for btn_type in [0u64, 1u64, 2u64] {
+                let btn: *mut objc2::runtime::AnyObject = objc2::msg_send![ns_window, standardWindowButton: btn_type];
+                if btn.is_null() { continue; }
+                let frame: NSRect = objc2::msg_send![btn, frame];
+                let right = frame.origin.x + frame.size.width;
+                if right > max_right {
+                    max_right = right;
+                }
+            }
+            // 加上右侧安全间距（约 20pt）
+            let width_pt = max_right + 20.0;
+            let scale = window.scale_factor();
+            (width_pt * scale) as f32
+        }
+    } else {
+        // fallback
+        let scale = window.scale_factor();
+        (92.0 * scale) as f32
+    }
 }
 
 impl PlatformWindowExt for winit::window::Window {

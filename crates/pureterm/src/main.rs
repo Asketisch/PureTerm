@@ -30,7 +30,7 @@ use quake_mode::QuakeMode;
 use pureterm_ui::split::{SplitContainer, Direction, SplitSide, PaneRect, DividerInfo,
     compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point};
 use pureterm_ui::tabs::{TabContent, SplitRef};
-use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_MIN_WIDTH, TAB_PADDING_H, TAB_CLOSE_BTN_WIDTH, TAB_NEW_BTN_WIDTH, TRAFFIC_LIGHT_WIDTH};
+use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_ITEM_HEIGHT, TAB_ITEM_Y, TAB_PADDING_H, TAB_CLOSE_BTN_WIDTH, TAB_NEW_BTN_WIDTH};
 use pureterm_ui::terminal::pane::{TerminalPane, PaneAction, Selection};
 use pureterm_ui::WelcomePage;
 use pureterm_terminal::screen::selection::{TerminalMouseEvent, MouseButton, MouseModifiers};
@@ -81,10 +81,14 @@ struct PureTermApp {
     quake_mode: QuakeMode,
     /// 标签栏状态。
     tab_bar: TabBarState,
+    /// 运行时计算的红绿灯区域宽度（物理像素）。
+    traffic_light_w: f32,
     /// 用于处理调整大小的外观配置。
     appearance: pureterm_core::config::AppearanceConfig,
     /// 用于从后台线程唤醒事件循环的事件循环代理。
     proxy: winit::event_loop::EventLoopProxy<()>,
+    /// 持久化的主题服务，加载了用户主题
+    theme_service: pureterm_core::theme::ThemeService,
 }
 
 /// 标签页标题重命名模态框的状态。
@@ -193,7 +197,7 @@ impl PureTermApp {
 
     /// 计算当前布局（面板矩形）。
     fn compute_layout(&self, screen_w: f32, screen_h: f32) -> Vec<(u64, PaneRect)> {
-        let tab_bar_offset_y = if self.show_tab_bar() { TAB_BAR_HEIGHT } else { 0.0 };
+        let tab_bar_offset_y = if self.show_tab_bar() { self.tab_bar.height } else { 0.0 };
         if let Some(ref root) = self.split_root {
             compute_pane_rects(root, 0.0, tab_bar_offset_y, screen_w, screen_h - tab_bar_offset_y)
         } else {
@@ -218,6 +222,7 @@ impl PureTermApp {
     fn update_tab_bar_layout(&mut self) {
         let (screen_w, _screen_h) = self.screen_size();
         let show = self.show_tab_bar();
+        let scale = self.window.as_ref().map(|w| w.scale_factor() as f32).unwrap_or(1.0);
 
         self.tab_bar.visible = show;
 
@@ -227,19 +232,33 @@ impl PureTermApp {
             return;
         }
 
-        let tabs = self.app.as_ref().map(|a| a.tab_manager.tabs()).unwrap_or(&[]);
-        let _active_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
+        // 缓存 scaled 常量到 TabBarState，供渲染和布局使用
+        let bar_h = TAB_BAR_HEIGHT * scale;
+        let item_h = TAB_ITEM_HEIGHT * scale;
+        let item_y = (bar_h - item_h) / 2.0;
+        let new_btn_w = TAB_NEW_BTN_WIDTH * scale;
+        let close_btn_w = TAB_CLOSE_BTN_WIDTH * scale;
+        let padding_h = TAB_PADDING_H * scale;
 
-        self.tab_bar.height = TAB_BAR_HEIGHT;
+        self.tab_bar.scale = scale;
+        self.tab_bar.height = bar_h;
+        self.tab_bar.bar_h = bar_h;
+        self.tab_bar.item_h = item_h;
+        self.tab_bar.item_y = item_y;
+        self.tab_bar.close_btn_w = close_btn_w;
+        self.tab_bar.new_btn_w = new_btn_w;
+        self.tab_bar.padding_h = padding_h;
+
+        let tabs = self.app.as_ref().map(|a| a.tab_manager.tabs()).unwrap_or(&[]);
         self.tab_bar.tab_layouts.clear();
 
-        // "+" 新标签按钮位于标签栏右端
-        let new_tab_x = screen_w - TAB_NEW_BTN_WIDTH;
+        // "+" 新标签按钮位于标签栏右端，高度与标签项一致
+        let new_tab_x = screen_w - new_btn_w;
         self.tab_bar.new_tab_rect = TabViewportRect {
             x: new_tab_x,
-            y: 0.0,
-            w: TAB_NEW_BTN_WIDTH,
-            h: TAB_BAR_HEIGHT,
+            y: item_y,
+            w: new_btn_w,
+            h: item_h,
         };
 
         let tab_count = tabs.len();
@@ -247,27 +266,28 @@ impl PureTermApp {
             return;
         }
 
-        // 标签填充红绿灯和"+"按钮之间的空间
-        let tabs_available_w = new_tab_x - pureterm_ui::tab_bar::TRAFFIC_LIGHT_WIDTH;
-        let equal_width = (tabs_available_w / tab_count as f32).max(TAB_MIN_WIDTH);
+        // 所有标签均分：终端宽度 - 红绿灯背景 - 新建标签按钮
+        let tl_w = self.traffic_light_w;
+        let tabs_available_w = new_tab_x - tl_w;
+        let equal_width = tabs_available_w / tab_count as f32;
 
-        let mut x = pureterm_ui::tab_bar::TRAFFIC_LIGHT_WIDTH;
+        let mut x = tl_w;
         for tab in tabs {
-            let close_width = if tab_count > 1 { TAB_CLOSE_BTN_WIDTH } else { 0.0 };
+            let cw = if tab_count > 1 { close_btn_w } else { 0.0 };
 
             let rect = TabViewportRect {
                 x,
-                y: 0.0,
+                y: item_y,
                 w: equal_width,
-                h: TAB_BAR_HEIGHT,
+                h: item_h,
             };
 
-            let close_rect = if close_width > 0.0 {
+            let close_rect = if cw > 0.0 {
                 Some(TabViewportRect {
-                    x: x + equal_width - close_width - 4.0,
-                    y: 0.0,
-                    w: close_width,
-                    h: TAB_BAR_HEIGHT,
+                    x: x + 4.0 * scale,
+                    y: item_y,
+                    w: cw,
+                    h: item_h,
                 })
             } else {
                 None
@@ -817,6 +837,7 @@ impl PureTermApp {
 
         // 打开标签页时隐藏欢迎页面
         self.welcome_page.visible = false;
+        self.tab_bar.tab_bar_dirty = true;
 
         if let Some(ref window) = self.window {
             window.request_redraw();
@@ -827,16 +848,21 @@ impl PureTermApp {
 
     /// 关闭活动标签页并切换到最近的一个。
     fn handle_close_tab(&mut self) {
-        // 关闭前获取活动标签页的面板 ID
+        let active_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
+        if let Some(id) = active_id {
+            self.close_tab_by_id(id);
+        }
+    }
+
+    /// 通过 ID 关闭标签页，清理面板并切换到新的活动标签页。
+    fn close_tab_by_id(&mut self, tab_id: u64) {
+        // 关闭前获取该标签页的面板 ID
         let tab_pane_ids: Vec<u64> = if let Some(ref app) = self.app {
-            if let Some(tab) = app.tab_manager.active_tab() {
+            let tabs = app.tab_manager.tabs();
+            if let Some(tab) = tabs.iter().find(|t| t.id == tab_id) {
                 match &tab.content {
                     TabContent::Pane(id) => vec![*id],
                     TabContent::Split(_root) => {
-                        // 我们需要分割容器来获取所有面板 ID
-                        // 目前，删除 self.panes 中属于此标签页的所有面板
-                        // 由于我们没有单独跟踪哪些面板属于哪个标签页，
-                        // 只从 split_root 收集所有面板 ID
                         self.split_root.as_ref()
                             .map(|root| root.pane_ids())
                             .unwrap_or_default()
@@ -851,7 +877,7 @@ impl PureTermApp {
 
         // 关闭标签页
         if let Some(ref mut app) = self.app {
-            app.tab_manager.close_active_tab();
+            app.tab_manager.close_tab(tab_id);
         }
 
         // 删除属于已关闭标签页的面板
@@ -868,18 +894,19 @@ impl PureTermApp {
                         self.focused_pane_id = Some(*id);
                     }
                     TabContent::Split(_) => {
-                        // 需要时恢复分割状态
                         self.focused_pane_id = self.panes.keys().next().copied();
                     }
                 }
             } else {
                 // 没有剩余标签页 - 创建新标签页
-                drop(tab_pane_ids); // release borrow
+                drop(tab_pane_ids);
+                self.tab_bar.tab_bar_dirty = true;
                 self.handle_new_tab();
                 return;
             }
         }
 
+        self.tab_bar.tab_bar_dirty = true;
         if let Some(ref window) = self.window {
             window.request_redraw();
         }
@@ -958,6 +985,13 @@ impl PureTermApp {
             return;
         }
 
+        let s = tab_bar.scale;
+        let bar_h = tab_bar.bar_h;
+        let item_y = tab_bar.item_y;
+        let item_h = tab_bar.item_h;
+        let close_btn_w = tab_bar.close_btn_w;
+        let padding_h = tab_bar.padding_h;
+
         let screen_w: f32 = {
             let tabs_end = tab_bar.tab_layouts.iter().map(|l| l.rect.x + l.rect.w).fold(0.0, f32::max);
             let new_tab_end = tab_bar.new_tab_rect.x + tab_bar.new_tab_rect.w;
@@ -973,7 +1007,7 @@ impl PureTermApp {
         {
             let dim = 0.85;
             renderer.build_rect_vertices(
-                ViewportRect { x: 0.0, y: 0.0, w: screen_w, h: TAB_BAR_HEIGHT },
+                ViewportRect { x: 0.0, y: 0.0, w: screen_w, h: bar_h },
                 [bar_bg[0] * dim, bar_bg[1] * dim, bar_bg[2] * dim, 1.0],
                 vertices, indices,
             );
@@ -983,7 +1017,7 @@ impl PureTermApp {
         {
             let border = 0.25;
             renderer.build_rect_vertices(
-                ViewportRect { x: 0.0, y: TAB_BAR_HEIGHT - 1.0, w: screen_w, h: 1.0 },
+                ViewportRect { x: 0.0, y: bar_h - s, w: screen_w, h: s },
                 [border, border, border + 0.03, 1.0],
                 vertices, indices,
             );
@@ -993,9 +1027,17 @@ impl PureTermApp {
         {
             let btn = tab_bar.new_tab_rect;
             if btn.w > 0.0 {
+                // 左侧分隔线
+                let sep_color = [0.35, 0.35, 0.4, 1.0];
+                renderer.build_rect_vertices(
+                    ViewportRect { x: btn.x, y: item_y + 4.0 * s, w: s, h: item_h - 8.0 * s },
+                    sep_color,
+                    vertices, indices,
+                );
+
                 // 悬停背景
                 if tab_bar.hovered_new_tab {
-                    let hover = 0.2;
+                    let hover = 0.3;
                     renderer.build_rect_vertices(
                         ViewportRect { x: btn.x, y: btn.y, w: btn.w, h: btn.h },
                         [hover, hover, hover + 0.02, 1.0],
@@ -1003,15 +1045,17 @@ impl PureTermApp {
                     );
                 }
                 // "+" 符号居中
-                let plus_y = (TAB_BAR_HEIGHT - 16.0) / 2.0;
+                let glyph_h = 16.0 * s;
+                let plus_y = item_y + (item_h - glyph_h) / 2.0;
                 let plus_color = if tab_bar.hovered_new_tab {
                     [1.0f32, 1.0, 1.0, 1.0]
                 } else {
                     [0.55f32, 0.55, 0.6, 1.0]
                 };
+                let plus_w = renderer.measure_text("+");
                 renderer.build_text_vertices(
                     "+",
-                    btn.x + (btn.w - 12.0) / 2.0,
+                    btn.x + (btn.w - plus_w) / 2.0,
                     plus_y,
                     plus_color,
                     vertices, indices,
@@ -1020,7 +1064,8 @@ impl PureTermApp {
         }
 
         // 标签页
-        let text_y = (TAB_BAR_HEIGHT - 16.0) / 2.0;
+        let glyph_h = 16.0 * s;
+        let text_y = item_y + (item_h - glyph_h) / 2.0;
 
         for (i, layout) in tab_bar.tab_layouts.iter().enumerate() {
             let is_active = active_tab_id == Some(layout.tab_id);
@@ -1028,14 +1073,12 @@ impl PureTermApp {
 
             // 标签页背景
             if is_active {
-                // 活动标签页：终端背景色（与内容区域匹配）
                 renderer.build_rect_vertices(
                     ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
                     bar_bg,
                     vertices, indices,
                 );
             } else if is_hovered {
-                // 悬停的非活动标签：比标签栏略亮
                 let f = 0.92;
                 renderer.build_rect_vertices(
                     ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
@@ -1044,30 +1087,31 @@ impl PureTermApp {
                 );
             }
 
-            // 标签页标题文本 — Ghostty 使用 labelColor（活动）/ secondaryLabelColor（非活动）
-            let available_width = layout.rect.w - TAB_PADDING_H;
-            let max_text_width = available_width - TAB_CLOSE_BTN_WIDTH;
+            // 标题文本 — 避让左侧关闭按钮
+            let has_close = layout.close_button_rect.is_some();
+            let left_reserved = if has_close { close_btn_w + 4.0 * s } else { padding_h / 2.0 };
+            let right_reserved = padding_h / 2.0;
+            let available_width = layout.rect.w - left_reserved - right_reserved;
             let full_width = renderer.measure_text(&layout.title);
 
-            let (display_title, text_width) = if full_width <= max_text_width {
+            let (display_title, text_width) = if full_width <= available_width {
                 (layout.title.clone(), full_width)
             } else {
                 let mut byte_end = 0usize;
                 let mut w = 0.0f32;
                 for (i, ch) in layout.title.char_indices() {
                     let cw = renderer.measure_text_char(ch);
-                    if w + cw > max_text_width { break; }
+                    if w + cw > available_width { break; }
                     w += cw;
                     byte_end = i + ch.len_utf8();
                 }
                 (layout.title[..byte_end].to_string(), w)
             };
 
-            let title_x = layout.rect.x + (available_width - text_width) / 2.0;
+            let title_x = layout.rect.x + left_reserved + (available_width - text_width) / 2.0;
             let fg_color = if is_active {
                 [fg_rgb[0] as f32 / 255.0, fg_rgb[1] as f32 / 255.0, fg_rgb[2] as f32 / 255.0, 1.0]
             } else {
-                // 非活动：暗淡的前景色（次要标签）
                 let dim = 0.6;
                 [fg_rgb[0] as f32 / 255.0 * dim, fg_rgb[1] as f32 / 255.0 * dim, fg_rgb[2] as f32 / 255.0 * dim, 1.0]
             };
@@ -1080,27 +1124,41 @@ impl PureTermApp {
                 vertices, indices,
             );
 
-            // 关闭按钮 — 仅在悬停时可见（Ghostty / 原生 macOS 行为）
+            // 关闭按钮 — 仅在悬停时可见
             if let Some(ref close_rect) = layout.close_button_rect {
                 if is_hovered {
-                    // 悬停背景
-                    let close_bg = if is_active { 0.25 } else { 0.18 };
+                    let btn_size = 24.0 * s;
+                    let btn_y = item_y + (item_h - btn_size) / 2.0;
+                    let btn_x = close_rect.x + (close_rect.w - btn_size) / 2.0;
+                    let is_close_hovered = tab_bar.hovered_close_tab_index == Some(i);
+                    let close_bg = if is_close_hovered {
+                        [0.4, 0.15, 0.15, 1.0]
+                    } else if is_active {
+                        [0.25, 0.25, 0.28, 1.0]
+                    } else {
+                        [0.18, 0.18, 0.21, 1.0]
+                    };
                     renderer.build_rect_vertices(
                         ViewportRect {
-                            x: close_rect.x,
-                            y: 0.0,
-                            w: close_rect.w,
-                            h: TAB_BAR_HEIGHT,
+                            x: btn_x,
+                            y: btn_y,
+                            w: btn_size,
+                            h: btn_size,
                         },
-                        [close_bg, close_bg * 0.6, close_bg * 0.6, 1.0],
+                        close_bg,
                         vertices, indices,
                     );
-                    // "x" 符号
+                    let x_color = if is_close_hovered {
+                        [1.0f32, 0.5, 0.5, 1.0]
+                    } else {
+                        [0.7f32, 0.45, 0.45, 1.0]
+                    };
+                    let x_glyph_w = renderer.measure_text("×");
                     renderer.build_text_vertices(
-                        "x",
-                        close_rect.x + (close_rect.w - 12.0) / 2.0,
-                        text_y,
-                        [0.9f32, 0.3, 0.3, 1.0],
+                        "×",
+                        btn_x + (btn_size - x_glyph_w) / 2.0,
+                        btn_y + (btn_size - glyph_h) / 2.0,
+                        x_color,
                         vertices, indices,
                     );
                 }
@@ -1112,9 +1170,9 @@ impl PureTermApp {
                 renderer.build_rect_vertices(
                     ViewportRect {
                         x: layout.rect.x,
-                        y: layout.rect.y + layout.rect.h - 3.0,
+                        y: layout.rect.y + layout.rect.h - 3.0 * s,
                         w: layout.rect.w,
-                        h: 3.0,
+                        h: 3.0 * s,
                     },
                     [cv[0] as f32 / 255.0, cv[1] as f32 / 255.0, cv[2] as f32 / 255.0, 1.0],
                     vertices, indices,
@@ -1164,8 +1222,11 @@ impl ApplicationHandler for PureTermApp {
             };
 
             // 如果配置了自定义字体路径，则使用它初始化渲染器
+            // font_size 配置单位为磅(pt)，fontdue 需要像素(px)
+            let scale = window.scale_factor() as f32;
+            let font_size = terminal_config.font_size as f32 * scale;
             let renderer = pollster::block_on(async {
-                TerminalRenderer::new(terminal_config.font_path.as_deref()).await
+                TerminalRenderer::new(terminal_config.font_path.as_deref(), font_size).await
             }).expect("Failed to initialize renderer");
 
             let surface = renderer.instance()
@@ -1215,6 +1276,11 @@ impl ApplicationHandler for PureTermApp {
             self.renderer = Some(renderer);
             self.surface = Some(surface);
             self.window = Some(window);
+            // 计算红绿灯区域实际宽度（物理像素）
+            #[cfg(target_os = "macos")]
+            {
+                self.traffic_light_w = crate::platform::macos::traffic_light_width(self.window.as_ref().unwrap());
+            }
             self.egui_backend = Some(egui_backend);
             self.appearance = appearance.clone();
 
@@ -1295,7 +1361,7 @@ impl ApplicationHandler for PureTermApp {
                     any_dirty, self.context_menu.visible, self.settings_panel.visible,
                     self.profile_selector.visible, self.welcome_page.visible,
                     self.rename_modal.is_some(), self.color_modal.is_some());
-                if !any_dirty && !self.context_menu.visible && !self.settings_panel.visible && !self.profile_selector.visible && !self.welcome_page.visible && self.rename_modal.is_none() && self.color_modal.is_none() {
+                if !any_dirty && !self.tab_bar.tab_bar_dirty && !self.context_menu.visible && !self.settings_panel.visible && !self.profile_selector.visible && !self.welcome_page.visible && self.rename_modal.is_none() && self.color_modal.is_none() {
                     log::debug!("RedrawRequested: 由于没有脏面板且所有面板都隐藏，提前返回");
                     return;
                 }
@@ -1329,7 +1395,7 @@ impl ApplicationHandler for PureTermApp {
                 }
 
                 // 收集分隔符矩形
-                let tab_bar_offset_y = if self.show_tab_bar() { TAB_BAR_HEIGHT } else { 0.0 };
+                let tab_bar_offset_y = if self.show_tab_bar() { self.tab_bar.height } else { 0.0 };
                 let dividers = self.split_root.as_ref()
                     .map(|root| compute_divider_rects(root, 0.0, tab_bar_offset_y, screen_w, screen_h - tab_bar_offset_y))
                     .unwrap_or_default();
@@ -1397,6 +1463,7 @@ impl ApplicationHandler for PureTermApp {
                     // 渲染标签栏覆盖层
                     let active_tab_id = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
                     Self::render_tab_bar_overlay(&self.tab_bar, active_tab_id, renderer, &self.color_scheme, &mut all_vertices, &mut all_indices);
+                    self.tab_bar.tab_bar_dirty = false;
 
                     // 渲染上下文菜单覆盖层
                     Self::render_context_menu_overlay(&self.context_menu, renderer, &mut all_vertices, &mut all_indices);
@@ -1600,8 +1667,7 @@ impl ApplicationHandler for PureTermApp {
                             }
                             // 检查主题是否改变并重新解析颜色方案
                             if app.config.appearance.theme != self.color_scheme.name {
-                                let theme_service = pureterm_core::theme::ThemeService::new();
-                                if let Some(scheme) = theme_service.get_scheme(&app.config.appearance.theme) {
+                                if let Some(scheme) = self.theme_service.get_scheme(&app.config.appearance.theme) {
                                     self.color_scheme = scheme.clone();
                                 }
                             }
@@ -1797,11 +1863,26 @@ impl ApplicationHandler for PureTermApp {
                         l.rect.contains(self.mouse_pos.0, self.mouse_pos.1)
                     });
 
+                    // 检查关闭按钮是否悬停
+                    let hovered_close_idx = hovered_idx.and_then(|idx| {
+                        let layout = &self.tab_bar.tab_layouts[idx];
+                        layout.close_button_rect.as_ref().and_then(|cr| {
+                            if cr.contains(self.mouse_pos.0, self.mouse_pos.1) {
+                                Some(idx)
+                            } else {
+                                None
+                            }
+                        })
+                    });
+
                     let changed = hovered_idx != self.tab_bar.hovered_tab_index
-                        || hovered_new_tab != self.tab_bar.hovered_new_tab;
+                        || hovered_new_tab != self.tab_bar.hovered_new_tab
+                        || hovered_close_idx != self.tab_bar.hovered_close_tab_index;
                     if changed {
                         self.tab_bar.hovered_tab_index = hovered_idx;
                         self.tab_bar.hovered_new_tab = hovered_new_tab;
+                        self.tab_bar.hovered_close_tab_index = hovered_close_idx;
+                        self.tab_bar.tab_bar_dirty = true;
                         if let Some(ref window) = self.window {
                             window.request_redraw();
                         }
@@ -1945,7 +2026,7 @@ impl ApplicationHandler for PureTermApp {
                                 if self.tab_bar.visible {
                                     // macOS: 跳过红绿灯区域，让系统原生处理关闭/最小化/最大化
                                     #[cfg(target_os = "macos")]
-                                    if self.mouse_pos.0 < TRAFFIC_LIGHT_WIDTH && self.mouse_pos.1 < TAB_BAR_HEIGHT {
+                                    if self.mouse_pos.0 < self.traffic_light_w && self.mouse_pos.1 < self.tab_bar.height {
                                         return;
                                     }
 
@@ -1956,13 +2037,8 @@ impl ApplicationHandler for PureTermApp {
                                         // 检查是否点击了关闭按钮
                                         if let Some(ref close_rect) = layout.close_button_rect {
                                             if close_rect.contains(self.mouse_pos.0, self.mouse_pos.1) {
-                                                // 关闭此标签页
-                                                if let Some(ref mut app) = self.app {
-                                                    app.tab_manager.close_tab(tab_id);
-                                                }
-                                                if let Some(ref window) = self.window {
-                                                    window.request_redraw();
-                                                }
+                                                // 关闭此标签页（含面板清理）
+                                                self.close_tab_by_id(tab_id);
                                                 return;
                                             }
                                         }
@@ -1970,6 +2046,7 @@ impl ApplicationHandler for PureTermApp {
                                         // 切换到此标签页
                                         let current_active = self.app.as_ref().and_then(|a| a.tab_manager.active_tab()).map(|t| t.id);
                                         if current_active != Some(tab_id) {
+                                            self.tab_bar.tab_bar_dirty = true;
                                             if let Some(ref mut app) = self.app {
                                                 app.tab_manager.select_tab(tab_id);
                                                 // 从标签页内容更新 focused_pane_id
@@ -2360,7 +2437,7 @@ fn main() -> Result<()> {
     }
 
     let config_service = ConfigService::load()?;
-    let theme_service = ThemeService::new();
+    let mut theme_service = ThemeService::new();
     let mut config = config_service.get().clone();
 
     // 处理快速 SSH 连接
@@ -2373,6 +2450,10 @@ fn main() -> Result<()> {
     let color_scheme = config.terminal.color_scheme.clone()
         .or_else(|| theme_service.get_scheme(&config.appearance.theme).cloned())
         .unwrap_or_else(|| theme_service.default_scheme().clone());
+
+    // 加载用户主题
+    let themes_dir = pureterm_core::config::AppConfig::config_dir().join("themes");
+    theme_service.load_user_themes(&themes_dir);
 
     let event_loop = winit::event_loop::EventLoop::new()?;
     let proxy = event_loop.create_proxy();
@@ -2401,8 +2482,10 @@ fn main() -> Result<()> {
         color_modal: None,
         quake_mode: if quake_mode { QuakeMode::new() } else { QuakeMode::default() },
         tab_bar: TabBarState::new(),
+        traffic_light_w: 0.0,
         appearance: pureterm_core::config::AppearanceConfig::default(),
         proxy,
+        theme_service,
     };
 
     event_loop.run_app(&mut app)?;

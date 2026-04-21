@@ -29,7 +29,8 @@ pub struct TerminalRenderer {
 impl TerminalRenderer {
     /// 创建新的终端渲染器
     /// `custom_font_path` - 可选的自定义字体文件路径
-    pub async fn new(custom_font_path: Option<&str>) -> anyhow::Result<Self> {
+    /// `font_size` - 字体大小（磅）
+    pub async fn new(custom_font_path: Option<&str>, font_size: f32) -> anyhow::Result<Self> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::all(),
             flags: wgpu::InstanceFlags::default(),
@@ -57,7 +58,7 @@ impl TerminalRenderer {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to create GPU device: {:?}", e))?;
 
-        let mut atlas = GlyphAtlas::new(14.0);
+        let mut atlas = GlyphAtlas::new(font_size);
         atlas.load_default_font(custom_font_path).map_err(|e| anyhow::anyhow!("{}", e))?;
 
         Ok(Self {
