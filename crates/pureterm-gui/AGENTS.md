@@ -106,11 +106,11 @@ ScreenSnapshot → 遍历 Cell → 各 pass 生成顶点 → 按序 render
 | `surface_config` | `Option<wgpu::SurfaceConfiguration>` |
 | `transparency_config` | `TransparencyConfig` 透明背景配置 |
 
-**初始化**（`new`，异步）：
+**初始化**（`new(custom_font_path, font_size)`，异步）：
 1. 创建 wgpu Instance
 2. 请求高性能 Adapter
 3. 创建 Device/Queue
-4. 初始化 GlyphAtlas
+4. 初始化 GlyphAtlas（`font_size` 为物理像素，由调用方传入 `config_font_size(pt) * scale_factor`）
 5. 加载默认字体
 
 **Surface 配置**（`configure_surface`）：

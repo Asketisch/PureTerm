@@ -22,7 +22,8 @@ cargo build --release
 - **OSC 序列**：Title (0/2)、Current Dir (7)、Hyperlinks (8)、Clipboard (52)、Colors (4/10/11/12)、Shell Integration (133)
 - **ESC 序列**：DECSC/DECRC、RIS、IND、RI、NEL、Screen Alignment
 - **渲染特性**：Bold→Bright 映射 (palette 0-7)、Inverse 模式、Hidden 文本、Background image、Kitty 内联图片、多 pass 渲染（背景色→装饰→文字→光标→后处理）、窗口 resize 安全（atlas dirty 标记 + Grid reflow 行数修复）
-- **标签栏**：Ghostty 风格原生 GPU 渲染，44px 高度适配 macOS 标题栏区域，主题色驱动配色，悬浮显示关闭按钮，"+" 新建标签按钮（28px），等分布局（排除红绿灯和加号按钮区域）
+- **标签栏**：Ghostty 风格原生 GPU 渲染，28pt 高度与 macOS 红绿灯按钮一致，DPI 感知（所有常量 × scale_factor），运行时查询红绿灯实际宽度，主题色驱动配色，关闭按钮在左侧（hover 显示），"+" 新建标签按钮（36px），严格等分布局，tab_bar_dirty 刷新机制
+- **UI 形状渲染**：SDF（Signed Distance Field）GPU 圆角矩形和圆形，单管线 `shape_params` 字段分支渲染，`fwidth + smoothstep` 像素级抗锯齿
 
 ## Agent 指南（分级索引）
 
@@ -59,3 +60,53 @@ pureterm settings               # 打开设置面板
 - **字体回退**：[pureterm-gui/AGENTS.md](crates/pureterm-gui/AGENTS.md) — 5 步字体回退链（fontdb）
 - **Sprite 光栅化**：[pureterm-gui/AGENTS.md](crates/pureterm-gui/AGENTS.md) — Block/Box/Braille/Powerline 软件 rasterizer
 - **Grapheme 边界**：[pureterm-terminal/src/screen/AGENTS.md](crates/pureterm-terminal/src/screen/AGENTS.md) — UAX #29 光标移动和选词
+
+## UI 设计语言
+
+所有 UI 元素（标签栏、上下文菜单、按钮）必须遵循统一的圆角设计语言。
+
+### 圆角规范
+
+所有圆角半径以**逻辑点（pt）**定义，运行时乘以 `scale_factor` 转换为物理像素。
+
+| 元素 | 形状 | 圆角半径（pt） |
+|------|------|---------------|
+| 标签页背景 | 圆角矩形 | 6 |
+| 标签页颜色指示条 | 纯色矩形 | 0（底部细条） |
+| 关闭按钮背景 | 圆形 | 直径 24pt |
+| 新建标签按钮悬停 | 圆角矩形 | 4 |
+| 标签栏整体背景 | 纯色矩形 | 0（全宽） |
+| 底部分隔线 | 纯色矩形 | 0 |
+| 右键菜单背景 | 圆角矩形 | 8 |
+| 菜单项悬停高亮 | 圆角矩形 | 4 |
+| 菜单分隔符 | 纯色矩形 | 0 |
+
+### 渲染方式
+
+- **GPU SDF 渲染**：通过 `Vertex.shape_params` 字段区分形状类型
+  - `shape_type = 0`：字形纹理采样 / 纯色矩形（原有行为）
+  - `shape_type = 1`：圆角矩形 SDF（`sd_rounded_box`）
+  - `shape_type = 2`：圆形 SDF（`length(p) - 1.0`）
+- **抗锯齿**：使用 `fwidth(d) + smoothstep(-aa, aa, d)` 实现像素级平滑边缘
+- **DPI 感知**：所有圆角半径以逻辑点定义，运行时乘 `scale_factor`
+
+### 配色规范
+
+| 元素 | 颜色 | 说明 |
+|------|------|------|
+| 标签栏背景 | 终端背景色 × 0.85 | 略暗于终端背景 |
+| 活跃标签 | 终端背景色（原色） | 与终端内容融为一体 |
+| 悬停标签 | 背景色 × 0.92 + 0.05 | 微亮提示 |
+| 关闭按钮默认 | `[0.25, 0.25, 0.28]` | 深灰色圆形 |
+| 关闭按钮悬停 | `[0.4, 0.15, 0.15]` | 红色高亮 |
+| 新建按钮悬停 | `[0.3, 0.3, 0.32]` | 浅灰 |
+| 菜单背景 | `[0.18, 0.18, 0.22, 0.95]` | 半透明深色 |
+| 菜单项悬停 | `[0.25, 0.5, 0.85]` | 蓝色高亮 |
+
+### 新增 UI 元素要求
+
+添加新的 UI 元素时必须：
+1. 使用 `build_rounded_rect_vertices` 或 `build_circle_vertices` 替代 `build_rect_vertices`
+2. 圆角半径遵循上表规范（或选择最接近的值）
+3. 配色遵循上表规范，保持视觉一致性
+4. 所有尺寸以逻辑点定义，乘 `scale_factor`

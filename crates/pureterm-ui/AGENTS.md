@@ -123,32 +123,45 @@ Ghostty 风格的单终端 Surface 模型，封装 Terminal + 输入处理 + 鼠
 
 | 类型 | 说明 |
 |------|------|
-| `TabBarState` | 标签栏渲染状态：visible、hovered_tab_index、hovered_new_tab、tab_layouts、new_tab_rect、height |
+| `TabBarState` | 标签栏渲染状态：visible、hovered_tab_index、hovered_new_tab、hovered_close_tab_index、tab_layouts、new_tab_rect、height、tab_bar_dirty、scale、bar_h、item_h、item_y、close_btn_w、new_btn_w、padding_h |
 | `TabLayout` | 单标签布局：tab_id、title、color、rect、close_button_rect |
 | `ViewportRect` | 矩形区域（x、y、w、h），用于命中检测 |
 
-**布局常量：**
+**布局常量（逻辑点，运行时乘 scale_factor 转物理像素）：**
 
 | 常量 | 值 | 说明 |
 |------|-----|------|
-| `TAB_BAR_HEIGHT` | 44.0 | 标签栏高度（适配 macOS 标题栏区域 ~28pt + notch ~38pt） |
+| `TAB_BAR_HEIGHT` | 28.0 | 标签栏高度，与 macOS 红绿灯按钮高度一致（Ghostty 风格） |
+| `TAB_ITEM_HEIGHT` | 28.0 | 标签项高度，填满整个标签栏 |
+| `TAB_ITEM_Y` | 0.0 | 标签项垂直偏移（无偏移） |
 | `TAB_PADDING_H` | 12.0 | 标签水平内边距 |
-| `TAB_CLOSE_BTN_WIDTH` | 20.0 | 关闭按钮宽度 |
-| `TAB_NEW_BTN_WIDTH` | 28.0 | "+" 新建标签按钮宽度（匹配 Ghostty NSTabBarNewTabButton） |
-| `TAB_MIN_WIDTH` | 100.0 | 标签最小宽度 |
-| `TAB_MAX_WIDTH` | 250.0 | 标签最大宽度 |
+| `TAB_CLOSE_BTN_WIDTH` | 28.0 | 关闭按钮宽度 |
+| `TAB_NEW_BTN_WIDTH` | 36.0 | "+" 新建标签按钮宽度 |
 | `TAB_BAR_BORDER_SIZE` | 1.0 | 底部分隔线宽度 |
-| `TRAFFIC_LIGHT_WIDTH` | 56.0 (macOS) / 0.0 (其他) | macOS 红绿灯按钮保留宽度 |
+| `TRAFFIC_LIGHT_WIDTH` | 92.0 (macOS) / 0.0 (其他) | macOS 红绿灯按钮保留宽度（编译时 fallback，运行时通过 API 动态获取） |
+
+**DPI 感知缩放机制：**
+1. 所有常量以逻辑点定义，运行时乘以 `window.scale_factor()` 转为物理像素
+2. `TabBarState` 缓存缩放后的值（bar_h、item_h 等），供布局和渲染使用
+3. `screen_size()` 返回物理像素，布局计算使用缩放后的常量
+4. 字体大小同样为 `config.font_size(pt) * scale_factor`
 
 **等分布局算法：**
-1. 计算可用宽度 = 窗口宽度 - TRAFFIC_LIGHT_WIDTH - TAB_NEW_BTN_WIDTH
-2. 每标签等宽 = 可用宽度 / 标签数（下限 TAB_MIN_WIDTH）
-3. "+" 按钮固定在窗口右侧
+1. 运行时通过 macOS API 获取红绿灯按钮实际宽度（`traffic_light_width()`）
+2. 计算可用宽度 = 窗口物理宽度 - traffic_light_w - TAB_NEW_BTN_WIDTH * scale
+3. 每标签等宽 = 可用宽度 / 标签数（无最小宽度限制，严格均分）
+4. "+" 按钮固定在窗口右侧
 
 **渲染逻辑（在 main.rs 中实现）：**
 - 背景色：终端背景色亮度降低 15%，激活标签使用原始背景色
-- 关闭按钮：仅悬浮时显示（hover-only），命中区域为标签全高
-- "+" 按钮：28px，悬浮时高亮
+- 关闭按钮：位于标签左侧，仅悬浮时显示，24pt 缩小背景 + × 居中（`measure_text` 动态居中）
+- 关闭按钮 hover：独立的 `hovered_close_tab_index` 追踪，hover 时背景更红
+- "+" 按钮：36px，悬浮时高亮，左侧有分隔线
+
+**刷新机制：**
+- `tab_bar_dirty` 标志追踪标签栏状态变化（关闭/切换/新建/悬浮）
+- `RedrawRequested` early-return 检查包含 `tab_bar_dirty`
+- 渲染后重置 dirty 标志
 
 ### terminal/ — 终端面板
 

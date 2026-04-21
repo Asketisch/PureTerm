@@ -15,27 +15,28 @@ use pureterm_core::config::GlassEffectStyle;
 use objc2::class;
 
 #[cfg(target_os = "macos")]
-#[repr(C)]
-struct CGColor {
-    _private: [u8; 0],
-}
-
-#[cfg(target_os = "macos")]
 #[link(name = "CoreGraphics", kind = "framework")]
 #[link(name = "CoreFoundation", kind = "framework")]
+#[link(name = "objc", kind = "dylib")]
 extern "C" {
     fn CGColorSpaceCreateDeviceGray() -> *mut core::ffi::c_void;
     fn CGColorCreate(
         space: *mut core::ffi::c_void,
         components: *const f64,
-    ) -> *mut CGColor;
+    ) -> *mut core::ffi::c_void;
+    fn CGColorRelease(color: *mut core::ffi::c_void);
     fn CFRelease(cf: *mut core::ffi::c_void);
+    // 原始 objc_msgSend — 绕过 objc2 debug 模式对 CALayer.setBackgroundColor:
+    // 的严格类型编码检查 (^{CGColor=} vs ^v / @)
+    fn objc_msgSend(
+        obj: *mut objc2::runtime::AnyObject,
+        cmd: objc2::runtime::Sel,
+        arg: *mut core::ffi::c_void,
+    ) -> *mut objc2::runtime::AnyObject;
 }
 
 #[cfg(target_os = "macos")]
 type CGFloat = f64;
-
-/// 获取 NSWindow 指针。
 #[cfg(target_os = "macos")]
 fn get_ns_window(window: &winit::window::Window) -> Option<*mut objc2::runtime::AnyObject> {
     use objc2::runtime::AnyObject;
@@ -170,16 +171,14 @@ fn create_traffic_light_background(ns_window: *mut objc2::runtime::AnyObject) {
         // 使用 CALayer 设置半透明背景色
         let layer: *mut AnyObject = objc2::msg_send![bg_view, layer];
         if !layer.is_null() {
-            // 创建半透明灰色背景 — 直接使用 CoreGraphics 创建 CGColor，
-            // 避免 NSColor 的 tagged pointer 在 objc2 debug 模式下类型编码不匹配
-            {
-                let color_space = unsafe { CGColorSpaceCreateDeviceGray() };
-                let components: [CGFloat; 2] = [0.2, 0.85]; // gray, alpha
-                let cg_color = unsafe { CGColorCreate(color_space, components.as_ptr()) };
-                unsafe { CFRelease(color_space as *mut core::ffi::c_void) };
-                let _: () = objc2::msg_send![layer, setBackgroundColor: cg_color];
-                unsafe { CFRelease(cg_color as *mut core::ffi::c_void) };
-            }
+            let color_space = CGColorSpaceCreateDeviceGray();
+            let components: [CGFloat; 2] = [0.2, 0.85];
+            let cg_color = CGColorCreate(color_space, components.as_ptr());
+            CFRelease(color_space);
+            // 使用原始 objc_msgSend 绕过 objc2 的类型编码检查
+            let sel = objc2::sel!(setBackgroundColor:);
+            objc_msgSend(layer, sel, cg_color);
+            CGColorRelease(cg_color);
         }
 
         // 添加到 contentView（层级在按钮下方）
@@ -201,7 +200,6 @@ pub fn apply_platform_styling(
             log::info!("macos: apply_platform_styling, NSWindow={:p}", ns_window);
             apply_transparent_titlebar(ns_window);
             ensure_traffic_lights_visible(ns_window);
-            create_traffic_light_background(ns_window);
         } else {
             log::error!("macos: failed to get NSWindow");
         }

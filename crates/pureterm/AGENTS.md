@@ -61,7 +61,8 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 | `focused_pane_id` | `Option<u64>` | 当前聚焦窗格 ID |
 | `context_menu` | `ContextMenuState` | 右键菜单状态 |
 | `color_scheme` | `ColorScheme` | 当前配色（也用于标签栏主题色） |
-| `tab_bar` | `TabBarState` | 标签栏渲染状态（布局、悬浮、"+" 按钮） |
+| `tab_bar` | `TabBarState` | 标签栏渲染状态（布局、悬浮、dirty 标志、DPI 缩放缓存） |
+| `traffic_light_w` | `f32` | 运行时计算的红绿灯区域宽度（物理像素） |
 | `tab_list` | `Vec<TabInfo>` | 标签页信息列表 |
 | `modifiers` | `ModifiersState` | 修饰键状态 |
 | `mouse_pos` | `(f32, f32)` | 最后已知鼠标位置（像素） |
@@ -86,26 +87,27 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 
 ### 启动（`resumed`）
 1. 创建 winit `Window`
-2. 异步初始化 `TerminalRenderer`（wgpu instance/adapter/device/queue）
+2. 异步初始化 `TerminalRenderer`（wgpu instance/adapter/device/queue），传入 `config.font_size * scale_factor` 作为字体像素大小
 3. 从 `AppearanceConfig` 创建 `TransparencyConfig`
 4. 配置 surface（设置透明度 alpha_mode 和圆角）
 5. 初始化 `EguiBackend`（用 device、surface format、window）
 6. 创建初始 `TerminalPane`，注册到 `panes` HashMap
 7. 通过 `ConfigService` 加载配置，打开初始标签页
+8. macOS: 通过 API 查询红绿灯按钮 frame 计算实际宽度（`traffic_light_width()`），缓存到 `traffic_light_w`
 
 ### 事件循环（`window_event`）
 - `CloseRequested` → 退出
 - `Resized` → 重新配置 surface（传入当前 appearance 配置，重建图集纹理并标记 dirty）+ `resize_all_panes()` + 更新标签栏布局
-- `RedrawRequested` → drain 所有窗格 → dirty check → 多窗格 snapshot/render → 标签栏覆盖渲染 → 可选 egui 覆盖
+- `RedrawRequested` → drain 所有窗格 → dirty check（含 tab_bar_dirty）→ 多窗格 snapshot/render → 标签栏覆盖渲染（重置 dirty）→ 可选 egui 覆盖
 - `ModifiersChanged` → 记录修饰键状态
 - `KeyboardInput` → 设置面板可见时路由给 egui，否则转发给 `handle_key_input`
 
 ### 多窗格渲染（`RedrawRequested`）
 1. `drain_output()` 所有窗格
-2. `compute_layout()` 获取所有窗格的 `PaneRect`（减去标签栏高度 TAB_BAR_HEIGHT）
+2. `compute_layout()` 获取所有窗格的 `PaneRect`（减去标签栏高度 `tab_bar.height`，已缩放为物理像素）
 3. 对每个窗格 `build_vertices(snapshot, ..., viewport)` 生成背景+字形顶点
 4. 合并所有窗格顶点/索引，添加分隔线、焦点边框、上下文菜单顶点
-5. `render_tab_bar_overlay()` 绘制 Ghostty 风格标签栏（主题色背景、等分标签、悬浮关闭按钮、"+" 按钮）
+5. `render_tab_bar_overlay()` 绘制 Ghostty 风格标签栏（所有尺寸使用 TabBarState 缓存的物理像素值）
 6. `draw_to_surface()` 渲染终端内容（返回 frame 不 present）
 7. 若设置面板可见 → `egui_backend.run()` + `render()` 用 `LoadOp::Load` 覆盖 → `frame.present()`
 8. 否则直接 `frame.present()`
@@ -144,10 +146,12 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 编辑 `resumed` 方法。当前只创建 `LocalSession`，如需支持其他会话类型需在此处根据配置选择。
 
 ### 修改标签栏
-- **布局**：编辑 `update_tab_bar_layout()` — 控制标签等分布局、"+" 按钮位置、关闭按钮区域
-- **渲染**：编辑 `render_tab_bar_overlay()` — 控制标签栏背景色、标签样式、悬浮效果、关闭按钮显示逻辑
-- **常量**：编辑 `pureterm-ui/src/tab_bar.rs` — TAB_BAR_HEIGHT、TAB_PADDING_H、TAB_MIN_WIDTH 等
+- **布局**：编辑 `update_tab_bar_layout()` — 所有常量乘 scale_factor 缓存到 TabBarState，标签严格均分剩余宽度
+- **渲染**：编辑 `render_tab_bar_overlay()` — 使用 TabBarState 缓存的物理像素值，不直接使用常量
+- **常量**：编辑 `pureterm-ui/src/tab_bar.rs` — 以逻辑点定义（TAB_BAR_HEIGHT=28 等），运行时缩放
+- **红绿灯宽度**：编辑 `platform/macos.rs` 的 `traffic_light_width()` — 运行时查询 macOS API 获取物理像素宽度
 - **交互**：编辑鼠标事件处理中的 `CursorMoved` / `MouseInput::Pressed(Left)` 分支 — 悬浮检测和点击处理
+- **刷新**：所有标签状态变更处设置 `tab_bar.tab_bar_dirty = true`
 
 ### 调试渲染不刷新问题
 检查 `RedrawRequested` 中每个窗格的 `drain_output()` 是否被调用、`is_dirty()` 是否返回 true、`snapshot()` 数据是否正确。窗口 resize 后文字消失通常是图集纹理未标记 dirty 导致的——确认 `configure_surface()` 调用了 `self.atlas.mark_dirty()`。

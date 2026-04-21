@@ -92,13 +92,13 @@ impl ViewportRect {
 }
 
 /// Layout constants.
-/// Tab bar height accommodates macOS titlebar area (~28pt, ~38pt with notch)
-/// plus padding for tab text and close button below.
-pub const TAB_BAR_HEIGHT: f32 = 44.0;
-/// Tab item height matches macOS traffic light buttons (28pt).
+/// Tab bar height matches macOS traffic light buttons (28pt),
+/// same as Ghostty's tab bar — buttons sit naturally centered.
+pub const TAB_BAR_HEIGHT: f32 = 28.0;
+/// Tab item fills the entire tab bar height.
 pub const TAB_ITEM_HEIGHT: f32 = 28.0;
-/// Vertical offset to center tab items within the tab bar.
-pub const TAB_ITEM_Y: f32 = (TAB_BAR_HEIGHT - TAB_ITEM_HEIGHT) / 2.0;
+/// Vertical offset — items start at top of tab bar.
+pub const TAB_ITEM_Y: f32 = 0.0;
 pub const TAB_PADDING_H: f32 = 12.0;
 pub const TAB_CLOSE_BTN_WIDTH: f32 = 28.0;
 pub const TAB_NEW_BTN_WIDTH: f32 = 36.0;

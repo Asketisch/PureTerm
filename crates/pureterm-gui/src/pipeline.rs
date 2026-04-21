@@ -2,9 +2,11 @@
 #[repr(C)]
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Vertex {
-    pub position: [f32; 2],   // 裁剪空间位置
-    pub tex_coords: [f32; 2], // 图集纹理坐标
-    pub color: [f32; 4],      // RGBA 颜色
+    pub position: [f32; 2],     // 裁剪空间位置
+    pub tex_coords: [f32; 2],   // 图集纹理坐标（字形）或局部 UV（UI 形状）
+    pub color: [f32; 4],        // RGBA 颜色
+    pub shape_params: [f32; 4], // [rect_w_px, rect_h_px, corner_radius, shape_type]
+                                 // shape_type: 0=字形/纯色矩形, 1=圆角矩形, 2=圆形
 }
 
 /// 终端渲染 Uniforms（必须与 shader 中的定义匹配）
@@ -17,7 +19,7 @@ pub struct TerminalUniforms {
 }
 
 impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 3] = [
+    const ATTRIBS: [wgpu::VertexAttribute; 4] = [
         wgpu::VertexAttribute {
             offset: 0,
             shader_location: 0,
@@ -31,6 +33,11 @@ impl Vertex {
         wgpu::VertexAttribute {
             offset: std::mem::size_of::<[f32; 4]>() as u64,
             shader_location: 2,
+            format: wgpu::VertexFormat::Float32x4,
+        },
+        wgpu::VertexAttribute {
+            offset: (std::mem::size_of::<[f32; 2]>() + std::mem::size_of::<[f32; 2]>() + std::mem::size_of::<[f32; 4]>()) as u64,
+            shader_location: 3,
             format: wgpu::VertexFormat::Float32x4,
         },
     ];
@@ -194,8 +201,7 @@ impl TextPipeline {
             cache: None,
         });
 
-        // 预分配缓冲区：支持最多 500×200 = 100K 单元格（约 12MB vertex + 2.4MB index）
-        // 远超实际终端尺寸，但不再浪费 152MB
+        // 预分配缓冲区：支持最多 500×200 = 100K 单元格（约 19.2MB vertex + 2.4MB index）
         let max_cells = 500 * 200;
         let vertex_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Terminal Vertex Buffer"),

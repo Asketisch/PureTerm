@@ -292,10 +292,10 @@ impl TerminalRenderer {
 
                 let base = vertices.len() as u32;
                 vertices.extend_from_slice(&[
-                    Vertex { position: [x0, y0], tex_coords: [0.0, 0.0], color: bg_color },
-                    Vertex { position: [x1, y0], tex_coords: [0.0, 0.0], color: bg_color },
-                    Vertex { position: [x0, y1], tex_coords: [0.0, 0.0], color: bg_color },
-                    Vertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: bg_color },
+                    Vertex { position: [x0, y0], tex_coords: [0.0, 0.0], color: bg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [x1, y0], tex_coords: [0.0, 0.0], color: bg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [x0, y1], tex_coords: [0.0, 0.0], color: bg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [x1, y1], tex_coords: [0.0, 0.0], color: bg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                 ]);
                 indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
 
@@ -328,10 +328,10 @@ impl TerminalRenderer {
 
                         let base = vertices.len() as u32;
                         vertices.extend_from_slice(&[
-                            Vertex { position: [cgx0, cgy0], tex_coords: [tx0, ty0], color: fg_color },
-                            Vertex { position: [cgx1, cgy0], tex_coords: [tx1, ty0], color: fg_color },
-                            Vertex { position: [cgx0, cgy1], tex_coords: [tx0, ty1], color: fg_color },
-                            Vertex { position: [cgx1, cgy1], tex_coords: [tx1, ty1], color: fg_color },
+                            Vertex { position: [cgx0, cgy0], tex_coords: [tx0, ty0], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                            Vertex { position: [cgx1, cgy0], tex_coords: [tx1, ty0], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                            Vertex { position: [cgx0, cgy1], tex_coords: [tx0, ty1], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                            Vertex { position: [cgx1, cgy1], tex_coords: [tx1, ty1], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                         ]);
                         indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
                     }
@@ -364,10 +364,10 @@ impl TerminalRenderer {
                                 let uy1 = 1.0 - ((underline_y + dy + ut) / screen_h) * 2.0;
                                 let base = vertices.len() as u32;
                                 vertices.extend_from_slice(&[
-                                    Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color },
-                                    Vertex { position: [x1, uy0], tex_coords: [0.0, 0.0], color: deco_color },
-                                    Vertex { position: [x0, uy1], tex_coords: [0.0, 0.0], color: deco_color },
-                                    Vertex { position: [x1, uy1], tex_coords: [0.0, 0.0], color: deco_color },
+                                    Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                    Vertex { position: [x1, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                    Vertex { position: [x0, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                    Vertex { position: [x1, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                                 ]);
                                 indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
                             }
@@ -379,10 +379,10 @@ impl TerminalRenderer {
                             let uy1 = 1.0 - ((underline_y + h) / screen_h) * 2.0;
                             let base = vertices.len() as u32;
                             vertices.extend_from_slice(&[
-                                Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color },
-                                Vertex { position: [x1, uy0], tex_coords: [0.0, 0.0], color: deco_color },
-                                Vertex { position: [x0, uy1], tex_coords: [0.0, 0.0], color: deco_color },
-                                Vertex { position: [x1, uy1], tex_coords: [0.0, 0.0], color: deco_color },
+                                Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                Vertex { position: [x1, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                Vertex { position: [x0, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                Vertex { position: [x1, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                             ]);
                             indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
                         }
@@ -392,10 +392,10 @@ impl TerminalRenderer {
                             let uy1 = 1.0 - ((underline_y + ut) / screen_h) * 2.0;
                             let base = vertices.len() as u32;
                             vertices.extend_from_slice(&[
-                                Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color },
-                                Vertex { position: [x1, uy0], tex_coords: [0.0, 0.0], color: deco_color },
-                                Vertex { position: [x0, uy1], tex_coords: [0.0, 0.0], color: deco_color },
-                                Vertex { position: [x1, uy1], tex_coords: [0.0, 0.0], color: deco_color },
+                                Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                Vertex { position: [x1, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                Vertex { position: [x0, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                Vertex { position: [x1, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                             ]);
                             indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
                         }
@@ -409,10 +409,10 @@ impl TerminalRenderer {
                     let sy1 = 1.0 - ((strike_y + strikethrough_thickness * 0.5) / screen_h) * 2.0;
                     let base = vertices.len() as u32;
                     vertices.extend_from_slice(&[
-                        Vertex { position: [x0, sy0], tex_coords: [0.0, 0.0], color: deco_color },
-                        Vertex { position: [x1, sy0], tex_coords: [0.0, 0.0], color: deco_color },
-                        Vertex { position: [x0, sy1], tex_coords: [0.0, 0.0], color: deco_color },
-                        Vertex { position: [x1, sy1], tex_coords: [0.0, 0.0], color: deco_color },
+                        Vertex { position: [x0, sy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                        Vertex { position: [x1, sy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                        Vertex { position: [x0, sy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                        Vertex { position: [x1, sy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                     ]);
                     indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
                 }
@@ -425,10 +425,10 @@ impl TerminalRenderer {
                     let oy1 = 1.0 - ((over_y + ol_t) / screen_h) * 2.0;
                     let base = vertices.len() as u32;
                     vertices.extend_from_slice(&[
-                        Vertex { position: [x0, oy0], tex_coords: [0.0, 0.0], color: deco_color },
-                        Vertex { position: [x1, oy0], tex_coords: [0.0, 0.0], color: deco_color },
-                        Vertex { position: [x0, oy1], tex_coords: [0.0, 0.0], color: deco_color },
-                        Vertex { position: [x1, oy1], tex_coords: [0.0, 0.0], color: deco_color },
+                        Vertex { position: [x0, oy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                        Vertex { position: [x1, oy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                        Vertex { position: [x0, oy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                        Vertex { position: [x1, oy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                     ]);
                     indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
                 }
@@ -489,10 +489,10 @@ impl TerminalRenderer {
 
             let base = vertices.len() as u32;
             vertices.extend_from_slice(&[
-                Vertex { position: [cx0, cy0], tex_coords: [0.0, 0.0], color: cursor_rgba },
-                Vertex { position: [cx1, cy0], tex_coords: [0.0, 0.0], color: cursor_rgba },
-                Vertex { position: [cx0, cy1], tex_coords: [0.0, 0.0], color: cursor_rgba },
-                Vertex { position: [cx1, cy1], tex_coords: [0.0, 0.0], color: cursor_rgba },
+                Vertex { position: [cx0, cy0], tex_coords: [0.0, 0.0], color: cursor_rgba, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [cx1, cy0], tex_coords: [0.0, 0.0], color: cursor_rgba, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [cx0, cy1], tex_coords: [0.0, 0.0], color: cursor_rgba, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [cx1, cy1], tex_coords: [0.0, 0.0], color: cursor_rgba, shape_params: [0.0, 0.0, 0.0, 0.0] },
             ]);
             indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
         }
@@ -522,10 +522,83 @@ impl TerminalRenderer {
 
         let base = vertices.len() as u32;
         vertices.extend_from_slice(&[
-            Vertex { position: [x0, y0], tex_coords: [0.0, 0.0], color },
-            Vertex { position: [x1, y0], tex_coords: [0.0, 0.0], color },
-            Vertex { position: [x0, y1], tex_coords: [0.0, 0.0], color },
-            Vertex { position: [x1, y1], tex_coords: [0.0, 0.0], color },
+            Vertex { position: [x0, y0], tex_coords: [0.0, 0.0], color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+            Vertex { position: [x1, y0], tex_coords: [0.0, 0.0], color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+            Vertex { position: [x0, y1], tex_coords: [0.0, 0.0], color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+            Vertex { position: [x1, y1], tex_coords: [0.0, 0.0], color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+        ]);
+        indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
+    }
+
+    /// 为圆角矩形构建顶点（用于标签页、按钮、菜单）
+    /// corner_radius 为物理像素单位
+    pub fn build_rounded_rect_vertices(
+        &mut self,
+        rect: ViewportRect,
+        color: [f32; 4],
+        corner_radius: f32,
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        let config = match &self.surface_config {
+            Some(c) => c,
+            None => return,
+        };
+        let screen_w = config.width as f32;
+        let screen_h = config.height as f32;
+
+        let x0 = (rect.x / screen_w) * 2.0 - 1.0;
+        let y0 = 1.0 - (rect.y / screen_h) * 2.0;
+        let x1 = ((rect.x + rect.w) / screen_w) * 2.0 - 1.0;
+        let y1 = 1.0 - ((rect.y + rect.h) / screen_h) * 2.0;
+
+        // shape_params: [rect_w_px, rect_h_px, corner_radius, shape_type=1]
+        let sp = [rect.w, rect.h, corner_radius, 1.0];
+
+        let base = vertices.len() as u32;
+        vertices.extend_from_slice(&[
+            Vertex { position: [x0, y0], tex_coords: [0.0, 0.0], color, shape_params: sp },
+            Vertex { position: [x1, y0], tex_coords: [1.0, 0.0], color, shape_params: sp },
+            Vertex { position: [x0, y1], tex_coords: [0.0, 1.0], color, shape_params: sp },
+            Vertex { position: [x1, y1], tex_coords: [1.0, 1.0], color, shape_params: sp },
+        ]);
+        indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
+    }
+
+    /// 为圆形构建顶点（用于关闭按钮等）
+    /// cx, cy, radius 均为物理像素单位
+    pub fn build_circle_vertices(
+        &mut self,
+        cx: f32,
+        cy: f32,
+        radius: f32,
+        color: [f32; 4],
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        let config = match &self.surface_config {
+            Some(c) => c,
+            None => return,
+        };
+        let screen_w = config.width as f32;
+        let screen_h = config.height as f32;
+
+        // 外接矩形（NDC 坐标）
+        let x0 = ((cx - radius) / screen_w) * 2.0 - 1.0;
+        let y0 = 1.0 - ((cy - radius) / screen_h) * 2.0;
+        let x1 = ((cx + radius) / screen_w) * 2.0 - 1.0;
+        let y1 = 1.0 - ((cy + radius) / screen_h) * 2.0;
+
+        // shape_params: [diameter, diameter, radius, shape_type=2]
+        let sp = [radius * 2.0, radius * 2.0, radius, 2.0];
+
+        // tex_coords: 归一化到 -1..1 范围（圆心为原点）
+        let base = vertices.len() as u32;
+        vertices.extend_from_slice(&[
+            Vertex { position: [x0, y0], tex_coords: [-1.0, -1.0], color, shape_params: sp },
+            Vertex { position: [x1, y0], tex_coords: [1.0, -1.0], color, shape_params: sp },
+            Vertex { position: [x0, y1], tex_coords: [-1.0, 1.0], color, shape_params: sp },
+            Vertex { position: [x1, y1], tex_coords: [1.0, 1.0], color, shape_params: sp },
         ]);
         indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
     }
@@ -605,10 +678,10 @@ impl TerminalRenderer {
 
                 let base = vertices.len() as u32;
                 vertices.extend_from_slice(&[
-                    Vertex { position: [cgx0, cgy0], tex_coords: [tx0, ty0], color },
-                    Vertex { position: [cgx1, cgy0], tex_coords: [tx1, ty0], color },
-                    Vertex { position: [cgx0, cgy1], tex_coords: [tx0, ty1], color },
-                    Vertex { position: [cgx1, cgy1], tex_coords: [tx1, ty1], color },
+                    Vertex { position: [cgx0, cgy0], tex_coords: [tx0, ty0], color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [cgx1, cgy0], tex_coords: [tx1, ty0], color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [cgx0, cgy1], tex_coords: [tx0, ty1], color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [cgx1, cgy1], tex_coords: [tx1, ty1], color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                 ]);
                 indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
 

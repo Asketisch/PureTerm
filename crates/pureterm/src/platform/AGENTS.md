@@ -6,7 +6,7 @@
 
 ```
 mod.rs       # PlatformWindowExt trait 定义
-macos.rs     # macOS 平台实现
+macos.rs     # macOS 平台实现（透明标题栏、红绿灯按钮、DPI 感知宽度查询）
 ```
 
 ## 模块依赖
@@ -31,35 +31,31 @@ pub trait PlatformWindowExt {
 
 ## macOS 实现
 
-macOS 平台特定功能：
+### 透明标题栏（Ghostty 风格）
 
-```rust
-#[cfg(target_os = "macos")]
-impl PlatformWindowExt for Window {
-    fn set_corner_radius(&self, radius: f32) {
-        // 使用 NSWindow  APIs 设置圆角
-    }
+`apply_transparent_titlebar(ns_window)`:
+- `titlebarAppearsTransparent = YES` — 标题栏透明
+- `titleVisibility: hidden` — 隐藏标题文字
+- `styleMask |= NSFullSizeContentView` — 内容延伸到标题栏区域
+- `setMovableByWindowBackground: true` — 允许拖拽移动窗口
+- 红绿灯按钮保持原位，无背景色
 
-    fn set_glass_effect(&self, style: GlassEffectStyle, blur_radius: u32) {
-        // 使用 NSVisualEffectView 设置玻璃效果
-    }
-}
-```
+### 红绿灯按钮宽度查询
 
-### GlassEffectStyle
+`traffic_light_width(window) -> f32`:
+- 通过 macOS API 查询三个标准窗口按钮（close=0, miniaturize=1, zoom=2）的实际 frame
+- 计算最右按钮的右边缘坐标，加上 20pt 安全间距
+- 乘以 `window.scale_factor()` 返回物理像素宽度
+- 窗口创建时调用一次，缓存到 `PureTermApp::traffic_light_w`
+- 用于标签栏布局（标签起始 x）和点击检测（跳过红绿灯区域）
 
-玻璃效果样式枚举：
+### 公共 API
 
-```rust
-pub enum GlassEffectStyle {
-    None,
-    Regular,     // 常规模糊
-    Clear,       // 清晰
-    Light,       // 浅色
-    Dark,        // 深色
-    Automatic,   // 根据系统主题自动选择
-}
-```
+| 函数 | 说明 |
+|------|------|
+| `apply_platform_styling(window, corner_radius, glass_effect)` | 应用透明标题栏 + 确保红绿灯可见 |
+| `reposition_traffic_lights_on_resize(window)` | no-op（macOS 自动管理） |
+| `traffic_light_width(window) -> f32` | 返回红绿灯区域物理像素宽度（macOS）/ 0.0（其他） |
 
 ## 常见任务
 
@@ -69,10 +65,14 @@ pub enum GlassEffectStyle {
 2. 实现 `PlatformWindowExt` trait
 3. 在 `mod.rs` 中添加 `#[cfg(target_os = "...")] mod <os>;`
 
-### 修改玻璃效果
+### 修改透明标题栏行为
 
-编辑 `macos.rs` 的 `set_glass_effect()` 方法。
+编辑 `macos.rs` 的 `apply_transparent_titlebar()` 方法。
+
+### 调整红绿灯区域宽度
+
+编辑 `macos.rs` 的 `traffic_light_width()` 方法（调整安全间距）。
 
 ## 父级导航
 
-← [pureterm/src/AGENTS.md](../AGENTS.md)
+← [pureterm/AGENTS.md](../AGENTS.md)

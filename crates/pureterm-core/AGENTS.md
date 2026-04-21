@@ -46,7 +46,7 @@ src/
 | `AppConfig` | 顶层配置结构（appearance + terminal + hotkeys + profiles + groups） |
 | `AppearanceConfig` | 外观配置：tabs_location、theme、frame、opacity、show_tab_bar、show_title_bar、corner_radius、glass_effect、background_blur |
 | `GlassEffectStyle` | 玻璃效果枚举：None、Regular、Clear、Light、Dark、Automatic |
-| `TerminalConfig` | 终端配置：font_family/font_size、scrollback_lines、renderer、bell、ligatures、cursor_style、cursor_blink、copy_on_select、color_scheme |
+| `TerminalConfig` | 终端配置：font_family/font_size（pt，运行时乘 scale_factor）、scrollback_lines、renderer、bell、ligatures、cursor_style、cursor_blink、copy_on_select、color_scheme |
 | `ConfigService` | 基于 `RwLock<AppConfig>` 的线程安全配置服务 |
 
 `ConfigService` 关键方法：

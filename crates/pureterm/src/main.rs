@@ -30,7 +30,7 @@ use quake_mode::QuakeMode;
 use pureterm_ui::split::{SplitContainer, Direction, SplitSide, PaneRect, DividerInfo,
     compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point};
 use pureterm_ui::tabs::{TabContent, SplitRef};
-use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_ITEM_HEIGHT, TAB_ITEM_Y, TAB_PADDING_H, TAB_CLOSE_BTN_WIDTH, TAB_NEW_BTN_WIDTH};
+use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_ITEM_HEIGHT, TAB_PADDING_H, TAB_CLOSE_BTN_WIDTH, TAB_NEW_BTN_WIDTH};
 use pureterm_ui::terminal::pane::{TerminalPane, PaneAction, Selection};
 use pureterm_ui::WelcomePage;
 use pureterm_terminal::screen::selection::{TerminalMouseEvent, MouseButton, MouseModifiers};
@@ -923,11 +923,13 @@ impl PureTermApp {
             return;
         }
 
-        // 带圆角外观的背景
+        // 菜单背景（圆角矩形）
         let (mx, my, mw, mh) = context_menu.menu_rect();
-        renderer.build_rect_vertices(
+        let menu_radius = 8.0;
+        renderer.build_rounded_rect_vertices(
             ViewportRect { x: mx, y: my, w: mw, h: mh },
             [0.18, 0.18, 0.22, 0.95],
+            menu_radius,
             vertices, indices,
         );
 
@@ -945,11 +947,12 @@ impl PureTermApp {
                 );
             }
 
-            // 悬停高亮（整行）
+            // 悬停高亮（圆角矩形）
             if context_menu.hovered_index == Some(i) {
-                renderer.build_rect_vertices(
-                    ViewportRect { x: mx, y: iy, w: mw, h: MENU_ITEM_HEIGHT },
+                renderer.build_rounded_rect_vertices(
+                    ViewportRect { x: mx + 2.0, y: iy, w: mw - 4.0, h: MENU_ITEM_HEIGHT },
                     hover_bg,
+                    4.0,
                     vertices, indices,
                 );
             }
@@ -1035,12 +1038,13 @@ impl PureTermApp {
                     vertices, indices,
                 );
 
-                // 悬停背景
+                // 悬停背景（圆角矩形）
                 if tab_bar.hovered_new_tab {
                     let hover = 0.3;
-                    renderer.build_rect_vertices(
+                    renderer.build_rounded_rect_vertices(
                         ViewportRect { x: btn.x, y: btn.y, w: btn.w, h: btn.h },
                         [hover, hover, hover + 0.02, 1.0],
+                        4.0 * s,
                         vertices, indices,
                     );
                 }
@@ -1071,18 +1075,21 @@ impl PureTermApp {
             let is_active = active_tab_id == Some(layout.tab_id);
             let is_hovered = tab_bar.hovered_tab_index == Some(i);
 
-            // 标签页背景
+            // 标签页背景（圆角矩形）
+            let tab_radius = 6.0 * s;
             if is_active {
-                renderer.build_rect_vertices(
+                renderer.build_rounded_rect_vertices(
                     ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
                     bar_bg,
+                    tab_radius,
                     vertices, indices,
                 );
             } else if is_hovered {
                 let f = 0.92;
-                renderer.build_rect_vertices(
+                renderer.build_rounded_rect_vertices(
                     ViewportRect { x: layout.rect.x, y: layout.rect.y, w: layout.rect.w, h: layout.rect.h },
                     [bar_bg[0] * f + 0.05, bar_bg[1] * f + 0.05, bar_bg[2] * f + 0.05, 1.0],
+                    tab_radius,
                     vertices, indices,
                 );
             }
@@ -1138,13 +1145,12 @@ impl PureTermApp {
                     } else {
                         [0.18, 0.18, 0.21, 1.0]
                     };
-                    renderer.build_rect_vertices(
-                        ViewportRect {
-                            x: btn_x,
-                            y: btn_y,
-                            w: btn_size,
-                            h: btn_size,
-                        },
+                    let circle_cx = btn_x + btn_size / 2.0;
+                    let circle_cy = btn_y + btn_size / 2.0;
+                    renderer.build_circle_vertices(
+                        circle_cx,
+                        circle_cy,
+                        btn_size / 2.0,
                         close_bg,
                         vertices, indices,
                     );
