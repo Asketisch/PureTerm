@@ -85,6 +85,8 @@ struct PureTermApp {
     traffic_light_w: f32,
     /// 用于处理调整大小的外观配置。
     appearance: pureterm_core::config::AppearanceConfig,
+    /// 当前 IME 预编辑文本（中文输入法组合状态）。
+    ime_preedit: String,
     /// 用于从后台线程唤醒事件循环的事件循环代理。
     proxy: winit::event_loop::EventLoopProxy<()>,
     /// 持久化的主题服务，加载了用户主题
@@ -371,8 +373,10 @@ impl PureTermApp {
         // 在 macOS 上，使用 Super（Command）键；在其他平台上，使用 Ctrl+Shift
         let copy_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
         let paste_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
+        // macOS 上额外检查 !ctrl，防止 Cmd+Ctrl+C 误触发复制；非 macOS 上 ctrl 本身是触发条件的一部分
+        let extra_ctrl_guard = cfg!(target_os = "macos") && ctrl;
 
-        if copy_trigger && key == "c" && !ctrl {
+        if copy_trigger && key == "c" && !extra_ctrl_guard {
             // 复制选区到系统剪贴板
             let text = self.focused_pane().and_then(|p| p.copy_selection());
             if let Some(text) = text {
@@ -383,7 +387,7 @@ impl PureTermApp {
             }
             return;
         }
-        if paste_trigger && key == "v" && !ctrl {
+        if paste_trigger && key == "v" && !extra_ctrl_guard {
             // 从系统剪贴板粘贴
             let text = if let Ok(mut cb) = arboard::Clipboard::new() {
                 cb.get_text().unwrap_or_else(|_| self.clipboard_text.clone())
@@ -407,7 +411,7 @@ impl PureTermApp {
 
         // 全选：macOS 上为 Cmd+A，其他地方为 Ctrl+Shift+A
         let select_all_trigger = if cfg!(target_os = "macos") { super_key } else { ctrl && shift };
-        if select_all_trigger && key == "a" && !ctrl {
+        if select_all_trigger && key == "a" && !extra_ctrl_guard {
             if let Some(ref mut pane) = self.focused_pane_mut() {
                 let rows = pane.terminal.rows();
                 let cols = pane.terminal.cols();
@@ -1282,6 +1286,10 @@ impl ApplicationHandler for PureTermApp {
             self.renderer = Some(renderer);
             self.surface = Some(surface);
             self.window = Some(window);
+            // 启用 IME 以支持中文等 CJK 输入法
+            if let Some(ref window) = self.window {
+                window.set_ime_allowed(true);
+            }
             // 计算红绿灯区域实际宽度（物理像素）
             #[cfg(target_os = "macos")]
             {
@@ -1313,6 +1321,7 @@ impl ApplicationHandler for PureTermApp {
             | ref evt @ WindowEvent::MouseWheel { .. }
             | ref evt @ WindowEvent::ModifiersChanged { .. }
             | ref evt @ WindowEvent::Focused { .. }
+            | ref evt @ WindowEvent::Ime(..)
                 if self.settings_panel.visible || self.profile_selector.visible || self.welcome_page.visible
                     || self.rename_modal.is_some() || self.color_modal.is_some() =>
             {
@@ -1405,6 +1414,22 @@ impl ApplicationHandler for PureTermApp {
                 let dividers = self.split_root.as_ref()
                     .map(|root| compute_divider_rects(root, 0.0, tab_bar_offset_y, screen_w, screen_h - tab_bar_offset_y))
                     .unwrap_or_default();
+
+                // 更新 IME 候选窗口位置到当前光标处
+                if let (Some(ref window), Some(ref renderer)) = (&self.window, &self.renderer) {
+                    if let Some(pane_id) = self.focused_pane_id {
+                        if let Some((_, viewport, snap, _)) = snapshots.iter().find(|(id, _, _, _)| *id == pane_id) {
+                            let (cell_w, cell_h) = renderer.cell_size();
+                            let scale = window.scale_factor() as f32;
+                            let cursor_x = (viewport.x + snap.cursor_col as f32 * cell_w) * scale;
+                            let cursor_y = (viewport.y + snap.cursor_row as f32 * cell_h) * scale;
+                            window.set_ime_cursor_area(
+                                winit::dpi::PhysicalPosition::new(cursor_x as f64, cursor_y as f64),
+                                winit::dpi::PhysicalSize::new((cell_w * scale) as f64, (cell_h * scale) as f64),
+                            );
+                        }
+                    }
+                }
 
                 // 收集焦点边框信息
                 let focus_rect = self.focused_pane_id
@@ -2294,6 +2319,35 @@ impl ApplicationHandler for PureTermApp {
                 log::debug!("File hovered: {:?}", path);
             }
 
+            WindowEvent::Ime(ime_event) => {
+                match ime_event {
+                    winit::event::Ime::Preedit(text, _cursor) => {
+                        log::debug!("IME Preedit: {:?}", text);
+                        self.ime_preedit = text.clone();
+                        if let Some(ref window) = self.window {
+                            window.request_redraw();
+                        }
+                    }
+                    winit::event::Ime::Commit(text) => {
+                        log::debug!("IME Commit: {:?}", text);
+                        self.ime_preedit.clear();
+                        if let Some(ref mut pane) = self.focused_pane_mut() {
+                            pane.write_input(text.as_bytes());
+                        }
+                        if let Some(ref window) = self.window {
+                            window.request_redraw();
+                        }
+                    }
+                    winit::event::Ime::Enabled => {
+                        log::debug!("IME Enabled");
+                    }
+                    winit::event::Ime::Disabled => {
+                        log::debug!("IME Disabled");
+                        self.ime_preedit.clear();
+                    }
+                }
+            }
+
             _ => {}
         }
     }
@@ -2490,6 +2544,7 @@ fn main() -> Result<()> {
         tab_bar: TabBarState::new(),
         traffic_light_w: 0.0,
         appearance: pureterm_core::config::AppearanceConfig::default(),
+        ime_preedit: String::new(),
         proxy,
         theme_service,
     };

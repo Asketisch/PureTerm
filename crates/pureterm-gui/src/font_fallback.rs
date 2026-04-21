@@ -45,14 +45,15 @@ impl FontFallback {
     /// 返回已完全加载的字体及其数据。
     pub fn find(&mut self, codepoint: char) -> Option<FallbackFont> {
         // Step 2: Try family fallback (system monospace)
-        if let Some(f) = self.try_family(&Family::Monospace) {
+        // Verify the font actually contains a glyph for this codepoint
+        if let Some(f) = self.try_family_for_codepoint(&Family::Monospace, codepoint) {
             return Some(f);
         }
 
         // Step 3: Emoji fallback
         if is_emoji(codepoint) {
             for name in EMOJI_FAMILIES {
-                if let Some(f) = self.try_family(&Family::Name(name)) {
+                if let Some(f) = self.try_family_for_codepoint(&Family::Name(name), codepoint) {
                     return Some(f);
                 }
             }
@@ -62,24 +63,24 @@ impl FontFallback {
         if is_cjk(codepoint) {
             #[cfg(target_os = "macos")]
             {
-                if let Some(f) = self.try_family(&Family::Name("Apple Color Emoji")) {
+                if let Some(f) = self.try_family_for_codepoint(&Family::Name("Apple Color Emoji"), codepoint) {
                     return Some(f);
                 }
             }
             for name in CJK_FAMILIES {
-                if let Some(f) = self.try_family(&Family::Name(name)) {
+                if let Some(f) = self.try_family_for_codepoint(&Family::Name(name), codepoint) {
                     return Some(f);
                 }
             }
         }
 
         // Step 5: Last resort — query any sans-serif font
-        self.try_family(&Family::SansSerif)
-            .or_else(|| self.try_family(&Family::Serif))
+        self.try_family_for_codepoint(&Family::SansSerif, codepoint)
+            .or_else(|| self.try_family_for_codepoint(&Family::Serif, codepoint))
     }
 
-    /// 尝试按家族加载字体。
-    fn try_family(&mut self, family: &Family<'_>) -> Option<FallbackFont> {
+    /// 尝试按家族加载字体，并验证字体支持给定码点。
+    fn try_family_for_codepoint(&mut self, family: &Family<'_>, codepoint: char) -> Option<FallbackFont> {
         let face_id = self.db.query(&Query {
             families: &[family.clone()],
             weight: Default::default(),
@@ -87,7 +88,15 @@ impl FontFallback {
             style: Default::default(),
         })?;
 
-        self.load_font_by_id(face_id)
+        let font = self.load_font_by_id(face_id)?;
+
+        // Verify the font actually has a glyph for this codepoint
+        let face = ttf_parser::Face::parse(&font.data, font.face_index).ok()?;
+        if face.glyph_index(codepoint).is_some() {
+            Some(font)
+        } else {
+            None
+        }
     }
 
     /// 加载字体的字形数据。
