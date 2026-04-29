@@ -1331,6 +1331,10 @@ impl ApplicationHandler for PureTermApp {
                     if consumed {
                         return;
                     }
+                    // 鼠标事件在面板可见时不 fallthrough 到终端，避免拖拽滑块时移动窗口
+                    if matches!(evt, WindowEvent::MouseInput { .. } | WindowEvent::CursorMoved { .. } | WindowEvent::MouseWheel { .. }) {
+                        return;
+                    }
                 }
             }
             _ => {}
@@ -1379,6 +1383,42 @@ impl ApplicationHandler for PureTermApp {
                 if !any_dirty && !self.tab_bar.tab_bar_dirty && !self.context_menu.visible && !self.settings_panel.visible && !self.profile_selector.visible && !self.welcome_page.visible && self.rename_modal.is_none() && self.color_modal.is_none() {
                     log::debug!("RedrawRequested: 由于没有脏面板且所有面板都隐藏，提前返回");
                     return;
+                }
+
+                // 检查并同步 appearance 变更（透明度、圆角、玻璃效果等）
+                {
+                    let appearance_changed = if let Some(ref app) = self.app {
+                        let new_app = &app.config.appearance;
+                        let old = &self.appearance;
+                        new_app.opacity != old.opacity
+                            || new_app.glass_effect != old.glass_effect
+                            || new_app.background_blur != old.background_blur
+                            || new_app.corner_radius != old.corner_radius
+                    } else {
+                        false
+                    };
+                    if appearance_changed {
+                        if let Some(ref app) = self.app {
+                            self.appearance = app.config.appearance.clone();
+                        }
+                        let (size_w, size_h) = self.screen_size();
+                        if let (Some(ref mut renderer), Some(ref surface)) = (&mut self.renderer, &mut self.surface) {
+                            let transparency = TransparencyConfig {
+                                opacity: self.appearance.opacity,
+                                blur: self.appearance.background_blur > 0,
+                                blur_radius: self.appearance.background_blur,
+                                transparent_background: !matches!(self.appearance.glass_effect, pureterm_core::config::GlassEffectStyle::None)
+                                    || self.appearance.opacity < 1.0,
+                            };
+                            renderer.configure_surface(surface, size_w as u32, size_h as u32, &transparency);
+                            renderer.set_corner_radius(self.appearance.corner_radius);
+                            platform::macos::apply_platform_styling(
+                                self.window.as_ref().unwrap(),
+                                self.appearance.corner_radius,
+                                &self.appearance.glass_effect,
+                            );
+                        }
+                    }
                 }
 
                 let (screen_w, screen_h) = self.screen_size();
@@ -1795,7 +1835,11 @@ impl ApplicationHandler for PureTermApp {
                         } else if key == '\u{7f}' {
                             self.handle_key_input("Backspace", ctrl, alt, shift, super_key);
                         } else if key != '\u{1b}' { // Skip escape prefix
-                            self.handle_key_input(&text.to_string(), ctrl, alt, shift, super_key);
+                            // 当 winit 已生成文本（Shift 已被平台"消费"来产生大写/符号），
+                            // 且没有其他功能修饰键时，不再将 shift 视为修饰键，
+                            // 避免 Shift+字母被编码为 modifyOtherKeys 序列。
+                            let effective_shift = if !ctrl && !alt && !super_key { false } else { shift };
+                            self.handle_key_input(&text.to_string(), ctrl, alt, effective_shift, super_key);
                         }
                         return;
                     }

@@ -29,6 +29,8 @@ pub struct SettingsPanel {
     new_profile: Option<Profile>,
     /// 添加新配置文件时创建的配置文件的类型。
     new_profile_type: ProfileType,
+    /// 缓存的主题名称列表，避免每帧重建 ThemeService
+    cached_theme_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -41,12 +43,15 @@ pub enum SettingsTab {
 
 impl Default for SettingsPanel {
     fn default() -> Self {
+        let theme_service = ThemeService::new();
+        let cached_theme_names = theme_service.list_schemes().iter().map(|s| s.to_string()).collect();
         Self {
             visible: false,
             selected_tab: SettingsTab::Appearance,
             editing_profile: None,
             new_profile: None,
             new_profile_type: ProfileType::Ssh,
+            cached_theme_names,
         }
     }
 }
@@ -82,7 +87,7 @@ impl SettingsPanel {
         egui::CentralPanel::default().show_inside(ui, |ui| {
             match self.selected_tab {
                 SettingsTab::Appearance => {
-                    changed |= Self::appearance_panel(ui, &mut config.appearance);
+                    changed |= Self::appearance_panel(ui, &mut config.appearance, &self.cached_theme_names);
                 }
                 SettingsTab::Terminal => {
                     changed |= Self::terminal_panel(ui, &mut config.terminal);
@@ -104,7 +109,7 @@ impl SettingsPanel {
         changed
     }
 
-    fn appearance_panel(ui: &mut Ui, appearance: &mut AppearanceConfig) -> bool {
+    fn appearance_panel(ui: &mut Ui, appearance: &mut AppearanceConfig, theme_names: &[String]) -> bool {
         let mut changed = false;
 
         ui.heading("外观设置");
@@ -132,17 +137,15 @@ impl SettingsPanel {
 
         ui.add_space(8.0);
 
-        // 终端配色方案
-        let theme_service = ThemeService::new();
-        let themes: Vec<&str> = theme_service.list_schemes();
+        // 终端配色方案（使用缓存的主题列表）
         let current = &appearance.theme;
 
         ComboBox::from_label("终端配色")
             .selected_text(current.as_str())
             .show_ui(ui, |ui| {
-                for theme in &themes {
-                    if ui.selectable_label(&appearance.theme == *theme, *theme).clicked() {
-                        appearance.theme = theme.to_string();
+                for theme in theme_names {
+                    if ui.selectable_label(appearance.theme == *theme, theme.as_str()).clicked() {
+                        appearance.theme = theme.clone();
                         changed = true;
                     }
                 }

@@ -554,7 +554,9 @@ impl TerminalPane {
                     let bytes = key.as_bytes();
                     if bytes.len() == 1 {
                         let ch = bytes[0];
-                        if ch.is_ascii_alphabetic() {
+                        // 只有 Ctrl 或 Alt 与字母组合时才发送 modifyOtherKeys 序列，
+                        // 单独的 Shift 已在事件层处理（文本已包含大小写信息）。
+                        if ch.is_ascii_alphabetic() && (ctrl || alt) {
                             return format!("\x1b[27;{};{}~", modifier, ch.to_ascii_lowercase() as u8).into_bytes();
                         }
                     }
