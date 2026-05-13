@@ -381,6 +381,8 @@ impl TerminalPane {
         let output_buffer = Arc::clone(&self.output_buffer);
         let session_closed = Arc::clone(&self.session_closed);
         let last_wake = Arc::clone(&self.last_wake);
+        // Tracks whether a deferred wake thread is pending, to avoid spawning duplicates.
+        let deferred_pending = Arc::new(AtomicBool::new(false));
 
             std::thread::spawn(move || {
                 loop {
@@ -401,19 +403,41 @@ impl TerminalPane {
                             }
                             // Rate-limit waker calls to ~60fps max
                             if let Some(ref waker) = waker {
-                                let should_wake = if let Ok(mut lw) = last_wake.lock() {
+                                let (should_wake, elapsed) = if let Ok(mut lw) = last_wake.lock() {
                                     let now = Instant::now();
-                                    if now.duration_since(*lw) >= WAKE_INTERVAL {
+                                    let elapsed = now.duration_since(*lw);
+                                    if elapsed >= WAKE_INTERVAL {
                                         *lw = now;
-                                        true
+                                        (true, elapsed)
                                     } else {
-                                        false
+                                        (false, elapsed)
                                     }
                                 } else {
-                                    false
+                                    (false, WAKE_INTERVAL)
                                 };
                                 if should_wake {
+                                    // Normal wake — clear deferred flag
+                                    deferred_pending.store(false, Ordering::SeqCst);
                                     waker();
+                                } else if !deferred_pending.swap(true, Ordering::SeqCst) {
+                                    // Wake was rate-limited and no deferred wake is pending.
+                                    // Spawn a one-shot timer to fire after the remaining interval.
+                                    let remaining = WAKE_INTERVAL - elapsed;
+                                    let waker_clone = waker.clone();
+                                    let last_wake_clone = Arc::clone(&last_wake);
+                                    let deferred_pending_clone = Arc::clone(&deferred_pending);
+                                    std::thread::spawn(move || {
+                                        std::thread::sleep(remaining);
+                                        if let Ok(mut lw) = last_wake_clone.lock() {
+                                            let now = Instant::now();
+                                            if now.duration_since(*lw) >= WAKE_INTERVAL {
+                                                *lw = now;
+                                                drop(lw);
+                                                deferred_pending_clone.store(false, Ordering::SeqCst);
+                                                waker_clone();
+                                            }
+                                        }
+                                    });
                                 }
                             }
                         }
@@ -571,7 +595,7 @@ impl TerminalPane {
 
         let app_cursor = self.terminal.mode().contains(TermMode::APP_CURSOR);
 
-        // Handle control characters
+        // Handle control characters: Ctrl alone with letters produces 0x01-0x1A
         if ctrl && !alt && !shift {
             match key {
                 "a" => return vec![0x01],
@@ -608,44 +632,66 @@ impl TerminalPane {
             }
         }
 
-        // Handle Ctrl + special keys (word navigation, etc.)
-        if ctrl && !alt {
+        // Compute xterm modifier number for modified special keys:
+        //   2=Shift, 3=Alt, 4=Alt+Shift, 5=Ctrl, 6=Ctrl+Shift, 7=Ctrl+Alt, 8=Ctrl+Alt+Shift
+        let has_mod = ctrl || alt || shift;
+        let modifier: u8 = if ctrl && alt && shift { 8 }
+            else if ctrl && alt { 7 }
+            else if ctrl && shift { 6 }
+            else if ctrl { 5 }
+            else if alt && shift { 4 }
+            else if alt { 3 }
+            else if shift { 2 }
+            else { 0 };
+
+        // Handle modified special keys with unified xterm encoding
+        if has_mod {
             match key {
-                "Up" => return b"\x1b[1;5A".to_vec(),
-                "Down" => return b"\x1b[1;5B".to_vec(),
-                "Right" => return b"\x1b[1;5C".to_vec(),
-                "Left" => return b"\x1b[1;5D".to_vec(),
-                "Home" => return b"\x1b[1;5H".to_vec(),
-                "End" => return b"\x1b[1;5F".to_vec(),
-                _ => {}
+                // Arrows: CSI 1 ; modifier {A/B/C/D}
+                "Up" => return format!("\x1b[1;{}A", modifier).into_bytes(),
+                "Down" => return format!("\x1b[1;{}B", modifier).into_bytes(),
+                "Right" => return format!("\x1b[1;{}C", modifier).into_bytes(),
+                "Left" => return format!("\x1b[1;{}D", modifier).into_bytes(),
+                // Home/End: CSI 1 ; modifier {H/F}
+                "Home" => return format!("\x1b[1;{}H", modifier).into_bytes(),
+                "End" => return format!("\x1b[1;{}F", modifier).into_bytes(),
+                // PageUp/PageDown: CSI {5|6} ; modifier ~
+                "PageUp" => return format!("\x1b[5;{}~", modifier).into_bytes(),
+                "PageDown" => return format!("\x1b[6;{}~", modifier).into_bytes(),
+                // Insert/Delete: CSI {2|3} ; modifier ~
+                "Insert" => return format!("\x1b[2;{}~", modifier).into_bytes(),
+                "Delete" => return format!("\x1b[3;{}~", modifier).into_bytes(),
+                // F-keys with modifiers
+                "F1" => return format!("\x1b[1;{}P", modifier).into_bytes(),
+                "F2" => return format!("\x1b[1;{}Q", modifier).into_bytes(),
+                "F3" => return format!("\x1b[1;{}R", modifier).into_bytes(),
+                "F4" => return format!("\x1b[1;{}S", modifier).into_bytes(),
+                "F5" => return format!("\x1b[15;{}~", modifier).into_bytes(),
+                "F6" => return format!("\x1b[17;{}~", modifier).into_bytes(),
+                "F7" => return format!("\x1b[18;{}~", modifier).into_bytes(),
+                "F8" => return format!("\x1b[19;{}~", modifier).into_bytes(),
+                "F9" => return format!("\x1b[20;{}~", modifier).into_bytes(),
+                "F10" => return format!("\x1b[21;{}~", modifier).into_bytes(),
+                "F11" => return format!("\x1b[23;{}~", modifier).into_bytes(),
+                "F12" => return format!("\x1b[24;{}~", modifier).into_bytes(),
+                // Tab with Shift: CSI Z (standard reverse-tab)
+                "Tab" => return b"\x1b[Z".to_vec(),
+                // Ctrl+Shift+letter: CSI u encoding ESC [ 27 ; modifier ; <codepoint> ~
+                _ => {
+                    let bytes = key.as_bytes();
+                    if bytes.len() == 1 {
+                        let ch = bytes[0];
+                        // 只有 Ctrl 或 Alt 与字母组合时才发送 modifyOtherKeys 序列，
+                        // 单独的 Shift 已在事件层处理（文本已包含大小写信息）。
+                        if ch.is_ascii_alphabetic() && (ctrl || alt) {
+                            return format!("\x1b[27;{};{}~", modifier, ch.to_ascii_lowercase() as u8).into_bytes();
+                        }
+                    }
+                }
             }
         }
 
-        // Handle Alt + special keys
-        if alt && !ctrl {
-            match key {
-                "Up" => return b"\x1b[1;3A".to_vec(),
-                "Down" => return b"\x1b[1;3B".to_vec(),
-                "Right" => return b"\x1b[1;3C".to_vec(),
-                "Left" => return b"\x1b[1;3D".to_vec(),
-                "Home" => return b"\x1b[1;3H".to_vec(),
-                "End" => return b"\x1b[1;3F".to_vec(),
-                _ => {}
-            }
-        }
-
-        // Handle Shift + Ctrl + special keys
-        if ctrl && shift && !alt {
-            match key {
-                "Up" => return b"\x1b[1;6A".to_vec(),
-                "Down" => return b"\x1b[1;6B".to_vec(),
-                "Right" => return b"\x1b[1;6C".to_vec(),
-                "Left" => return b"\x1b[1;6D".to_vec(),
-                _ => {}
-            }
-        }
-
-        // Handle special keys (with app cursor mode support)
+        // Handle bare special keys (no modifiers)
         match key {
             "Enter" => return vec![0x0d],
             "Backspace" => return vec![0x7f],
@@ -710,14 +756,6 @@ impl TerminalPane {
             "F11" => return b"\x1b[23~".to_vec(),
             "F12" => return b"\x1b[24~".to_vec(),
             _ => {}
-        }
-
-        // Handle Shift + special keys (fallback for non-arrow keys)
-        if shift {
-            match key {
-                "Tab" => return b"\x1b[Z".to_vec(),
-                _ => {}
-            }
         }
 
         // Handle Alt modifier for printable characters

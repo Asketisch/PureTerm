@@ -756,6 +756,15 @@ except:
         }
 
         let font = &self.fonts.get(font_index)?.as_ref()?;
+
+        // Check if the font actually supports this character.
+        // If lookup returns glyph index 0 (.notdef), the font has no glyph for it,
+        // and rasterizing would produce a "tofu" rectangle. Skip directly to fallback.
+        let glyph_index = font.lookup_glyph_index(c);
+        if glyph_index == 0 && c != '\0' {
+            return self.get_fallback_glyph(font_index, c);
+        }
+
         let (metrics, bitmap) = font.rasterize(c, self.font_size);
 
         let width = metrics.width as u16;

@@ -30,6 +30,57 @@ pub struct EguiBackend {
     renderer: egui_wgpu::Renderer,
 }
 
+/// Configure egui to use system CJK fonts for proper rendering of Chinese/Japanese/Korean text.
+fn configure_cjk_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+
+    let mut db = fontdb::Database::new();
+    db.load_system_fonts();
+
+    // Platform-specific CJK font families, in priority order.
+    let cjk_families: &[&str] = if cfg!(target_os = "macos") {
+        &["PingFang SC", "PingFang TC", "Hiragino Sans GB"]
+    } else if cfg!(target_os = "linux") {
+        &["Noto Sans CJK SC", "Noto Sans CJK TC", "WenQuanYi Micro Hei"]
+    } else {
+        &["Microsoft YaHei", "SimHei"]
+    };
+
+    for family_name in cjk_families {
+        let query = fontdb::Query {
+            families: &[fontdb::Family::Name(family_name)],
+            weight: fontdb::Weight::default(),
+            stretch: fontdb::Stretch::default(),
+            style: fontdb::Style::default(),
+        };
+
+        if let Some(face_id) = db.query(&query) {
+            if let Some((source, _index)) = db.face_source(face_id) {
+                if let fontdb::Source::File(path) = source {
+                    if let Ok(data) = std::fs::read(&path) {
+                        let font_name = format!("{}-fallback", family_name);
+                        fonts.font_data.insert(
+                            font_name.clone().into(),
+                            std::sync::Arc::new(egui::FontData::from_owned(data)),
+                        );
+
+                        // Add as fallback for both Proportional and Monospace families
+                        for family in &[egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                            if let Some(fallbacks) = fonts.families.get_mut(family) {
+                                fallbacks.push(font_name.clone().into());
+                            }
+                        }
+                        log::info!("Loaded CJK font '{}' for egui settings panel", family_name);
+                        break; // Use the first successfully loaded CJK font
+                    }
+                }
+            }
+        }
+    }
+
+    ctx.set_fonts(fonts);
+}
+
 impl EguiBackend {
     /// Create a new egui backend.
     pub fn new(
@@ -38,6 +89,10 @@ impl EguiBackend {
         window: Arc<Window>,
     ) -> Self {
         let egui_ctx = egui::Context::default();
+
+        // Configure CJK fonts for proper display of Chinese text in settings panel
+        configure_cjk_fonts(&egui_ctx);
+
         let viewport_id = egui_ctx.viewport_id();
 
         let winit_state = egui_winit::State::new(
