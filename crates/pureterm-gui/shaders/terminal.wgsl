@@ -119,12 +119,56 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4f {
     }
 
     // shape_type == 2: 圆形 SDF
-    {
+    if (shape_type < 2.5) {
         // tex_coords 是 -1 到 1 范围的局部坐标（圆心为原点）
         let local_pos = in.tex_coords;
         let d = length(local_pos) - 1.0;
 
         // 使用 fwidth 实现像素级抗锯齿
+        let aa = fwidth(d);
+        let alpha = 1.0 - smoothstep(-aa, aa, d);
+
+        return vec4f(in.color.rgb, in.color.a * alpha);
+    }
+
+    // shape_type == 3: 点线下划线
+    if (shape_type < 3.5) {
+        let rect_w = in.shape_params.x;
+        let px_x = in.tex_coords.x * rect_w;
+        let dot_period = 4.0;
+        let dot_duty = 2.0;
+        let x_mod = px_x % dot_period;
+        let alpha = 1.0 - smoothstep(dot_duty - 0.5, dot_duty, x_mod);
+
+        return vec4f(in.color.rgb, in.color.a * alpha);
+    }
+
+    // shape_type == 4: 虚线下划线
+    if (shape_type < 4.5) {
+        let rect_w = in.shape_params.x;
+        let px_x = in.tex_coords.x * rect_w;
+        let dash_period = 12.0;
+        let dash_duty = 7.0;
+        let x_mod = px_x % dash_period;
+        let alpha = 1.0 - smoothstep(dash_duty - 0.5, dash_duty, x_mod);
+
+        return vec4f(in.color.rgb, in.color.a * alpha);
+    }
+
+    // shape_type == 5: 波浪（curly）下划线
+    {
+        let rect_w = in.shape_params.x;
+        let rect_h = in.shape_params.y;
+        let px_x = in.tex_coords.x * rect_w;
+        let px_y = in.tex_coords.y * rect_h;
+
+        // Sine wave: amplitude is ~1/3 of rect height
+        let amplitude = rect_h * 0.3;
+        let frequency = 6.283185 / 5.0; // ~2 full waves per 5px
+        let wave_y = rect_h * 0.5 + sin(px_x * frequency) * amplitude;
+
+        // Distance from current pixel to wave center
+        let d = abs(px_y - wave_y) - (rect_h * 0.15); // line thickness
         let aa = fwidth(d);
         let alpha = 1.0 - smoothstep(-aa, aa, d);
 

@@ -6,7 +6,7 @@ SerialPort 会话实现，基于 serialport crate。
 
 ```
 src/
-└── mod.rs        # SerialSession 实现 (约 300 行)
+└── mod.rs        # SerialSession 实现 (108 行)
 ```
 
 ## 模块依赖
@@ -140,4 +140,4 @@ port.set_flow_control(serial::FlowControl::Hardware)?;
 
 ## 父级导航
 
-← [pureterm-session/AGENTS.md](../../AGENTS.md)
+← [src/AGENTS.md](../AGENTS.md)

@@ -27,14 +27,17 @@ cargo build --release
 
 ## Agent 指南（分级索引）
 
+文档采用层级导航：本文件 → crates/ → 各 crate → src/ → 子目录，每层 AGENTS.md 指向更详细的下级。
+
+- **项目导航**：[AGENTS.md](AGENTS.md) — 完整层级树
 - **工作区总览**：[crates/AGENTS.md](crates/AGENTS.md) — 依赖关系、数据流、Agent 类型选择
-- **各 Crate 详细指南**：
-  - [pureterm/AGENTS.md](crates/pureterm/AGENTS.md) — 二进制入口，事件循环
-  - [pureterm-core/AGENTS.md](crates/pureterm-core/AGENTS.md) — 配置、主题、快捷键、插件
-  - [pureterm-terminal/AGENTS.md](crates/pureterm-terminal/AGENTS.md) — VTE 解析、屏幕网格、grapheme、调色板
-  - [pureterm-session/AGENTS.md](crates/pureterm-session/AGENTS.md) — Session trait + 4 种实现
-  - [pureterm-ui/AGENTS.md](crates/pureterm-ui/AGENTS.md) — Surface、SplitTree、标签页、终端面板
-  - [pureterm-gui/AGENTS.md](crates/pureterm-gui/AGENTS.md) — 多 pass GPU 渲染、Sprite、HarfBuzz、ShaderToy
+- **各 Crate 指南**（每层指向 src/AGENTS.md，src/ 再指向子目录）：
+  - [pureterm/AGENTS.md](crates/pureterm/AGENTS.md) → [src/AGENTS.md](crates/pureterm/src/AGENTS.md) — 二进制入口，事件循环
+  - [pureterm-core/AGENTS.md](crates/pureterm-core/AGENTS.md) → [src/AGENTS.md](crates/pureterm-core/src/AGENTS.md) — 配置、主题、快捷键、AI、秘密脱敏
+  - [pureterm-terminal/AGENTS.md](crates/pureterm-terminal/AGENTS.md) → [src/AGENTS.md](crates/pureterm-terminal/src/AGENTS.md) — VTE 解析、屏幕网格、CommandBlock
+  - [pureterm-session/AGENTS.md](crates/pureterm-session/AGENTS.md) → [src/AGENTS.md](crates/pureterm-session/src/AGENTS.md) — Session trait + 5 种实现（含 Tmux）
+  - [pureterm-ui/AGENTS.md](crates/pureterm-ui/AGENTS.md) → [src/AGENTS.md](crates/pureterm-ui/src/AGENTS.md) — Surface、标签页、命令面板、历史菜单
+  - [pureterm-gui/AGENTS.md](crates/pureterm-gui/AGENTS.md) → [src/AGENTS.md](crates/pureterm-gui/src/AGENTS.md) — GPU 渲染、Sprite、HarfBuzz、ShaderToy
 
 ## CLI 命令
 
@@ -51,15 +54,20 @@ pureterm settings               # 打开设置面板
 
 ## 功能文档索引
 
-- **Shell 集成**：[pureterm-session/AGENTS.md](crates/pureterm-session/AGENTS.md) — OSC 133 标记注入
-- **终端检查器**：[pureterm-ui/AGENTS.md](crates/pureterm-ui/AGENTS.md) — InspectorState 调试面板
-- **C API**：[pureterm-core/AGENTS.md](crates/pureterm-core/AGENTS.md) — libpureterm FFI 接口
-- **Tmux 集成**：[pureterm-terminal/AGENTS.md](crates/pureterm-terminal/AGENTS.md) — DCS 1000p 控制模式
-- **多 pass 渲染**：[pureterm-gui/src/render_pass/AGENTS.md](crates/pureterm-gui/src/render_pass/AGENTS.md) — 8 pass GPU 渲染架构
-- **Surface 抽象**：[pureterm-ui/AGENTS.md](crates/pureterm-ui/AGENTS.md) — Ghostty 风格的 Surface + Action 消息系统
-- **字体回退**：[pureterm-gui/AGENTS.md](crates/pureterm-gui/AGENTS.md) — 5 步字体回退链（fontdb）
-- **Sprite 光栅化**：[pureterm-gui/AGENTS.md](crates/pureterm-gui/AGENTS.md) — Block/Box/Braille/Powerline 软件 rasterizer
-- **Grapheme 边界**：[pureterm-terminal/src/screen/AGENTS.md](crates/pureterm-terminal/src/screen/AGENTS.md) — UAX #29 光标移动和选词
+- **Shell 集成**：[pureterm-session/src/shell_integration.rs](crates/pureterm-session/src/shell_integration.rs) → [src/AGENTS.md](crates/pureterm-session/src/AGENTS.md) — OSC 133 标记注入
+- **终端检查器**：[pureterm-ui/src/inspector.rs](crates/pureterm-ui/src/inspector.rs) → [src/AGENTS.md](crates/pureterm-ui/src/AGENTS.md) — InspectorState 调试面板
+- **C API**：[pureterm-core/src/capi.rs](crates/pureterm-core/src/capi.rs) → [src/AGENTS.md](crates/pureterm-core/src/AGENTS.md) — libpureterm FFI 接口
+- **Tmux 集成**：[pureterm-terminal/src/tmux/](crates/pureterm-terminal/src/tmux/) → [tmux/AGENTS.md](crates/pureterm-terminal/src/tmux/AGENTS.md) — DCS 1000p 控制模式
+- **Tmux Session**：[pureterm-session/src/tmux_session.rs](crates/pureterm-session/src/tmux_session.rs) → [src/AGENTS.md](crates/pureterm-session/src/AGENTS.md) — Tmux 控制模式 Session
+- **多 pass 渲染**：[pureterm-gui/src/render_pass/](crates/pureterm-gui/src/render_pass/) → [render_pass/AGENTS.md](crates/pureterm-gui/src/render_pass/AGENTS.md) — 8 pass GPU 渲染架构
+- **Surface 抽象**：[pureterm-ui/src/surface.rs](crates/pureterm-ui/src/surface.rs) → [src/AGENTS.md](crates/pureterm-ui/src/AGENTS.md) — Ghostty 风格的 Surface + Action 消息系统
+- **字体回退**：[pureterm-gui/src/font_fallback.rs](crates/pureterm-gui/src/font_fallback.rs) → [src/AGENTS.md](crates/pureterm-gui/src/AGENTS.md) — 5 步字体回退链（fontdb）
+- **Sprite 光栅化**：[pureterm-gui/src/sprite.rs](crates/pureterm-gui/src/sprite.rs) → [src/AGENTS.md](crates/pureterm-gui/src/AGENTS.md) — Block/Box/Braille/Powerline 软件 rasterizer
+- **Grapheme 边界**：[pureterm-terminal/src/screen/grapheme.rs](crates/pureterm-terminal/src/screen/grapheme.rs) → [screen/AGENTS.md](crates/pureterm-terminal/src/screen/AGENTS.md) — UAX #29 光标移动和选词
+- **秘密脱敏**：[pureterm-core/src/secret_redaction.rs](crates/pureterm-core/src/secret_redaction.rs) → [src/AGENTS.md](crates/pureterm-core/src/AGENTS.md) — API 密钥/令牌模式检测和视觉脱敏
+- **命令纠正**：[pureterm-core/src/command_correction.rs](crates/pureterm-core/src/command_correction.rs) → [src/AGENTS.md](crates/pureterm-core/src/AGENTS.md) — AI 驱动的命令失败建议
+- **命令历史**：[pureterm-ui/src/history_menu.rs](crates/pureterm-ui/src/history_menu.rs) → [src/AGENTS.md](crates/pureterm-ui/src/AGENTS.md) — 命令历史菜单（MAX_HISTORY=10000）
+- **CommandBlock**：[pureterm-terminal/src/block.rs](crates/pureterm-terminal/src/block.rs) → [src/AGENTS.md](crates/pureterm-terminal/src/AGENTS.md) — OSC 133 Shell 集成命令块模型
 
 ## UI 设计语言
 

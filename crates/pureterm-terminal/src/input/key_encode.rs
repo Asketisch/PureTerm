@@ -203,147 +203,184 @@ pub fn key_to_pc_function_key(key: Key) -> Option<PcFunctionKey> {
     }
 }
 
-/// 使用 Kitty 键盘协议编码键事件。
+/// Kitty 键盘协议键码映射。
 ///
-/// 格式：CSI <key> ; <mods> <event> <final>
-/// - key: u21 码点或 Kitty 映射的键码
-/// - mods: 位字段（1=shift, 2=alt, 4=ctrl, 8=super）
-/// - event: u（按下），：u（重复），；u（释放）
-/// - final: u（普通键），~（特殊），A-D/F/H/P/Q/S（光标键）
+/// 返回键对应的 Kitty 协议键码（Unicode 码点或特殊键码）。
+fn kitty_key_code(key: &Key, utf8: &str) -> Option<u32> {
+    match key {
+        // 可打印字符 → Unicode 码点
+        Key::Space => Some(32),
+        Key::Enter => Some(13),
+        Key::Tab => Some(9),
+        Key::Backspace => Some(127),
+        Key::Escape => Some(27),
+        // 方向键
+        Key::ArrowUp => Some(57426),
+        Key::ArrowDown => Some(57427),
+        Key::ArrowRight => Some(57428),
+        Key::ArrowLeft => Some(57429),
+        // 导航键
+        Key::Insert => Some(57418),
+        Key::Delete => Some(57419),
+        Key::Home => Some(57414),
+        Key::End => Some(57416),
+        Key::PageUp => Some(57417),
+        Key::PageDown => Some(57418),
+        // 功能键 F1-F12
+        Key::F1 => Some(57444),
+        Key::F2 => Some(57445),
+        Key::F3 => Some(57446),
+        Key::F4 => Some(57447),
+        Key::F5 => Some(57448),
+        Key::F6 => Some(57449),
+        Key::F7 => Some(57450),
+        Key::F8 => Some(57451),
+        Key::F9 => Some(57452),
+        Key::F10 => Some(57453),
+        Key::F11 => Some(57454),
+        Key::F12 => Some(57455),
+        // 功能键 F13-F35
+        Key::F13 => Some(57376),
+        Key::F14 => Some(57377),
+        Key::F15 => Some(57378),
+        Key::F16 => Some(57379),
+        Key::F17 => Some(57380),
+        Key::F18 => Some(57381),
+        Key::F19 => Some(57382),
+        Key::F20 => Some(57383),
+        Key::F21 => Some(57384),
+        Key::F22 => Some(57385),
+        Key::F23 => Some(57386),
+        Key::F24 => Some(57387),
+        Key::F25 => Some(57388),
+        Key::F26 => Some(57389),
+        Key::F27 => Some(57390),
+        Key::F28 => Some(57391),
+        Key::F29 => Some(57392),
+        Key::F30 => Some(57393),
+        Key::F31 => Some(57394),
+        Key::F32 => Some(57395),
+        Key::F33 => Some(57396),
+        Key::F34 => Some(57397),
+        Key::F35 => Some(57398),
+        // 数字小键盘
+        Key::NumPad0 => Some(57399),
+        Key::NumPad1 => Some(57400),
+        Key::NumPad2 => Some(57401),
+        Key::NumPad3 => Some(57402),
+        Key::NumPad4 => Some(57403),
+        Key::NumPad5 => Some(57404),
+        Key::NumPad6 => Some(57405),
+        Key::NumPad7 => Some(57406),
+        Key::NumPad8 => Some(57407),
+        Key::NumPad9 => Some(57408),
+        Key::NumPadDecimal => Some(57409),
+        Key::NumPadDivide => Some(57410),
+        Key::NumPadMultiply => Some(57411),
+        Key::NumPadSubtract => Some(57412),
+        Key::NumPadAdd => Some(57413),
+        Key::NumPadEnter => Some(57414),
+        Key::NumPadEqual => Some(57415),
+        // 修饰键（仅在 report_events 模式下编码）
+        Key::ShiftLeft => Some(57441),
+        Key::ShiftRight => Some(57447),
+        Key::ControlLeft => Some(57442),
+        Key::ControlRight => Some(57448),
+        Key::AltLeft => Some(57443),
+        Key::AltRight => Some(57449),
+        Key::SuperLeft => Some(57444),
+        Key::SuperRight => Some(57450),
+        Key::CapsLock => Some(57358),
+        Key::NumLock => Some(57360),
+        // 其他可打印字符从 utf8 获取码点
+        _ => {
+            if !utf8.is_empty() {
+                utf8.chars().next().map(|c| c as u32)
+            } else {
+                None
+            }
+        }
+    }
+}
+
+/// 使用 Kitty 键盘协议编码键事件（CSI u 格式）。
 ///
-/// 特殊键使用不同的最终字符：
-/// - 方向键：A, B, C, D
-/// - Home/End: H, F
-/// - 功能键：P, Q, R, S（F1-F4），~（F5+）
-/// - 其他：~
-pub fn encode_kitty(event: &KeyEvent, _flags: &KittyFlags) -> Option<Vec<u8>> {
+/// 格式：CSI key_code ; modifiers [:event_type] [;text] u
+/// - key_code: Unicode 码点或 Kitty 特殊键码
+/// - modifiers: 1 + (shift:1 | alt:2 | ctrl:4 | super:8)
+/// - event_type: 1=press, 2=repeat, 3=release（仅在 report_events 时）
+/// - text: 关联文本（仅在 associated_text 时）
+pub fn encode_kitty(event: &KeyEvent, flags: &KittyFlags) -> Option<Vec<u8>> {
     let mods = event.effective_mods();
-    let mods_val = mods.kitty_value();
+    let mods_val = mods.csi_u_value();
 
-    // 获取动作后缀
-    let action_suffix = match event.action {
-        KeyAction::Press => ":u",
-        KeyAction::Repeat => ":u",
-        KeyAction::Release => ";u",
-    };
+    // 获取键码
+    let key_code = kitty_key_code(&event.key, &event.utf8)?;
 
-    // 处理特殊键
-    if let Some(_pc_key) = key_to_pc_function_key(event.key) {
-        // 功能键 F1-F4 使用 SS3 格式
-        let is_f1_to_f4 = matches!(event.key, Key::F1 | Key::F2 | Key::F3 | Key::F4);
-        if is_f1_to_f4 {
-            // F1-F4 使用带修饰符的 SS3 格式
-            let final_char = match event.key {
-                Key::F1 => 'P',
-                Key::F2 => 'Q',
-                Key::F3 => 'R',
-                Key::F4 => 'S',
-                _ => unreachable!(),
-            };
-            if mods.is_empty() {
-                return Some(format!("\x1bO{}", final_char).into_bytes());
-            } else {
-                return Some(format!("\x1b[1;{}{}", mods_val + 1, final_char).into_bytes());
-            }
-        }
+    // 构建 CSI u 序列
+    let mut seq = format!("\x1b[{};{}", key_code, mods_val);
 
-        // F5+ 使用 CSI 格式
-        let key_num = match event.key {
-            Key::F5 => 15,
-            Key::F6 => 17,
-            Key::F7 => 18,
-            Key::F8 => 19,
-            Key::F9 => 20,
-            Key::F10 => 21,
-            Key::F11 => 23,
-            Key::F12 => 24,
-            Key::F13 => 25,
-            Key::F14 => 26,
-            Key::F15 => 28,
-            Key::F16 => 29,
-            Key::F17 => 31,
-            Key::F18 => 32,
-            Key::F19 => 33,
-            Key::F20 => 34,
-            Key::F21 => 23,
-            Key::F22 => 24,
-            Key::F23 => 25,
-            Key::F24 => 28,
-            _ => return None,
+    // 添加事件类型（flag 2: report_events）
+    if flags.report_events {
+        let event_type = match event.action {
+            KeyAction::Press => 1,
+            KeyAction::Repeat => 2,
+            KeyAction::Release => 3,
         };
+        seq.push_str(&format!(":{}", event_type));
+    }
 
-        if mods.is_empty() {
-            return Some(format!("\x1b[{}~", key_num).into_bytes());
-        } else {
-            return Some(format!("\x1b[{};{}{}", key_num, mods_val + 1, action_suffix).into_bytes());
+    // 添加关联文本（flag 16: associated_text）
+    if flags.associated_text && !event.utf8.is_empty() {
+        // 对文本中的特殊字符进行百分号编码
+        for c in event.utf8.chars() {
+            if c.is_ascii() && !c.is_control() && c != ';' && c != ':' && c != '%' {
+                seq.push(c);
+            } else {
+                let bytes = c.to_string();
+                for b in bytes.bytes() {
+                    seq.push_str(&format!("%{:02X}", b));
+                }
+            }
         }
     }
 
-    // 方向键 - Kitty 使用带 A/B/C/D 最终字符的 CSI 格式
-    let arrow = match event.key {
-        Key::ArrowUp => Some('A'),
-        Key::ArrowDown => Some('B'),
-        Key::ArrowRight => Some('C'),
-        Key::ArrowLeft => Some('D'),
-        _ => None,
+    seq.push('u');
+    Some(seq.into_bytes())
+}
+
+/// 编码修饰键按下/释放事件。
+///
+/// 修饰键本身不产生传统按键事件，仅在 report_events 模式下报告。
+pub fn encode_modifier_key(key: &Key, action: &KeyAction, report_events: bool) -> Option<Vec<u8>> {
+    let key_code = match key {
+        Key::ShiftLeft => 57441,
+        Key::ShiftRight => 57447,
+        Key::ControlLeft => 57442,
+        Key::ControlRight => 57448,
+        Key::AltLeft => 57443,
+        Key::AltRight => 57449,
+        Key::SuperLeft => 57444,
+        Key::SuperRight => 57450,
+        Key::CapsLock => 57358,
+        Key::NumLock => 57360,
+        _ => return None,
     };
 
-    if let Some(c) = arrow {
-        // 对于 Kitty 协议，方向键使用 CSI 格式：CSI <char>
-        if mods.is_empty() {
-            return Some(format!("\x1b[{}", c).into_bytes());
-        } else {
-            return Some(format!("\x1b[1;{}{}", mods_val + 1, c).into_bytes());
-        }
+    // 修饰键总是用 mods=1（无修饰符）
+    let mut seq = format!("\x1b[{};1", key_code);
+
+    if report_events {
+        let event_type = match action {
+            KeyAction::Press => 1,
+            KeyAction::Repeat => 2,
+            KeyAction::Release => 3,
+        };
+        seq.push_str(&format!(":{}", event_type));
     }
 
-    // Home/End - Kitty 使用带 H/F 最终字符的 CSI 格式
-    let home_end = match event.key {
-        Key::Home => Some('H'),
-        Key::End => Some('F'),
-        _ => None,
-    };
-
-    if let Some(c) = home_end {
-        if mods.is_empty() {
-            return Some(format!("\x1b[{}", c).into_bytes());
-        } else {
-            return Some(format!("\x1b[1;{}{}", mods_val + 1, c).into_bytes());
-        }
-    }
-
-    // Insert, Delete, PageUp, PageDown
-    match event.key {
-        Key::Insert => {
-            if mods.is_empty() {
-                Some(b"\x1b[2~".to_vec())
-            } else {
-                Some(format!("\x1b[2;{}{}", mods_val + 1, action_suffix).into_bytes())
-            }
-        }
-        Key::Delete => {
-            if mods.is_empty() {
-                Some(b"\x1b[3~".to_vec())
-            } else {
-                Some(format!("\x1b[3;{}{}", mods_val + 1, action_suffix).into_bytes())
-            }
-        }
-        Key::PageUp => {
-            if mods.is_empty() {
-                Some(b"\x1b[5~".to_vec())
-            } else {
-                Some(format!("\x1b[5;{}{}", mods_val + 1, action_suffix).into_bytes())
-            }
-        }
-        Key::PageDown => {
-            if mods.is_empty() {
-                Some(b"\x1b[6~".to_vec())
-            } else {
-                Some(format!("\x1b[6;{}{}", mods_val + 1, action_suffix).into_bytes())
-            }
-        }
-        _ => None,
-    }
+    seq.push('u');
+    Some(seq.into_bytes())
 }
 
 /// 使用传统 xterm 序列编码键事件。
@@ -450,13 +487,37 @@ pub fn encode_control_char(c: char) -> Option<u8> {
     }
 }
 
+/// 判断按键在传统编码下是否歧义。
+///
+/// 歧义按键包括：Escape 无修饰符、带 Ctrl/Alt/Super 的键、
+/// Shift+Enter/Tab/Backspace。
+fn is_ambiguous_key(event: &KeyEvent) -> bool {
+    let mods = event.effective_mods();
+
+    // 任何 Ctrl/Alt/Super 修饰符导致歧义
+    if mods.ctrl() || mods.alt() || mods.super_() {
+        return true;
+    }
+
+    // Shift + 特殊键歧义
+    if mods.shift() {
+        return matches!(event.key, Key::Enter | Key::Tab | Key::Backspace | Key::Escape);
+    }
+
+    // Escape 无修饰符也是歧义的（可能与单独的 ESC 字符混淆）
+    matches!(event.key, Key::Escape)
+}
+
 /// 使用最佳可用编码编码键事件。
 ///
 /// 优先级：
-/// 1. Kitty 协议（如果 flags 非空）
+/// 1. Kitty 协议（如果 flags 非空且满足条件）
 /// 2. 直接文本（对于不带修饰符的可打印字符）
-/// 3. Xterm 序列（传统键）
-/// 4. 控制字符映射（Ctrl+字母）
+/// 3. 控制字符映射（Ctrl+字母）
+/// 4. Xterm 序列（传统键）
+/// 5. ModifyOtherKeys 模式 2
+/// 6. Fixterms CSI-u
+/// 7. 直接文本回退
 pub fn encode_key_event(
     event: &KeyEvent,
     kitty_flags: Option<&KittyFlags>,
@@ -464,10 +525,20 @@ pub fn encode_key_event(
     fixterms: bool,
     app_keypad: bool,
 ) -> Option<Vec<u8>> {
-    // Kitty 协议优先
+    // Kitty 协议处理
     if let Some(flags) = kitty_flags {
         if !flags.is_empty() {
-            return encode_kitty(event, flags);
+            // Flag 8 (report_all): 所有键都用 CSI u
+            // Flag 1 (disambiguate): 仅歧义键用 CSI u
+            // 其他 flags (report_events/alternate/associated_text): 需要与 1 或 8 组合
+            let use_kitty = flags.modified || is_ambiguous_key(event);
+            if use_kitty {
+                // 修饰键单独处理
+                if event.key.is_modifier() {
+                    return encode_modifier_key(&event.key, &event.action, flags.report_events);
+                }
+                return encode_kitty(event, flags);
+            }
         }
     }
 
@@ -515,7 +586,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_kitty_arrow() {
+    fn test_kitty_arrow_up() {
         let event = KeyEvent::new(
             KeyAction::Press,
             Key::ArrowUp,
@@ -524,11 +595,12 @@ mod tests {
         );
         let flags = KittyFlags { modified: true, ..Default::default() };
         let encoded = encode_kitty(&event, &flags);
-        assert_eq!(encoded, Some(b"\x1b[A".to_vec()));
+        // 57426 is Kitty key code for ArrowUp, mods=1 (empty)
+        assert_eq!(encoded, Some(b"\x1b[57426;1u".to_vec()));
     }
 
     #[test]
-    fn test_kitty_arrow_with_mods() {
+    fn test_kitty_arrow_with_shift() {
         let event = KeyEvent::new(
             KeyAction::Press,
             Key::ArrowUp,
@@ -537,7 +609,63 @@ mod tests {
         );
         let flags = KittyFlags { modified: true, ..Default::default() };
         let encoded = encode_kitty(&event, &flags);
-        assert_eq!(encoded, Some(b"\x1b[1;2A".to_vec()));
+        // mods = 1 + shift(1) = 2
+        assert_eq!(encoded, Some(b"\x1b[57426;2u".to_vec()));
+    }
+
+    #[test]
+    fn test_kitty_enter() {
+        let event = KeyEvent::new(
+            KeyAction::Press,
+            Key::Enter,
+            Mods::empty(),
+            String::new(),
+        );
+        let flags = KittyFlags { modified: true, ..Default::default() };
+        let encoded = encode_kitty(&event, &flags);
+        assert_eq!(encoded, Some(b"\x1b[13;1u".to_vec()));
+    }
+
+    #[test]
+    fn test_kitty_ctrl_a() {
+        let event = KeyEvent::new(
+            KeyAction::Press,
+            Key::A,
+            Mods::from_bits(Mods::CTRL),
+            "a".to_string(),
+        );
+        let flags = KittyFlags { modified: true, ..Default::default() };
+        let encoded = encode_kitty(&event, &flags);
+        // 'a' = 97, mods = 1 + ctrl(4) = 5
+        assert_eq!(encoded, Some(b"\x1b[97;5u".to_vec()));
+    }
+
+    #[test]
+    fn test_kitty_with_event_type() {
+        let event = KeyEvent::new(
+            KeyAction::Repeat,
+            Key::A,
+            Mods::empty(),
+            "a".to_string(),
+        );
+        let flags = KittyFlags { report_events: true, ..Default::default() };
+        let encoded = encode_kitty(&event, &flags);
+        // 'a' = 97, mods = 1, event_type = 2 (repeat)
+        assert_eq!(encoded, Some(b"\x1b[97;1:2u".to_vec()));
+    }
+
+    #[test]
+    fn test_kitty_f1() {
+        let event = KeyEvent::new(
+            KeyAction::Press,
+            Key::F1,
+            Mods::empty(),
+            String::new(),
+        );
+        let flags = KittyFlags { modified: true, ..Default::default() };
+        let encoded = encode_kitty(&event, &flags);
+        // F1 = 57444
+        assert_eq!(encoded, Some(b"\x1b[57444;1u".to_vec()));
     }
 
     #[test]
@@ -597,5 +725,38 @@ mod tests {
 
         let non_empty = KittyFlags { modified: true, ..Default::default() };
         assert!(!non_empty.is_empty());
+    }
+
+    #[test]
+    fn test_is_ambiguous_key() {
+        // Escape with no mods is ambiguous
+        let esc = KeyEvent::new(KeyAction::Press, Key::Escape, Mods::empty(), String::new());
+        assert!(is_ambiguous_key(&esc));
+
+        // Ctrl+A is ambiguous
+        let ctrl_a = KeyEvent::new(KeyAction::Press, Key::A, Mods::from_bits(Mods::CTRL), "a".into());
+        assert!(is_ambiguous_key(&ctrl_a));
+
+        // Plain 'a' is not ambiguous
+        let plain_a = KeyEvent::new(KeyAction::Press, Key::A, Mods::empty(), "a".into());
+        assert!(!is_ambiguous_key(&plain_a));
+
+        // Shift+Enter is ambiguous
+        let shift_enter = KeyEvent::new(KeyAction::Press, Key::Enter, Mods::from_bits(Mods::SHIFT), String::new());
+        assert!(is_ambiguous_key(&shift_enter));
+    }
+
+    #[test]
+    fn test_encode_kitty_with_associated_text() {
+        let event = KeyEvent::new(
+            KeyAction::Press,
+            Key::A,
+            Mods::empty(),
+            "a".to_string(),
+        );
+        let flags = KittyFlags { associated_text: true, ..Default::default() };
+        let encoded = encode_kitty(&event, &flags);
+        // 'a' = 97, mods = 1, text = "a"
+        assert_eq!(encoded, Some(b"\x1b[97;1au".to_vec()));
     }
 }

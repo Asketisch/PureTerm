@@ -6,15 +6,15 @@
 
 ```
 src/
-├── mod.rs          # RenderPass trait + PassData + 工厂函数 (226 行)
-├── bg_color.rs     # BgColorPass 单元格背景色 (150 行)
-├── cell_text.rs    # CellTextPass 字形渲染 (184 行)
-├── cursor.rs       # CursorPass 光标 + 闪烁 (203 行)
-├── decorations.rs  # DecorationsPass 下划线/删除线/上划线 (148 行)
-├── bg_image.rs     # BgImagePass 背景壁纸 (209 行)
-├── kitty_image.rs  # KittyImagePass 内联图片 (184 行)
-├── post_process.rs # PostProcessPass 后处理效果 (214 行)
-└── debug_overlay.rs # DebugOverlayPass 调试文本 (164 行)
+├── mod.rs          # RenderPass trait + PassData + 工厂函数 (225 行)
+├── bg_color.rs     # BgColorPass 单元格背景色 (148 行)
+├── cell_text.rs    # CellTextPass 字形渲染 (182 行)
+├── cursor.rs       # CursorPass 光标 + 闪烁 (201 行)
+├── decorations.rs  # DecorationsPass 下划线/删除线/上划线 (146 行)
+├── bg_image.rs     # BgImagePass 背景壁纸 (208 行)
+├── kitty_image.rs  # KittyImagePass 内联图片 (183 行)
+├── post_process.rs # PostProcessPass 后处理效果 (212 行)
+└── debug_overlay.rs # DebugOverlayPass 调试文本 (162 行)
 ```
 
 ## 模块依赖
@@ -202,4 +202,4 @@ Kitty 图形协议内联图片渲染。
 
 ## 父级导航
 
-← [pureterm-gui/AGENTS.md](../../AGENTS.md)
+← [src/AGENTS.md](../AGENTS.md)

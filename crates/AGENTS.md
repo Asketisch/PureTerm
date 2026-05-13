@@ -7,9 +7,9 @@
 | Crate | 说明 | 详细指南 |
 |-------|------|----------|
 | [pureterm](pureterm/AGENTS.md) | 二进制入口点，事件循环、窗口管理、多窗格渲染、标签栏 GPU 渲染、CLI | [pureterm/AGENTS.md](pureterm/AGENTS.md) |
-| [pureterm-core](pureterm-core/AGENTS.md) | 配置、主题（28 种内置）、快捷键、i18n、AI、加密、触发器、C API | [pureterm-core/AGENTS.md](pureterm-core/AGENTS.md) |
-| [pureterm-terminal](pureterm-terminal/AGENTS.md) | VTE 解析器、屏幕网格（reflow + 分页存储）、grapheme 边界、256 色调色板、Tmux 集成 | [pureterm-terminal/AGENTS.md](pureterm-terminal/AGENTS.md) |
-| [pureterm-session](pureterm-session/AGENTS.md) | Session trait + Local/SSH/Serial/Telnet + Shell 集成 + 文件传输 | [pureterm-session/AGENTS.md](pureterm-session/AGENTS.md) |
+| [pureterm-core](pureterm-core/AGENTS.md) | 配置、主题（28 种内置）、快捷键、i18n、AI、加密、触发器、秘密脱敏、命令纠正、C API | [pureterm-core/AGENTS.md](pureterm-core/AGENTS.md) |
+| [pureterm-terminal](pureterm-terminal/AGENTS.md) | VTE 解析器、屏幕网格（reflow + 分页存储）、grapheme 边界、256 色调色板、CommandBlock、Tmux 集成 | [pureterm-terminal/AGENTS.md](pureterm-terminal/AGENTS.md) |
+| [pureterm-session](pureterm-session/AGENTS.md) | Session trait + Local/SSH/Serial/Telnet/Tmux + Shell 集成 + 文件传输 | [pureterm-session/AGENTS.md](pureterm-session/AGENTS.md) |
 | [pureterm-ui](pureterm-ui/AGENTS.md) | Surface 抽象、SplitTree、标签页（Ghostty 风格 GPU 渲染）、分割面板、终端面板、命令面板、搜索、AI 聊天 | [pureterm-ui/AGENTS.md](pureterm-ui/AGENTS.md) |
 | [pureterm-gui](pureterm-gui/AGENTS.md) | wgpu 多 pass 渲染、Sprite 光栅化、HarfBuzz 整形、ShaderToy、字体回退 | [pureterm-gui/AGENTS.md](pureterm-gui/AGENTS.md) |
 

@@ -5,215 +5,44 @@
 
 mod cli;
 mod conditional;
+pub mod import;
+mod legacy;
 mod loader;
 mod options;
+mod service;
+mod types;
 mod validator;
 
+// Re-exports from options (shared types: Color, Size, enums, default functions, etc.)
 pub use options::*;
+
+// Re-exports from CLI
 pub use cli::CliArgs;
+
+// Re-exports from conditional
 pub use conditional::ConditionalConfig;
+
+// Re-exports from loader
 pub use loader::{ConfigLoader, ConfigError};
+
+// Re-exports from validator
 pub use validator::ConfigValidator;
 
-use parking_lot::RwLock;
+// Re-exports from legacy types
+pub use legacy::AppConfig;
+pub use legacy::AppearanceConfig;
+pub use legacy::TerminalConfig;
+
+// Re-exports from shared types
+pub use types::GlassEffectStyle;
+
+// Re-export service
+pub use service::ConfigService;
+
+// ── New Config struct (100+ options) ──────────────────────────────────────────
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::mpsc;
-
-use crate::error::{CoreError, Result};
-use crate::hotkey::HotkeysConfig;
-use crate::profile::{Profile, ProfileGroup};
-use crate::theme::{ColorScheme, ThemeService};
-
-/// Simple config loader for AppConfig (backward compatibility)
-fn load_app_config() -> Result<AppConfig> {
-    let config_path = AppConfig::default_path();
-    if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)?;
-        let config: AppConfig = toml::from_str(&content)?;
-        Ok(config)
-    } else {
-        Ok(AppConfig::default())
-    }
-}
-
-fn save_app_config(config: &AppConfig) -> Result<()> {
-    let config_path = AppConfig::default_path();
-    let content = toml::to_string_pretty(config)
-        .map_err(|e| CoreError::Config(e.to_string()))?;
-    std::fs::write(&config_path, content)?;
-    Ok(())
-}
-
-// ── Legacy Compatibility Types ────────────────────────────────────────────────
-// These types are kept for backward compatibility with pureterm-ui
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppConfig {
-    #[serde(default)]
-    pub appearance: AppearanceConfig,
-    #[serde(default)]
-    pub terminal: TerminalConfig,
-    #[serde(default)]
-    pub hotkeys: HotkeysConfig,
-    #[serde(default)]
-    pub profiles: Vec<Profile>,
-    #[serde(default)]
-    pub groups: Vec<ProfileGroup>,
-    #[serde(default = "default_config_version")]
-    pub version: u32,
-}
-
-fn default_config_version() -> u32 { 1 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GlassEffectStyle {
-    None,
-    Regular,
-    Clear,
-    Light,
-    Dark,
-    Automatic,
-}
-
-impl Default for GlassEffectStyle {
-    fn default() -> Self {
-        Self::Automatic
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AppearanceConfig {
-    #[serde(default = "legacy_tabs_location")]
-    pub tabs_location: String,
-    #[serde(default = "legacy_theme")]
-    pub theme: String,
-    #[serde(default = "legacy_ui_theme")]
-    pub ui_theme: String,
-    #[serde(default = "legacy_frame")]
-    pub frame: String,
-    #[serde(default)]
-    pub opacity: f32,
-    #[serde(default)]
-    pub show_tab_bar: bool,
-    #[serde(default = "legacy_true")]
-    pub show_title_bar: bool,
-    #[serde(default = "legacy_corner_radius")]
-    pub corner_radius: f32,
-    #[serde(default)]
-    pub glass_effect: GlassEffectStyle,
-    #[serde(default = "legacy_background_blur")]
-    pub background_blur: u32,
-}
-
-impl Default for AppearanceConfig {
-    fn default() -> Self {
-        Self {
-            tabs_location: legacy_tabs_location(),
-            theme: legacy_theme(),
-            ui_theme: legacy_ui_theme(),
-            frame: legacy_frame(),
-            opacity: 1.0,
-            show_tab_bar: true,
-            show_title_bar: true,
-            corner_radius: legacy_corner_radius(),
-            glass_effect: GlassEffectStyle::default(),
-            background_blur: legacy_background_blur(),
-        }
-    }
-}
-
-fn legacy_tabs_location() -> String { "top".into() }
-fn legacy_theme() -> String { "dark".into() }
-fn legacy_ui_theme() -> String { "dark".into() }
-fn legacy_frame() -> String { "thin".into() }
-fn legacy_true() -> bool { true }
-fn legacy_corner_radius() -> f32 { 16.0 }
-fn legacy_background_blur() -> u32 { 20 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TerminalConfig {
-    #[serde(default = "legacy_font_family")]
-    pub font_family: String,
-    #[serde(default)]
-    pub font_path: Option<String>,
-    #[serde(default = "legacy_font_size")]
-    pub font_size: u16,
-    #[serde(default = "legacy_font_size")]
-    pub font_size_mac: u16,
-    #[serde(default = "legacy_scrollback")]
-    pub scrollback_lines: u32,
-    #[serde(default = "legacy_renderer")]
-    pub renderer: String,
-    #[serde(default = "legacy_bell")]
-    pub bell: String,
-    #[serde(default = "legacy_true")]
-    pub ligatures: bool,
-    #[serde(default = "legacy_cursor_style")]
-    pub cursor_style: String,
-    #[serde(default = "legacy_true")]
-    pub cursor_blink: bool,
-    #[serde(default = "legacy_true")]
-    pub copy_on_select: bool,
-    #[serde(default)]
-    pub color_scheme: Option<ColorScheme>,
-}
-
-impl Default for TerminalConfig {
-    fn default() -> Self {
-        Self {
-            font_family: legacy_font_family(),
-            font_path: None,
-            font_size: legacy_font_size(),
-            font_size_mac: legacy_font_size(),
-            scrollback_lines: legacy_scrollback(),
-            renderer: legacy_renderer(),
-            bell: legacy_bell(),
-            ligatures: true,
-            cursor_style: legacy_cursor_style(),
-            cursor_blink: true,
-            copy_on_select: true,
-            color_scheme: None,
-        }
-    }
-}
-
-fn legacy_font_family() -> String { "JetBrains Mono".into() }
-fn legacy_font_size() -> u16 { 13 }
-fn legacy_scrollback() -> u32 { 25000 }
-fn legacy_renderer() -> String { "wgpu".into() }
-fn legacy_bell() -> String { "visual".into() }
-fn legacy_cursor_style() -> String { "block".into() }
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            appearance: AppearanceConfig::default(),
-            terminal: TerminalConfig::default(),
-            hotkeys: HotkeysConfig::default(),
-            profiles: Vec::new(),
-            groups: Vec::new(),
-            version: default_config_version(),
-        }
-    }
-}
-
-impl AppConfig {
-    pub fn default_path() -> PathBuf {
-        Self::config_dir().join("config.toml")
-    }
-
-    pub fn config_dir() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("pureterm")
-    }
-
-    pub fn themes_dir() -> PathBuf {
-        Self::config_dir().join("themes")
-    }
-}
 
 /// Main application configuration with 100+ options
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -861,112 +690,5 @@ impl Default for Config {
             auto_update: default_auto_update(),
             auto_update_channel: default_auto_update_channel(),
         }
-    }
-}
-
-// ── Config Service ─────────────────────────────────────────────────────────────
-
-pub struct ConfigService {
-    #[allow(dead_code)]
-    config_dir: PathBuf,
-    config: RwLock<AppConfig>,
-    theme_service: RwLock<ThemeService>,
-    reload_tx: Option<mpsc::Sender<()>>,
-}
-
-impl ConfigService {
-    pub fn load() -> Result<Self> {
-        let config_dir = Self::config_dir();
-        std::fs::create_dir_all(&config_dir)?;
-
-        let config = load_app_config()?;
-
-        let mut theme_service = ThemeService::new();
-        theme_service.load_user_themes(&Self::themes_dir());
-
-        Ok(Self {
-            config_dir,
-            config: RwLock::new(config),
-            theme_service: RwLock::new(theme_service),
-            reload_tx: None,
-        })
-    }
-
-    pub fn load_with_cli(_cli: CliArgs) -> Result<Self> {
-        // CLI args can be applied on top of loaded config in the future
-        Self::load()
-    }
-
-    pub fn start_watching(&mut self) -> Result<mpsc::Receiver<()>> {
-        use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-        use std::time::Duration;
-
-        let (tx, rx) = mpsc::channel();
-        let tx_clone = tx.clone();
-        let config_path = Self::config_path();
-
-        let mut watcher = RecommendedWatcher::new(
-            move |res: std::result::Result<notify::Event, notify::Error>| {
-                if let Ok(event) = res {
-                    if event.kind.is_modify() {
-                        let _ = tx_clone.send(());
-                    }
-                }
-            },
-            notify::Config::default().with_poll_interval(Duration::from_secs(2)),
-        )
-        .map_err(|e| CoreError::Config(e.to_string()))?;
-
-        watcher
-            .watch(&config_path, RecursiveMode::NonRecursive)
-            .map_err(|e| CoreError::Config(e.to_string()))?;
-
-        self.reload_tx = Some(tx);
-        Ok(rx)
-    }
-
-    pub fn reload(&self) -> Result<()> {
-        let new_config = load_app_config()?;
-        let mut config = self.config.write();
-        *config = new_config;
-        log::info!("Config reloaded from disk");
-        Ok(())
-    }
-
-    pub fn save(&self) -> Result<()> {
-        let config = self.config.read();
-        save_app_config(&config)
-    }
-
-    pub fn get(&self) -> parking_lot::RwLockReadGuard<'_, AppConfig> {
-        self.config.read()
-    }
-
-    pub fn update<F>(&self, f: F)
-    where
-        F: FnOnce(&mut AppConfig),
-    {
-        let mut config = self.config.write();
-        f(&mut config);
-    }
-
-    pub fn theme_service(&self) -> parking_lot::RwLockReadGuard<'_, ThemeService> {
-        self.theme_service.read()
-    }
-
-    pub fn config_path() -> PathBuf {
-        Self::config_dir().join("config.toml")
-    }
-
-    pub fn config_dir() -> PathBuf {
-        AppConfig::config_dir()
-    }
-
-    pub fn themes_dir() -> PathBuf {
-        AppConfig::themes_dir()
-    }
-
-    pub fn plugins_dir() -> PathBuf {
-        Self::config_dir().join("plugins")
     }
 }

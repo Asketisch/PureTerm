@@ -4,6 +4,25 @@ use std::sync::Arc;
 use winit::event::WindowEvent;
 use winit::window::Window;
 
+/// CJK font family names to search for (per platform).
+#[cfg(target_os = "macos")]
+const CJK_FAMILIES: &[&str] = &[
+    "PingFang SC", "PingFang TC", "PingFang HK",
+    "Hiragino Sans GB", "STHeiti", "Songti SC",
+];
+#[cfg(target_os = "linux")]
+const CJK_FAMILIES: &[&str] = &[
+    "Noto Sans CJK SC", "Noto Sans CJK TC",
+    "WenQuanYi Micro Hei", "Source Han Sans",
+];
+#[cfg(target_os = "windows")]
+const CJK_FAMILIES: &[&str] = &[
+    "Microsoft YaHei", "SimHei",
+    "Source Han Sans SC", "Noto Sans CJK SC",
+];
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+const CJK_FAMILIES: &[&str] = &[];
+
 /// Manages egui rendering within the wgpu pipeline.
 pub struct EguiBackend {
     pub context: egui::Context,
@@ -37,6 +56,66 @@ impl EguiBackend {
             winit_state,
             renderer,
         }
+    }
+
+    /// Register CJK fonts with the egui context so Chinese/Japanese/Korean
+    /// text can be rendered in the settings panel, modals, etc.
+    pub fn setup_cjk_fonts(&self) {
+        let cjk_data = Self::find_cjk_font();
+        match cjk_data {
+            Some(data) => {
+                let mut fonts = egui::FontDefinitions::default();
+
+                // Add the CJK font data
+                fonts.font_data.insert(
+                    "cjk".to_owned(),
+                    Arc::new(egui::FontData::from_owned(data)),
+                );
+
+                // Append CJK font to Proportional and Monospace families
+                // egui automatically tries each font in order for each character
+                let cjk_name = "cjk".to_owned();
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+                    if let Some(fallback) = fonts.families.get_mut(&family) {
+                        fallback.push(cjk_name.clone());
+                    }
+                }
+
+                self.context.set_fonts(fonts);
+                log::info!("egui: CJK fonts registered successfully");
+            }
+            None => {
+                log::warn!("egui: no CJK font found on system, Chinese text may not render");
+            }
+        }
+    }
+
+    /// Find a suitable CJK font on the system.
+    fn find_cjk_font() -> Option<Vec<u8>> {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+
+        for family_name in CJK_FAMILIES {
+            let face_id = db.query(&fontdb::Query {
+                families: &[fontdb::Family::Name(family_name)],
+                weight: fontdb::Weight::default(),
+                stretch: fontdb::Stretch::default(),
+                style: fontdb::Style::default(),
+            });
+
+            if let Some(id) = face_id {
+                if let Some((source, _index)) = db.face_source(id) {
+                    if let fontdb::Source::File(path) = source {
+                        if let Ok(data) = std::fs::read(&path) {
+                            log::info!("egui: found CJK font: {} at {:?}", family_name, path);
+                            return Some(data);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Process a winit window event through egui.

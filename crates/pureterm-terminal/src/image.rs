@@ -771,7 +771,7 @@ fn decompress(data: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// Decode PNG data to RGBA pixels.
-fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
+pub fn decode_png(data: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
     let decoder = png::Decoder::new(std::io::Cursor::new(data));
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0; reader.output_buffer_size()];

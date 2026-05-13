@@ -2,6 +2,8 @@
 
 终端模拟引擎的核心实现：VTE 转义序列解析、字符网格管理（含 reflow）、光标操作、超链接、图片支持。
 
+src/ 级别模块详解：[src/AGENTS.md](src/AGENTS.md)
+
 ## 关键依赖
 
 `vte`（VTE 解析）、`unicode-width` + `unicode-segmentation`（Unicode）、`serde`（序列化）、`thiserror`（错误）、`parking_lot`（并发）。
@@ -23,9 +25,10 @@ src/
 ├── replay.rs          # 终端回放功能
 ├── search.rs          # 终端内搜索（基于 Ghostty 架构）
 ├── bidi.rs            # 双向文本支持（Arabic、Hebrew 等）
+├── block.rs            # CommandBlock 模型（OSC 133 Shell 集成）(220 行)
 ├── parser/
 │   ├── mod.rs          # VteParser 包装
-│   ├── perform.rs      # VtePerform（vte::Perform 实现）+ ScreenSnapshot
+│   ├── perform.rs      # VtePerform（vte::Perform 实现）+ ScreenSnapshot (3044 行)
 │   └── AGENTS.md       # VTE 执行引擎详解
 ├── screen/
 │   ├── mod.rs          # 模块重导出
@@ -97,7 +100,7 @@ Session 字节 → VteParser::parse() → VtePerform（vte::Perform）→ Grid/C
 
 详细文档：[parser/AGENTS.md](src/parser/AGENTS.md)
 
-`VtePerform` 实现 `vte::Perform` trait（1263 行），包含：CSI/OSC/ESC 序列分发、`pending_wrap` 机制、IRM 插入模式、双宽字符、备用屏幕缓冲区（Alt Screen）、DCS Hook/Put/Unhook、SGR 文本属性。ScreenSnapshot 作为渲染用的屏幕快照。
+`VtePerform` 实现 `vte::Perform` trait（3044 行），包含：CSI/OSC/ESC 序列分发、`pending_wrap` 机制、IRM 插入模式、双宽字符、备用屏幕缓冲区（Alt Screen）、DCS Hook/Put/Unhook、SGR 文本属性。ScreenSnapshot 作为渲染用的屏幕快照。
 
 ### tmux/ — Tmux 集成
 

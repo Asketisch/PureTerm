@@ -2,6 +2,8 @@
 
 应用程序的 main 入口，负责将所有 crate 组装到一起并驱动事件循环。
 
+src/ 级别模块详解：[src/AGENTS.md](src/AGENTS.md)
+
 ## 关键依赖
 
 依赖工作区中其他 5 个 crate：`pureterm-core`、`pureterm-terminal`、`pureterm-session`、`pureterm-ui`、`pureterm-gui`
@@ -14,6 +16,14 @@
 src/                  # 主源代码
 ├── AGENTS.md         # src/ 目录详解
 ├── main.rs           # 主入口（CLI + 事件循环）
+├── cli.rs            # CLI 参数解析
+├── app.rs            # PureTermApp 应用状态
+├── event_handler.rs  # 事件处理分发
+├── key_input.rs      # 键盘输入处理
+├── overlay.rs        # 覆盖层渲染
+├── pane_ops.rs       # 窗格操作
+├── tab_ops.rs        # 标签页操作
+├── accessibility.rs  # 无障碍支持
 ├── quake_mode.rs     # Quake 模式（dropdown terminal）
 ├── tray.rs           # 系统托盘图标
 ├── multi_window.rs   # 多窗口管理

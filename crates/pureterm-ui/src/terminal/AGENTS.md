@@ -1,13 +1,13 @@
 # pureterm-ui/src/terminal — TerminalPane 终端面板
 
-TerminalPane 是 pureterm-ui 的核心组件（1046 行），组合 `Terminal`（终端模拟）+ `Session`（连接会话）。负责输入编码、鼠标事件处理、输出处理、选择、平滑滚动和搜索。
+TerminalPane 是 pureterm-ui 的核心组件（1395 行），组合 `Terminal`（终端模拟）+ `Session`（连接会话）。负责输入编码、鼠标事件处理、输出处理、选择、平滑滚动和搜索。
 
 ## 文件结构
 
 ```
 src/
 ├── mod.rs    # 模块重导出 (3 行)
-└── pane.rs   # TerminalPane + Selection + ScrollState + PaneAction (1046 行)
+└── pane.rs   # TerminalPane + Selection + ScrollState + PaneAction (1395 行)
 ```
 
 ## 模块依赖
@@ -224,4 +224,4 @@ Alt 键按下时滚轮发送方向键序列（适用于 `less` 等程序）。
 
 ## 父级导航
 
-← [pureterm-ui/AGENTS.md](../../AGENTS.md)
+← [src/AGENTS.md](../AGENTS.md)

@@ -6,17 +6,17 @@
 
 ```
 src/
-├── mod.rs              # 模块重导出 (13 行)
-├── cell.rs             # Cell、CellAttrs、Color、NamedColor (103 行)
+├── mod.rs              # 模块重导出 (23 行)
+├── cell.rs             # Cell、CellAttrs、Color、NamedColor (212 行)
 ├── color.rs            # 重导出 Color (1 行)
-├── color_palette.rs    # 256 色调色板生成、CIELAB 插值、X11 颜色名 (469 行)
-├── cursor.rs           # Cursor、CursorStyle (55 行)
-├── grapheme.rs         # Grapheme 边界检测（UAX #29）(454 行)
-├── grid.rs             # Grid（字符网格 + 回滚缓冲区）(441 行，VecDeque)
-├── page_list.rs        # PageList 分页存储（替代 Vec<Vec<Cell>>）(273 行)
-├── ref_counted_set.rs  # RefCountedSet<T> 引用计数集合 (173 行)
-├── selection.rs        # 文本选择 + 鼠标事件编码 (142 行)
-└── style.rs            # Style + StylePool 样式去重池 (217 行)
+├── color_palette.rs    # 256 色调色板生成、CIELAB 插值、X11 颜色名 (468 行)
+├── cursor.rs           # Cursor、CursorStyle (57 行)
+├── grapheme.rs         # Grapheme 边界检测（UAX #29）(453 行)
+├── grid.rs             # Grid（字符网格 + 回滚缓冲区）(447 行，VecDeque)
+├── page_list.rs        # PageList 分页存储（替代 Vec<Vec<Cell>>）(272 行)
+├── ref_counted_set.rs  # RefCountedSet<T> 引用计数集合 (172 行)
+├── selection.rs        # 文本选择 + 鼠标事件编码 (608 行)
+└── style.rs            # Style + StylePool 样式去重池 (216 行)
 ```
 
 **注意：** 无 `history.rs` 文件，回滚历史由 `Grid` 管理（底层可选 `PageList` 分页存储）。
@@ -245,4 +245,4 @@ SGR 格式：`\x1b[<Pb;Px;PwM`（Down）、`\x1b[<Pb;Px;PwM`（Up）、`\x1b[<Pb
 
 ## 父级导航
 
-← [pureterm-terminal/AGENTS.md](../../AGENTS.md)
+← [src/AGENTS.md](../AGENTS.md)

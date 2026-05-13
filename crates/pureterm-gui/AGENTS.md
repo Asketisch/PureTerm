@@ -2,6 +2,8 @@
 
 使用 wgpu 29 实现 GPU 加速的终端文本渲染。采用多渲染 pass 架构（背景色→装饰→文字→光标→图片→后处理→调试覆盖），字形图集、软件光栅化 Sprite、HarfBuzz 文本整形、ShaderToy 自定义着色器。提供 egui-wgpu 集成层用于设置面板覆盖。
 
+src/ 级别模块详解：[src/AGENTS.md](src/AGENTS.md)
+
 ## 关键依赖
 
 内部依赖：`pureterm-core`、`pureterm-terminal`
@@ -15,27 +17,27 @@
 ```
 src/
 ├── lib.rs             # 模块导出
-├── renderer.rs        # TerminalRenderer（主渲染器，组装各 pass）
+├── renderer.rs        # TerminalRenderer（主渲染器，组装各 pass）(1220 行)
 ├── pipeline.rs        # TextPipeline + Vertex（兼容旧接口）
 ├── render_pass/       # 多 pass 渲染架构
-│   ├── mod.rs          # RenderPass trait + PassData + 工厂函数 (226 行)
-│   ├── bg_color.rs     # BgColorPass 单元格背景色 (150 行)
-│   ├── cell_text.rs    # CellTextPass 字形渲染 (184 行)
-│   ├── cursor.rs       # CursorPass 光标 + 闪烁 (203 行)
-│   ├── decorations.rs  # DecorationsPass 下划线/删除线/上划线 (148 行)
-│   ├── bg_image.rs     # BgImagePass 背景壁纸 (209 行)
-│   ├── kitty_image.rs  # KittyImagePass Kitty 内联图片 (184 行)
-│   ├── post_process.rs # PostProcessPass 后处理效果 (214 行)
-│   ├── debug_overlay.rs # DebugOverlayPass 调试文本覆盖 (164 行)
+│   ├── mod.rs          # RenderPass trait + PassData + 工厂函数 (225 行)
+│   ├── bg_color.rs     # BgColorPass 单元格背景色 (148 行)
+│   ├── cell_text.rs    # CellTextPass 字形渲染 (182 行)
+│   ├── cursor.rs       # CursorPass 光标 + 闪烁 (201 行)
+│   ├── decorations.rs  # DecorationsPass 下划线/删除线/上划线 (146 行)
+│   ├── bg_image.rs     # BgImagePass 背景壁纸 (208 行)
+│   ├── kitty_image.rs  # KittyImagePass Kitty 内联图片 (183 行)
+│   ├── post_process.rs # PostProcessPass 后处理效果 (212 行)
+│   ├── debug_overlay.rs # DebugOverlayPass 调试文本覆盖 (162 行)
 │   └── AGENTS.md       # 渲染 pass 架构详解
-├── render_thread.rs   # RenderThread 独立渲染线程 (259 行)
-├── fonts.rs           # GlyphAtlas 字形图集（2048×2048 R8）
-├── font_fallback.rs   # FontFallback 字体回退链（fontdb）(273 行)
-├── shaping.rs         # TextShaper HarfBuzz 文本整形 (139 行)
-├── sprite.rs          # 软件 Sprite 光栅化器（Block/Box/Braille/Powerline）(1433 行)
+├── render_thread.rs   # RenderThread 独立渲染线程 (258 行)
+├── fonts.rs           # GlyphAtlas 字形图集（2048×2048 R8）(1224 行)
+├── font_fallback.rs   # FontFallback 字体回退链（fontdb）(272 行)
+├── shaping.rs         # TextShaper HarfBuzz 文本整形 (138 行)
+├── sprite.rs          # 软件 Sprite 光栅化器（Block/Box/Braille/Powerline）(1430 行)
 ├── egui_backend.rs    # EguiBackend（egui-wgpu 集成）
 ├── egui_int.rs        # egui 集成层（TerminalWidget）
-├── shader_toy.rs      # ShaderToy 自定义着色器支持 (281 行)
+├── shader_toy.rs      # ShaderToy 自定义着色器支持 (280 行)
 ├── transparency.rs    # 透明背景支持
 ├── background.rs      # 背景渲染
 ├── math.rs            # GPU 数学工具（正交投影、坐标转换）(18 行)
@@ -208,7 +210,7 @@ ScreenSnapshot → 遍历 Cell → 各 pass 生成顶点 → 按序 render
 
 `TextShaper::shape()` 返回视觉序 glyph 列表，支持 BiDi、Arabic、Indic、emoji ZWJ 序列。
 
-### sprite.rs — 软件 Sprite 光栅化器（1433 行）
+### sprite.rs — 软件 Sprite 光栅化器（1430 行）
 
 绕过字体光栅化，直接绘制终端专用字符的像素模式：
 

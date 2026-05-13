@@ -6,6 +6,7 @@ pub mod command_palette;
 pub mod context_menu;
 pub mod explorer;
 pub mod focus_mode;
+pub mod history_menu;
 pub mod inspector;
 pub mod jump_prompt;
 pub mod lock_screen;

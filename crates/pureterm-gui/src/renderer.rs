@@ -3,6 +3,56 @@ use crate::pipeline::{TextPipeline, Vertex};
 use crate::transparency::TransparencyConfig;
 use pureterm_core::theme::ColorScheme;
 use pureterm_terminal::ScreenSnapshot;
+use std::time::Instant;
+
+/// WCAG 2.0 相对亮度计算
+fn relative_luminance(r: u8, g: u8, b: u8) -> f64 {
+    let linearize = |c: u8| {
+        let s = c as f64 / 255.0;
+        if s <= 0.03928 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * linearize(r) + 0.7152 * linearize(g) + 0.0722 * linearize(b)
+}
+
+/// WCAG 对比度比率
+fn contrast_ratio(fg: [u8; 3], bg: [u8; 3]) -> f64 {
+    let l1 = relative_luminance(fg[0], fg[1], fg[2]);
+    let l2 = relative_luminance(bg[0], bg[1], bg[2]);
+    let lighter = l1.max(l2);
+    let darker = l1.min(l2);
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+/// 如果对比度低于阈值，向白/黑方向混合前景色以满足要求
+fn enforce_minimum_contrast(fg: [u8; 3], bg: [u8; 3], threshold: f64) -> [u8; 3] {
+    if contrast_ratio(fg, bg) >= threshold {
+        return fg;
+    }
+    // 确定前景应该更亮还是更暗
+    let bg_lum = relative_luminance(bg[0], bg[1], bg[2]);
+    let target = if bg_lum < 0.5 { [255u8, 255, 255] } else { [0u8, 0, 0] };
+    // 二分搜索混合比例
+    let mut lo = 0.0f64;
+    let mut hi = 1.0f64;
+    for _ in 0..16 {
+        let mid = (lo + hi) / 2.0;
+        let blended = [
+            (fg[0] as f64 * (1.0 - mid) + target[0] as f64 * mid) as u8,
+            (fg[1] as f64 * (1.0 - mid) + target[1] as f64 * mid) as u8,
+            (fg[2] as f64 * (1.0 - mid) + target[2] as f64 * mid) as u8,
+        ];
+        if contrast_ratio(blended, bg) >= threshold {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    [
+        (fg[0] as f64 * (1.0 - hi) + target[0] as f64 * hi) as u8,
+        (fg[1] as f64 * (1.0 - hi) + target[1] as f64 * hi) as u8,
+        (fg[2] as f64 * (1.0 - hi) + target[2] as f64 * hi) as u8,
+    ]
+}
 
 /// 用于子区域渲染的视口矩形
 #[derive(Debug, Clone, Copy)]
@@ -24,6 +74,14 @@ pub struct TerminalRenderer {
     atlas_texture: Option<wgpu::Texture>,
     surface_config: Option<wgpu::SurfaceConfiguration>,
     transparency_config: TransparencyConfig,
+    cursor_blink_enabled: bool,
+    cursor_blink_start: Instant,
+    /// Cached vertices from last build_vertices call.
+    cached_vertices: Vec<Vertex>,
+    /// Cached indices from last build_vertices call.
+    cached_indices: Vec<u32>,
+    /// Whether the cached vertex data needs re-upload to GPU.
+    vertices_dirty: bool,
 }
 
 impl TerminalRenderer {
@@ -71,6 +129,11 @@ impl TerminalRenderer {
             atlas_texture: None,
             surface_config: None,
             transparency_config: TransparencyConfig::default(),
+            cursor_blink_enabled: true,
+            cursor_blink_start: Instant::now(),
+            cached_vertices: Vec::new(),
+            cached_indices: Vec::new(),
+            vertices_dirty: false,
         })
     }
 
@@ -189,6 +252,7 @@ impl TerminalRenderer {
     /// 为视口内单个窗格的终端快照构建顶点
     ///
     /// 如果 `viewport` 为 None，则渲染到整个表面（传统单窗格模式）
+    /// `minimum_contrast`: WCAG 对比度阈值（0.0 = 不强制，>1.0 = 强制）
     /// 返回 `(vertices, indices)`
     pub fn build_vertices(
         &mut self,
@@ -196,6 +260,7 @@ impl TerminalRenderer {
         color_scheme: &ColorScheme,
         selection: Option<&dyn Fn(usize, usize) -> bool>,
         viewport: Option<ViewportRect>,
+        minimum_contrast: f64,
     ) -> (Vec<Vertex>, Vec<u32>) {
         let config = match &self.surface_config {
             Some(c) => c,
@@ -274,6 +339,13 @@ impl TerminalRenderer {
                     (raw_fg, raw_bg)
                 };
 
+                // 最小对比度强制
+                let resolved_fg = if minimum_contrast > 1.0 {
+                    enforce_minimum_contrast(resolved_fg, resolved_bg, minimum_contrast)
+                } else {
+                    resolved_fg
+                };
+
                 let bg_color = if is_selected {
                     if cell.bg == pureterm_terminal::Color::Named(pureterm_terminal::NamedColor::Background) && !cell.attrs.inverse {
                         [sel_bg[0] as f32 / 255.0, sel_bg[1] as f32 / 255.0, sel_bg[2] as f32 / 255.0, 1.0]
@@ -303,7 +375,9 @@ impl TerminalRenderer {
                 if cell.c != ' ' && !cell.attrs.hidden {
                     let (atlas_w, atlas_h) = self.atlas.atlas_dimensions();
                     let face_idx = self.atlas.face_index_for_attrs(cell.attrs.bold, cell.attrs.italic);
-                    let glyph_opt = self.atlas.get_glyph(face_idx, cell.c);
+                    // Subpixel positioning: use fractional x offset for sharper glyphs
+                    let x_frac = x.fract();
+                    let glyph_opt = self.atlas.get_glyph_subpixel(face_idx, cell.c, x_frac);
                     if let Some(glyph) = glyph_opt {
                         let tx0 = glyph.x as f32 / atlas_w as f32;
                         let ty0 = glyph.y as f32 / atlas_h as f32;
@@ -365,29 +439,58 @@ impl TerminalRenderer {
                                 let base = vertices.len() as u32;
                                 vertices.extend_from_slice(&[
                                     Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
-                                    Vertex { position: [x1, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
-                                    Vertex { position: [x0, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
-                                    Vertex { position: [x1, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                    Vertex { position: [x1, uy0], tex_coords: [1.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                    Vertex { position: [x0, uy1], tex_coords: [0.0, 1.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                    Vertex { position: [x1, uy1], tex_coords: [1.0, 1.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
                                 ]);
                                 indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
                             }
                         }
                         pureterm_terminal::UnderlineStyle::Curly => {
-                            // Curly underline: thicker wavy line (approximated as a thicker bar)
-                            let h = ut * 2.0;
-                            let uy0 = 1.0 - ((underline_y) / screen_h) * 2.0;
-                            let uy1 = 1.0 - ((underline_y + h) / screen_h) * 2.0;
+                            // Curly underline: sine wave pattern via shader (shape_type=5)
+                            let h = ut * 3.0;
+                            let uy0 = 1.0 - ((underline_y - ut) / screen_h) * 2.0;
+                            let uy1 = 1.0 - ((underline_y - ut + h) / screen_h) * 2.0;
+                            let sp = [effective_w, h, 0.0, 5.0];
                             let base = vertices.len() as u32;
                             vertices.extend_from_slice(&[
-                                Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
-                                Vertex { position: [x1, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
-                                Vertex { position: [x0, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
-                                Vertex { position: [x1, uy1], tex_coords: [0.0, 0.0], color: deco_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                                Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x1, uy0], tex_coords: [1.0, 0.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x0, uy1], tex_coords: [0.0, 1.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x1, uy1], tex_coords: [1.0, 1.0], color: deco_color, shape_params: sp },
+                            ]);
+                            indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
+                        }
+                        pureterm_terminal::UnderlineStyle::Dotted => {
+                            // Dotted underline via shader (shape_type=3)
+                            let uy0 = 1.0 - (underline_y / screen_h) * 2.0;
+                            let uy1 = 1.0 - ((underline_y + ut) / screen_h) * 2.0;
+                            let sp = [effective_w, ut, 0.0, 3.0];
+                            let base = vertices.len() as u32;
+                            vertices.extend_from_slice(&[
+                                Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x1, uy0], tex_coords: [1.0, 0.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x0, uy1], tex_coords: [0.0, 1.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x1, uy1], tex_coords: [1.0, 1.0], color: deco_color, shape_params: sp },
+                            ]);
+                            indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
+                        }
+                        pureterm_terminal::UnderlineStyle::Dashed => {
+                            // Dashed underline via shader (shape_type=4)
+                            let uy0 = 1.0 - (underline_y / screen_h) * 2.0;
+                            let uy1 = 1.0 - ((underline_y + ut) / screen_h) * 2.0;
+                            let sp = [effective_w, ut, 0.0, 4.0];
+                            let base = vertices.len() as u32;
+                            vertices.extend_from_slice(&[
+                                Vertex { position: [x0, uy0], tex_coords: [0.0, 0.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x1, uy0], tex_coords: [1.0, 0.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x0, uy1], tex_coords: [0.0, 1.0], color: deco_color, shape_params: sp },
+                                Vertex { position: [x1, uy1], tex_coords: [1.0, 1.0], color: deco_color, shape_params: sp },
                             ]);
                             indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
                         }
                         _ => {
-                            // Single / Dotted / Dashed: solid line (dotted/dashed require shader support)
+                            // Single underline: solid line
                             let uy0 = 1.0 - (underline_y / screen_h) * 2.0;
                             let uy1 = 1.0 - ((underline_y + ut) / screen_h) * 2.0;
                             let base = vertices.len() as u32;
@@ -435,8 +538,9 @@ impl TerminalRenderer {
             }
         }
 
-        // 渲染光标
-        if snapshot.cursor_visible {
+        // 渲染光标（需要同时满足可见和闪烁状态）
+        let blink_visible = self.cursor_blink_visible();
+        if snapshot.cursor_visible && blink_visible {
             let cx = offset_x + snapshot.cursor_col as f32 * cell_w;
             let cy = offset_y + snapshot.cursor_row as f32 * cell_h;
             let cursor_color = ColorScheme::parse_color(&color_scheme.cursor);
@@ -498,6 +602,38 @@ impl TerminalRenderer {
         }
 
         (vertices, indices)
+    }
+
+    /// 构建顶点并缓存结果（用于主渲染路径）
+    pub fn build_and_cache_vertices(
+        &mut self,
+        snapshot: &ScreenSnapshot,
+        color_scheme: &ColorScheme,
+        selection: Option<&dyn Fn(usize, usize) -> bool>,
+        viewport: Option<ViewportRect>,
+        minimum_contrast: f64,
+    ) {
+        let (vertices, indices) = self.build_vertices(snapshot, color_scheme, selection, viewport, minimum_contrast);
+        self.cached_vertices = vertices;
+        self.cached_indices = indices;
+        self.vertices_dirty = true;
+    }
+
+    /// 缓存外部构建的顶点数据
+    pub fn cache_vertices(&mut self, vertices: Vec<Vertex>, indices: Vec<u32>) {
+        self.cached_vertices = vertices;
+        self.cached_indices = indices;
+        self.vertices_dirty = true;
+    }
+
+    /// 获取缓存的顶点
+    pub fn cached_vertices(&self) -> &[Vertex] {
+        &self.cached_vertices
+    }
+
+    /// 获取缓存的索引
+    pub fn cached_indices(&self) -> &[u32] {
+        &self.cached_indices
     }
 
     /// 为填充矩形构建顶点（用于分隔线、边框、菜单背景）
@@ -634,6 +770,174 @@ impl TerminalRenderer {
         );
     }
 
+    /// Build vertices for command block visual markers (vertical bars in the left margin).
+    /// Draws a 2px wide vertical bar for each row that is a PromptStart.
+    pub fn build_block_marker_vertices(
+        &mut self,
+        viewport: ViewportRect,
+        block_markers: &[usize],
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        let (_, cell_h) = self.atlas.cell_size();
+        let marker_color: [f32; 4] = [0.4, 0.7, 1.0, 0.7];
+        let marker_width = 2.0;
+        for &row in block_markers {
+            let y = viewport.y + row as f32 * cell_h;
+            self.build_rect_vertices(
+                ViewportRect {
+                    x: viewport.x,
+                    y,
+                    w: marker_width,
+                    h: cell_h,
+                },
+                marker_color,
+                vertices,
+                indices,
+            );
+        }
+    }
+
+    /// Build vertices for IME preedit text rendering at the cursor position.
+    /// Draws the preedit text with an underline at the cursor location.
+    pub fn build_ime_preedit_vertices(
+        &mut self,
+        viewport: ViewportRect,
+        snapshot: &ScreenSnapshot,
+        preedit: &str,
+        color_scheme: &ColorScheme,
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        let config = match &self.surface_config {
+            Some(c) => c,
+            None => return,
+        };
+        let screen_w = config.width as f32;
+        let screen_h = config.height as f32;
+        let (cell_w, cell_h) = self.atlas.cell_size();
+        let ascent = self.atlas.ascent();
+        let (underline_pos, underline_thickness, _, _) = self.atlas.decoration_metrics();
+
+        let fg = ColorScheme::parse_color(&color_scheme.foreground);
+        let fg_color = [fg[0] as f32 / 255.0, fg[1] as f32 / 255.0, fg[2] as f32 / 255.0, 1.0];
+
+        // Position: start at cursor position within the viewport
+        let cursor_x = viewport.x + snapshot.cursor_col as f32 * cell_w;
+        let cursor_y = viewport.y + snapshot.cursor_row as f32 * cell_h;
+
+        // Draw a subtle background highlight behind the preedit text
+        let total_width = self.measure_text(preedit);
+        if total_width > 0.0 {
+            let bg_color = [0.3, 0.3, 0.5, 0.3];
+            let bx0 = (cursor_x / screen_w) * 2.0 - 1.0;
+            let by0 = 1.0 - (cursor_y / screen_h) * 2.0;
+            let bx1 = ((cursor_x + total_width) / screen_w) * 2.0 - 1.0;
+            let by1 = 1.0 - ((cursor_y + cell_h) / screen_h) * 2.0;
+            let base = vertices.len() as u32;
+            vertices.extend_from_slice(&[
+                Vertex { position: [bx0, by0], tex_coords: [0.0, 0.0], color: bg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [bx1, by0], tex_coords: [0.0, 0.0], color: bg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [bx0, by1], tex_coords: [0.0, 0.0], color: bg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [bx1, by1], tex_coords: [0.0, 0.0], color: bg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+            ]);
+            indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
+
+            // Draw underline for preedit
+            let underline_y = cursor_y + ascent + underline_pos;
+            let uy0 = 1.0 - (underline_y / screen_h) * 2.0;
+            let uy1 = 1.0 - ((underline_y + underline_thickness) / screen_h) * 2.0;
+            let base = vertices.len() as u32;
+            vertices.extend_from_slice(&[
+                Vertex { position: [bx0, uy0], tex_coords: [0.0, 0.0], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [bx1, uy0], tex_coords: [0.0, 0.0], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [bx0, uy1], tex_coords: [0.0, 0.0], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                Vertex { position: [bx1, uy1], tex_coords: [0.0, 0.0], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+            ]);
+            indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
+        }
+
+        // Draw the preedit text characters
+        let mut cursor_x = cursor_x;
+        for ch in preedit.chars() {
+            let (atlas_w, atlas_h) = self.atlas.atlas_dimensions();
+            if let Some(glyph) = self.atlas.get_glyph(0, ch) {
+                let tx0 = glyph.x as f32 / atlas_w as f32;
+                let ty0 = glyph.y as f32 / atlas_h as f32;
+                let tx1 = (glyph.x + glyph.width as u32) as f32 / atlas_w as f32;
+                let ty1 = (glyph.y + glyph.height as u32) as f32 / atlas_h as f32;
+
+                let gx0 = cursor_x + glyph.x_offset;
+                let gx1 = gx0 + glyph.width as f32;
+                let gy_bottom = cursor_y + ascent - glyph.y_offset;
+                let gy_top = gy_bottom - glyph.height as f32;
+
+                let cgx0 = (gx0 / screen_w) * 2.0 - 1.0;
+                let cgy0 = 1.0 - (gy_top / screen_h) * 2.0;
+                let cgx1 = (gx1 / screen_w) * 2.0 - 1.0;
+                let cgy1 = 1.0 - (gy_bottom / screen_h) * 2.0;
+
+                let base = vertices.len() as u32;
+                vertices.extend_from_slice(&[
+                    Vertex { position: [cgx0, cgy0], tex_coords: [tx0, ty0], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [cgx1, cgy0], tex_coords: [tx1, ty0], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [cgx0, cgy1], tex_coords: [tx0, ty1], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                    Vertex { position: [cgx1, cgy1], tex_coords: [tx1, ty1], color: fg_color, shape_params: [0.0, 0.0, 0.0, 0.0] },
+                ]);
+                indices.extend_from_slice(&[base, base + 1, base + 2, base + 2, base + 1, base + 3]);
+
+                cursor_x += glyph.advance;
+            }
+        }
+    }
+
+    /// 为滚动条构建顶点（轨道 + 滑块）
+    /// `viewport`: 面板渲染区域
+    /// `scroll_offset`: 当前滚动偏移（0 = 底部）
+    /// `history`: 历史行数（超出可见区域的行）
+    /// `visible_rows`: 可见行数
+    /// `width`: 滚动条宽度（像素）
+    /// `opacity`: 轨道不透明度
+    pub fn build_scrollbar_vertices(
+        &mut self,
+        viewport: ViewportRect,
+        scroll_offset: usize,
+        history: usize,
+        visible_rows: usize,
+        width: f32,
+        opacity: f32,
+        vertices: &mut Vec<Vertex>,
+        indices: &mut Vec<u32>,
+    ) {
+        if history == 0 {
+            return;
+        }
+
+        let total_content = visible_rows + history;
+
+        // 轨道背景
+        let track_x = viewport.x + viewport.w - width;
+        self.build_rect_vertices(
+            ViewportRect { x: track_x, y: viewport.y, w: width, h: viewport.h },
+            [0.5, 0.5, 0.55, opacity],
+            vertices, indices,
+        );
+
+        // 滑块
+        let thumb_ratio = visible_rows as f32 / total_content as f32;
+        let thumb_h = (viewport.h * thumb_ratio).max(20.0); // 最小 20px
+        let max_thumb_y = viewport.h - thumb_h;
+        let scroll_ratio = scroll_offset as f32 / history as f32;
+        let thumb_y = viewport.y + max_thumb_y * scroll_ratio;
+
+        self.build_rounded_rect_vertices(
+            ViewportRect { x: track_x, y: thumb_y, w: width, h: thumb_h },
+            [0.7, 0.7, 0.75, 0.9],
+            width * 0.5, // 圆角 = 半宽（药丸形状）
+            vertices, indices,
+        );
+    }
+
     /// 使用字形图集为上下文菜单文本构建顶点
     pub fn build_text_vertices(
         &mut self,
@@ -723,6 +1027,7 @@ impl TerminalRenderer {
         if let Some(frame) = frame {
             frame.present();
         }
+        self.vertices_dirty = false;
     }
 
     /// 提交顶点和索引到 GPU 但不呈现
@@ -815,7 +1120,7 @@ impl TerminalRenderer {
         selection: Option<&dyn Fn(usize, usize) -> bool>,
     ) {
         let bg = ColorScheme::parse_color(&color_scheme.background);
-        let (vertices, indices) = self.build_vertices(snapshot, color_scheme, selection, None);
+        let (vertices, indices) = self.build_vertices(snapshot, color_scheme, selection, None, 0.0);
         self.draw(surface, &vertices, &indices, bg);
     }
 
@@ -865,5 +1170,51 @@ impl TerminalRenderer {
     /// 获取表面配置
     pub fn surface_config(&self) -> Option<&wgpu::SurfaceConfiguration> {
         self.surface_config.as_ref()
+    }
+
+    /// 使用缓存的顶点数据渲染（跳过顶点重建）
+    pub fn render_cached(
+        &mut self,
+        surface: &wgpu::Surface<'static>,
+        bg_color: [u8; 3],
+    ) {
+        if !self.cached_vertices.is_empty() {
+            let v = std::mem::take(&mut self.cached_vertices);
+            let i = std::mem::take(&mut self.cached_indices);
+            self.draw(surface, &v, &i, bg_color);
+            self.cached_vertices = v;
+            self.cached_indices = i;
+        }
+    }
+
+    /// 将上次构建的顶点标记为需要重新上传
+    pub fn mark_vertices_dirty(&mut self) {
+        self.vertices_dirty = true;
+    }
+
+    /// 计算当前光标闪烁可见状态
+    /// 周期 1000ms：600ms 显示 + 400ms 隐藏（VT520 规范）
+    pub fn cursor_blink_visible(&self) -> bool {
+        if !self.cursor_blink_enabled {
+            return true;
+        }
+        let elapsed_ms = self.cursor_blink_start.elapsed().as_millis() % 1000;
+        elapsed_ms < 600
+    }
+
+    /// 重置光标闪烁定时器（在用户输入时调用）
+    pub fn reset_cursor_blink(&mut self) {
+        self.cursor_blink_start = Instant::now();
+    }
+
+    /// 设置光标闪烁启用状态
+    pub fn set_cursor_blink(&mut self, enabled: bool) {
+        self.cursor_blink_enabled = enabled;
+        self.cursor_blink_start = Instant::now();
+    }
+
+    /// 检查是否启用了光标闪烁
+    pub fn is_cursor_blink_enabled(&self) -> bool {
+        self.cursor_blink_enabled
     }
 }

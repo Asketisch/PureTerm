@@ -14,6 +14,8 @@ use pureterm_terminal::screen::selection::{
     self, ClickCount, MouseButton, MouseModifiers, TerminalMouseEvent,
 };
 use pureterm_terminal::mode::TermMode;
+use crate::autocomplete::{Completion, complete_path, complete_command};
+use crate::history_menu::CommandHistory;
 
 // ── Smooth Scroll State ───────────────────────────────────────────────────────
 
@@ -206,6 +208,19 @@ impl Default for MouseState {
     }
 }
 
+/// A command correction suggestion shown after a failing command.
+#[derive(Debug, Clone)]
+pub struct CorrectionSuggestion {
+    /// The original command that failed.
+    pub command: String,
+    /// The exit code (non-zero).
+    pub exit_code: i32,
+    /// A suggested correction (if AI is configured).
+    pub suggestion: Option<String>,
+    /// Whether the hint is visible.
+    pub visible: bool,
+}
+
 /// A terminal pane that combines a Terminal with a Session.
 pub struct TerminalPane {
     pub id: u64,
@@ -227,12 +242,32 @@ pub struct TerminalPane {
     pub copy_on_select: bool,
     /// Callback for clipboard copy (set by the application).
     pub on_copy: Option<Box<dyn FnMut(&str) + Send>>,
+    /// Callback for clipboard set from OSC 52 (set by the application).
+    pub on_clipboard_set: Option<Box<dyn FnMut(&str) + Send>>,
     /// Smooth scroll state for animated scrolling
     pub scroll_state: ScrollState,
     /// Signal from output thread that the session has closed.
     session_closed: Arc<AtomicBool>,
+    /// Buffer for terminal response data (DA/DSR/DECRQSS replies to child process).
+    response_buffer: Arc<Mutex<Vec<u8>>>,
     /// Last time the waker was called, for rate-limiting.
     last_wake: Arc<Mutex<Instant>>,
+    /// IME preedit string for CJK input methods.
+    pub ime_preedit: Option<String>,
+    /// Whether the autocomplete popup is visible.
+    pub autocomplete_visible: bool,
+    /// Current autocomplete query text.
+    pub autocomplete_query: String,
+    /// Autocomplete candidate results.
+    pub autocomplete_results: Vec<Completion>,
+    /// Currently selected autocomplete index.
+    pub autocomplete_selected: usize,
+    /// Whether the inline history popup is visible.
+    pub history_visible: bool,
+    /// Command history for the inline popup.
+    pub command_history: CommandHistory,
+    /// Command correction suggestion (shown when a command fails).
+    pub correction_suggestion: Option<CorrectionSuggestion>,
 }
 
 static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
@@ -260,9 +295,19 @@ impl TerminalPane {
             dropped_files: Vec::new(),
             copy_on_select: true,
             on_copy: None,
+            on_clipboard_set: None,
             scroll_state: ScrollState::new(),
+            response_buffer: Arc::new(Mutex::new(Vec::new())),
             session_closed: Arc::new(AtomicBool::new(false)),
             last_wake: Arc::new(Mutex::new(Instant::now())),
+            ime_preedit: None,
+            autocomplete_visible: false,
+            autocomplete_query: String::new(),
+            autocomplete_results: Vec::new(),
+            autocomplete_selected: 0,
+            history_visible: false,
+            command_history: CommandHistory::new(),
+            correction_suggestion: None,
         }
     }
 
@@ -270,13 +315,60 @@ impl TerminalPane {
     pub fn set_session(&mut self, session: Box<dyn Session>, waker: Option<Arc<dyn Fn() + Send + Sync>>) {
         let receiver = session.output_stream();
         self.session = Some(session);
+        self.wire_terminal_callbacks();
         self.start_output_processing(receiver, waker);
     }
 
     /// Set the session with a pre-created receiver (avoids broadcast race condition).
     pub fn set_session_with_receiver(&mut self, session: Box<dyn Session>, receiver: broadcast::Receiver<Vec<u8>>, waker: Option<Arc<dyn Fn() + Send + Sync>>) {
         self.session = Some(session);
+        self.wire_terminal_callbacks();
         self.start_output_processing(receiver, waker);
+    }
+
+    /// Wire response writer and clipboard callbacks on the terminal.
+    fn wire_terminal_callbacks(&mut self) {
+        // Response writer: terminal queries (DA/DSR) write responses here,
+        // drain_output() flushes them to the session.
+        let response_buffer = Arc::clone(&self.response_buffer);
+        self.terminal.set_response_writer(Box::new(move |data: &[u8]| {
+            if let Ok(mut buf) = response_buffer.lock() {
+                buf.extend_from_slice(data);
+            }
+        }));
+
+        // OSC 52 clipboard callback: delegated to on_clipboard_set if provided
+        // The application sets on_clipboard_set after creating the pane
+        self.terminal.set_clipboard_callback(Box::new(|_text: &str| {
+            // Default: no-op. The app wires this via on_clipboard_set after creation.
+        }));
+
+        // OSC 9 / OSC 777 notification callback
+        self.terminal.set_notification_callback(Box::new(|title: &str, body: &str| {
+            #[cfg(target_os = "macos")]
+            {
+                let title = title.to_string();
+                let body = body.to_string();
+                std::thread::spawn(move || {
+                    let _ = std::process::Command::new("osascript")
+                        .arg("-e")
+                        .arg(format!(
+                            "display notification \"{}\" with title \"{}\"",
+                            body.replace('\\', "\\\\").replace('"', "\\\""),
+                            title.replace('\\', "\\\\").replace('"', "\\\""),
+                        ))
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null())
+                        .status();
+                });
+            }
+        }));
+    }
+
+    /// Set the clipboard callback for OSC 52 operations.
+    /// Call this after set_session() to wire up the system clipboard.
+    pub fn set_clipboard_handler(&mut self, handler: Box<dyn FnMut(&str) + Send>) {
+        self.on_clipboard_set = Some(handler);
     }
 
     /// Hard cap on the pending output buffer to prevent unbounded memory growth.
@@ -348,6 +440,18 @@ impl TerminalPane {
             self.session_closed.store(false, Ordering::SeqCst);
         }
 
+        // Flush terminal response data (DA/DSR replies) to the child process
+        if let Ok(mut resp) = self.response_buffer.lock() {
+            if !resp.is_empty() {
+                if let Some(ref mut session) = self.session {
+                    if let Err(e) = session.write(&resp) {
+                        log::warn!("Failed to write terminal response: {}", e);
+                    }
+                }
+                resp.clear();
+            }
+        }
+
         if let Ok(mut buffer) = self.output_buffer.lock() {
             if !buffer.is_empty() {
                 log::debug!("drain_output: {} bytes from session", buffer.len());
@@ -400,6 +504,29 @@ impl TerminalPane {
         } else {
             log::debug!("write_input: no session, {} bytes dropped", data.len());
         }
+    }
+
+    /// Set the IME preedit string for CJK input methods.
+    /// When Some, the composing text is shown at the cursor position.
+    /// When None, the preedit is cleared.
+    pub fn set_ime_preedit(&mut self, text: Option<String>) {
+        self.ime_preedit = text;
+        self.dirty = true;
+    }
+
+    /// Commit IME text by sending it to the terminal.
+    pub fn commit_ime_text(&mut self, text: &str) {
+        if !text.is_empty() {
+            // Auto-scroll to bottom on input
+            if self.terminal.scroll_offset() > 0 {
+                self.terminal.scroll_to_bottom();
+                self.dirty = true;
+            }
+            self.write_input(text.as_bytes());
+        }
+        // Clear preedit after commit
+        self.ime_preedit = None;
+        self.dirty = true;
     }
 
     /// Process output from the session.
@@ -621,10 +748,17 @@ impl TerminalPane {
     /// Copy the selected text.
     pub fn copy_selection(&self) -> Option<String> {
         self.selection.as_ref().map(|sel| {
-            self.terminal.get_text(
-                sel.start_row, sel.start_col,
-                sel.end_row, sel.end_col,
-            )
+            if sel.is_block {
+                self.terminal.get_text_block(
+                    sel.start_row, sel.start_col,
+                    sel.end_row, sel.end_col,
+                )
+            } else {
+                self.terminal.get_text(
+                    sel.start_row, sel.start_col,
+                    sel.end_row, sel.end_col,
+                )
+            }
         })
     }
 
@@ -681,6 +815,11 @@ impl TerminalPane {
         self.dirty = true;
     }
 
+    /// Check if the session is still active (not exited).
+    pub fn session_is_active(&self) -> bool {
+        self.session.is_some() && !self.session_closed.load(Ordering::SeqCst)
+    }
+
     // ── Mouse event handling ──
 
     /// Convert pixel coordinates to terminal grid (row, col).
@@ -722,10 +861,17 @@ impl TerminalPane {
                     MouseButton::Right => {
                         // Right-click: copy selection if exists, then show context menu
                         if let Some(sel) = &self.selection {
-                            let text = self.terminal.get_text(
-                                sel.start_row, sel.start_col,
-                                sel.end_row, sel.end_col,
-                            );
+                            let text = if sel.is_block {
+                                self.terminal.get_text_block(
+                                    sel.start_row, sel.start_col,
+                                    sel.end_row, sel.end_col,
+                                )
+                            } else {
+                                self.terminal.get_text(
+                                    sel.start_row, sel.start_col,
+                                    sel.end_row, sel.end_col,
+                                )
+                            };
                             if !text.is_empty() {
                                 return (None, Some(PaneAction::CopyText(text)));
                             }
@@ -744,10 +890,17 @@ impl TerminalPane {
                     self.mouse_state.left_down = false;
                     // Finalize selection
                     if let Some(ref sel) = self.selection {
-                        let text = self.terminal.get_text(
-                            sel.start_row, sel.start_col,
-                            sel.end_row, sel.end_col,
-                        );
+                        let text = if sel.is_block {
+                            self.terminal.get_text_block(
+                                sel.start_row, sel.start_col,
+                                sel.end_row, sel.end_col,
+                            )
+                        } else {
+                            self.terminal.get_text(
+                                sel.start_row, sel.start_col,
+                                sel.end_row, sel.end_col,
+                            )
+                        };
                         if !text.trim().is_empty() && self.copy_on_select {
                             return (None, Some(PaneAction::CopyText(text)));
                         }
@@ -876,13 +1029,14 @@ impl TerminalPane {
                 }
             }
             ClickCount::Double => {
-                // Select word at position
+                // Smart selection: try semantic patterns first, fall back to word bounds
                 let line_chars: Vec<char> = if let Some(row_cells) = self.terminal.snapshot().rows.get(row) {
                     row_cells.iter().map(|c| c.c).collect()
                 } else {
                     vec![]
                 };
-                let (start, end) = selection::find_word_bounds(&line_chars, col);
+                let (start, end) = selection::find_smart_selection(&line_chars, col)
+                    .unwrap_or_else(|| selection::find_word_bounds(&line_chars, col));
                 self.selection = Some(Selection {
                     start_row: row,
                     start_col: start,
@@ -993,6 +1147,202 @@ impl TerminalPane {
         } else {
             Some(0)
         };
+    }
+
+    // ── Autocomplete popup methods ──────────────────────────────────────────
+
+    /// Get the current command-line text before cursor (last line of visible area).
+    pub fn current_line_text(&self) -> String {
+        let snapshot = self.terminal.snapshot();
+        let cursor_row = snapshot.cursor_row;
+        if cursor_row < snapshot.rows.len() {
+            let row = &snapshot.rows[cursor_row];
+            row.iter().take(snapshot.cursor_col + 1).map(|c| c.c).collect()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Extract the word before the cursor position for completion.
+    fn word_before_cursor(&self) -> String {
+        let text = self.current_line_text();
+        let text = text.trim_end();
+        if text.is_empty() {
+            return String::new();
+        }
+        // Find the last space-delimited token
+        if let Some(pos) = text.rfind(' ') {
+            text[pos + 1..].to_string()
+        } else {
+            text.to_string()
+        }
+    }
+
+    /// Show the autocomplete popup with completions for the current context.
+    pub fn show_autocomplete(&mut self) {
+        let prefix = self.word_before_cursor();
+        self.autocomplete_query = prefix.clone();
+        self.autocomplete_selected = 0;
+
+        let mut results = Vec::new();
+
+        // If prefix contains a path separator, do path completion
+        if prefix.contains('/') || prefix.starts_with('~') {
+            let cwd = std::env::var("PWD").unwrap_or_else(|_| ".".to_string());
+            results.extend(complete_path(&prefix, &cwd));
+        }
+
+        // Always try command completion (for first word or all words)
+        results.extend(complete_command(&prefix));
+
+        // Deduplicate by text
+        let mut seen = std::collections::HashSet::new();
+        results.retain(|c| seen.insert(c.text.clone()));
+
+        if !results.is_empty() {
+            self.autocomplete_results = results;
+            self.autocomplete_visible = true;
+            self.dirty = true;
+        }
+    }
+
+    /// Hide the autocomplete popup.
+    pub fn hide_autocomplete(&mut self) {
+        self.autocomplete_visible = false;
+        self.autocomplete_results.clear();
+        self.autocomplete_query.clear();
+        self.autocomplete_selected = 0;
+    }
+
+    /// Accept the currently selected autocomplete result and send it to the terminal.
+    /// Returns true if a completion was accepted.
+    pub fn accept_autocomplete(&mut self) -> bool {
+        if !self.autocomplete_visible || self.autocomplete_results.is_empty() {
+            return false;
+        }
+        let idx = self.autocomplete_selected.min(self.autocomplete_results.len() - 1);
+        let completion_text = self.autocomplete_results[idx].text.clone();
+        let query = self.autocomplete_query.clone();
+        let text = if completion_text.starts_with(&query) {
+            completion_text[query.len()..].to_string()
+        } else {
+            completion_text
+        };
+        if !text.is_empty() {
+            self.write_input(text.as_bytes());
+        }
+        self.hide_autocomplete();
+        true
+    }
+
+    /// Move the autocomplete selection up.
+    pub fn autocomplete_up(&mut self) {
+        if self.autocomplete_visible && !self.autocomplete_results.is_empty() {
+            self.autocomplete_selected = self.autocomplete_selected.saturating_sub(1);
+            self.dirty = true;
+        }
+    }
+
+    /// Move the autocomplete selection down.
+    pub fn autocomplete_down(&mut self) {
+        if self.autocomplete_visible && !self.autocomplete_results.is_empty() {
+            self.autocomplete_selected = (self.autocomplete_selected + 1)
+                .min(self.autocomplete_results.len() - 1);
+            self.dirty = true;
+        }
+    }
+
+    // ── History popup methods ───────────────────────────────────────────────
+
+    /// Show the history popup with the current line as prefix.
+    pub fn show_history(&mut self) {
+        let prefix = self.word_before_cursor();
+        if prefix.is_empty() {
+            // Use the full line as prefix for empty word
+            let line = self.current_line_text();
+            self.command_history.start_search(line.trim());
+        } else {
+            self.command_history.start_search(&prefix);
+        }
+        if self.command_history.filtered_count() > 0 {
+            self.history_visible = true;
+            self.dirty = true;
+        }
+    }
+
+    /// Hide the history popup.
+    pub fn hide_history(&mut self) {
+        self.history_visible = false;
+        self.command_history.cancel();
+    }
+
+    /// Accept the currently selected history entry and send it to the terminal.
+    /// Returns true if a history entry was accepted.
+    pub fn accept_history(&mut self) -> bool {
+        if !self.history_visible {
+            return false;
+        }
+        if let Some(entry) = self.command_history.selected_entry() {
+            let entry = entry.to_string();
+            self.hide_history();
+            // Send the selected history entry as input
+            self.write_input(entry.as_bytes());
+            self.write_input(b"\r");
+            return true;
+        }
+        self.hide_history();
+        false
+    }
+
+    /// Move history selection to older entry.
+    pub fn history_next(&mut self) {
+        if self.history_visible {
+            self.command_history.next();
+            self.dirty = true;
+        }
+    }
+
+    /// Move history selection to newer entry.
+    pub fn history_prev(&mut self) {
+        if self.history_visible {
+            self.command_history.prev();
+            self.dirty = true;
+        }
+    }
+
+    /// Record a command in history (called when Enter is pressed at prompt).
+    pub fn record_command(&mut self, command: &str) {
+        let cmd = command.trim().to_string();
+        if !cmd.is_empty() {
+            self.command_history.push(cmd);
+        }
+    }
+
+    // ── Command correction methods ──────────────────────────────────────────
+
+    /// Show a command correction suggestion for a failed command.
+    /// Called when an OutputEnd mark with non-zero exit code is detected.
+    pub fn show_command_correction(&mut self, command: String, exit_code: i32) {
+        self.correction_suggestion = Some(CorrectionSuggestion {
+            command,
+            exit_code,
+            suggestion: None, // AI suggestion would be async
+            visible: true,
+        });
+        self.dirty = true;
+    }
+
+    /// Dismiss the command correction suggestion.
+    pub fn dismiss_correction(&mut self) {
+        if let Some(ref mut c) = self.correction_suggestion {
+            c.visible = false;
+        }
+        self.correction_suggestion = None;
+    }
+
+    /// Check if the command correction suggestion is visible.
+    pub fn is_correction_visible(&self) -> bool {
+        self.correction_suggestion.as_ref().map_or(false, |c| c.visible)
     }
 }
 

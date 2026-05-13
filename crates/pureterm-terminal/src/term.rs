@@ -28,6 +28,30 @@ impl Terminal {
         self.perform.resize(cols, rows);
     }
 
+    /// Set the response writer callback for terminal query replies (DA/DSR/DECRQSS).
+    /// The callback receives bytes that should be written to the child process's stdin.
+    pub fn set_response_writer(&mut self, writer: Box<dyn FnMut(&[u8]) + Send>) {
+        self.perform.set_response_writer(writer);
+    }
+
+    /// Set the clipboard callback for OSC 52 clipboard operations.
+    /// The callback receives decoded text that should be set on the system clipboard.
+    pub fn set_clipboard_callback(&mut self, callback: Box<dyn FnMut(&str) + Send>) {
+        self.perform.set_clipboard_callback(callback);
+    }
+
+    /// Set the notification callback for OSC 9 / OSC 777 desktop notifications.
+    /// The callback receives (title, body).
+    pub fn set_notification_callback(&mut self, callback: Box<dyn FnMut(&str, &str) + Send>) {
+        self.perform.set_notification_callback(callback);
+    }
+
+    /// Set the mark callback for OSC 133 shell integration marks.
+    /// The callback receives the mark kind (PromptStart, CommandStart, OutputStart, OutputEnd).
+    pub fn set_mark_callback(&mut self, callback: Box<dyn FnMut(crate::mark::MarkKind) + Send>) {
+        self.perform.set_mark_callback(callback);
+    }
+
     /// Check if the screen content has changed since last check.
     pub fn is_dirty(&self) -> bool {
         self.perform.dirty
@@ -46,6 +70,11 @@ impl Terminal {
     /// Get the number of columns.
     pub fn cols(&self) -> usize {
         self.perform.cols
+    }
+
+    /// Check if the cursor is visible (visible flag + SHOW_CURSOR mode).
+    pub fn cursor_visible(&self) -> bool {
+        self.perform.cursor.visible && self.perform.mode.contains(crate::mode::TermMode::SHOW_CURSOR)
     }
 
     /// Get the number of rows.
@@ -78,6 +107,12 @@ impl Terminal {
     /// Reset scroll to bottom.
     pub fn scroll_to_bottom(&mut self) {
         self.perform.grid.scroll_to_bottom();
+        self.perform.dirty = true;
+    }
+
+    /// Scroll to an absolute position.
+    pub fn scroll_to_position(&mut self, offset: usize) {
+        self.perform.grid.scroll_to_position(offset);
         self.perform.dirty = true;
     }
 
@@ -209,18 +244,45 @@ impl Terminal {
         &self.search
     }
 
-    /// Get visible text content for copy.
+    /// Get visible text content for copy (linear selection).
     pub fn get_text(&self, start_row: usize, start_col: usize, end_row: usize, end_col: usize) -> String {
+        self.get_text_impl(start_row, start_col, end_row, end_col, false)
+    }
+
+    /// Get visible text content for copy (block/rectangular selection).
+    /// For block selection, each row extracts only the column range independently.
+    pub fn get_text_block(&self, start_row: usize, start_col: usize, end_row: usize, end_col: usize) -> String {
+        self.get_text_impl(start_row, start_col, end_row, end_col, true)
+    }
+
+    /// Internal text extraction supporting both linear and block modes.
+    fn get_text_impl(&self, start_row: usize, start_col: usize, end_row: usize, end_col: usize, block: bool) -> String {
         // Normalize: ensure start <= end regardless of drag direction
         let (sr, sc, er, ec) = if start_row < end_row || (start_row == end_row && start_col <= end_col) {
             (start_row, start_col, end_row, end_col)
         } else {
             (end_row, end_col, start_row, start_col)
         };
+
+        // For block selection, normalize column range independently
+        let (col_min, col_max) = if block {
+            (sc.min(ec), sc.max(ec))
+        } else {
+            (sc, ec)
+        };
+
         let mut text = String::new();
         for row in sr..=er.min(self.perform.rows - 1) {
-            let col_start = if row == sr { sc } else { 0 };
-            let col_end = if row == er { ec.min(self.perform.cols - 1) } else { self.perform.cols - 1 };
+            let (col_start, col_end) = if block {
+                // Block: same column range on every row
+                (col_min, col_max.min(self.perform.cols - 1))
+            } else {
+                // Linear: full-line span between start and end
+                let cs = if row == sr { sc } else { 0 };
+                let ce = if row == er { ec.min(self.perform.cols - 1) } else { self.perform.cols - 1 };
+                (cs, ce)
+            };
+
             if let Some(row_cells) = self.perform.grid.visible_row(row) {
                 for col in col_start..=col_end {
                     if col < row_cells.len() {
@@ -292,5 +354,25 @@ impl Terminal {
         self.perform.mode.insert(crate::mode::TermMode::AUTO_WRAP);
         self.perform.cursor.visible = true;
         self.perform.dirty = true;
+    }
+
+    /// Get a reference to the block manager.
+    pub fn block_manager(&self) -> &crate::block::BlockManager {
+        &self.perform.block_manager
+    }
+
+    /// Get a mutable reference to the block manager.
+    pub fn block_manager_mut(&mut self) -> &mut crate::block::BlockManager {
+        &mut self.perform.block_manager
+    }
+
+    /// Navigate to the next command block prompt row.
+    pub fn next_block_prompt(&self, current_row: usize) -> Option<usize> {
+        self.perform.block_manager.next_prompt_row(current_row)
+    }
+
+    /// Navigate to the previous command block prompt row.
+    pub fn prev_block_prompt(&self, current_row: usize) -> Option<usize> {
+        self.perform.block_manager.prev_prompt_row(current_row)
     }
 }

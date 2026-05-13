@@ -1,4 +1,5 @@
 pub mod bidi;
+pub mod block;
 pub mod bracketed_paste;
 pub mod charset;
 pub mod hyperlink;

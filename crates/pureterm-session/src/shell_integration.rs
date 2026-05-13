@@ -230,10 +230,22 @@ const ZSH_INTEGRATION_SCRIPT: &str = r#"
 
 # OSC 133 escape sequences
 prompt_start() {
+    local __exit=$?
+    local __duration=0
+    if [[ -n "$__pureterm_cmd_start" ]]; then
+        __duration=$(( ($EPOCHREALTIME - $__pureterm_cmd_start) * 1000000 ))
+        __duration=${__duration%.*}
+    fi
+    if [[ -n "$__pureterm_cmd_started" ]]; then
+        printf '\033]133;D;exit=%d;duration=%s\a' "$__exit" "$__duration"
+        unset __pureterm_cmd_started
+    fi
     printf '\033]133;A\a'
 }
 
 command_start() {
+    __pureterm_cmd_start=$EPOCHREALTIME
+    __pureterm_cmd_started=1
     printf '\033]133;B\a'
 }
 
@@ -241,31 +253,11 @@ command_execute() {
     printf '\033]133;C\a'
 }
 
-command_output_end() {
-    printf '\033]133;D\a'
-}
-
-# Precmd hook - called before each prompt
-preexec() {
-    command_start
-}
-
-# Precmd hook - called before each command executes
-precmd() {
-    prompt_start
-}
-
-# Hook into command execution
-preexec_invoke_exec() {
-    command_execute
-    return 0  # Continue with normal execution
-}
-
 # Set up hooks if not already set up
 if [[ -z "$PURETERM_INTEGRATION_SET" ]]; then
     export PURETERM_INTEGRATION_SET=1
+    zmodload zsh/datetime 2>/dev/null || true
 
-    # Add precmd hook
     autoload -Uz add-zsh-hook
     add-zsh-hook precmd prompt_start 2>/dev/null || true
     add-zsh-hook preexec command_start 2>/dev/null || true
@@ -280,19 +272,23 @@ const BASH_INTEGRATION_SCRIPT: &str = r#"
 
 # OSC 133 escape sequences
 prompt_start() {
+    local __exit=$?
+    local __duration=0
+    if [[ -n "$__pureterm_cmd_start" ]]; then
+        local __now=$(date +%s%N)
+        __duration=$(( (__now - __pureterm_cmd_start) / 1000 ))
+    fi
+    if [[ -n "$__pureterm_cmd_started" ]]; then
+        printf '\033]133;D;exit=%d;duration=%s\a' "$__exit" "$__duration"
+        unset __pureterm_cmd_started
+    fi
     printf '\033]133;A\a'
 }
 
 command_start() {
+    __pureterm_cmd_start=$(date +%s%N)
+    __pureterm_cmd_started=1
     printf '\033]133;B\a'
-}
-
-command_execute() {
-    printf '\033]133;C\a'
-}
-
-command_output_end() {
-    printf '\033]133;D\a'
 }
 
 # PROMPT_COMMAND is called before each prompt
@@ -300,11 +296,6 @@ PROMPT_COMMAND="prompt_start${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 
 # DEBUG trap is called before each command
 trap 'command_start' DEBUG
-
-# If we have a function named command_execute, call it
-if type command_execute &>/dev/null; then
-    :
-fi
 "#;
 
 /// Fish 集成脚本内容。

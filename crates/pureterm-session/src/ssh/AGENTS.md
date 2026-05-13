@@ -8,12 +8,12 @@ SSH 会话完整实现：基于 `russh 0.60` 的 SSH client、SFTP v3 文件传�
 src/
 ├── mod.rs              # 模块重导出 (17 行)
 ├── auth.rs             # SshAuth 枚举 (13 行)
-├── client.rs           # SshSession + SshClientHandler (655 行)
+├── client.rs           # SshSession + SshClientHandler (656 行)
 ├── agent_forward.rs    # AgentForwardManager (53 行)
 ├── forward.rs         # PortForwardManager + ForwardType/ForwardTunnel (146 行)
 ├── known_hosts.rs      # KnownHosts TOFU 验证 (195 行)
 ├── multiplexer.rs     # SshMultiplexer 连接复用 (387 行)
-├── sftp.rs            # SftpClient SFTP v3 客户端 (592 行)
+├── sftp.rs            # SftpClient SFTP v3 客户端 (609 行)
 └── x11.rs             # X11ForwardManager + X11State (125 行)
 ```
 
@@ -197,4 +197,4 @@ pub struct AgentForwardManager {
 
 ## 父级导航
 
-← [pureterm-session/AGENTS.md](../../AGENTS.md)
+← [src/AGENTS.md](../AGENTS.md)

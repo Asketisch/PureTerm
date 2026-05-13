@@ -2,6 +2,8 @@
 
 提供统一的 `Session` trait 和四种实现：本地 PTY、SSH、串口、Telnet。包含中间件系统用于处理数据流，以及跳板机、日志、同步输入等功能。
 
+src/ 级别模块详解：[src/AGENTS.md](src/AGENTS.md)
+
 ## 关键依赖
 
 内部依赖：`pureterm-core`
@@ -46,6 +48,7 @@ src/
 │   ├── iac.rs          # IAC 解析器
 │   └── AGENTS.md       # Telnet 会话详解
 ├── telnet_provider.rs  # Telnet ProfileProvider
+├── tmux_session.rs     # Tmux 控制模式 Session 实现 (592 行)
 ├── xmodem.rs           # Xmodem 文件传输
 └── zmodem.rs            # Zmodem 文件传输
 ```
@@ -197,6 +200,10 @@ Shell 集成模块，注入 OSC 133 标记用于提示和命令跟踪：
 ### ZmodemMiddleware / Xmodem（zmodem.rs / xmodem.rs）
 
 文件传输中间件，支持 Zmodem 和 Xmodem 协议。
+
+### TmuxSession（tmux_session.rs）
+
+Tmux 控制模式 Session 实现。启动 `tmux -C -u` 进程，通过 DCS 1000p 控制模式与 tmux 通信。支持 %output 事件路由、会话管理、窗格操作。
 
 ### Profile Providers
 

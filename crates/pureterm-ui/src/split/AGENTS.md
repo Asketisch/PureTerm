@@ -143,4 +143,4 @@ pub struct DividerInfo {
 
 ## 父级导航
 
-← [pureterm-ui/AGENTS.md](../../AGENTS.md)
+← [src/AGENTS.md](../AGENTS.md)

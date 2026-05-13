@@ -2,6 +2,8 @@
 
 基于 egui 的 UI 组件：应用状态管理、Surface 抽象（Ghostty 风格）、标签页、分割面板（SplitTree 不可变树 + SplitContainer 递归容器）、终端面板、命令面板、搜索、AI 聊天、专注模式、跳转提示、在线搜索、快速命令栏等。
 
+src/ 级别模块详解：[src/AGENTS.md](src/AGENTS.md)
+
 ## 关键依赖
 
 内部依赖：`pureterm-core`、`pureterm-terminal`、`pureterm-session`
@@ -21,6 +23,7 @@ src/
 ├── context_menu.rs      # 右键菜单（17 个 MenuAction）
 ├── explorer.rs          # 文件浏览器（本地 + SFTP）
 ├── focus_mode.rs        # 专注模式（隐藏所有 UI 元素）(76 行)
+├── history_menu.rs      # 命令历史菜单（VecDeque, MAX_HISTORY=10000）(279 行)
 ├── inspector.rs         # 终端检查器（调试面板）
 ├── jump_prompt.rs       # 跳转提示（Ctrl+; / OSC 133 prompt mark）(74 行)
 ├── lock_screen.rs       # 锁屏
@@ -46,7 +49,7 @@ src/
 │   └── AGENTS.md        # 标签页管理详解
 ├── terminal/
 │   ├── mod.rs           # 重导出
-│   ├── pane.rs          # TerminalPane + Selection + ScrollState + PaneAction (1046 行)
+│   ├── pane.rs          # TerminalPane + Selection + ScrollState + PaneAction (1395 行)
 │   └── AGENTS.md        # 终端面板详解
 ├── theme.rs             # 主题管理
 ├── tokens.rs            # UI token 定义
@@ -167,7 +170,7 @@ Ghostty 风格的单终端 Surface 模型，封装 Terminal + 输入处理 + 鼠
 
 详细文档：[terminal/AGENTS.md](src/terminal/AGENTS.md)
 
-最核心的组件（1046 行），组合 `Terminal` + `Session`。包含：Selection、SearchState、ScrollState（平滑滚动 + 动量）、TerminalPane，输出处理流程（broadcast → buffer → drain，16 MiB 上限，60fps 限速），完整按键编码表，鼠标事件处理（单击/双击选词/三击选行 + 拖拽 + 平滑滚动），粘贴处理。
+最核心的组件（1395 行），组合 `Terminal` + `Session`。包含：Selection、SearchState、ScrollState（平滑滚动 + 动量）、TerminalPane，输出处理流程（broadcast → buffer → drain，16 MiB 上限，60fps 限速），完整按键编码表，鼠标事件处理（单击/双击选词/三击选行 + 拖拽 + 平滑滚动），粘贴处理。
 
 **ScrollState** — 平滑滚动：ease-out cubic 动画 + 动量滚动。
 

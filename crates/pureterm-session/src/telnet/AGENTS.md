@@ -6,8 +6,8 @@ Telnet 协议会话实现，基于 TCP socket。
 
 ```
 src/
-├── mod.rs        # TelnetSession 实现 (148 行)
-└── iac.rs        # IAC (Interpret As Command) 解析器 (547 行)
+├── mod.rs        # TelnetSession 实现 (147 行)
+└── iac.rs        # IAC (Interpret As Command) 解析器 (536 行)
 ```
 
 ## 模块依赖
@@ -193,4 +193,4 @@ IAC SB WINDOW SIZE <cols> <rows> IAC SE
 
 ## 父级导航
 
-← [pureterm-session/AGENTS.md](../../AGENTS.md)
+← [src/AGENTS.md](../AGENTS.md)

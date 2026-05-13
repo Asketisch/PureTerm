@@ -302,6 +302,12 @@ impl Grid {
         self.scroll_offset = 0;
     }
 
+    /// Scroll to an absolute position (0 = bottom, max = oldest).
+    pub fn scroll_to_position(&mut self, offset: usize) {
+        let max_scroll = self.rows.len().saturating_sub(self.visible_rows);
+        self.scroll_offset = offset.min(max_scroll);
+    }
+
     /// Get the visible portion of the grid as a flat slice of rows.
     pub fn visible_cells(&self) -> Vec<&[Cell]> {
         let start = self.visible_start();

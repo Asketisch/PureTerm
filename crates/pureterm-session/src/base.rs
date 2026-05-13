@@ -37,6 +37,11 @@ pub enum SessionType {
         host: String,
         port: u16,
     },
+    Tmux {
+        session_name: Option<String>,
+        attach: bool,
+        socket_path: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone)]

@@ -635,6 +635,101 @@ except:
         Ok(())
     }
 
+    /// Quantize a subpixel offset to one of 3 bins: 0.0, 0.33, 0.67
+    fn quantize_subpixel(x_frac: f32) -> u8 {
+        let frac = x_frac - x_frac.floor();
+        if frac < 0.167 {
+            0
+        } else if frac < 0.5 {
+            1
+        } else if frac < 0.833 {
+            2
+        } else {
+            0
+        }
+    }
+
+    /// Convert quantized subpixel bin back to fractional offset.
+    fn subpixel_offset(bin: u8) -> f32 {
+        match bin {
+            0 => 0.0,
+            1 => 0.33,
+            2 => 0.67,
+            _ => 0.0,
+        }
+    }
+
+    /// Get or rasterize a glyph with subpixel positioning.
+    /// The `x_frac` is the fractional part of the x position in pixels,
+    /// quantized to 3 bins (0.0, 0.33, 0.67) for cache efficiency.
+    pub fn get_glyph_subpixel(&mut self, font_index: usize, c: char, x_frac: f32) -> Option<&GlyphInfo> {
+        if self.fonts[face::REGULAR].is_none() {
+            return None;
+        }
+
+        let sub_bin = Self::quantize_subpixel(x_frac);
+        // Encode subpixel bin into the cache key using a surrogate approach:
+        // key = (font_index, char_with_bin_encoded)
+        // Use a private-use Unicode char to encode (original_char, bin)
+        let key = (font_index * 4 + sub_bin as usize, c);
+        if self.cache.contains_key(&key) {
+            return self.cache.get(&key);
+        }
+
+        // Sprite glyphs don't benefit from subpixel positioning
+        if is_block_element(c) || is_box_drawing(c) || is_braille(c) || is_powerline(c) {
+            return self.get_glyph(font_index, c);
+        }
+
+        let sub_offset = Self::subpixel_offset(sub_bin);
+        let font = &self.fonts.get(font_index)?.as_ref()?;
+
+        // fontdue rasterize takes an f32 subpixel offset for x
+        let (metrics, bitmap) = font.rasterize(c, self.font_size);
+
+        let width = metrics.width as u16;
+        let height = metrics.height as u16;
+
+        if width == 0 || height == 0 {
+            return self.get_glyph(font_index, c);
+        }
+
+        let (ax, ay) = match self.allocate_rect(width as u32, height as u32) {
+            Some(pos) => pos,
+            None => {
+                log::warn!("Glyph atlas full, cannot cache subpixel glyphs");
+                return self.get_glyph(font_index, c);
+            }
+        };
+
+        let start_x = ax as usize;
+        let start_y = ay as usize;
+        for (gy, row) in bitmap.chunks(width as usize).enumerate() {
+            for (gx, &val) in row.iter().enumerate() {
+                let px = start_x + gx;
+                let py = start_y + gy;
+                if px < self.atlas_width as usize && py < self.atlas_height as usize {
+                    self.atlas_data[py * self.atlas_width as usize + px] = val;
+                }
+            }
+        }
+
+        let info = GlyphInfo {
+            x: ax,
+            y: ay,
+            width,
+            height,
+            x_offset: metrics.xmin as f32 + sub_offset,
+            y_offset: metrics.ymin as f32,
+            advance: metrics.advance_width,
+            is_ligature: false,
+            ligature_len: 1,
+        };
+
+        self.cache.insert(key, info);
+        self.cache.get(&key)
+    }
+
     /// Get or rasterize a glyph.
     pub fn get_glyph(&mut self, font_index: usize, c: char) -> Option<&GlyphInfo> {
         if self.fonts[face::REGULAR].is_none() {

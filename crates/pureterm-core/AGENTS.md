@@ -2,6 +2,8 @@
 
 工作区的基础 crate，提供配置管理、配色方案、快捷键绑定、配置文件、插件系统、AI 集成、加密存储、触发器和通知。
 
+src/ 级别模块详解：[src/AGENTS.md](src/AGENTS.md)
+
 ## 关键依赖
 
 `serde` + `serde_json` + `toml`（序列化）、`dirs`（路径）、`uuid`（ID）、`thiserror`（错误）、`parking_lot`（并发）、`sha2` + `aes-gcm` + `base64`（加密）、`regex`（正则）。
@@ -34,7 +36,11 @@ src/
 ├── theme_auto.rs    # 自动主题切换
 ├── trigger.rs       # 输出触发器（通知/高亮/命令）
 ├── vault.rs         # 敏感信息加密存储（AES-256-GCM）
-└── capi.rs          # C API 桩实现（FFI 接口契约）
+├── capi.rs          # C API 桩实现（FFI 接口契约）
+├── command_correction.rs # AI 命令纠正建议
+├── default_terminal.rs  # macOS 默认终端注册
+├── prevent_sleep.rs     # 系统休眠防止（caffeinate）
+└── secret_redaction.rs  # API 密钥/秘密模式检测和视觉脱敏
 ```
 
 ## 模块详情
@@ -165,6 +171,22 @@ enum CoreError {
 ### capi.rs — C API（FFI 接口）
 
 libpureterm 的 C API，定义了用于在 C/ObjC/Swift 应用中嵌入终端的完整接口契约。
+
+### command_correction.rs — AI 命令纠正建议
+
+AI 驱动的命令失败建议，当命令返回非零退出码时提供修正建议。
+
+### default_terminal.rs — macOS 默认终端注册
+
+在 macOS 上注册 PureTerm 为默认终端模拟器。
+
+### prevent_sleep.rs — 系统休眠防止
+
+使用 caffeinate 防止系统休眠，在长时间命令执行期间保持唤醒。
+
+### secret_redaction.rs — API 密钥/秘密模式检测和视觉脱敏
+
+检测终端输出中的 API 密钥、令牌等敏感信息模式并进行视觉脱敏（支持 20+ 种密钥模式检测）。
 
 > **注意**：当前为 **桩实现（stub）**。所有类型定义和函数签名已就绪，但函数体返回空指针/硬编码值。需要后续接入 `pureterm-terminal` 的 Terminal/Grid 模块。
 

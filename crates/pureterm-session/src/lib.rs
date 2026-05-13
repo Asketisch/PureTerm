@@ -16,6 +16,7 @@ pub mod ssh_provider;
 pub mod sync_input;
 pub mod telnet;
 pub mod telnet_provider;
+pub mod tmux_session;
 pub mod xmodem;
 pub mod zmodem;
 
@@ -34,3 +35,4 @@ pub use session_log::{SessionLog, SessionLogConfig};
 pub use login_script::LoginScriptMiddleware;
 pub use zmodem::{ZmodemMiddleware, ZmodemState};
 pub use sync_input::{SyncInputManager, SyncInputResult, SyncSessionHandle};
+pub use tmux_session::{TmuxSession, TmuxSessionConfig, TmuxEvent};

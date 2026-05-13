@@ -16,6 +16,8 @@ parking_lot = { workspace = true }
 png = { workspace = true }
 miniz_oxide = { workspace = true }
 regex = { workspace = true }
+once_cell = { workspace = true }
 simdutf8 = { workspace = true }
 memchr = { workspace = true }
 intrusive-collections = { workspace = true }
+base64 = { workspace = true }

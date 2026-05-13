@@ -250,4 +250,4 @@ for pane in viewer.get_active_panes() {
 
 ## 父级导航
 
-← [pureterm-terminal/AGENTS.md](../../AGENTS.md)
+← [src/AGENTS.md](../AGENTS.md)

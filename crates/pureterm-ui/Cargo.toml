@@ -20,3 +20,6 @@ parking_lot = { workspace = true }
 regex = { workspace = true }
 uuid = { workspace = true }
 im = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
