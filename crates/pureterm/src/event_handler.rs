@@ -596,6 +596,8 @@ impl ApplicationHandler for PureTermApp {
                             let mut rename_done = false;
                             let mut color_done = false;
                             let mut settings_changed = false;
+                            // Pending snippet selection to process after the egui closure (needs &mut self.panes).
+                            let mut pending_snippet_id: Option<String> = None;
                             // Snapshot focused-pane data needed by the status bar
                             // before entering the closure (avoids borrow conflicts
                             // with `self.panes`).
@@ -618,10 +620,15 @@ impl ApplicationHandler for PureTermApp {
 
                                 // 命令面板
                                 if command_palette_visible {
+                                    // 用最新配置中的代码片段重建条目列表。
+                                    self.command_palette.set_snippets(&app.config.snippets);
                                     egui::CentralPanel::default().show(ctx, |ui| {
                                         if let Some(cmd_id) = self.command_palette.show(ui) {
                                             log::info!("Command palette selected: {}", cmd_id);
-                                            // TODO: 处理命令执行
+                                            if cmd_id.starts_with("snippet:") {
+                                                pending_snippet_id = Some(cmd_id);
+                                            }
+                                            // TODO: 处理其它命令执行
                                         }
                                     });
                                 }
@@ -916,6 +923,28 @@ impl ApplicationHandler for PureTermApp {
                                     tab_id: m.tab_id,
                                     color: m.color.clone(),
                                 });
+                            }
+
+                            // 处理命令面板中选中的代码片段：把文本作为输入发送到聚焦面板。
+                            if let Some(cmd_id) = pending_snippet_id {
+                                let snippet_id = cmd_id.trim_start_matches("snippet:");
+                                if let Some(snippet) = app.config.snippets.iter().find(|s| s.id == snippet_id) {
+                                    if let Some(pane_id) = self.focused_pane_id {
+                                        if let Some(pane) = self.panes.get_mut(&pane_id) {
+                                            pane.write_input(snippet.text.as_bytes());
+                                            // 没有以换行结尾时补一个 CR，让 shell 立即执行。
+                                            if !snippet.text.ends_with('\n') && !snippet.text.ends_with('\r') {
+                                                pane.write_input(b"\r");
+                                            }
+                                        } else {
+                                            log::warn!("Snippet target pane {} not found", pane_id);
+                                        }
+                                    } else {
+                                        log::warn!("Snippet selected but no focused pane");
+                                    }
+                                } else {
+                                    log::warn!("Snippet id '{}' not found in config", snippet_id);
+                                }
                             }
 
                             if let Some(profile) = profile_connect_request {

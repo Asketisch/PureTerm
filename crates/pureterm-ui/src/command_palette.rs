@@ -3,6 +3,7 @@
 //! 提供可搜索的命令、设置和操作列表。
 
 use egui::{Id, RichText, TextEdit, Ui};
+use pureterm_core::snippets::Snippet;
 
 /// 命令面板中的命令条目。
 #[derive(Debug, Clone)]
@@ -59,6 +60,22 @@ impl CommandPalette {
             CommandEntry { id: "toggle_fullscreen".into(), label: "Toggle Fullscreen".into(), category: "View".into(), shortcut: Some("F11".into()) },
             CommandEntry { id: "quit".into(), label: "Quit".into(), category: "App".into(), shortcut: Some("Ctrl+Q".into()) },
         ]
+    }
+
+    /// 用当前用户配置的代码片段重建条目列表。
+    ///
+    /// 内置命令始终保留；每个 snippet 追加为类别 `"Snippet"`，
+    /// id 形如 `"snippet:<snippet_id>"`，无快捷键。
+    /// 多次调用不会累积——每次调用都会从 `built_in_commands()` 重建。
+    pub fn set_snippets(&mut self, snippets: &[Snippet]) {
+        let mut commands = Self::built_in_commands();
+        commands.extend(snippets.iter().map(|s| CommandEntry {
+            id: format!("snippet:{}", s.id),
+            label: s.name.clone(),
+            category: "Snippet".into(),
+            shortcut: None,
+        }));
+        self.commands = commands;
     }
 
     /// 显示命令面板。如有选中命令则返回其 ID。
@@ -178,5 +195,84 @@ impl CommandPalette {
         }
 
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snip(id: &str, name: &str, text: &str) -> Snippet {
+        Snippet {
+            id: id.into(),
+            name: name.into(),
+            text: text.into(),
+            tags: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn set_snippets_appends_entries() {
+        let mut palette = CommandPalette::new();
+        let builtin_count = CommandPalette::built_in_commands().len();
+
+        let snippets = vec![
+            snip("a", "Deploy Prod", "make deploy"),
+            snip("b", "Run Tests", "cargo test"),
+        ];
+        palette.set_snippets(&snippets);
+
+        assert_eq!(palette.commands.len(), builtin_count + 2);
+
+        // All builtin ids are still present.
+        for builtin in CommandPalette::built_in_commands() {
+            assert!(
+                palette.commands.iter().any(|c| c.id == builtin.id),
+                "builtin {} missing after set_snippets",
+                builtin.id
+            );
+        }
+
+        // Snippet entries are appended with the expected shape.
+        let a = palette
+            .commands
+            .iter()
+            .find(|c| c.id == "snippet:a")
+            .expect("snippet:a entry");
+        assert_eq!(a.label, "Deploy Prod");
+        assert_eq!(a.category, "Snippet");
+        assert!(a.shortcut.is_none());
+
+        let b = palette
+            .commands
+            .iter()
+            .find(|c| c.id == "snippet:b")
+            .expect("snippet:b entry");
+        assert_eq!(b.label, "Run Tests");
+        assert_eq!(b.category, "Snippet");
+    }
+
+    #[test]
+    fn set_snippets_replaces_previous_call() {
+        let mut palette = CommandPalette::new();
+        let builtin_count = CommandPalette::built_in_commands().len();
+
+        palette.set_snippets(&[
+            snip("a", "First", "x"),
+            snip("b", "Second", "y"),
+        ]);
+        assert_eq!(palette.commands.len(), builtin_count + 2);
+
+        // Second call with a different list must not accumulate.
+        palette.set_snippets(&[snip("c", "Only", "z")]);
+        assert_eq!(palette.commands.len(), builtin_count + 1);
+        assert!(palette.commands.iter().any(|c| c.id == "snippet:c"));
+        assert!(!palette.commands.iter().any(|c| c.id == "snippet:a"));
+        assert!(!palette.commands.iter().any(|c| c.id == "snippet:b"));
+
+        // Calling with empty list resets back to builtins only.
+        palette.set_snippets(&[]);
+        assert_eq!(palette.commands.len(), builtin_count);
+        assert!(!palette.commands.iter().any(|c| c.id.starts_with("snippet:")));
     }
 }
