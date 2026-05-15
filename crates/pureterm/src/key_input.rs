@@ -7,6 +7,44 @@ impl PureTermApp {
     pub(crate) fn handle_key_input(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool, super_key: bool) {
         log::debug!("handle_key_input: key={:?}, ctrl={}, alt={}, shift={}, super={}", key, ctrl, alt, shift, super_key);
 
+        // ── Copy mode ──────────────────────────────────────────────────────
+        // Ctrl+Shift+Space: enter copy mode.
+        if ctrl && shift && !alt && !super_key && key == " " {
+            if let Some(pane) = self.focused_pane_mut() {
+                let (cols, rows) = (pane.terminal.cols(), pane.terminal.rows());
+                pane.copy_mode.enter(rows, cols);
+                pane.mark_dirty();
+            }
+            if let Some(ref window) = self.window { window.request_redraw(); }
+            return;
+        }
+
+        // While copy_mode is active, the focused pane consumes all keys.
+        let copy_mode_active = self.focused_pane().map_or(false, |p| p.copy_mode.active);
+        if copy_mode_active {
+            self.handle_copy_mode_key(key, ctrl, alt, shift);
+            if let Some(ref window) = self.window { window.request_redraw(); }
+            return;
+        }
+
+        // ── Broadcast toggle ──────────────────────────────────────────────
+        // Ctrl+Shift+B: add focused pane to broadcast group; second press removes.
+        if ctrl && shift && !alt && !super_key && (key == "B" || key == "b") {
+            if let Some(id) = self.focused_pane_id {
+                let now_member = self.broadcast.toggle(id);
+                self.broadcast.enable(self.broadcast.len() >= 2);
+                log::info!(
+                    "broadcast: pane {} {} group; group size {}; enabled={}",
+                    id,
+                    if now_member { "joined" } else { "left" },
+                    self.broadcast.len(),
+                    self.broadcast.is_enabled(),
+                );
+            }
+            if let Some(ref window) = self.window { window.request_redraw(); }
+            return;
+        }
+
         // ── Popup overlay navigation (autocomplete & history) ──
         // When a popup is visible, intercept navigation keys before they reach the terminal.
         {
@@ -190,13 +228,31 @@ impl PureTermApp {
             return;
         }
 
-        if let Some(ref mut pane) = self.focused_pane_mut() {
-            // 在 macOS 上，Command 键组合是应用级快捷键，
-            // 不要将无法识别的组合转发到终端。
-            if cfg!(target_os = "macos") && super_key {
-                return;
+        let mut delivered_to: Option<u64> = None;
+        if let Some(focused_id) = self.focused_pane_id {
+            if let Some(pane) = self.panes.get_mut(&focused_id) {
+                // 在 macOS 上，Command 键组合是应用级快捷键，
+                // 不要将无法识别的组合转发到终端。
+                if cfg!(target_os = "macos") && super_key {
+                    return;
+                }
+                pane.handle_key(key, ctrl, alt, shift);
+                delivered_to = Some(focused_id);
             }
-            pane.handle_key(key, ctrl, alt, shift);
+        }
+        // Broadcast fan-out: deliver the same key event to every other member.
+        if self.broadcast.is_enabled() {
+            if let Some(focused_id) = delivered_to {
+                if self.broadcast.contains(focused_id) {
+                    let members: Vec<u64> = self.broadcast.members();
+                    for member_id in members {
+                        if member_id == focused_id { continue; }
+                        if let Some(pane) = self.panes.get_mut(&member_id) {
+                            pane.handle_key(key, ctrl, alt, shift);
+                        }
+                    }
+                }
+            }
         }
         // 重置光标闪烁定时器（用户输入时让光标显示）
         if let Some(ref mut renderer) = self.renderer {
@@ -205,5 +261,36 @@ impl PureTermApp {
         if let Some(ref window) = self.window {
             window.request_redraw();
         }
+    }
+
+    fn handle_copy_mode_key(&mut self, key: &str, _ctrl: bool, _alt: bool, _shift: bool) {
+        let Some(pane) = self.focused_pane_mut() else { return; };
+        match key {
+            "h" | "Left" => pane.copy_mode.move_left(),
+            "j" | "Down" => pane.copy_mode.move_down(),
+            "k" | "Up" => pane.copy_mode.move_up(),
+            "l" | "Right" => pane.copy_mode.move_right(),
+            "w" => pane.copy_mode.move_word_forward(),
+            "b" => pane.copy_mode.move_word_back(),
+            "0" | "Home" => pane.copy_mode.move_line_start(),
+            "$" | "End" => pane.copy_mode.move_line_end(),
+            "v" => pane.copy_mode.start_selection_linear(),
+            "V" => pane.copy_mode.start_selection_block(),
+            "y" | "Enter" => {
+                if let Some((anchor, head, _is_block)) = pane.copy_mode.normalised_selection() {
+                    let s_row = anchor.row.max(0) as usize;
+                    let e_row = head.row.max(0) as usize;
+                    let text = pane.terminal.get_text(s_row, anchor.col, e_row, head.col);
+                    if let Some(cb) = pane.on_clipboard_set.as_mut() { cb(&text); }
+                }
+                pane.copy_mode.exit();
+            }
+            "Escape" | "q" => {
+                pane.copy_mode.cancel_selection();
+                pane.copy_mode.exit();
+            }
+            _ => {}
+        }
+        pane.mark_dirty();
     }
 }

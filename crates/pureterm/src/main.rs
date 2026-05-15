@@ -205,6 +205,7 @@ fn main() -> Result<()> {
                 ..Default::default()
             },
         ),
+        broadcast: pureterm_ui::terminal::broadcast::BroadcastGroup::new(),
     };
 
     event_loop.run_app(&mut app)?;

@@ -337,6 +337,7 @@ impl PureTermApp {
         }
 
         self.panes.remove(&pane_id);
+        self.broadcast.remove(pane_id);
 
         // 如果关闭的面板处于聚焦状态，切换到另一个面板
         if self.focused_pane_id == Some(pane_id) {

@@ -10,6 +10,7 @@ use tokio::sync::broadcast;
 
 use pureterm_session::Session;
 use pureterm_terminal::Terminal;
+use pureterm_terminal::copy_mode::CopyMode;
 use pureterm_terminal::screen::selection::{
     self, ClickCount, MouseButton, MouseModifiers, TerminalMouseEvent,
 };
@@ -300,6 +301,8 @@ pub struct TerminalPane {
     pub last_smart_match: Option<SmartMatch>,
     /// Last-seen cwd for change detection.
     last_cwd: Option<String>,
+    /// Vim-style scrollback navigation state.
+    pub copy_mode: CopyMode,
 }
 
 static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
@@ -350,6 +353,7 @@ impl TerminalPane {
             smart_selection: None,
             last_smart_match: None,
             last_cwd: None,
+            copy_mode: CopyMode::new(),
         }
     }
 
@@ -1693,6 +1697,18 @@ mod trigger_smoke_tests {
             1,
             "tail-find should rerun on new output"
         );
+    }
+
+    #[test]
+    fn copy_mode_lifecycle() {
+        let mut pane = TerminalPane::new(40, 5, 100);
+        assert!(!pane.copy_mode.active);
+        pane.copy_mode.enter(5, 40);
+        assert!(pane.copy_mode.active);
+        pane.copy_mode.move_right();
+        assert_eq!(pane.copy_mode.cursor.col, 1);
+        pane.copy_mode.exit();
+        assert!(!pane.copy_mode.active);
     }
 
     #[test]

@@ -207,6 +207,7 @@ impl PureTermApp {
         // 删除属于已关闭标签页的面板
         for pane_id in &tab_pane_ids {
             self.panes.remove(pane_id);
+            self.broadcast.remove(*pane_id);
         }
         self.split_root = None;
 

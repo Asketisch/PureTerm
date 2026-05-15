@@ -27,6 +27,7 @@ use pureterm_ui::status_bar::StatusBar;
 use pureterm_ui::tabs::TabContent;
 use pureterm_ui::toolbelt::ToolbeltState;
 use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_ITEM_HEIGHT, TAB_PADDING_H, TAB_CLOSE_BTN_WIDTH, TAB_NEW_BTN_WIDTH};
+use pureterm_ui::terminal::broadcast::BroadcastGroup;
 use pureterm_ui::terminal::pane::TerminalPane;
 use pureterm_ui::WelcomePage;
 use pureterm_terminal::mark::MarkKind;
@@ -112,6 +113,8 @@ pub(crate) struct PureTermApp {
     pub(crate) status_bar: StatusBar,
     /// Right-side Toolbelt panel state (visibility gated by config).
     pub(crate) toolbelt: ToolbeltState,
+    /// Cross-pane input broadcast group.
+    pub(crate) broadcast: BroadcastGroup,
 }
 
 /// 标签页标题重命名模态框的状态。
