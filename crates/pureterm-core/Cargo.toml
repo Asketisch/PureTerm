@@ -24,6 +24,7 @@ reqwest = { version = "0.12", features = ["json"] }
 tokio = { workspace = true }
 notify = { workspace = true }
 crossbeam-channel = "0.5"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }
