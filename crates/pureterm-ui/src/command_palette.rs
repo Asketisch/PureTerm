@@ -57,6 +57,7 @@ impl CommandPalette {
             CommandEntry { id: "zoom_out".into(), label: "Zoom Out".into(), category: "View".into(), shortcut: Some("Ctrl+-".into()) },
             CommandEntry { id: "zoom_reset".into(), label: "Zoom Reset".into(), category: "View".into(), shortcut: Some("Ctrl+0".into()) },
             CommandEntry { id: "settings".into(), label: "Open Settings".into(), category: "Preferences".into(), shortcut: None },
+            CommandEntry { id: "show_sftp_browser".into(), label: "Show SFTP Browser".into(), category: "View".into(), shortcut: None },
             CommandEntry { id: "toggle_fullscreen".into(), label: "Toggle Fullscreen".into(), category: "View".into(), shortcut: Some("F11".into()) },
             CommandEntry { id: "quit".into(), label: "Quit".into(), category: "App".into(), shortcut: Some("Ctrl+Q".into()) },
         ]

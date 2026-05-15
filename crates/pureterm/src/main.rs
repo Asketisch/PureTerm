@@ -206,6 +206,7 @@ fn main() -> Result<()> {
             },
         ),
         broadcast: pureterm_ui::terminal::broadcast::BroadcastGroup::new(),
+        sftp_browser: None,
     };
 
     event_loop.run_app(&mut app)?;

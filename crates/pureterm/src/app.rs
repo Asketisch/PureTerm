@@ -18,6 +18,7 @@ use pureterm_session::SerialSession;
 use pureterm_session::TelnetSession;
 use pureterm_ui::app::App;
 use pureterm_ui::command_palette::CommandPalette;
+use pureterm_ui::sftp_browser::SftpBrowserState;
 use pureterm_ui::context_menu::ContextMenuState;
 use pureterm_ui::profile_selector::ProfileSelector;
 use pureterm_ui::settings::SettingsPanel;
@@ -115,6 +116,8 @@ pub(crate) struct PureTermApp {
     pub(crate) toolbelt: ToolbeltState,
     /// Cross-pane input broadcast group.
     pub(crate) broadcast: BroadcastGroup,
+    /// SFTP browser modal state. None = hidden.
+    pub(crate) sftp_browser: Option<SftpBrowserState>,
 }
 
 /// 标签页标题重命名模态框的状态。

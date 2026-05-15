@@ -598,6 +598,8 @@ impl ApplicationHandler for PureTermApp {
                             let mut settings_changed = false;
                             // Pending snippet selection to process after the egui closure (needs &mut self.panes).
                             let mut pending_snippet_id: Option<String> = None;
+                            // Pending "Show SFTP Browser" command-palette dispatch.
+                            let mut pending_show_sftp = false;
                             // Snapshot focused-pane data needed by the status bar
                             // before entering the closure (avoids borrow conflicts
                             // with `self.panes`).
@@ -627,6 +629,8 @@ impl ApplicationHandler for PureTermApp {
                                             log::info!("Command palette selected: {}", cmd_id);
                                             if cmd_id.starts_with("snippet:") {
                                                 pending_snippet_id = Some(cmd_id);
+                                            } else if cmd_id == "show_sftp_browser" {
+                                                pending_show_sftp = true;
                                             }
                                             // TODO: 处理其它命令执行
                                         }
@@ -882,6 +886,59 @@ impl ApplicationHandler for PureTermApp {
                                     });
                                 }
 
+                                // SFTP browser modal.
+                                if let Some(state) = &mut self.sftp_browser {
+                                    let mut close = false;
+                                    egui::Window::new("SFTP Browser")
+                                        .collapsible(false)
+                                        .resizable(true)
+                                        .default_width(560.0)
+                                        .default_height(420.0)
+                                        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                                        .show(ctx, |ui| {
+                                            ui.horizontal(|ui| {
+                                                if ui.button("◀").on_hover_text("Back").clicked() { state.back(); }
+                                                if ui.button("▶").on_hover_text("Forward").clicked() { state.forward(); }
+                                                if ui.button("⬆").on_hover_text("Up").clicked() { state.navigate_up(); }
+                                                ui.label(format!("📁 {}", state.cwd));
+                                            });
+                                            ui.horizontal(|ui| {
+                                                ui.label("Filter:");
+                                                let mut filter = state.filter.clone();
+                                                if ui.text_edit_singleline(&mut filter).changed() {
+                                                    state.set_filter(filter);
+                                                }
+                                                let mut show_hidden = state.show_hidden;
+                                                if ui.checkbox(&mut show_hidden, "Hidden").changed() {
+                                                    state.set_show_hidden(show_hidden);
+                                                }
+                                            });
+                                            ui.separator();
+                                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                                let mut to_navigate: Option<String> = None;
+                                                let mut to_toggle: Option<String> = None;
+                                                for entry in &state.entries {
+                                                    let icon = if entry.is_dir { "📁" } else { "📄" };
+                                                    let selected = state.selection.contains(&entry.path);
+                                                    let resp = ui.selectable_label(selected, format!("{} {}", icon, entry.name));
+                                                    if resp.double_clicked() && entry.is_dir {
+                                                        to_navigate = Some(entry.path.clone());
+                                                    } else if resp.clicked() {
+                                                        to_toggle = Some(entry.path.clone());
+                                                    }
+                                                }
+                                                if let Some(p) = to_navigate { state.navigate(&p); }
+                                                if let Some(p) = to_toggle { state.toggle_select(&p); }
+                                            });
+                                            ui.separator();
+                                            ui.horizontal(|ui| {
+                                                ui.label(format!("{} selected", state.selection.len()));
+                                                if ui.button("Close").clicked() { close = true; }
+                                            });
+                                        });
+                                    if close { self.sftp_browser = None; }
+                                }
+
                                 // ── Toolbelt (right side) — gated by config ──
                                 if self.toolbelt.config.visible {
                                     let width = self.toolbelt.config.width;
@@ -923,6 +980,19 @@ impl ApplicationHandler for PureTermApp {
                                     tab_id: m.tab_id,
                                     color: m.color.clone(),
                                 });
+                            }
+
+                            // 处理 "Show SFTP Browser" 命令：打开模态框并填充演示数据。
+                            if pending_show_sftp {
+                                use pureterm_session::ssh::sftp::RemoteFileMeta;
+                                let mut state = pureterm_ui::sftp_browser::SftpBrowserState::new("/".to_string());
+                                state.set_listing(vec![
+                                    RemoteFileMeta { name: "Documents".into(), path: "/Documents".into(), is_dir: true, size: 0, modified: None, permissions: None },
+                                    RemoteFileMeta { name: "logs".into(), path: "/logs".into(), is_dir: true, size: 0, modified: None, permissions: None },
+                                    RemoteFileMeta { name: "README.md".into(), path: "/README.md".into(), is_dir: false, size: 1234, modified: None, permissions: None },
+                                ]);
+                                self.sftp_browser = Some(state);
+                                self.command_palette.visible = false;
                             }
 
                             // 处理命令面板中选中的代码片段：把文本作为输入发送到聚焦面板。
