@@ -1,3 +1,4 @@
+pub mod annotation;
 pub mod bidi;
 pub mod block;
 pub mod bracketed_paste;
