@@ -15,6 +15,7 @@ pub mod profile_selector;
 pub mod quick_bar;
 pub mod search;
 pub mod settings;
+pub mod sftp_browser;
 pub mod split;
 pub mod split_tree;
 pub mod status_bar;
@@ -39,6 +40,7 @@ pub use inspector::{
 };
 pub use profile_selector::ProfileSelector;
 pub use settings::SettingsPanel;
+pub use sftp_browser::{SftpBrowserState, SortMode};
 pub use split::{SplitContainer, PaneRect, SplitSide, DividerInfo, compute_pane_rects, pane_at_point, compute_divider_rects, divider_at_point, DIVIDER_WIDTH, DIVIDER_HIT_WIDTH};
 pub use status_bar::{read_git_branch, StatusBar, StatusComponent, StatusContext};
 pub use surface::{Surface, SurfaceId, SurfaceSize, SurfaceMouse, KeyboardState,
