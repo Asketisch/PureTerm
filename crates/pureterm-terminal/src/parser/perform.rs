@@ -6,6 +6,17 @@ use crate::charset::{Charset, CharsetIndex, map_char, charset_from_designation};
 use crate::image::{ImageManager, KittyGraphicsParser};
 use crate::block::BlockManager;
 use log::{debug, trace};
+use std::collections::VecDeque;
+
+/// A row whose contents are complete (LF or wrap). Drained by Pane to feed triggers.
+#[derive(Debug, Clone)]
+pub struct CompletedLine {
+    pub line_id: u64,
+    pub text: String,
+    pub cwd: Option<String>,
+}
+
+const COMPLETED_LINES_CAP: usize = 256;
 
 /// Performs actions based on VTE escape sequences.
 pub struct VtePerform {
@@ -94,6 +105,8 @@ pub struct VtePerform {
     pub image_manager: ImageManager,
     /// Title stack for CSI 22/23 t push/pop.
     title_stack: Vec<String>,
+    /// Bounded queue of completed lines fed to Pane each frame.
+    pub(crate) completed_lines: VecDeque<CompletedLine>,
 }
 
 /// Protected mode tracking for cells.
@@ -170,6 +183,7 @@ impl VtePerform {
             protected_mode: ProtectedMode::Off,
             image_manager: ImageManager::new(),
             title_stack: Vec::new(),
+            completed_lines: VecDeque::with_capacity(COMPLETED_LINES_CAP),
         }
     }
 
@@ -533,7 +547,39 @@ impl VtePerform {
 
     /// Mark the current row as wrapped (called when pending_wrap triggers a line break).
     fn mark_row_wrapped(&mut self) {
+        let wrapped_id = self.grid.line_id_for_visible(self.cursor.row);
         self.grid.set_wrapped(self.cursor.row, true);
+        if let Some(id) = wrapped_id {
+            self.enqueue_completed_by_id(id);
+        }
+    }
+
+    /// Extract printable text of a row's cells, skipping wide spacers and
+    /// trimming trailing spaces.
+    fn extract_row_text_by_line_id(&self, id: u64) -> Option<String> {
+        let loc = self.grid.find_row_by_line_id(id)?;
+        let cells: &[crate::screen::Cell] = match loc {
+            crate::screen::grid::RowLocation::Visible(r) => self.grid.visible_row(r)?,
+            crate::screen::grid::RowLocation::History(idx) => self.grid.history_row(idx)?,
+        };
+        let mut s = String::with_capacity(cells.len());
+        for c in cells {
+            if c.wide == crate::screen::WideMode::SpacerTail
+                || c.wide == crate::screen::WideMode::SpacerHead { continue; }
+            s.push(c.c);
+        }
+        Some(s.trim_end_matches(' ').to_string())
+    }
+
+    /// Enqueue a completed line by id. Bounded; oldest dropped + warned.
+    fn enqueue_completed_by_id(&mut self, id: u64) {
+        let Some(text) = self.extract_row_text_by_line_id(id) else { return; };
+        let cwd = self.current_dir.clone();
+        if self.completed_lines.len() >= COMPLETED_LINES_CAP {
+            log::warn!("triggers: completed_lines queue full ({}); dropping oldest", COMPLETED_LINES_CAP);
+            self.completed_lines.pop_front();
+        }
+        self.completed_lines.push_back(CompletedLine { line_id: id, text, cwd });
     }
 
     /// Reset tab stops to default (every 8 columns).
@@ -606,6 +652,8 @@ impl vte::Perform for VtePerform {
             0x0a | 0x0b | 0x0c => {
                 // LF / VT / FF - Line Feed (VT and FF are treated as LF per VT spec)
                 self.pending_wrap = false;
+                // Snapshot id of the row about to be completed.
+                let leaving_id = self.grid.line_id_for_visible(self.cursor.row);
                 let top = self.scroll_top;
                 let bottom = self.scroll_bottom.min(self.rows);
                 if self.cursor.row + 1 >= bottom {
@@ -617,6 +665,9 @@ impl vte::Perform for VtePerform {
                 }
                 if self.mode.contains(TermMode::LINE_FEED_NEW_LINE) {
                     self.cursor.col = 0;
+                }
+                if let Some(id) = leaving_id {
+                    self.enqueue_completed_by_id(id);
                 }
                 self.dirty = true;
             }
@@ -645,7 +696,9 @@ impl vte::Perform for VtePerform {
     }
 
     fn put(&mut self, byte: u8) {
-        self.dcs_buffer.push(byte);
+        if self.dcs_buffer.len() < 64 * 1024 * 1024 {
+            self.dcs_buffer.push(byte);
+        }
     }
 
     fn unhook(&mut self) {
@@ -3040,5 +3093,48 @@ fn parse_sgr_extended_color_lookahead(params: &[Vec<u16>], start: usize) -> Opti
             }
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Test helper: drive bytes through the parser into a VtePerform.
+    fn feed(p: &mut VtePerform, bytes: &[u8]) {
+        let mut parser = crate::parser::VteParser::new();
+        parser.parse(bytes, p);
+    }
+
+    #[test]
+    fn lf_enqueues_completed_line() {
+        let mut p = VtePerform::new(10, 3, 100);
+        feed(&mut p, b"hello\n");
+        let line = p.completed_lines.pop_front().expect("LF should enqueue");
+        assert_eq!(line.text, "hello");
+    }
+
+    #[test]
+    fn wrap_enqueues_completed_line() {
+        let mut p = VtePerform::new(5, 3, 100);
+        feed(&mut p, b"abcdefgh");
+        let first = p.completed_lines.pop_front().expect("wrap should enqueue");
+        assert_eq!(first.text, "abcde");
+    }
+
+    #[test]
+    fn ed_does_not_enqueue() {
+        let mut p = VtePerform::new(10, 3, 100);
+        feed(&mut p, b"hello");
+        // Issue ESC[2J — full screen erase.
+        feed(&mut p, b"\x1b[2J");
+        assert!(p.completed_lines.is_empty(), "erase should not enqueue");
+    }
+
+    #[test]
+    fn queue_caps_at_256() {
+        let mut p = VtePerform::new(2, 1, 1000);
+        for _ in 0..400 { feed(&mut p, b"a\n"); }
+        assert!(p.completed_lines.len() <= 256);
     }
 }
