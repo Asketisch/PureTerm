@@ -1,6 +1,6 @@
 pub mod perform;
 
-pub use perform::{VtePerform, ScreenSnapshot};
+pub use perform::{VtePerform, ScreenSnapshot, CompletedLine};
 
 /// VTE 解析器包装器。
 pub struct VteParser {

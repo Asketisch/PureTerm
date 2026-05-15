@@ -375,4 +375,121 @@ impl Terminal {
     pub fn prev_block_prompt(&self, current_row: usize) -> Option<usize> {
         self.perform.block_manager.prev_prompt_row(current_row)
     }
+
+    /// Get total grid row count (visible + scrollback).
+    pub fn grid_rows(&self) -> usize {
+        self.perform.grid.total_rows()
+    }
+
+    /// Get grid column count.
+    pub fn grid_cols(&self) -> usize {
+        self.perform.cols
+    }
+
+    /// Get total image storage bytes.
+    pub fn image_bytes(&self) -> usize {
+        self.perform.image_manager.used_bytes()
+    }
+
+    /// Drain the queue of completed lines (LF + wrap).
+    /// Pane calls this each frame after `write()` to feed triggers.
+    pub fn drain_completed_lines(&mut self) -> Vec<crate::parser::perform::CompletedLine> {
+        std::mem::take(&mut self.perform.completed_lines).into_iter().collect()
+    }
+
+    /// Set background color across a range of cells in the row identified by `line_id`.
+    /// Silently no-ops if the line has been evicted from scrollback.
+    pub fn apply_highlight(&mut self, line_id: u64, range: std::ops::Range<usize>, bg: crate::screen::Color) {
+        let cols = self.cols();
+        let Some(row) = self.perform.grid.row_mut_by_line_id(line_id) else { return; };
+        let end = range.end.min(cols).min(row.len());
+        for col in range.start..end {
+            row[col].bg = bg;
+        }
+        self.perform.dirty = true;
+    }
+
+    /// Attach a hyperlink across a range in the row identified by `line_id`.
+    pub fn apply_hyperlink(&mut self, line_id: u64, range: std::ops::Range<usize>, url: &str) {
+        use std::sync::Arc;
+        let link = Arc::new(crate::hyperlink::Hyperlink::new(url.to_string(), None));
+        let cols = self.cols();
+        let Some(row) = self.perform.grid.row_mut_by_line_id(line_id) else { return; };
+        let end = range.end.min(cols).min(row.len());
+        for col in range.start..end {
+            row[col].hyperlink = Some(link.clone());
+        }
+        self.perform.dirty = true;
+    }
+
+    /// Mark a range as protected (used by PasswordMask trigger; downstream rendering
+    /// substitutes the glyph via secret_redaction visual policy).
+    pub fn apply_password_mask(&mut self, line_id: u64, range: std::ops::Range<usize>) {
+        let cols = self.cols();
+        let Some(row) = self.perform.grid.row_mut_by_line_id(line_id) else { return; };
+        let end = range.end.min(cols).min(row.len());
+        for col in range.start..end {
+            row[col].protected = true;
+        }
+        self.perform.dirty = true;
+    }
+}
+
+#[cfg(test)]
+mod term_trigger_tests {
+    use super::*;
+    use crate::screen::Color;
+
+    #[test]
+    fn drain_returns_completed_lines() {
+        let mut t = Terminal::new(10, 3, 100);
+        t.write(b"hello\r\nworld\r\n");
+        let lines = t.drain_completed_lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].text.trim_end(), "hello");
+        assert_eq!(lines[1].text.trim_end(), "world");
+        assert!(t.drain_completed_lines().is_empty());
+    }
+
+    #[test]
+    fn apply_highlight_writes_bg() {
+        let mut t = Terminal::new(20, 3, 100);
+        t.write(b"error here\n");
+        let line = t.drain_completed_lines().pop().expect("LF should enqueue");
+        let red = Color::Palette(9);
+        t.apply_highlight(line.line_id, 0..5, red);
+        let ss = t.snapshot();
+        let row_with_text = ss.rows.iter().find(|r| r.iter().any(|c| c.c == 'e')).expect("text row");
+        assert_eq!(row_with_text[0].bg, red);
+    }
+
+    #[test]
+    fn apply_hyperlink_attaches_url() {
+        let mut t = Terminal::new(20, 3, 100);
+        t.write(b"link me\n");
+        let line = t.drain_completed_lines().pop().unwrap();
+        t.apply_hyperlink(line.line_id, 0..7, "https://example.com");
+        let ss = t.snapshot();
+        let row = ss.rows.iter().find(|r| r.iter().any(|c| c.c == 'l')).unwrap();
+        assert!(row[0].hyperlink.is_some());
+        assert_eq!(row[0].hyperlink.as_ref().unwrap().uri, "https://example.com");
+    }
+
+    #[test]
+    fn apply_password_mask_marks_protected() {
+        let mut t = Terminal::new(20, 3, 100);
+        t.write(b"secret123\n");
+        let line = t.drain_completed_lines().pop().unwrap();
+        t.apply_password_mask(line.line_id, 0..9);
+        let ss = t.snapshot();
+        let row = ss.rows.iter().find(|r| r.iter().any(|c| c.c == 's')).unwrap();
+        assert!(row[0].protected);
+    }
+
+    #[test]
+    fn apply_highlight_to_unknown_id_is_noop() {
+        let mut t = Terminal::new(10, 2, 5);
+        // Should not panic.
+        t.apply_highlight(u64::MAX, 0..5, Color::Palette(1));
+    }
 }
