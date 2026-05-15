@@ -77,6 +77,9 @@ pub struct AppConfig {
     /// Saved password entries (Keychain/1Password/command providers).
     #[serde(default)]
     pub password_entries: Vec<crate::password_manager::PasswordEntry>,
+    /// Smart-selection regex rules (URL/email/path/SHA/IP classifier).
+    #[serde(default = "default_smart_rules")]
+    pub smart_selection_rules: Vec<SmartRule>,
 }
 
 impl Default for AppConfig {
@@ -95,6 +98,7 @@ impl Default for AppConfig {
             snippets: Vec::new(),
             auto_profile_rules: Vec::new(),
             password_entries: Vec::new(),
+            smart_selection_rules: default_smart_rules(),
         }
     }
 }
