@@ -16,6 +16,7 @@ pub mod prevent_sleep;
 pub mod profile;
 pub mod remote;
 pub mod secret_redaction;
+pub mod semantic_history;
 pub mod smart_selection;
 pub mod snippets;
 pub mod terminfo;
