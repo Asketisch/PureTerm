@@ -244,6 +244,20 @@ impl Terminal {
         &self.search
     }
 
+    /// Re-run the active query if tail-find is enabled. Cheap no-op otherwise.
+    /// Returns the current number of matches.
+    pub fn tail_find_refresh(&mut self) -> usize {
+        if !self.search.tail_find {
+            return self.search.matches.len();
+        }
+        let query = match self.search.query.as_ref() {
+            Some(re) => re.as_str().to_string(),
+            None => return 0,
+        };
+        let _ = self.search(&query);
+        self.search.matches.len()
+    }
+
     /// Get visible text content for copy (linear selection).
     pub fn get_text(&self, start_row: usize, start_col: usize, end_row: usize, end_col: usize) -> String {
         self.get_text_impl(start_row, start_col, end_row, end_col, false)
@@ -491,5 +505,17 @@ mod term_trigger_tests {
         let mut t = Terminal::new(10, 2, 5);
         // Should not panic.
         t.apply_highlight(u64::MAX, 0..5, Color::Palette(1));
+    }
+
+    #[test]
+    fn tail_find_refresh_picks_up_new_matches() {
+        let mut t = Terminal::new(5, 3, 100);
+        t.search("foo").expect("compile");
+        assert_eq!(t.search_state().count(), 0);
+        t.search.enable_tail_find(true);
+        t.write(b"foo\n");
+        let n = t.tail_find_refresh();
+        assert_eq!(n, 1);
+        assert_eq!(t.search_state().count(), 1);
     }
 }

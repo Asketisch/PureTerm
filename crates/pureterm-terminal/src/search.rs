@@ -4,6 +4,10 @@
 //! 基于 Ghostty 的 terminal/search/ 架构。
 
 use regex::Regex;
+use std::collections::VecDeque;
+
+/// Maximum number of search queries kept in history.
+pub const MAX_HISTORY: usize = 64;
 
 /// 网格中的位置（行，列）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -51,6 +55,11 @@ pub struct SearchState {
     pub(crate) selected: Option<usize>,
     /// 上次搜索方向。
     pub(crate) direction: SearchDirection,
+    /// When true, the next time new output completes a line, re-run the
+    /// active query against the affected rows and refresh `matches`.
+    pub tail_find: bool,
+    /// LRU history of previous search queries (most-recent first, capped).
+    pub history: VecDeque<String>,
 }
 
 impl Default for SearchState {
@@ -66,7 +75,33 @@ impl SearchState {
             matches: Vec::new(),
             selected: None,
             direction: SearchDirection::Forward,
+            tail_find: false,
+            history: VecDeque::new(),
         }
+    }
+
+    /// Toggle tail-find (auto-refresh on new output).
+    pub fn enable_tail_find(&mut self, on: bool) {
+        self.tail_find = on;
+    }
+
+    /// Push a query into the LRU history, deduplicating and capping.
+    pub fn push_history(&mut self, query: &str) {
+        if query.is_empty() {
+            return;
+        }
+        if let Some(pos) = self.history.iter().position(|q| q == query) {
+            self.history.remove(pos);
+        }
+        self.history.push_front(query.to_string());
+        while self.history.len() > MAX_HISTORY {
+            self.history.pop_back();
+        }
+    }
+
+    /// Iterate over query history (most-recent first).
+    pub fn history(&self) -> impl Iterator<Item = &str> {
+        self.history.iter().map(|s| s.as_str())
     }
 
     /// 获取当前查询字符串。
@@ -210,5 +245,38 @@ fn find_matches_in_row(
             GridPos::new(row, start_col),
             GridPos::new(row, end_col),
         ));
+    }
+}
+
+#[cfg(test)]
+mod search_state_tests {
+    use super::*;
+
+    #[test]
+    fn push_history_dedupes_and_caps() {
+        let mut s = SearchState::new();
+        s.push_history("a");
+        s.push_history("b");
+        s.push_history("a"); // moves "a" to front
+        let h: Vec<&str> = s.history().collect();
+        assert_eq!(h, vec!["a", "b"]);
+
+        s.push_history(""); // ignored
+        assert_eq!(s.history().count(), 2);
+
+        for i in 0..MAX_HISTORY + 10 {
+            s.push_history(&format!("q{}", i));
+        }
+        assert_eq!(s.history().count(), MAX_HISTORY);
+    }
+
+    #[test]
+    fn enable_tail_find_default_off() {
+        let mut s = SearchState::new();
+        assert!(!s.tail_find);
+        s.enable_tail_find(true);
+        assert!(s.tail_find);
+        s.enable_tail_find(false);
+        assert!(!s.tail_find);
     }
 }
