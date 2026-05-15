@@ -66,6 +66,9 @@ pub struct AppConfig {
     /// User-defined text snippets accessible via the Command Palette.
     #[serde(default)]
     pub snippets: Vec<Snippet>,
+    /// Rules driving automatic profile switching (matched against host/cwd/user).
+    #[serde(default)]
+    pub auto_profile_rules: Vec<crate::auto_profile::AutoSwitchRule>,
 }
 
 impl Default for AppConfig {
@@ -82,6 +85,7 @@ impl Default for AppConfig {
             prevent_sleep: true,
             triggers: default_app_triggers(),
             snippets: Vec::new(),
+            auto_profile_rules: Vec::new(),
         }
     }
 }
