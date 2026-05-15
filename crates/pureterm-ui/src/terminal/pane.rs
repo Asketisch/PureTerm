@@ -22,6 +22,8 @@ use crate::quick_bar::QuickBarMode;
 
 use std::sync::RwLock;
 use pureterm_core::trigger::TriggerService;
+use pureterm_core::auto_profile::AutoProfileSwitcher;
+use pureterm_session::coprocess::CoprocessMiddleware;
 use crate::terminal::trigger_dispatch::{DispatchState, dispatch_trigger};
 
 // ── Smooth Scroll State ───────────────────────────────────────────────────────
@@ -285,6 +287,12 @@ pub struct TerminalPane {
     pub trigger_service: Option<Arc<RwLock<TriggerService>>>,
     /// Per-pane dispatch state (capture writers, env snapshot).
     pub(crate) trigger_state: DispatchState,
+    /// Optional attached coprocess; drains pending bytes into session each frame.
+    pub coprocess: Option<Arc<CoprocessMiddleware>>,
+    /// Optional shared auto-profile switcher (None = disabled).
+    pub auto_profile: Option<Arc<RwLock<AutoProfileSwitcher>>>,
+    /// Last-seen cwd for change detection.
+    last_cwd: Option<String>,
 }
 
 static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
@@ -330,12 +338,26 @@ impl TerminalPane {
             quick_bar: QuickBar::new(),
             trigger_service: None,
             trigger_state: DispatchState::new(),
+            coprocess: None,
+            auto_profile: None,
+            last_cwd: None,
         }
     }
 
     /// Attach a shared TriggerService. Call after `new()`; safe to swap.
     pub fn set_trigger_service(&mut self, svc: Arc<RwLock<TriggerService>>) {
         self.trigger_service = Some(svc);
+    }
+
+    /// Attach a coprocess middleware whose pending bytes will be re-injected
+    /// into the session on every drain. Call after `new()`.
+    pub fn set_coprocess(&mut self, cp: Arc<CoprocessMiddleware>) {
+        self.coprocess = Some(cp);
+    }
+
+    /// Attach a shared auto-profile switcher. Call after `new()`.
+    pub fn set_auto_profile(&mut self, sw: Arc<RwLock<AutoProfileSwitcher>>) {
+        self.auto_profile = Some(sw);
     }
 
     /// Set the session for this pane and start output processing.
@@ -545,6 +567,39 @@ impl TerminalPane {
                         if bell { self.visual_bell_active = true; }
                         if let Some(text) = clipboard {
                             if let Some(cb) = self.on_clipboard_set.as_mut() { cb(&text); }
+                        }
+                    }
+                }
+
+                // Coprocess: drain bytes the child wrote and forward to session.
+                if let Some(cp) = &self.coprocess {
+                    let pending = cp.drain_pending_input();
+                    if !pending.is_empty() {
+                        if let Some(ref mut s) = self.session {
+                            if let Err(e) = s.write(&pending) {
+                                log::warn!("coprocess inject: {}", e);
+                            }
+                        }
+                    }
+                }
+
+                // Tail-find: re-run active search on new content.
+                self.terminal.tail_find_refresh();
+
+                // Auto-profile: evaluate on cwd change.
+                let cwd_now = self.terminal.current_dir().map(|s| s.to_string());
+                if cwd_now != self.last_cwd {
+                    self.last_cwd = cwd_now.clone();
+                    if let Some(sw) = &self.auto_profile {
+                        let decision = sw
+                            .read()
+                            .unwrap_or_else(|e| e.into_inner())
+                            .evaluate(None, cwd_now.as_deref(), std::env::var("USER").ok().as_deref());
+                        if let Some(d) = decision {
+                            log::info!(
+                                "auto-profile switch suggested: {} (rule {})",
+                                d.profile_id, d.triggered_by
+                            );
                         }
                     }
                 }
@@ -1578,5 +1633,24 @@ mod trigger_smoke_tests {
 
         // Cleanup.
         let _ = std::fs::remove_file(&expected);
+    }
+
+    #[test]
+    fn drain_output_invokes_tail_find_when_enabled() {
+        let mut pane = TerminalPane::new(40, 5, 100);
+        // Search for "boom"; initially zero matches.
+        pane.terminal.search("boom").unwrap();
+        assert!(pane.terminal.search_state().matches().is_empty());
+        pane.terminal.search.enable_tail_find(true);
+        {
+            let mut buf = pane.output_buffer.lock().unwrap();
+            buf.extend_from_slice(b"boom\r\n");
+        }
+        pane.drain_output();
+        assert_eq!(
+            pane.terminal.search_state().matches().len(),
+            1,
+            "tail-find should rerun on new output"
+        );
     }
 }

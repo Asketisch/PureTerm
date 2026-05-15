@@ -78,6 +78,7 @@ impl PureTermApp {
         let waker: Arc<dyn Fn() + Send + Sync> = Arc::new(move || { let _ = proxy.send_event(()); });
         pane.set_session_with_receiver(session, output_receiver, Some(waker));
         pane.set_trigger_service(self.trigger_service.clone());
+        pane.set_auto_profile(self.auto_profile_switcher.clone());
         pane.set_clipboard_handler(Box::new(|text: &str| {
             if let Ok(mut cb) = arboard::Clipboard::new() {
                 if let Err(e) = cb.set_text(text) {

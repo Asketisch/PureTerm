@@ -145,6 +145,10 @@ fn main() -> Result<()> {
     trigger_svc.replace_all(config.triggers.clone());
     let trigger_service = std::sync::Arc::new(std::sync::RwLock::new(trigger_svc));
 
+    let auto_profile_switcher = std::sync::Arc::new(std::sync::RwLock::new(
+        pureterm_core::auto_profile::AutoProfileSwitcher::new(config.auto_profile_rules.clone()),
+    ));
+
     let mut app = PureTermApp {
         window: None,
         renderer: None,
@@ -177,6 +181,7 @@ fn main() -> Result<()> {
         sleep_prevented: false,
         pending_marks: Arc::new(Mutex::new(Vec::new())),
         trigger_service,
+        auto_profile_switcher,
         quit_requested: false,
         should_quit: false,
         last_tab_click_time: None,
