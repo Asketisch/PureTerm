@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use crate::error::Result;
 use crate::hotkey::HotkeysConfig;
 use crate::profile::{Profile, ProfileGroup};
+use crate::smart_selection::{SmartRule, SmartSelectionService};
 use crate::snippets::Snippet;
 use crate::theme::ColorScheme;
 
@@ -33,6 +34,10 @@ fn legacy_cursor_style() -> String { "block".into() }
 
 fn default_app_triggers() -> Vec<crate::trigger::Trigger> {
     crate::trigger::TriggerService::default_triggers()
+}
+
+fn default_smart_rules() -> Vec<SmartRule> {
+    SmartSelectionService::default_rules()
 }
 
 // ── Legacy Structs ────────────────────────────────────────────────────────────
@@ -69,6 +74,9 @@ pub struct AppConfig {
     /// Rules driving automatic profile switching (matched against host/cwd/user).
     #[serde(default)]
     pub auto_profile_rules: Vec<crate::auto_profile::AutoSwitchRule>,
+    /// Saved password entries (Keychain/1Password/command providers).
+    #[serde(default)]
+    pub password_entries: Vec<crate::password_manager::PasswordEntry>,
 }
 
 impl Default for AppConfig {
@@ -86,6 +94,7 @@ impl Default for AppConfig {
             triggers: default_app_triggers(),
             snippets: Vec::new(),
             auto_profile_rules: Vec::new(),
+            password_entries: Vec::new(),
         }
     }
 }
