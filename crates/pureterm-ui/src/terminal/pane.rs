@@ -16,6 +16,13 @@ use pureterm_terminal::screen::selection::{
 use pureterm_terminal::mode::TermMode;
 use crate::autocomplete::{Completion, complete_path, complete_command};
 use crate::history_menu::CommandHistory;
+use crate::inspector::{InspectorState, TerminalDebugInfo, RendererDebugInfo, GridDebugInfo, ModesDebugInfo, FontAtlasDebugInfo};
+use crate::quick_bar::QuickBar;
+use crate::quick_bar::QuickBarMode;
+
+use std::sync::RwLock;
+use pureterm_core::trigger::TriggerService;
+use crate::terminal::trigger_dispatch::{DispatchState, dispatch_trigger};
 
 // ── Smooth Scroll State ───────────────────────────────────────────────────────
 
@@ -268,6 +275,16 @@ pub struct TerminalPane {
     pub command_history: CommandHistory,
     /// Command correction suggestion (shown when a command fails).
     pub correction_suggestion: Option<CorrectionSuggestion>,
+    /// Terminal inspector for debugging.
+    pub inspector: InspectorState,
+    /// Whether the inspector overlay is visible.
+    pub inspector_visible: bool,
+    /// Quick bar for commands/search.
+    pub quick_bar: QuickBar,
+    /// Shared trigger rules; None disables triggers for this pane.
+    pub trigger_service: Option<Arc<RwLock<TriggerService>>>,
+    /// Per-pane dispatch state (capture writers, env snapshot).
+    trigger_state: DispatchState,
 }
 
 static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
@@ -308,7 +325,17 @@ impl TerminalPane {
             history_visible: false,
             command_history: CommandHistory::new(),
             correction_suggestion: None,
+            inspector: InspectorState::new(),
+            inspector_visible: false,
+            quick_bar: QuickBar::new(),
+            trigger_service: None,
+            trigger_state: DispatchState::new(),
         }
+    }
+
+    /// Attach a shared TriggerService. Call after `new()`; safe to swap.
+    pub fn set_trigger_service(&mut self, svc: Arc<RwLock<TriggerService>>) {
+        self.trigger_service = Some(svc);
     }
 
     /// Set the session for this pane and start output processing.
@@ -393,6 +420,7 @@ impl TerminalPane {
                                 if new_len > Self::MAX_OUTPUT_BUFFER_BYTES {
                                     let excess = new_len - Self::MAX_OUTPUT_BUFFER_BYTES;
                                     buffer.drain(..excess);
+                                    buffer.shrink_to_fit();
                                     log::warn!(
                                         "output_buffer exceeded {} MiB cap, dropped {} bytes of oldest data",
                                         Self::MAX_OUTPUT_BUFFER_BYTES / (1024 * 1024),
@@ -482,10 +510,45 @@ impl TerminalPane {
                 self.terminal.write(&buffer);
                 self.dirty = true;
 
-                // Scroll to bottom on new output if user is at the bottom
-                if self.terminal.scroll_offset() == 0 {
-                    // Already at bottom — stay at bottom
+                // Triggers: feed completed lines to the rule set and dispatch.
+                if let Some(svc) = self.trigger_service.clone() {
+                    let lines = self.terminal.drain_completed_lines();
+                    if !lines.is_empty() {
+                        let svc_guard = svc.read().unwrap_or_else(|e| e.into_inner());
+                        let mut to_send: Vec<u8> = Vec::new();
+                        let mut bell = false;
+                        let mut clipboard: Option<String> = None;
+                        for line in &lines {
+                            for m in svc_guard.evaluate_with_captures(&line.text) {
+                                let fx = dispatch_trigger(&m, line, &mut self.terminal, &mut self.trigger_state);
+                                if !fx.send_to_session.is_empty() {
+                                    to_send.extend_from_slice(&fx.send_to_session);
+                                }
+                                if fx.bell { bell = true; }
+                                if fx.clipboard.is_some() { clipboard = fx.clipboard; }
+                                if let Some((t, b)) = fx.notification {
+                                    log::info!("trigger notify: {} — {}", t, b);
+                                }
+                                if let Some(cwd) = fx.set_cwd {
+                                    log::info!("trigger DirectoryTrack: {}", cwd);
+                                }
+                            }
+                        }
+                        drop(svc_guard);
+                        if !to_send.is_empty() {
+                            if let Some(ref mut s) = self.session {
+                                if let Err(e) = s.write(&to_send) {
+                                    log::warn!("trigger SendText: {}", e);
+                                }
+                            }
+                        }
+                        if bell { self.visual_bell_active = true; }
+                        if let Some(text) = clipboard {
+                            if let Some(cb) = self.on_clipboard_set.as_mut() { cb(&text); }
+                        }
+                    }
                 }
+
                 // If user scrolled up, don't force scroll down
                 buffer.clear();
             }
@@ -1430,4 +1493,43 @@ pub enum PaneAction {
     EditTabTitle,
     /// Edit the tab color.
     EditTabColor,
+}
+
+impl Drop for TerminalPane {
+    fn drop(&mut self) {
+        // Kill the session so the child process terminates and the broadcast
+        // channel closes, which causes the reader thread to exit.
+        if let Some(ref mut session) = self.session {
+            let _ = session.kill("TERM");
+        }
+    }
+}
+
+#[cfg(test)]
+mod trigger_smoke_tests {
+    use super::*;
+    use pureterm_core::trigger::{Trigger, TriggerAction, TriggerService, HighlightScope};
+
+    #[test]
+    fn pane_dispatches_highlight_on_match() {
+        let mut pane = TerminalPane::new(40, 5, 100);
+        let mut svc = TriggerService::new();
+        svc.add_trigger(Trigger {
+            id: "x".into(),
+            name: "Err".into(),
+            pattern: r"error".into(),
+            action: TriggerAction::Highlight { color: "#FF0000".into(), scope: HighlightScope::Match },
+            enabled: true,
+            case_sensitive: false,
+        });
+        pane.set_trigger_service(Arc::new(RwLock::new(svc)));
+        {
+            let mut buf = pane.output_buffer.lock().unwrap();
+            buf.extend_from_slice(b"this is an error message\r\n");
+        }
+        pane.drain_output();
+        // The completed line should have been drained and matched.
+        assert!(pane.terminal.drain_completed_lines().is_empty(),
+            "drain_output should consume completed lines");
+    }
 }
