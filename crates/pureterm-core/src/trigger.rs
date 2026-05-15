@@ -186,24 +186,22 @@ pub struct TemplateContext {
 /// Expand `\1..\9`, `${cwd}`, `${date}`, `${env:NAME}` in a template string.
 pub fn expand_template(tpl: &str, ctx: &TemplateContext) -> String {
     let mut out = String::with_capacity(tpl.len());
-    let bytes = tpl.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let b = bytes[i];
-        if b == b'\\' && i + 1 < bytes.len() {
-            let n = bytes[i + 1];
+    let mut rest = tpl;
+    while !rest.is_empty() {
+        let bytes = rest.as_bytes();
+        let b0 = bytes[0];
+        if b0 == b'\\' && bytes.len() >= 2 {
+            let n = bytes[1];
             if (b'1'..=b'9').contains(&n) {
                 let idx = (n - b'1') as usize;
-                if let Some(c) = ctx.captures.get(idx) {
-                    out.push_str(c);
-                }
-                i += 2;
+                if let Some(c) = ctx.captures.get(idx) { out.push_str(c); }
+                rest = &rest[2..];
                 continue;
             }
         }
-        if b == b'$' && i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-            if let Some(close) = tpl[i + 2..].find('}') {
-                let key = &tpl[i + 2..i + 2 + close];
+        if b0 == b'$' && bytes.len() >= 2 && bytes[1] == b'{' {
+            if let Some(close) = rest[2..].find('}') {
+                let key = &rest[2..2 + close];
                 if key == "cwd" {
                     if let Some(c) = &ctx.cwd { out.push_str(c); }
                 } else if key == "date" {
@@ -211,12 +209,14 @@ pub fn expand_template(tpl: &str, ctx: &TemplateContext) -> String {
                 } else if let Some(name) = key.strip_prefix("env:") {
                     if let Some(v) = ctx.env.get(name) { out.push_str(v); }
                 }
-                i += 2 + close + 1;
+                rest = &rest[2 + close + 1..];
                 continue;
             }
         }
-        out.push(b as char);
-        i += 1;
+        // Advance by one full UTF-8 char so multi-byte sequences stay intact.
+        let ch = rest.chars().next().unwrap();
+        out.push(ch);
+        rest = &rest[ch.len_utf8()..];
     }
     out
 }
@@ -369,6 +369,17 @@ mod tests {
     fn template_expansion_missing_env_yields_empty() {
         let ctx = TemplateContext { captures: vec![], cwd: None, env: Default::default() };
         assert_eq!(expand_template("x=${env:UNSET}y", &ctx), "x=y");
+    }
+
+    #[test]
+    fn template_expansion_preserves_non_ascii() {
+        let ctx = TemplateContext {
+            captures: vec!["你好".into()],
+            cwd: Some("/用户/项目".into()),
+            env: Default::default(),
+        };
+        let out = expand_template(r"路径=${cwd} 名=\1 emoji=🚀", &ctx);
+        assert_eq!(out, "路径=/用户/项目 名=你好 emoji=🚀");
     }
 
     #[test]
