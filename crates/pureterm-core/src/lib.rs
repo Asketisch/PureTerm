@@ -23,5 +23,6 @@ pub mod theme;
 pub mod theme_auto;
 pub mod trigger;
 pub mod vault;
+pub mod workgroup;
 
 pub use config::{AppConfig as Config, ConfigService, CliArgs};

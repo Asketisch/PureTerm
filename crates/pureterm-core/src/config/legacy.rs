@@ -80,6 +80,9 @@ pub struct AppConfig {
     /// Smart-selection regex rules (URL/email/path/SHA/IP classifier).
     #[serde(default = "default_smart_rules")]
     pub smart_selection_rules: Vec<SmartRule>,
+    /// Saved tab/split arrangements (workgroups).
+    #[serde(default)]
+    pub workgroups: Vec<crate::workgroup::Workgroup>,
 }
 
 impl Default for AppConfig {
@@ -99,6 +102,7 @@ impl Default for AppConfig {
             auto_profile_rules: Vec::new(),
             password_entries: Vec::new(),
             smart_selection_rules: default_smart_rules(),
+            workgroups: Vec::new(),
         }
     }
 }
