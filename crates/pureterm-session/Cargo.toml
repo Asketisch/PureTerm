@@ -24,3 +24,6 @@ dirs = { workspace = true }
 bytes = "1"
 rpassword = { workspace = true }
 pollster = "0.4"
+
+[dev-dependencies]
+tempfile = { workspace = true }
