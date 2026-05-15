@@ -23,6 +23,8 @@ use crate::quick_bar::QuickBarMode;
 use std::sync::RwLock;
 use pureterm_core::trigger::TriggerService;
 use pureterm_core::auto_profile::AutoProfileSwitcher;
+use pureterm_core::semantic_history::{SemanticHistoryService, SemanticTarget};
+use pureterm_core::smart_selection::{SmartMatch, SmartSelectionService};
 use pureterm_session::coprocess::CoprocessMiddleware;
 use crate::terminal::trigger_dispatch::{DispatchState, dispatch_trigger};
 
@@ -291,6 +293,11 @@ pub struct TerminalPane {
     pub coprocess: Option<Arc<CoprocessMiddleware>>,
     /// Optional shared auto-profile switcher (None = disabled).
     pub auto_profile: Option<Arc<RwLock<AutoProfileSwitcher>>>,
+    /// Smart-selection service (rules from config). Optional — None disables.
+    pub smart_selection: Option<Arc<SmartSelectionService>>,
+    /// Last smart-selection match found at right-click position; used by
+    /// the context menu to render relevant actions.
+    pub last_smart_match: Option<SmartMatch>,
     /// Last-seen cwd for change detection.
     last_cwd: Option<String>,
 }
@@ -340,6 +347,8 @@ impl TerminalPane {
             trigger_state: DispatchState::new(),
             coprocess: None,
             auto_profile: None,
+            smart_selection: None,
+            last_smart_match: None,
             last_cwd: None,
         }
     }
@@ -358,6 +367,11 @@ impl TerminalPane {
     /// Attach a shared auto-profile switcher. Call after `new()`.
     pub fn set_auto_profile(&mut self, sw: Arc<RwLock<AutoProfileSwitcher>>) {
         self.auto_profile = Some(sw);
+    }
+
+    /// Attach a shared smart-selection service. Call after `new()`.
+    pub fn set_smart_selection(&mut self, svc: Arc<SmartSelectionService>) {
+        self.smart_selection = Some(svc);
     }
 
     /// Set the session for this pane and start output processing.
@@ -1015,6 +1029,15 @@ impl TerminalPane {
                         return (None, Some(PaneAction::PasteFromClipboard));
                     }
                     MouseButton::Right => {
+                        // Smart selection: stash any match under the cursor for
+                        // the context menu to surface (UI surface is follow-up).
+                        if let Some(svc) = &self.smart_selection {
+                            let cols_minus_1 = self.terminal.cols().saturating_sub(1);
+                            let line_text = self.terminal.get_text(row, 0, row, cols_minus_1);
+                            self.last_smart_match = svc.evaluate(&line_text, col);
+                        } else {
+                            self.last_smart_match = None;
+                        }
                         // Right-click: copy selection if exists, then show context menu
                         if let Some(sel) = &self.selection {
                             let text = if sel.is_block {
@@ -1128,6 +1151,22 @@ impl TerminalPane {
     }
 
     fn handle_left_click(&mut self, row: usize, col: usize, modifiers: MouseModifiers) -> Option<PaneAction> {
+        // Cmd/Ctrl-click on a URL / file path / email opens it via the system
+        // handler. MouseModifiers currently exposes ctrl/alt/shift; cmd is not
+        // plumbed, so we accept ctrl as the open modifier on every platform.
+        let is_open_modifier = modifiers.ctrl && !modifiers.shift && !modifiers.alt;
+        if is_open_modifier {
+            let cols_minus_1 = self.terminal.cols().saturating_sub(1);
+            let line_text = self.terminal.get_text(row, 0, row, cols_minus_1);
+            if let Some(m) = SemanticHistoryService::detect_at(&line_text, col) {
+                return Some(match m.target {
+                    SemanticTarget::Url { href } => PaneAction::OpenUrl(href),
+                    SemanticTarget::Email { address } => PaneAction::OpenUrl(format!("mailto:{}", address)),
+                    SemanticTarget::File { path, line, col } => PaneAction::OpenFile { path, line, col },
+                });
+            }
+        }
+
         let now = Instant::now();
         let click_count = if let Some(last_time) = self.mouse_state.last_click_time {
             if now.duration_since(last_time) < std::time::Duration::from_millis(500) {
@@ -1536,6 +1575,8 @@ pub enum PaneAction {
     ShowContextMenu,
     /// Open a URL in the default browser.
     OpenUrl(String),
+    /// Open a local file (optionally with cursor line/col) in the system editor.
+    OpenFile { path: String, line: Option<u32>, col: Option<u32> },
     /// Split the pane to the right.
     SplitRight,
     /// Split the pane to the left.
@@ -1651,6 +1692,32 @@ mod trigger_smoke_tests {
             pane.terminal.search_state().matches().len(),
             1,
             "tail-find should rerun on new output"
+        );
+    }
+
+    #[test]
+    fn right_click_records_smart_match() {
+        let mut pane = TerminalPane::new(80, 5, 100);
+        pane.set_smart_selection(Arc::new(
+            pureterm_core::smart_selection::SmartSelectionService::with_defaults(),
+        ));
+        // Inject visible text containing a URL, then drain so it's on the grid.
+        {
+            let mut buf = pane.output_buffer.lock().unwrap();
+            buf.extend_from_slice(b"see https://example.com here\r\n");
+        }
+        pane.drain_output();
+        // Synthesize the smart-match lookup directly: the right-click branch
+        // does exactly this, but constructing the full mouse event would also
+        // require the surrounding renderer/layout machinery.
+        let line_text = pane.terminal.get_text(0, 0, 0, 79);
+        let svc = pane.smart_selection.as_ref().unwrap();
+        // Column 12 is inside "https://example.com".
+        pane.last_smart_match = svc.evaluate(&line_text, 12);
+        assert!(
+            pane.last_smart_match.is_some(),
+            "URL under cursor should match: line={:?}",
+            line_text
         );
     }
 }

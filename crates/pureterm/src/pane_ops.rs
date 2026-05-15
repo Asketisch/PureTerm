@@ -79,6 +79,7 @@ impl PureTermApp {
         pane.set_session_with_receiver(session, output_receiver, Some(waker));
         pane.set_trigger_service(self.trigger_service.clone());
         pane.set_auto_profile(self.auto_profile_switcher.clone());
+        pane.set_smart_selection(self.smart_selection.clone());
         pane.set_clipboard_handler(Box::new(|text: &str| {
             if let Ok(mut cb) = arboard::Clipboard::new() {
                 if let Err(e) = cb.set_text(text) {
@@ -139,6 +140,26 @@ impl PureTermApp {
                 let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
                 #[cfg(target_os = "windows")]
                 let _ = std::process::Command::new("cmd").args(["/c", "start", &url]).spawn();
+            }
+            PaneAction::OpenFile { path, line: _, col: _ } => {
+                // Open in the default OS handler. line/col are ignored for now —
+                // most OS-level handlers can't surface them; honoring them needs
+                // an editor-aware launcher (e.g. `code -g path:line:col`).
+                let p = if path.starts_with('/') || path.starts_with('~') {
+                    path.clone()
+                } else {
+                    format!("./{}", path)
+                };
+                log::info!("Opening file: {}", p);
+                #[cfg(target_os = "macos")]
+                let res = std::process::Command::new("open").arg(&p).spawn();
+                #[cfg(target_os = "linux")]
+                let res = std::process::Command::new("xdg-open").arg(&p).spawn();
+                #[cfg(target_os = "windows")]
+                let res = std::process::Command::new("cmd").args(["/c", "start", &p]).spawn();
+                if let Err(e) = res {
+                    log::warn!("OpenFile failed: {}: {}", p, e);
+                }
             }
             PaneAction::SplitRight => {
                 self.handle_split(SplitSide::Right);

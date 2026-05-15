@@ -149,6 +149,17 @@ fn main() -> Result<()> {
         pureterm_core::auto_profile::AutoProfileSwitcher::new(config.auto_profile_rules.clone()),
     ));
 
+    let smart_selection = {
+        let mut svc = pureterm_core::smart_selection::SmartSelectionService::new();
+        let rules = if config.smart_selection_rules.is_empty() {
+            pureterm_core::smart_selection::SmartSelectionService::default_rules()
+        } else {
+            config.smart_selection_rules.clone()
+        };
+        svc.replace_rules(rules);
+        std::sync::Arc::new(svc)
+    };
+
     let mut app = PureTermApp {
         window: None,
         renderer: None,
@@ -182,6 +193,7 @@ fn main() -> Result<()> {
         pending_marks: Arc::new(Mutex::new(Vec::new())),
         trigger_service,
         auto_profile_switcher,
+        smart_selection,
         quit_requested: false,
         should_quit: false,
         last_tab_click_time: None,

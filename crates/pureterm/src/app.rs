@@ -92,6 +92,8 @@ pub(crate) struct PureTermApp {
     pub(crate) trigger_service: Arc<StdRwLock<TriggerService>>,
     /// Shared auto-profile switcher; injected into every new TerminalPane.
     pub(crate) auto_profile_switcher: Arc<StdRwLock<pureterm_core::auto_profile::AutoProfileSwitcher>>,
+    /// Shared smart-selection service; injected into every new TerminalPane.
+    pub(crate) smart_selection: Arc<pureterm_core::smart_selection::SmartSelectionService>,
     /// 持久化的主题服务，加载了用户主题
     pub(crate) theme_service: ThemeService,
     /// Prevent system sleep while commands are running.
