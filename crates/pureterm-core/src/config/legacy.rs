@@ -30,6 +30,10 @@ fn legacy_renderer() -> String { "wgpu".into() }
 fn legacy_bell() -> String { "visual".into() }
 fn legacy_cursor_style() -> String { "block".into() }
 
+fn default_app_triggers() -> Vec<crate::trigger::Trigger> {
+    crate::trigger::TriggerService::default_triggers()
+}
+
 // ── Legacy Structs ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,6 +59,9 @@ pub struct AppConfig {
     /// Prevent system sleep during long-running commands.
     #[serde(default = "legacy_true")]
     pub prevent_sleep: bool,
+    /// Output-stream regex triggers (matched per completed line).
+    #[serde(default = "default_app_triggers")]
+    pub triggers: Vec<crate::trigger::Trigger>,
 }
 
 impl Default for AppConfig {
@@ -69,6 +76,7 @@ impl Default for AppConfig {
             secret_redaction: false,
             confirm_quit: true,
             prevent_sleep: true,
+            triggers: default_app_triggers(),
         }
     }
 }

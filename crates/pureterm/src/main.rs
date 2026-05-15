@@ -20,6 +20,7 @@ use pureterm_core::theme::ThemeService;
 use pureterm_gui::EguiBackend;
 use pureterm_session::base::ConnectParams;
 use pureterm_ui::app::App;
+use pureterm_ui::command_palette::CommandPalette;
 use pureterm_ui::context_menu::ContextMenuState;
 use pureterm_ui::profile_selector::ProfileSelector;
 use pureterm_ui::settings::SettingsPanel;
@@ -140,6 +141,10 @@ fn main() -> Result<()> {
     let proxy = event_loop.create_proxy();
     let quake_mode = cli.quake;
 
+    let mut trigger_svc = pureterm_core::trigger::TriggerService::new();
+    trigger_svc.replace_all(config.triggers.clone());
+    let trigger_service = std::sync::Arc::new(std::sync::RwLock::new(trigger_svc));
+
     let mut app = PureTermApp {
         window: None,
         renderer: None,
@@ -157,6 +162,7 @@ fn main() -> Result<()> {
         hovered_divider: None,
         egui_backend: None,
         settings_panel: SettingsPanel::default(),
+        command_palette: CommandPalette::new(),
         profile_selector: ProfileSelector::default(),
         welcome_page: WelcomePage::new(),
         rename_modal: None,
@@ -170,6 +176,7 @@ fn main() -> Result<()> {
         prevent_sleep: PreventSleep::new(),
         sleep_prevented: false,
         pending_marks: Arc::new(Mutex::new(Vec::new())),
+        trigger_service,
         quit_requested: false,
         should_quit: false,
         last_tab_click_time: None,

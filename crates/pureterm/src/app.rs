@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::sync::RwLock as StdRwLock;
 
 use pureterm_core::config::AppearanceConfig;
+use pureterm_core::trigger::TriggerService;
 use pureterm_core::prevent_sleep::PreventSleep;
 use pureterm_core::theme::{ColorScheme, ThemeService};
 use pureterm_gui::EguiBackend;
@@ -15,6 +17,7 @@ use pureterm_session::SshSession;
 use pureterm_session::SerialSession;
 use pureterm_session::TelnetSession;
 use pureterm_ui::app::App;
+use pureterm_ui::command_palette::CommandPalette;
 use pureterm_ui::context_menu::ContextMenuState;
 use pureterm_ui::profile_selector::ProfileSelector;
 use pureterm_ui::settings::SettingsPanel;
@@ -61,6 +64,8 @@ pub(crate) struct PureTermApp {
     pub(crate) egui_backend: Option<EguiBackend>,
     /// 设置面板状态。
     pub(crate) settings_panel: SettingsPanel,
+    /// 命令面板状态。
+    pub(crate) command_palette: CommandPalette,
     /// 用于快速连接/会话选择的配置文件选择器。
     pub(crate) profile_selector: ProfileSelector,
     /// 首次启动或没有标签页时的欢迎页面。
@@ -81,6 +86,8 @@ pub(crate) struct PureTermApp {
     pub(crate) proxy: EventLoopProxy<()>,
     /// Shared buffer for OSC 133 mark events from terminal panes.
     pub(crate) pending_marks: Arc<Mutex<Vec<(u64, MarkKind)>>>,
+    /// Shared trigger rules; injected into every new TerminalPane.
+    pub(crate) trigger_service: Arc<StdRwLock<TriggerService>>,
     /// 持久化的主题服务，加载了用户主题
     pub(crate) theme_service: ThemeService,
     /// Prevent system sleep while commands are running.
