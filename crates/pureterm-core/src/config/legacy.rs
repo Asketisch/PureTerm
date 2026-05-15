@@ -83,6 +83,9 @@ pub struct AppConfig {
     /// Saved tab/split arrangements (workgroups).
     #[serde(default)]
     pub workgroups: Vec<crate::workgroup::Workgroup>,
+    /// Whether the right-side Toolbelt panel is visible.
+    #[serde(default)]
+    pub toolbelt_visible: bool,
 }
 
 impl Default for AppConfig {
@@ -103,6 +106,7 @@ impl Default for AppConfig {
             password_entries: Vec::new(),
             smart_selection_rules: default_smart_rules(),
             workgroups: Vec::new(),
+            toolbelt_visible: false,
         }
     }
 }

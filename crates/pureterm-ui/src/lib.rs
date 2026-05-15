@@ -25,6 +25,7 @@ pub mod tab_bar;
 pub mod terminal;
 pub mod theme;
 pub mod tokens;
+pub mod toolbelt;
 pub mod welcome;
 
 pub use app::App;
@@ -46,4 +47,5 @@ pub use tabs::TabManager;
 pub use tab_recovery::{TabRecovery, SavedTab, SavedWindowState};
 pub use terminal::TerminalPane;
 pub use theme::{ColorTheme, apply_theme, set_theme, dark_mode, light_mode, dark_color_theme, light_color_theme};
+pub use toolbelt::{ToolKind, ToolNotes, ToolbeltConfig, ToolbeltState, PASTE_HISTORY_CAP};
 pub use welcome::WelcomePage;
