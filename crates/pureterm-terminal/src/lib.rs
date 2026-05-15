@@ -3,6 +3,7 @@ pub mod bidi;
 pub mod block;
 pub mod bracketed_paste;
 pub mod charset;
+pub mod copy_mode;
 pub mod hyperlink;
 pub mod image;
 pub mod input;
