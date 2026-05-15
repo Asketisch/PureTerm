@@ -1,5 +1,6 @@
 pub mod base;
 pub mod clone_shell;
+pub mod coprocess;
 pub mod jump_host;
 pub mod local;
 pub mod local_provider;
@@ -29,6 +30,7 @@ pub use serial::SerialSession;
 pub use serial_provider::SerialProfileProvider;
 pub use telnet::TelnetSession;
 pub use telnet_provider::TelnetProfileProvider;
+pub use coprocess::{Coprocess, CoprocessMiddleware};
 pub use middleware::{SessionMiddleware, MiddlewareStack};
 pub use osc_processor::OscProcessorMiddleware;
 pub use session_log::{SessionLog, SessionLogConfig};
