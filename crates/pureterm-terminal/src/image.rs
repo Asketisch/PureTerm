@@ -345,30 +345,22 @@ impl SixelParser {
             let c = data[i];
             match c {
                 b'#' => {
-                    // Select color register: # Pc
+                    // Color introducer: `#Pc` selects register Pc;
+                    // `#Pc;Pu;Px;Py;Pz` defines and selects (Pu=1 HLS, Pu=2 RGB).
                     i += 1;
-                    let mut num_str = String::new();
-                    while i < data.len() && data[i].is_ascii_digit() {
-                        num_str.push(data[i] as char);
-                        i += 1;
-                    }
-                    current_color = num_str.parse().unwrap_or(0);
-                    continue; // Already advanced past digits
-                }
-                b'"' => {
-                    // Color/intensity definition: " Pc ; Pu ; Px ; Py ; Pz
-                    i += 1;
-                    let mut cparams = Vec::new();
+                    let mut cparams: Vec<i32> = Vec::new();
                     let mut current_num = String::new();
                     while i < data.len() {
                         let pc = data[i];
                         match pc {
                             b'0'..=b'9' => {
                                 current_num.push(pc as char);
+                                i += 1;
                             }
                             b';' => {
                                 cparams.push(current_num.parse::<i32>().unwrap_or(0));
                                 current_num.clear();
+                                i += 1;
                             }
                             _ => {
                                 if !current_num.is_empty() {
@@ -377,27 +369,37 @@ impl SixelParser {
                                 break;
                             }
                         }
-                        i += 1;
                     }
                     if !cparams.is_empty() {
-                        let reg = cparams[0] as usize;
+                        let reg = cparams[0].max(0) as usize;
                         if cparams.len() >= 5 && cparams[1] == 1 {
-                            // HLS color: "Pc;1;Hh;Ll;Ss
-                            let h = cparams[2] as f32 / 360.0;
-                            let l = cparams[3] as f32 / 100.0;
-                            let s = cparams[4] as f32 / 100.0;
+                            // HLS color: #Pc;1;Hh;Ll;Ss (H 0-360, L 0-100, S 0-100).
+                            let h = (cparams[2] as f32 / 360.0).rem_euclid(1.0);
+                            let l = (cparams[3] as f32 / 100.0).clamp(0.0, 1.0);
+                            let s = (cparams[4] as f32 / 100.0).clamp(0.0, 1.0);
                             let (r, g, b) = hls_to_rgb(h, l, s);
                             self.set_color(reg, r, g, b);
-                            current_color = reg;
                         } else if cparams.len() >= 5 && cparams[1] == 2 {
-                            // RGB direct: "Pc;2;Rr;Gg;Bb (values 0-100 scale to 0-255)
-                            let r = (cparams[2] as f32 * 255.0 / 100.0) as u8;
-                            let g = (cparams[3] as f32 * 255.0 / 100.0) as u8;
-                            let b = (cparams[4] as f32 * 255.0 / 100.0) as u8;
+                            // RGB direct: #Pc;2;Rr;Gg;Bb (values 0-100 scale to 0-255).
+                            let r = ((cparams[2].clamp(0, 100) as f32) * 255.0 / 100.0) as u8;
+                            let g = ((cparams[3].clamp(0, 100) as f32) * 255.0 / 100.0) as u8;
+                            let b = ((cparams[4].clamp(0, 100) as f32) * 255.0 / 100.0) as u8;
                             self.set_color(reg, r, g, b);
-                            current_color = reg;
-                        } else if cparams.len() == 1 {
-                            current_color = reg;
+                        }
+                        current_color = reg;
+                    }
+                    continue;
+                }
+                b'"' => {
+                    // Raster Attributes (DECGRA): "Pan;Pad;Ph;Pv (pixel aspect + size hint).
+                    // We accept and skip the parameters; we infer dimensions from the data.
+                    i += 1;
+                    while i < data.len() {
+                        let pc = data[i];
+                        if matches!(pc, b'0'..=b'9' | b';') {
+                            i += 1;
+                        } else {
+                            break;
                         }
                     }
                     continue;
@@ -854,8 +856,12 @@ pub struct ImageManager {
     next_id: u32,
     byte_limit: usize,
     used_bytes: usize,
-    /// LRU order for images (oldest first).
+    /// Byte usage for sixel images.
+    sixel_used_bytes: usize,
+    /// LRU order for Kitty images (oldest first).
     lru_order: VecDeque<u32>,
+    /// LRU order for Sixel images (oldest first).
+    sixel_lru_order: VecDeque<u32>,
     /// Pending chunked transfers.
     chunked_transfers: HashMap<u32, ChunkedTransfer>,
 }
@@ -880,7 +886,9 @@ impl ImageManager {
             next_id: 1,
             byte_limit: DEFAULT_BYTE_LIMIT,
             used_bytes: 0,
+            sixel_used_bytes: 0,
             lru_order: VecDeque::new(),
+            sixel_lru_order: VecDeque::new(),
             chunked_transfers: HashMap::new(),
         }
     }
@@ -913,10 +921,25 @@ impl ImageManager {
         id
     }
 
-    /// Store a new Sixel image.
+    /// Store a new Sixel image with byte tracking and LRU eviction.
     pub fn store_sixel(&mut self, image: SixelImage) -> u32 {
         let id = image.id;
+        let size = image.data.len();
+
+        // Evict oldest Sixel images if needed before adding
+        while self.sixel_used_bytes + size > self.byte_limit && !self.sixel_images.is_empty() {
+            self.evict_oldest_sixel();
+        }
+
+        // Remove existing image with same ID if present
+        if let Some(old) = self.sixel_images.remove(&id) {
+            self.sixel_used_bytes -= old.data.len();
+            self.sixel_lru_order.retain(|&x| x != id);
+        }
+
         self.sixel_images.insert(id, image);
+        self.sixel_used_bytes += size;
+        self.sixel_lru_order.push_back(id);
         id
     }
 
@@ -975,7 +998,13 @@ impl ImageManager {
 
     /// Remove a Sixel image by ID.
     pub fn remove_sixel(&mut self, id: u32) -> Option<SixelImage> {
-        self.sixel_images.remove(&id)
+        if let Some(image) = self.sixel_images.remove(&id) {
+            self.sixel_used_bytes -= image.data.len();
+            self.sixel_lru_order.retain(|&x| x != id);
+            Some(image)
+        } else {
+            None
+        }
     }
 
     /// Remove all images at a given cell position.
@@ -1021,12 +1050,14 @@ impl ImageManager {
         self.sixel_images.clear();
         self.placements.clear();
         self.used_bytes = 0;
+        self.sixel_used_bytes = 0;
         self.lru_order.clear();
+        self.sixel_lru_order.clear();
     }
 
-    /// Get total bytes used by images.
+    /// Get total bytes used by images (Kitty + Sixel).
     pub fn used_bytes(&self) -> usize {
-        self.used_bytes
+        self.used_bytes + self.sixel_used_bytes
     }
 
     /// Get byte limit.
@@ -1218,6 +1249,16 @@ impl ImageManager {
         }
     }
 
+    /// Evict the oldest Sixel image when at capacity.
+    fn evict_oldest_sixel(&mut self) {
+        if let Some(oldest_id) = self.sixel_lru_order.pop_front() {
+            if let Some(image) = self.sixel_images.remove(&oldest_id) {
+                self.sixel_used_bytes -= image.data.len();
+                self.placements.retain(|(img_id, _), _| *img_id != oldest_id);
+            }
+        }
+    }
+
     /// Evict images until under capacity.
     fn evict_if_needed(&mut self) {
         while self.used_bytes > self.byte_limit && !self.images.is_empty() {
@@ -1352,5 +1393,115 @@ mod tests {
         let encoded = b"SGVsbG8";
         let decoded = base64_decode(encoded);
         assert_eq!(decoded, b"Hello");
+    }
+
+    // ── Sixel parser tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn parse_sixel_minimal_image() {
+        // `#0;2;100;0;0` defines color 0 as full red (RGB 0-100 scale).
+        // `#0` selects color 0.
+        // `??` two empty sixel cells (mask 0).
+        // `!10~` repeats `~` (mask 0x3F = all 6 rows) 10 times.
+        // `$` resets x to 0; `-` advances to next band (we ignore the empty band).
+        let mut parser = SixelParser::new();
+        let image = parser.parse_all(b"#0;2;100;0;0#0??!10~$-");
+        // 2 empty + 10 filled columns = 12 wide; one band = 6 tall.
+        assert_eq!(image.width, 12);
+        assert!(image.height >= 6);
+        assert!(!image.data.is_empty());
+
+        // Check that at least one filled column has red pixels.
+        // Column 2 (first filled column), row 0 -> offset (0 * width + 2) * 4
+        let off = (0 * image.width as usize + 2) * 4;
+        assert_eq!(image.data[off], 255, "expected red channel = 255 at filled pixel");
+        assert_eq!(image.data[off + 1], 0, "expected green channel = 0 at filled pixel");
+        assert_eq!(image.data[off + 2], 0, "expected blue channel = 0 at filled pixel");
+        assert_eq!(image.data[off + 3], 255, "expected alpha = 255 at filled pixel");
+
+        // Empty column 0, row 0 should have alpha 0 (transparent).
+        let off0 = (0 * image.width as usize + 0) * 4;
+        assert_eq!(image.data[off0 + 3], 0, "expected empty pixel to be transparent");
+    }
+
+    #[test]
+    fn parse_sixel_rejects_garbage() {
+        let mut parser = SixelParser::new();
+        // Empty input -> empty image (width=0, height=0).
+        let empty = parser.parse_all(b"");
+        assert_eq!(empty.width, 0);
+        assert_eq!(empty.height, 0);
+        assert!(empty.data.is_empty());
+
+        // Pure non-sixel control bytes -> still empty.
+        let mut parser2 = SixelParser::new();
+        let garbage = parser2.parse_all(b"\x01\x02\x03 \t\n");
+        assert_eq!(garbage.width, 0);
+        assert_eq!(garbage.height, 0);
+    }
+
+    #[test]
+    fn hls_to_rgb_known_triples() {
+        // L=0 -> black regardless of H/S.
+        let (r, g, b) = hls_to_rgb(0.5, 0.0, 1.0);
+        assert_eq!((r, g, b), (0, 0, 0));
+
+        // L=1.0 -> white.
+        let (r, g, b) = hls_to_rgb(0.5, 1.0, 1.0);
+        assert_eq!((r, g, b), (255, 255, 255));
+
+        // S=0, L=0.5 -> mid grey.
+        let (r, g, b) = hls_to_rgb(0.0, 0.5, 0.0);
+        assert!(r > 120 && r < 135);
+        assert_eq!(r, g);
+        assert_eq!(g, b);
+
+        // Pure red: H=0, L=0.5, S=1.0.
+        let (r, g, b) = hls_to_rgb(0.0, 0.5, 1.0);
+        assert_eq!(r, 255);
+        assert_eq!(g, 0);
+        assert_eq!(b, 0);
+    }
+
+    #[test]
+    fn parse_sixel_hls_color() {
+        // Define color register 1 as HLS pure red (H=0, L=50, S=100), then draw a column.
+        let mut parser = SixelParser::new();
+        let image = parser.parse_all(b"#1;1;0;50;100#1~");
+        assert_eq!(image.width, 1);
+        assert!(image.height >= 6);
+        let off = 0;
+        assert_eq!(image.data[off], 255);
+        assert_eq!(image.data[off + 1], 0);
+        assert_eq!(image.data[off + 2], 0);
+    }
+
+    #[test]
+    fn parse_sixel_advance_band() {
+        // Two bands of one filled column -> height 12.
+        let mut parser = SixelParser::new();
+        let image = parser.parse_all(b"#0;2;0;100;0#0~-~");
+        assert_eq!(image.width, 1);
+        assert_eq!(image.height, 12);
+        // Top pixel should be green.
+        assert_eq!(image.data[1], 255);
+    }
+
+    #[test]
+    fn store_sixel_assigns_id_and_tracks_bytes() {
+        let mut mgr = ImageManager::new();
+        let img = SixelImage {
+            id: 42,
+            width: 4,
+            height: 4,
+            data: vec![0u8; 4 * 4 * 4],
+            color_palette: Vec::new(),
+            cols: 1,
+            rows: 1,
+        };
+        let id = mgr.store_sixel(img);
+        assert_eq!(id, 42);
+        assert!(mgr.get_sixel(42).is_some());
+        assert!(mgr.used_bytes() >= 4 * 4 * 4);
     }
 }
