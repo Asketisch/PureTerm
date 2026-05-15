@@ -18,3 +18,20 @@ impl Default for GlassEffectStyle {
         Self::Automatic
     }
 }
+
+/// Input mode for terminal cursor positioning (Warp-style)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InputMode {
+    /// Default: input pinned to bottom of screen
+    PinnedToBottom,
+    /// Input pinned to top of screen, blocks invert
+    PinnedToTop,
+    /// Input starts at top, pushed down by commands (waterfall style)
+    Waterfall,
+}
+
+impl Default for InputMode {
+    fn default() -> Self {
+        Self::PinnedToBottom
+    }
+}

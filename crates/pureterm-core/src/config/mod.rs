@@ -34,7 +34,7 @@ pub use legacy::AppearanceConfig;
 pub use legacy::TerminalConfig;
 
 // Re-exports from shared types
-pub use types::GlassEffectStyle;
+pub use types::{GlassEffectStyle, InputMode};
 
 // Re-export service
 pub use service::ConfigService;
@@ -379,6 +379,9 @@ pub struct Config {
     pub async_backend: bool,
     #[serde(default)]
     pub command_palette_entry: Vec<CommandPaletteEntry>,
+    /// Output-stream regex triggers (matched per completed line).
+    #[serde(default = "default_triggers")]
+    pub triggers: Vec<crate::trigger::Trigger>,
     #[serde(default)]
     pub resize_overlay: ResizeOverlay,
     #[serde(default)]
@@ -645,6 +648,7 @@ impl Default for Config {
             enquiry_response: None,
             async_backend: default_async_backend(),
             command_palette_entry: Vec::new(),
+            triggers: default_triggers(),
             resize_overlay: ResizeOverlay::default(),
             resize_position: None,
             resize_duration: default_resize_duration(),
@@ -690,5 +694,42 @@ impl Default for Config {
             auto_update: default_auto_update(),
             auto_update_channel: default_auto_update_channel(),
         }
+    }
+}
+
+fn default_triggers() -> Vec<crate::trigger::Trigger> {
+    crate::trigger::TriggerService::default_triggers()
+}
+
+#[cfg(test)]
+mod triggers_config_tests {
+    use super::*;
+
+    #[test]
+    fn config_default_includes_builtin_triggers() {
+        let cfg = Config::default();
+        assert_eq!(cfg.triggers.len(), 3, "expected 3 builtin triggers");
+        assert!(cfg.triggers.iter().any(|t| t.id == "builtin_error"));
+        assert!(cfg.triggers.iter().any(|t| t.id == "builtin_warning"));
+        assert!(cfg.triggers.iter().any(|t| t.id == "builtin_failed"));
+    }
+
+    #[test]
+    fn triggers_field_serde_roundtrip() {
+        // Roundtrip just the triggers field via TOML to confirm the
+        // Trigger type itself serializes cleanly. (Full Config roundtrip
+        // is blocked by a pre-existing UnsupportedType("unit") error in
+        // an unrelated field — see UnsupportedType(Some("unit")).)
+        #[derive(serde::Serialize, serde::Deserialize)]
+        struct Wrap {
+            triggers: Vec<crate::trigger::Trigger>,
+        }
+        let w = Wrap {
+            triggers: default_triggers(),
+        };
+        let s = toml::to_string(&w).unwrap();
+        let back: Wrap = toml::from_str(&s).unwrap();
+        assert_eq!(back.triggers.len(), 3);
+        assert!(back.triggers.iter().any(|t| t.id == "builtin_error"));
     }
 }

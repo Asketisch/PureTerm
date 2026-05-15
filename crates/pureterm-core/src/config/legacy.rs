@@ -10,7 +10,7 @@ use crate::hotkey::HotkeysConfig;
 use crate::profile::{Profile, ProfileGroup};
 use crate::theme::ColorScheme;
 
-use super::types::GlassEffectStyle;
+use super::types::{GlassEffectStyle, InputMode};
 
 // ── Legacy default value helpers ──────────────────────────────────────────────
 
@@ -111,6 +111,10 @@ pub struct AppearanceConfig {
     pub glass_effect: GlassEffectStyle,
     #[serde(default = "legacy_background_blur")]
     pub background_blur: u32,
+    #[serde(default)]
+    pub pane_dim_opacity: f32,
+    #[serde(default)]
+    pub focus_pane_on_hover: bool,
 }
 
 impl Default for AppearanceConfig {
@@ -126,6 +130,8 @@ impl Default for AppearanceConfig {
             corner_radius: legacy_corner_radius(),
             glass_effect: GlassEffectStyle::default(),
             background_blur: legacy_background_blur(),
+            pane_dim_opacity: 0.0,
+            focus_pane_on_hover: false,
         }
     }
 }
@@ -156,6 +162,8 @@ pub struct TerminalConfig {
     pub copy_on_select: bool,
     #[serde(default)]
     pub color_scheme: Option<ColorScheme>,
+    #[serde(default)]
+    pub input_mode: InputMode,
 }
 
 impl Default for TerminalConfig {
@@ -173,6 +181,7 @@ impl Default for TerminalConfig {
             cursor_blink: true,
             copy_on_select: true,
             color_scheme: None,
+            input_mode: InputMode::default(),
         }
     }
 }
