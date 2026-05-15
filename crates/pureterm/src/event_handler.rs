@@ -596,6 +596,13 @@ impl ApplicationHandler for PureTermApp {
                             let mut rename_done = false;
                             let mut color_done = false;
                             let mut settings_changed = false;
+                            // Snapshot focused-pane data needed by the status bar
+                            // before entering the closure (avoids borrow conflicts
+                            // with `self.panes`).
+                            let status_cwd: Option<String> = self
+                                .focused_pane_id
+                                .and_then(|id| self.panes.get(&id))
+                                .and_then(|p| p.terminal.current_dir().map(|s| s.to_string()));
                             #[allow(deprecated)]
                             let full_output = egui_backend.run(raw_input, |ctx| {
                                 // 设置面板
@@ -834,6 +841,51 @@ impl ApplicationHandler for PureTermApp {
                                                 });
                                         }
                                     }
+                                }
+
+                                // ── Status bar (bottom) — always rendered ──
+                                {
+                                    let user = std::env::var("USER").ok();
+                                    let hostname = std::env::var("HOSTNAME").ok()
+                                        .or_else(|| std::env::var("HOST").ok());
+                                    let git_branch = status_cwd
+                                        .as_deref()
+                                        .and_then(|c| pureterm_ui::status_bar::read_git_branch(std::path::Path::new(c)));
+                                    let sctx = pureterm_ui::status_bar::StatusContext {
+                                        cwd: status_cwd.clone(),
+                                        hostname,
+                                        user,
+                                        git_branch,
+                                        ..Default::default()
+                                    };
+                                    let parts = self.status_bar.render(&sctx);
+                                    egui::TopBottomPanel::bottom("pureterm_status_bar").show(ctx, |ui| {
+                                        ui.horizontal(|ui| {
+                                            for (i, part) in parts.iter().enumerate() {
+                                                let comp = self.status_bar.components.get(i);
+                                                let label = if matches!(comp, Some(pureterm_ui::status_bar::StatusComponent::Cwd)) {
+                                                    format!("\u{2248} {}", part)
+                                                } else {
+                                                    part.clone()
+                                                };
+                                                ui.label(label);
+                                                if i + 1 < parts.len() { ui.label(" | "); }
+                                            }
+                                        });
+                                    });
+                                }
+
+                                // ── Toolbelt (right side) — gated by config ──
+                                if self.toolbelt.config.visible {
+                                    let width = self.toolbelt.config.width;
+                                    egui::SidePanel::right("pureterm_toolbelt")
+                                        .default_width(width)
+                                        .show(ctx, |ui| {
+                                            for kind in self.toolbelt.config.tools.iter() {
+                                                let label = format!("{:?}", kind);
+                                                ui.collapsing(label, |ui| { ui.label("(empty)"); });
+                                            }
+                                        });
                                 }
                             });
 

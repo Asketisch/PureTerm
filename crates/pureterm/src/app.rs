@@ -23,7 +23,9 @@ use pureterm_ui::profile_selector::ProfileSelector;
 use pureterm_ui::settings::SettingsPanel;
 use pureterm_ui::split::{SplitContainer, Direction, PaneRect,
     compute_pane_rects};
+use pureterm_ui::status_bar::StatusBar;
 use pureterm_ui::tabs::TabContent;
+use pureterm_ui::toolbelt::ToolbeltState;
 use pureterm_ui::tab_bar::{TabBarState, TabLayout, ViewportRect as TabViewportRect, TAB_BAR_HEIGHT, TAB_ITEM_HEIGHT, TAB_PADDING_H, TAB_CLOSE_BTN_WIDTH, TAB_NEW_BTN_WIDTH};
 use pureterm_ui::terminal::pane::TerminalPane;
 use pureterm_ui::WelcomePage;
@@ -102,6 +104,10 @@ pub(crate) struct PureTermApp {
     pub(crate) last_tab_click_time: Option<std::time::Instant>,
     /// Last left-clicked tab ID (for double-click detection).
     pub(crate) last_tab_click_id: Option<u64>,
+    /// Bottom status bar (cwd / git branch / clock by default).
+    pub(crate) status_bar: StatusBar,
+    /// Right-side Toolbelt panel state (visibility gated by config).
+    pub(crate) toolbelt: ToolbeltState,
 }
 
 /// 标签页标题重命名模态框的状态。

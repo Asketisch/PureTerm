@@ -181,6 +181,13 @@ fn main() -> Result<()> {
         should_quit: false,
         last_tab_click_time: None,
         last_tab_click_id: None,
+        status_bar: pureterm_ui::status_bar::StatusBar::default_layout(),
+        toolbelt: pureterm_ui::toolbelt::ToolbeltState::new(
+            pureterm_ui::toolbelt::ToolbeltConfig {
+                visible: config.toolbelt_visible,
+                ..Default::default()
+            },
+        ),
     };
 
     event_loop.run_app(&mut app)?;
