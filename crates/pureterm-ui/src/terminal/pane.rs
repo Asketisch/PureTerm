@@ -284,7 +284,7 @@ pub struct TerminalPane {
     /// Shared trigger rules; None disables triggers for this pane.
     pub trigger_service: Option<Arc<RwLock<TriggerService>>>,
     /// Per-pane dispatch state (capture writers, env snapshot).
-    trigger_state: DispatchState,
+    pub(crate) trigger_state: DispatchState,
 }
 
 static NEXT_PANE_ID: AtomicU64 = AtomicU64::new(1);
@@ -1531,5 +1531,52 @@ mod trigger_smoke_tests {
         // The completed line should have been drained and matched.
         assert!(pane.terminal.drain_completed_lines().is_empty(),
             "drain_output should consume completed lines");
+    }
+
+    #[test]
+    fn capture_to_file_writes_only_matching_lines() {
+        use pureterm_core::trigger::{Trigger, TriggerAction};
+        use std::io::Read;
+
+        // Use a randomized basename so concurrent test runs don't collide.
+        let basename = format!("pureterm_test_{}.log", uuid::Uuid::new_v4());
+        let mut pane = TerminalPane::new(80, 5, 100);
+        let mut svc = TriggerService::new();
+        svc.add_trigger(Trigger {
+            id: "cap".into(),
+            name: "Capture".into(),
+            pattern: r"^ERROR:".into(),
+            action: TriggerAction::CaptureToFile {
+                path: basename.clone(),
+                max_bytes: 1024 * 1024,
+            },
+            enabled: true,
+            case_sensitive: true,
+        });
+        pane.set_trigger_service(Arc::new(RwLock::new(svc)));
+        {
+            let mut buf = pane.output_buffer.lock().unwrap();
+            buf.extend_from_slice(b"ERROR: disk full\r\nINFO: ok\r\nERROR: out of memory\r\n");
+        }
+        pane.drain_output();
+        // CaptureToFile uses a BufWriter; force-flush so the assertions see bytes.
+        pane.trigger_state.flush_capture_writers();
+
+        let expected = dirs::data_local_dir()
+            .unwrap()
+            .join("pureterm")
+            .join("captures")
+            .join(&basename);
+        let mut s = String::new();
+        std::fs::File::open(&expected)
+            .expect("capture file should exist")
+            .read_to_string(&mut s)
+            .unwrap();
+        assert!(s.contains("ERROR: disk full"), "expected first ERROR line, got: {:?}", s);
+        assert!(s.contains("ERROR: out of memory"), "expected second ERROR line, got: {:?}", s);
+        assert!(!s.contains("INFO: ok"), "INFO line should not appear, got: {:?}", s);
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&expected);
     }
 }

@@ -39,6 +39,22 @@ cargo build --release
   - [pureterm-ui/AGENTS.md](crates/pureterm-ui/AGENTS.md) → [src/AGENTS.md](crates/pureterm-ui/src/AGENTS.md) — Surface、标签页、命令面板、历史菜单
   - [pureterm-gui/AGENTS.md](crates/pureterm-gui/AGENTS.md) → [src/AGENTS.md](crates/pureterm-gui/src/AGENTS.md) — GPU 渲染、Sprite、HarfBuzz、ShaderToy
 
+## 快捷键
+
+| 快捷键 | 功能 |
+|--------|------|
+| `Ctrl+Shift+P` | 命令面板 |
+| `Ctrl+Shift+O` | 配置文件选择器 |
+| `Ctrl+,` | 设置面板 |
+| `Ctrl+Shift+I` | 终端检查器 |
+| `Ctrl+Shift+K` | 快速栏 |
+| `Ctrl+F` | 搜索 |
+| `Ctrl+Shift+T` | 新建标签页 |
+| `Ctrl+Shift+W` | 关闭标签页 |
+| `Ctrl+Shift+D` | 向右分屏 |
+| `Ctrl+D` | 向下分屏 |
+| `Ctrl+=` / `Ctrl+-` / `Ctrl+0` | 放大 / 缩小 / 重置缩放 |
+
 ## CLI 命令
 
 ```bash
@@ -67,7 +83,10 @@ pureterm settings               # 打开设置面板
 - **秘密脱敏**：[pureterm-core/src/secret_redaction.rs](crates/pureterm-core/src/secret_redaction.rs) → [src/AGENTS.md](crates/pureterm-core/src/AGENTS.md) — API 密钥/令牌模式检测和视觉脱敏
 - **命令纠正**：[pureterm-core/src/command_correction.rs](crates/pureterm-core/src/command_correction.rs) → [src/AGENTS.md](crates/pureterm-core/src/AGENTS.md) — AI 驱动的命令失败建议
 - **命令历史**：[pureterm-ui/src/history_menu.rs](crates/pureterm-ui/src/history_menu.rs) → [src/AGENTS.md](crates/pureterm-ui/src/AGENTS.md) — 命令历史菜单（MAX_HISTORY=10000）
+- **命令面板**：[pureterm-ui/src/command_palette.rs](crates/pureterm-ui/src/command_palette.rs) — `Ctrl+Shift+P` 触发，支持搜索和执行内置命令
+- **快速栏**：[pureterm-ui/src/quick_bar.rs](crates/pureterm-ui/src/quick_bar.rs) — `Ctrl+Shift+K` 触发，支持 Command/Search/Filter 模式
 - **CommandBlock**：[pureterm-terminal/src/block.rs](crates/pureterm-terminal/src/block.rs) → [src/AGENTS.md](crates/pureterm-terminal/src/AGENTS.md) — OSC 133 Shell 集成命令块模型
+- **触发器系统**：[pureterm-core/src/trigger.rs](crates/pureterm-core/src/trigger.rs) → [src/AGENTS.md](crates/pureterm-core/src/AGENTS.md) — 11 种 action 的 regex trigger（Notify/Highlight/Bell/CopyMatch/RunCommand/SendText/CaptureToFile/Hyperlink/DirectoryTrack/PasswordMask/PlaySound），pane.drain_output 评估每行匹配；Settings → Triggers 页可视化编辑
 
 ## UI 设计语言
 
@@ -118,3 +137,11 @@ pureterm settings               # 打开设置面板
 2. 圆角半径遵循上表规范（或选择最接近的值）
 3. 配色遵循上表规范，保持视觉一致性
 4. 所有尺寸以逻辑点定义，乘 `scale_factor`
+
+### 外观配置项
+
+| 配置项 | 类型 | 默认值 | 说明 |
+|--------|------|--------|------|
+| `pane_dim_opacity` | f32 | 0.0 | 非聚焦面板暗化透明度 (0.0-0.8) |
+| `focus_pane_on_hover` | bool | false | 鼠标悬停时自动聚焦面板 |
+| `input_mode` | enum | PinnedToBottom | 输入模式：PinnedToBottom/PinnedToTop/Waterfall |

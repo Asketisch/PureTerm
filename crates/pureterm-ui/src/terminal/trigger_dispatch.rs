@@ -31,6 +31,15 @@ impl Default for DispatchState {
 
 impl DispatchState {
     pub fn new() -> Self { Self::default() }
+
+    /// Flush all open capture-to-file writers. Used by tests and on shutdown
+    /// to ensure buffered bytes hit disk.
+    pub fn flush_capture_writers(&mut self) {
+        use std::io::Write;
+        for (_, w) in self.capture_writers.iter_mut() {
+            let _ = w.flush();
+        }
+    }
 }
 
 /// Side-effects the caller must apply: terminal/session interactions outside
