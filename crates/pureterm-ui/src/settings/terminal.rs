@@ -1,7 +1,7 @@
 //! Terminal settings sub-panel.
 
 use egui::{ComboBox, RichText, Slider, Ui};
-use pureterm_core::config::TerminalConfig;
+use pureterm_core::config::{InputMode, TerminalConfig};
 
 /// Render the terminal settings panel.
 ///
@@ -71,6 +71,33 @@ pub(crate) fn terminal_panel(ui: &mut Ui, terminal: &mut TerminalConfig) -> bool
     if ui.checkbox(&mut terminal.copy_on_select, "Copy on select").changed() {
         changed = true;
     }
+
+    // Input mode (Warp-style)
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(4.0);
+    ui.label("Input mode:");
+    let input_mode_label = match terminal.input_mode {
+        InputMode::PinnedToBottom => "固定底部",
+        InputMode::PinnedToTop => "固定顶部",
+        InputMode::Waterfall => "瀑布流",
+    };
+    ComboBox::from_label("输入模式")
+        .selected_text(input_mode_label)
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(matches!(terminal.input_mode, InputMode::PinnedToBottom), "固定底部").clicked() {
+                terminal.input_mode = InputMode::PinnedToBottom;
+                changed = true;
+            }
+            if ui.selectable_label(matches!(terminal.input_mode, InputMode::PinnedToTop), "固定顶部").clicked() {
+                terminal.input_mode = InputMode::PinnedToTop;
+                changed = true;
+            }
+            if ui.selectable_label(matches!(terminal.input_mode, InputMode::Waterfall), "瀑布流").clicked() {
+                terminal.input_mode = InputMode::Waterfall;
+                changed = true;
+            }
+        });
 
     changed
 }

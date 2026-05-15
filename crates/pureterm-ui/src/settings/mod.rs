@@ -8,6 +8,7 @@ mod general;
 mod hotkeys;
 mod profiles;
 mod terminal;
+mod triggers;
 
 use egui::Ui;
 use pureterm_core::config::AppConfig;
@@ -47,6 +48,7 @@ pub enum SettingsTab {
     Terminal,
     Profiles,
     Hotkeys,
+    Triggers,
 }
 
 impl Default for SettingsPanel {
@@ -69,7 +71,12 @@ impl SettingsPanel {
     }
 
     /// 显示设置面板。如配置被修改则返回 true。
-    pub fn show(&mut self, ui: &mut Ui, config: &mut AppConfig) -> bool {
+    pub fn show(
+        &mut self,
+        ui: &mut Ui,
+        config: &mut AppConfig,
+        triggers_service: &std::sync::Arc<std::sync::RwLock<pureterm_core::trigger::TriggerService>>,
+    ) -> bool {
         if !self.visible {
             return false;
         }
@@ -83,6 +90,7 @@ impl SettingsPanel {
                 ui.selectable_value(&mut self.selected_tab, SettingsTab::Terminal, "Terminal");
                 ui.selectable_value(&mut self.selected_tab, SettingsTab::Profiles, "Profiles");
                 ui.selectable_value(&mut self.selected_tab, SettingsTab::Hotkeys, "Hotkeys");
+                ui.selectable_value(&mut self.selected_tab, SettingsTab::Triggers, "Triggers");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Close").clicked() {
                         self.visible = false;
@@ -123,6 +131,9 @@ impl SettingsPanel {
                 }
                 SettingsTab::Hotkeys => {
                     hotkeys::hotkeys_panel(ui, &mut config.hotkeys);
+                }
+                SettingsTab::Triggers => {
+                    changed |= triggers::triggers_panel(ui, &mut config.triggers, triggers_service);
                 }
             }
         });

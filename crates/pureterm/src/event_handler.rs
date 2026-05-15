@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Instant;
 
 use pureterm_core::config::ConfigService;
 use pureterm_core::theme::ColorScheme;
@@ -17,6 +18,58 @@ use pureterm_terminal::mark::MarkKind;
 use pureterm_terminal::screen::selection::{TerminalMouseEvent, MouseButton, MouseModifiers};
 
 use winit::application::ApplicationHandler;
+
+/// Get process RSS in bytes (macOS).
+#[cfg(target_os = "macos")]
+fn get_process_rss() -> u64 {
+    let pid = std::process::id();
+    let output = std::process::Command::new("ps")
+        .args(["-o", "rss=", "-p", &pid.to_string()])
+        .output()
+        .ok();
+    output
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(|kb| kb * 1024)
+        .unwrap_or(0)
+}
+
+/// Get process RSS in bytes (non-macOS fallback).
+#[cfg(not(target_os = "macos"))]
+fn get_process_rss() -> u64 { 0 }
+
+/// Memory diagnostic state.
+static LAST_MEM_LOG: std::sync::Mutex<Option<Instant>> = std::sync::Mutex::new(None);
+
+fn log_memory_diag(panes: &std::collections::HashMap<u64, pureterm_ui::terminal::pane::TerminalPane>) {
+    let mut last = match LAST_MEM_LOG.lock() {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+    let now = Instant::now();
+    let should_log = match *last {
+        None => true,
+        Some(t) => now.duration_since(t).as_secs() >= 5,
+    };
+    if !should_log { return; }
+    *last = Some(now);
+
+    let rss = get_process_rss();
+    let rss_mb = rss as f64 / (1024.0 * 1024.0);
+
+    for (id, pane) in panes {
+        let grid_rows = pane.terminal.grid_rows();
+        let grid_history = pane.terminal.history();
+        let grid_cols = pane.terminal.grid_cols();
+        let est_grid_mb = (grid_rows * grid_cols * 56) as f64 / (1024.0 * 1024.0);
+        let img_bytes = pane.terminal.image_bytes();
+        log::warn!(
+            "[MEM] RSS={:.0}MB pane={}: grid_rows={} history={} cols={} est_grid={:.1}MB images={:.1}MB",
+            rss_mb, id, grid_rows, grid_history, grid_cols, est_grid_mb,
+            img_bytes as f64 / (1024.0 * 1024.0)
+        );
+    }
+}
 use winit::event::{ElementState, WindowEvent, MouseButton as WinitMouseButton, MouseScrollDelta};
 use winit::event_loop::ActiveEventLoop;
 
@@ -232,6 +285,9 @@ impl ApplicationHandler for PureTermApp {
                 for pane in self.panes.values_mut() {
                     pane.drain_output();
                 }
+
+                // Memory diagnostics (every 5 seconds)
+                log_memory_diag(&self.panes);
 
                 // Process pending OSC 133 mark events for prevent-sleep.
                 // Mark callbacks are invoked synchronously during drain_output() above,
@@ -516,6 +572,7 @@ impl ApplicationHandler for PureTermApp {
                     // 如果任何面板/模态框可见，则渲染 egui 覆盖层
                     // 注意：欢迎页面仅在没有任何标签页时才需要渲染
                     let needs_egui = self.settings_panel.visible || self.profile_selector.visible
+                        || self.command_palette.visible
                         || self.rename_modal.is_some() || self.color_modal.is_some()
                         || self.quit_requested || popup_visible;
                     let show_welcome = self.welcome_page.visible && self.app.as_ref().map(|a| a.tab_manager.is_empty()).unwrap_or(false);
@@ -529,6 +586,7 @@ impl ApplicationHandler for PureTermApp {
                             // 提取 egui 闭包需要读写的状态
                             let settings_visible = self.settings_panel.visible;
                             let profile_visible = self.profile_selector.visible;
+                            let command_palette_visible = self.command_palette.visible;
                             let welcome_visible = self.welcome_page.visible;
                             let mut profile_connect_request: Option<pureterm_core::profile::Profile> = None;
                             let rename_modal_rc = self.rename_modal.take().map(|m| Rc::new(RefCell::new(m)));
@@ -546,8 +604,18 @@ impl ApplicationHandler for PureTermApp {
                                     egui::CentralPanel::default().show(ctx, |ui| {
                                         ui.vertical_centered(|ui| {
                                             ui.set_max_width(600.0);
-                                            settings_changed = self.settings_panel.show(ui, &mut app.config) || settings_changed;
+                                            settings_changed = self.settings_panel.show(ui, &mut app.config, &self.trigger_service) || settings_changed;
                                         });
+                                    });
+                                }
+
+                                // 命令面板
+                                if command_palette_visible {
+                                    egui::CentralPanel::default().show(ctx, |ui| {
+                                        if let Some(cmd_id) = self.command_palette.show(ui) {
+                                            log::info!("Command palette selected: {}", cmd_id);
+                                            // TODO: 处理命令执行
+                                        }
                                     });
                                 }
 

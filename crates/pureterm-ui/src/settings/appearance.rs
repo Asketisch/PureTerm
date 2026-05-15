@@ -129,5 +129,18 @@ pub(crate) fn appearance_panel(ui: &mut Ui, appearance: &mut AppearanceConfig) -
         changed = true;
     }
 
+    // Pane dim opacity
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(4.0);
+    if ui.add(Slider::new(&mut appearance.pane_dim_opacity, 0.0..=0.8).text("非聚焦面板暗化")).changed() {
+        changed = true;
+    }
+
+    // Focus pane on hover
+    if ui.checkbox(&mut appearance.focus_pane_on_hover, "悬停时聚焦面板").changed() {
+        changed = true;
+    }
+
     changed
 }
