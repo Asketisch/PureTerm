@@ -86,6 +86,12 @@ pub struct AppConfig {
     /// Whether the right-side Toolbelt panel is visible.
     #[serde(default)]
     pub toolbelt_visible: bool,
+    /// Globally enable DVR session recording for new panes.
+    #[serde(default)]
+    pub dvr_enabled: bool,
+    /// Recorded DVR session log paths shown in the DVR settings tab.
+    #[serde(default)]
+    pub dvr_recordings: Vec<String>,
 }
 
 impl Default for AppConfig {
@@ -107,6 +113,8 @@ impl Default for AppConfig {
             smart_selection_rules: default_smart_rules(),
             workgroups: Vec::new(),
             toolbelt_visible: false,
+            dvr_enabled: false,
+            dvr_recordings: Vec::new(),
         }
     }
 }

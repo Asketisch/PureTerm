@@ -3,12 +3,16 @@
 //! 提供基于 egui 的设置面板,用于配置外观、
 //! 终端设置、配置文件和快捷键。
 
+mod annotations_tab;
 mod appearance;
+mod dvr;
 mod general;
 mod hotkeys;
+mod passwords;
 mod profiles;
 mod terminal;
 mod triggers;
+mod workgroups;
 
 use egui::Ui;
 use pureterm_core::config::AppConfig;
@@ -49,6 +53,10 @@ pub enum SettingsTab {
     Profiles,
     Hotkeys,
     Triggers,
+    Passwords,
+    Annotations,
+    Workgroups,
+    Dvr,
 }
 
 impl Default for SettingsPanel {
@@ -91,6 +99,10 @@ impl SettingsPanel {
                 ui.selectable_value(&mut self.selected_tab, SettingsTab::Profiles, "Profiles");
                 ui.selectable_value(&mut self.selected_tab, SettingsTab::Hotkeys, "Hotkeys");
                 ui.selectable_value(&mut self.selected_tab, SettingsTab::Triggers, "Triggers");
+                ui.selectable_value(&mut self.selected_tab, SettingsTab::Passwords, "Passwords");
+                ui.selectable_value(&mut self.selected_tab, SettingsTab::Annotations, "Annotations");
+                ui.selectable_value(&mut self.selected_tab, SettingsTab::Workgroups, "Workgroups");
+                ui.selectable_value(&mut self.selected_tab, SettingsTab::Dvr, "DVR");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button("Close").clicked() {
                         self.visible = false;
@@ -134,6 +146,18 @@ impl SettingsPanel {
                 }
                 SettingsTab::Triggers => {
                     changed |= triggers::triggers_panel(ui, &mut config.triggers, triggers_service);
+                }
+                SettingsTab::Passwords => {
+                    changed |= passwords::passwords_panel(ui, &mut config.password_entries);
+                }
+                SettingsTab::Annotations => {
+                    annotations_tab::annotations_panel(ui);
+                }
+                SettingsTab::Workgroups => {
+                    changed |= workgroups::workgroups_panel(ui, &mut config.workgroups);
+                }
+                SettingsTab::Dvr => {
+                    changed |= dvr::dvr_panel(ui, &mut config.dvr_enabled, &mut config.dvr_recordings);
                 }
             }
         });
