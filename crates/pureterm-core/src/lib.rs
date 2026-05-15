@@ -15,6 +15,7 @@ pub mod prevent_sleep;
 pub mod profile;
 pub mod remote;
 pub mod secret_redaction;
+pub mod snippets;
 pub mod terminfo;
 pub mod theme;
 pub mod theme_auto;

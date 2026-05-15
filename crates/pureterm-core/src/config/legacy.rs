@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use crate::error::Result;
 use crate::hotkey::HotkeysConfig;
 use crate::profile::{Profile, ProfileGroup};
+use crate::snippets::Snippet;
 use crate::theme::ColorScheme;
 
 use super::types::{GlassEffectStyle, InputMode};
@@ -62,6 +63,9 @@ pub struct AppConfig {
     /// Output-stream regex triggers (matched per completed line).
     #[serde(default = "default_app_triggers")]
     pub triggers: Vec<crate::trigger::Trigger>,
+    /// User-defined text snippets accessible via the Command Palette.
+    #[serde(default)]
+    pub snippets: Vec<Snippet>,
 }
 
 impl Default for AppConfig {
@@ -77,6 +81,7 @@ impl Default for AppConfig {
             confirm_quit: true,
             prevent_sleep: true,
             triggers: default_app_triggers(),
+            snippets: Vec::new(),
         }
     }
 }
