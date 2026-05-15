@@ -17,6 +17,13 @@ pub enum DoubleMode {
     DoubleHeightBottom,
 }
 
+/// Where a row identified by line_id currently lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowLocation {
+    Visible(usize),
+    History(usize),
+}
+
 /// A 2D grid of terminal cells with scrollback history.
 ///
 /// Uses `VecDeque` for O(1) push/pop at both ends, eliminating the O(n)
@@ -31,6 +38,11 @@ pub struct Grid {
     wrapped: VecDeque<bool>,
     /// Per-row double-width/double-height mode.
     double_mode: VecDeque<DoubleMode>,
+    /// Per-row monotonic identifier. None for rows that pre-date the
+    /// id generator (e.g. blanks left over from reflow before any write).
+    line_ids: VecDeque<Option<u64>>,
+    /// Next id to assign.
+    next_line_id: u64,
     /// Number of visible columns
     cols: usize,
     /// Number of visible rows
@@ -50,17 +62,32 @@ impl Grid {
         let grid_marks = (0..visible_rows).map(|_| None).collect();
         let grid_wrapped = (0..visible_rows).map(|_| false).collect();
         let grid_double = (0..visible_rows).map(|_| DoubleMode::Normal).collect();
+        let mut next_line_id: u64 = 0;
+        let grid_line_ids: VecDeque<Option<u64>> = (0..visible_rows).map(|_| {
+            let id = Some(next_line_id);
+            next_line_id += 1;
+            id
+        }).collect();
 
         Self {
             rows: grid_rows,
             marks: grid_marks,
             wrapped: grid_wrapped,
             double_mode: grid_double,
+            line_ids: grid_line_ids,
+            next_line_id,
             cols,
             visible_rows,
             scrollback_limit: scrollback,
             scroll_offset: 0,
         }
+    }
+
+    /// Allocate the next monotonic line id.
+    fn next_line_id_alloc(&mut self) -> u64 {
+        let id = self.next_line_id;
+        self.next_line_id += 1;
+        id
     }
 
     pub fn cols(&self) -> usize {
@@ -69,6 +96,10 @@ impl Grid {
 
     pub fn visible_rows(&self) -> usize {
         self.visible_rows
+    }
+
+    pub fn total_rows(&self) -> usize {
+        self.rows.len()
     }
 
     pub fn scroll_offset(&self) -> usize {
@@ -107,11 +138,14 @@ impl Grid {
             self.marks.pop_front();
             self.wrapped.pop_front();
             self.double_mode.pop_front();
+            self.line_ids.pop_front();
         }
+        let new_id = Some(self.next_line_id_alloc());
         self.rows.push_back(new_row);
         self.marks.push_back(None);
         self.wrapped.push_back(false);
         self.double_mode.push_back(DoubleMode::Normal);
+        self.line_ids.push_back(new_id);
     }
 
     /// Scroll down by one line.
@@ -120,16 +154,31 @@ impl Grid {
         let total = self.rows.len();
         let start = total.saturating_sub(self.visible_rows);
         if start > 0 {
+            let new_id = Some(self.next_line_id_alloc());
             self.rows.insert(start, new_row);
             self.marks.insert(start, None);
             self.wrapped.insert(start, false);
             self.double_mode.insert(start, DoubleMode::Normal);
+            self.line_ids.insert(start, new_id);
         }
         if self.rows.len() > self.visible_rows + self.scrollback_limit {
             self.rows.pop_front();
             self.marks.pop_front();
             self.wrapped.pop_front();
             self.double_mode.pop_front();
+            self.line_ids.pop_front();
+        }
+    }
+
+    /// Enforce scrollback limit by removing oldest rows if over limit.
+    fn enforce_scrollback_limit(&mut self) {
+        let max_rows = self.visible_rows.saturating_add(self.scrollback_limit);
+        while self.rows.len() > max_rows {
+            self.rows.pop_front();
+            self.marks.pop_front();
+            self.wrapped.pop_front();
+            self.double_mode.pop_front();
+            self.line_ids.pop_front();
         }
     }
 
@@ -146,15 +195,22 @@ impl Grid {
             self.rows.remove(remove_idx);
             self.marks.remove(remove_idx);
             self.wrapped.remove(remove_idx);
+            self.double_mode.remove(remove_idx);
+            self.line_ids.remove(remove_idx);
         }
         // Insert a blank row just before the bottom of the region
         let insert_idx = start + bottom - 1; // -1 because we removed a row
         let new_row = (0..self.cols).map(|_| Cell::blank()).collect();
         if insert_idx <= self.rows.len() {
+            let new_id = Some(self.next_line_id_alloc());
             self.rows.insert(insert_idx, new_row);
             self.marks.insert(insert_idx, None);
             self.wrapped.insert(insert_idx, false);
+            self.double_mode.insert(insert_idx, DoubleMode::Normal);
+            self.line_ids.insert(insert_idx, new_id);
         }
+        // Enforce scrollback limit after region scroll
+        self.enforce_scrollback_limit();
     }
 
     /// Scroll a specific region down by one line (insert blank at top, delete bottom row).
@@ -168,9 +224,12 @@ impl Grid {
         let insert_idx = start + top;
         let new_row = (0..self.cols).map(|_| Cell::blank()).collect();
         if insert_idx <= self.rows.len() {
+            let new_id = Some(self.next_line_id_alloc());
             self.rows.insert(insert_idx, new_row);
             self.marks.insert(insert_idx, None);
             self.wrapped.insert(insert_idx, false);
+            self.double_mode.insert(insert_idx, DoubleMode::Normal);
+            self.line_ids.insert(insert_idx, new_id);
         }
         // Remove the row at the bottom of the region
         let remove_idx = start + bottom; // bottom row (1 past because we inserted)
@@ -178,7 +237,11 @@ impl Grid {
             self.rows.remove(remove_idx);
             self.marks.remove(remove_idx);
             self.wrapped.remove(remove_idx);
+            self.double_mode.remove(remove_idx);
+            self.line_ids.remove(remove_idx);
         }
+        // Enforce scrollback limit after region scroll
+        self.enforce_scrollback_limit();
     }
 
     /// Resize the grid to new dimensions with reflow support.
@@ -202,10 +265,12 @@ impl Grid {
         // After reflow, total rows may be less than new_rows even when
         // new_rows <= old visible_rows (unwrapping reduces row count).
         while self.rows.len() < new_rows {
+            let new_id = Some(self.next_line_id_alloc());
             self.rows.push_back((0..new_cols).map(|_| Cell::blank()).collect());
             self.marks.push_back(None);
             self.wrapped.push_back(false);
             self.double_mode.push_back(DoubleMode::Normal);
+            self.line_ids.push_back(new_id);
         }
         self.visible_rows = new_rows;
 
@@ -264,6 +329,13 @@ impl Grid {
         self.rows = new_rows;
         self.wrapped = new_wrapped;
         self.marks = new_marks;
+        // Reflow loses identity — regenerate ids from scratch.
+        let row_count = self.rows.len();
+        let mut new_line_ids: VecDeque<Option<u64>> = VecDeque::with_capacity(row_count);
+        for _ in 0..row_count {
+            new_line_ids.push_back(Some(self.next_line_id_alloc()));
+        }
+        self.line_ids = new_line_ids;
     }
 
     /// Set the wrapped flag for a visible row.
@@ -372,6 +444,7 @@ impl Grid {
             self.marks.drain(..visible_start);
             self.wrapped.drain(..visible_start);
             self.double_mode.drain(..visible_start);
+            self.line_ids.drain(..visible_start);
         }
         self.scroll_offset = 0;
     }
@@ -443,5 +516,73 @@ impl Grid {
             }
         }
         None
+    }
+
+    /// Get the line id at a visible row, if any.
+    pub fn line_id_for_visible(&self, row: usize) -> Option<u64> {
+        if row >= self.visible_rows { return None; }
+        let idx = self.visible_start() + row;
+        self.line_ids.get(idx).copied().flatten()
+    }
+
+    /// Locate a row by its line id (visible or history).
+    pub fn find_row_by_line_id(&self, id: u64) -> Option<RowLocation> {
+        let total_history = self.history();
+        for (idx, slot) in self.line_ids.iter().enumerate() {
+            if *slot == Some(id) {
+                return if idx < total_history {
+                    Some(RowLocation::History(idx))
+                } else {
+                    Some(RowLocation::Visible(idx - total_history))
+                };
+            }
+        }
+        None
+    }
+
+    /// Mutable access to a row's cells by line id (visible or history).
+    pub fn row_mut_by_line_id(&mut self, id: u64) -> Option<&mut Vec<Cell>> {
+        let loc = self.find_row_by_line_id(id)?;
+        match loc {
+            RowLocation::Visible(r) => self.visible_row_mut(r),
+            RowLocation::History(idx) => self.rows.get_mut(idx),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_ids_monotonic_on_scroll() {
+        let mut g = Grid::new(10, 3, 100);
+        let id1 = g.line_id_for_visible(0).unwrap();
+        // Scroll once → bottom row gets a fresh id.
+        g.scroll_up();
+        let id_after = g.line_id_for_visible(2).unwrap();
+        assert!(id_after > id1, "new row id ({}) must exceed prior ({})", id_after, id1);
+    }
+
+    #[test]
+    fn find_row_by_line_id_visible_then_history() {
+        let mut g = Grid::new(10, 3, 100);
+        let id_top = g.line_id_for_visible(0).unwrap();
+        // Push enough scrolls that row migrates to history.
+        for _ in 0..3 { g.scroll_up(); }
+        match g.find_row_by_line_id(id_top) {
+            Some(super::RowLocation::History(_)) => {}
+            other => panic!("expected History, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn row_mut_by_line_id_allows_writeback() {
+        let mut g = Grid::new(5, 2, 10);
+        let id = g.line_id_for_visible(0).unwrap();
+        let row = g.row_mut_by_line_id(id).expect("row exists");
+        row[0].bg = crate::screen::Color::Palette(9);
+        let cell = g.get(0, 0).unwrap();
+        assert_eq!(cell.bg, crate::screen::Color::Palette(9));
     }
 }
