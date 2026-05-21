@@ -271,20 +271,13 @@
 
 ### 6.1 触发器系统
 - **优先级**: P0
-- **状态**: 只有简单模式匹配；无丰富触发动作
-- **参考**:
-  - iTerm2: `sources/Triggers/` - 30+ 触发器类型
-  - Archive: `archive/pureterm-core/src/trigger.rs` (11 种 action 类型)
-- **关键文件**:
-  - iTerm2: `sources/Triggers/Trigger.h`、`sources/Triggers/Trigger.m` - 基础触发器
-  - iTerm2: `sources/Triggers/iTermEventTriggerEvaluator.swift` - 正则评估
-  - iTerm2: `sources/Triggers/HighlightTrigger.m` - 正则高亮
-  - iTerm2: `sources/Triggers/PasswordTrigger.m` - 密码检测
-  - iTerm2: `sources/Triggers/CaptureTrigger.m` - 捕获到文件
-- **iTerm2 触发器类型**:
-  - Alert、Bell、Bounce、Highlight、Hyperlink、Mark、Password、CaptureToFile
-  - SendText、RunCommand、DirectoryTrack、SetDirectory、SetHostname
-  - SetNamedMark、SetTabStatus、SetUserVariable、InjectJavascript
+- **状态**: ✅ 已实现（MVP）— 11 种动作已接入事件循环，3 个内置默认规则，TOML 配置支持
+- **实现文件**:
+  - `crates/pureterm-alacritty-runtime/src/alacritty/trigger.rs` — TriggerService / TriggerAction / LineTracker / 模板展开 / 12 个单元测试
+  - `crates/pureterm-alacritty-runtime/src/alacritty/trigger_dispatch.rs` — 11 种动作分发（Highlight/Bell/Notify/SendText/CaptureToFile/Hyperlink 等）
+  - `crates/pureterm-alacritty-runtime/src/alacritty/config/trigger.rs` — TOML 配置解析
+- **已实现动作**: Bell、Highlight（Cell bg）、Notify（macOS 通知）、CopyMatch、RunCommand、SendText（PTY 写回）、CaptureToFile（文件轮转）、Hyperlink、DirectoryTrack、PasswordMask、PlaySound
+- **待完善**: Hyperlink/PasswordMask 单元格操作、TOML 热重载、Settings UI 编辑界面
 
 ### 6.2 协同处理（外部脚本集成）
 - **优先级**: P1
@@ -423,7 +416,7 @@
 1. OSC 133 Shell 集成
 2. 多标签支持
 3. SSH 会话后端
-4. 触发器系统
+4. ~~触发器系统~~ ✅ 已实现（MVP）
 5. 多通道渲染管线
 
 ### P1 - 高优先级（应该有）

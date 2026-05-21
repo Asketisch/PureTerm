@@ -42,6 +42,8 @@ use crate::event::{
 use crate::logging::LOG_TARGET_IPC_CONFIG;
 use crate::message_bar::MessageBuffer;
 use crate::scheduler::Scheduler;
+use crate::trigger::{LineTracker, TriggerService};
+use crate::trigger_dispatch::{DispatchState, dispatch_trigger};
 use crate::{input, renderer};
 
 /// Event context for one individual Alacritty window.
@@ -67,6 +69,10 @@ pub struct WindowContext {
     shell_pid: u32,
     window_config: ParsedOptions,
     config: Rc<UiConfig>,
+    /// Trigger evaluation context.
+    trigger_service: TriggerService,
+    trigger_tracker: LineTracker,
+    trigger_dispatch_state: DispatchState,
 }
 
 impl WindowContext {
@@ -254,6 +260,9 @@ impl WindowContext {
             mouse: Default::default(),
             touch: Default::default(),
             dirty: Default::default(),
+            trigger_service: TriggerService::default(),
+            trigger_tracker: LineTracker::new(),
+            trigger_dispatch_state: DispatchState::new(),
         })
     }
 
@@ -456,6 +465,68 @@ impl WindowContext {
 
         for event in self.event_queue.drain(..) {
             processor.handle_event(event);
+        }
+
+        // Evaluate triggers against completed lines.
+        {
+            use alacritty_terminal::grid::Dimensions;
+            use alacritty_terminal::event::Notify;
+            use alacritty_terminal::term::ClipboardType;
+            use crate::trigger::LineTracker;
+
+            let total_lines = terminal.grid().total_lines();
+            let display_offset = terminal.grid().display_offset();
+            let cursor_row = terminal.grid().cursor.point.line.0 as usize;
+            let last_row = self.trigger_tracker.last_cursor_row;
+            let last_total = self.trigger_tracker.last_total_lines;
+
+            self.trigger_tracker.last_cursor_row = cursor_row;
+            self.trigger_tracker.last_total_lines = total_lines;
+            self.trigger_tracker.last_display_offset = display_offset;
+
+            if cursor_row != last_row || total_lines != last_total {
+                if cursor_row > 0 {
+                    let row = (cursor_row - 1) as isize;
+                    use alacritty_terminal::index::Line;
+                    let line = Line(row as i32);
+                    let text = LineTracker::row_to_string(terminal.grid(), line);
+                    if !text.is_empty() {
+                        let matches = self.trigger_service.evaluate(&text);
+                        for m in &matches {
+                            let fx = dispatch_trigger(
+                                m,
+                                &text,
+                                row,
+                                terminal.grid_mut(),
+                                &mut self.trigger_dispatch_state,
+                            );
+                            if fx.bell {
+                                self.display.visual_bell.ring();
+                            }
+                            if !fx.send_to_pty.is_empty() {
+                                let bytes: std::borrow::Cow<'static, [u8]> = fx.send_to_pty.into();
+                                self.notifier.notify(bytes);
+                            }
+                            if let Some(text) = fx.clipboard {
+                                clipboard.store(ClipboardType::Clipboard, text);
+                            }
+                            if let Some((title, body)) = fx.notification {
+                                let _ = std::process::Command::new("sh")
+                                    .arg("-c")
+                                    .arg(format!(
+                                        "osascript -e 'display notification \"{}\" with title \"{}\"'",
+                                        body.replace('\'', "'\\''"),
+                                        title.replace('\'', "'\\''"),
+                                    ))
+                                    .spawn();
+                            }
+                            if fx.dirty {
+                                self.dirty = true;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         // Process DisplayUpdate events.
