@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.pureterm.app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>Apache-2.0</project_license>
+  <name>PureTerm</name>
+  <summary>A fast, cross-platform, GPU-accelerated terminal emulator</summary>
+  <description>
+    <p>
+      PureTerm is a modern terminal emulator that uses the GPU for rendering,
+      providing significant performance improvements over software-rendered terminals.
+      It supports true color, ligatures, cursor styling, and more.
+    </p>
+  </description>
+  <launchable type="desktop-id">pureterm.desktop</launchable>
+  <url type="homepage">https://github.com/user/pureterm</url>
+  <provides>
+    <binary>pureterm</binary>
+  </provides>
+</component>

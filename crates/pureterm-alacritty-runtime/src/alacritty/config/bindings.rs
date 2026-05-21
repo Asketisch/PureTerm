@@ -163,22 +163,22 @@ pub enum Action {
     /// Clear the display buffer(s) to remove history.
     ClearHistory,
 
-    /// Hide the Alacritty window.
+    /// Hide the PureTerm window.
     Hide,
 
-    /// Hide all windows other than Alacritty on macOS.
+    /// Hide all windows other than PureTerm on macOS.
     HideOtherApplications,
 
-    /// Minimize the Alacritty window.
+    /// Minimize the PureTerm window.
     Minimize,
 
-    /// Quit Alacritty.
+    /// Quit PureTerm.
     Quit,
 
     /// Clear warning and error notices.
     ClearLogNotice,
 
-    /// Spawn a new instance of Alacritty.
+    /// Spawn a new instance of PureTerm.
     SpawnNewInstance,
 
     /// Select next tab.
@@ -217,7 +217,7 @@ pub enum Action {
     /// Select the last tab.
     SelectLastTab,
 
-    /// Create a new Alacritty window.
+    /// Create a new PureTerm window.
     CreateNewWindow,
 
     /// Create new window in a tab.

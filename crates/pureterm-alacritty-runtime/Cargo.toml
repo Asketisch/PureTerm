@@ -2,7 +2,7 @@
 name = "pureterm-alacritty-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "Alacritty-based single-window runtime for PureTerm"
+description = "PureTerm - A fast, cross-platform, GPU-accelerated terminal emulator"
 
 [dependencies]
 alacritty_terminal = { path = "../alacritty_terminal", version = "0.26.1-dev" }

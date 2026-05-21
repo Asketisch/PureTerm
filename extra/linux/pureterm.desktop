@@ -1,0 +1,16 @@
+[Desktop Entry]
+Type=Application
+Name=PureTerm
+Comment=A fast, cross-platform, GPU-accelerated terminal emulator
+TryExec=pureterm
+Exec=pureterm
+Icon=pureterm
+Terminal=false
+Categories=System;TerminalEmulator;
+StartupNotify=true
+StartupWMClass=PureTerm
+Actions=NewWindow;
+
+[Desktop Action NewWindow]
+Name=New Window
+Exec=pureterm

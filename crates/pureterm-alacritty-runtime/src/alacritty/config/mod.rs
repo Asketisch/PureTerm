@@ -364,43 +364,74 @@ fn prune_yaml_nulls(value: &mut serde_yaml::Value, warn_pruned: bool) {
 /// Get the location of the first found default config file paths
 /// according to the following order:
 ///
-/// 1. $XDG_CONFIG_HOME/alacritty/alacritty.toml
-/// 2. $XDG_CONFIG_HOME/alacritty.toml
-/// 3. $HOME/.config/alacritty/alacritty.toml
-/// 4. $HOME/.alacritty.toml
-/// 5. /etc/alacritty/alacritty.toml
+/// 1. $XDG_CONFIG_HOME/pureterm/alacritty.toml  (PureTerm preferred)
+/// 2. $XDG_CONFIG_HOME/pureterm/pureterm.toml   (PureTerm alias)
+/// 3. $XDG_CONFIG_HOME/alacritty/alacritty.toml (Alacritty fallback)
+/// 4. $XDG_CONFIG_HOME/alacritty.toml
+/// 5. $HOME/.config/pureterm/alacritty.toml
+/// 6. $HOME/.config/pureterm/pureterm.toml
+/// 7. $HOME/.config/alacritty/alacritty.toml
+/// 8. $HOME/.alacritty.toml
+/// 9. /etc/alacritty/alacritty.toml
 #[cfg(not(windows))]
 pub fn installed_config(suffix: &str) -> Option<PathBuf> {
-    let file_name = format!("alacritty.{suffix}");
+    let alacritty_file = format!("alacritty.{suffix}");
+    let pureterm_file = format!("pureterm.{suffix}");
 
-    // Try using XDG location by default.
-    xdg::BaseDirectories::with_prefix("alacritty")
-        .find_config_file(&file_name)
-        .or_else(|| xdg::BaseDirectories::new().find_config_file(&file_name))
+    // PureTerm preferred: XDG pureterm/ directory.
+    xdg::BaseDirectories::with_prefix("pureterm")
+        .find_config_file(&alacritty_file)
+        .or_else(|| xdg::BaseDirectories::with_prefix("pureterm").find_config_file(&pureterm_file))
+        // Alacritty fallback: XDG alacritty/ directory.
+        .or_else(|| xdg::BaseDirectories::with_prefix("alacritty").find_config_file(&alacritty_file))
+        .or_else(|| xdg::BaseDirectories::new().find_config_file(&alacritty_file))
         .or_else(|| {
             if let Ok(home) = env::var("HOME") {
-                // Fallback path: $HOME/.config/alacritty/alacritty.toml.
-                let fallback = PathBuf::from(&home).join(".config/alacritty").join(&file_name);
+                // $HOME/.config/pureterm/alacritty.toml
+                let fallback = PathBuf::from(&home).join(".config/pureterm").join(&alacritty_file);
                 if fallback.exists() {
                     return Some(fallback);
                 }
-                // Fallback path: $HOME/.alacritty.toml.
-                let hidden_name = format!(".{file_name}");
+                // $HOME/.config/pureterm/pureterm.toml
+                let fallback = PathBuf::from(&home).join(".config/pureterm").join(&pureterm_file);
+                if fallback.exists() {
+                    return Some(fallback);
+                }
+                // $HOME/.config/alacritty/alacritty.toml
+                let fallback = PathBuf::from(&home).join(".config/alacritty").join(&alacritty_file);
+                if fallback.exists() {
+                    return Some(fallback);
+                }
+                // $HOME/.alacritty.toml
+                let hidden_name = format!(".{alacritty_file}");
                 let fallback = PathBuf::from(&home).join(hidden_name);
                 if fallback.exists() {
                     return Some(fallback);
                 }
             }
 
-            let fallback = PathBuf::from("/etc/alacritty").join(&file_name);
+            let fallback = PathBuf::from("/etc/alacritty").join(&alacritty_file);
             fallback.exists().then_some(fallback)
         })
 }
 
 #[cfg(windows)]
 pub fn installed_config(suffix: &str) -> Option<PathBuf> {
-    let file_name = format!("alacritty.{suffix}");
-    dirs::config_dir().map(|path| path.join("alacritty").join(file_name)).filter(|new| new.exists())
+    let alacritty_file = format!("alacritty.{suffix}");
+    let pureterm_file = format!("pureterm.{suffix}");
+    dirs::config_dir()
+        .and_then(|path| {
+            let pt = path.join("pureterm").join(&alacritty_file);
+            if pt.exists() {
+                return Some(pt);
+            }
+            let pt = path.join("pureterm").join(&pureterm_file);
+            if pt.exists() {
+                return Some(pt);
+            }
+            let ac = path.join("alacritty").join(alacritty_file);
+            ac.exists().then_some(ac)
+        })
 }
 
 #[cfg(test)]

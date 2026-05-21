@@ -1,0 +1,54 @@
+#compdef pureterm
+
+_pureterm() {
+    local -a commands options
+    commands=(
+        'msg:Send a message to the PureTerm socket'
+        'migrate:Migrate the configuration file'
+        'help:Print help'
+    )
+    options=(
+        '--print-events[Print all events to STDOUT]'
+        '--ref-test[Generates ref test]'
+        '--embed[X11 window ID to embed PureTerm within]:embed:'
+        '--config-file[Specify alternative configuration file]:file:_files'
+        '--socket[Path for IPC socket creation]:socket:_files'
+        '(-q)-q[Reduces the level of verbosity]'
+        '(-v)-v[Increases the level of verbosity]'
+        '--daemon[Do not spawn an initial window]'
+        '--hold[Remain open after child process exit]'
+        '(-e)-e[Command and args to execute]:command:_command_names'
+        '(-T -t)--title[Defines the window title]:title:'
+        '--class[Defines window class/app_id on X11/Wayland]:class:'
+        '(-o)--option[Override configuration file options]:option:'
+    )
+
+    _arguments -C $options \
+        ":commands:->command" \
+        "*::arg:->args"
+
+    case $state in
+        command)
+            _describe "command" commands
+            ;;
+        args)
+            case $words[1] in
+                msg)
+                    _arguments \
+                        '--socket[IPC socket connection path override]:socket:_files' \
+                        ':message:(CreateWindow Config GetConfig)'
+                    ;;
+                migrate)
+                    _arguments \
+                        '--config-file[Path to the configuration file]:file:_files' \
+                        '--dry-run[Only output TOML config to STDOUT]' \
+                        '--skip-imports[Do not recurse over imports]' \
+                        '--skip-renames[Do not move renamed fields]' \
+                        '--silent[Do not output to STDOUT]'
+                    ;;
+            esac
+            ;;
+    esac
+}
+
+_pureterm "$@"
