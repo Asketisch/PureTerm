@@ -62,6 +62,7 @@ dependencies = [
  "home",
  "libc",
  "log",
+ "memchr",
  "miow",
  "parking_lot",
  "piper",

@@ -1,5 +1,6 @@
 //! Process window events.
 
+use crate::shell_block::BlockManager;
 use crate::ConfigMonitor;
 use glutin::config::GetGlConfig;
 use std::borrow::Cow;
@@ -685,6 +686,7 @@ pub struct ActionContext<'a, N, T> {
     pub master_fd: RawFd,
     #[cfg(not(windows))]
     pub shell_pid: u32,
+    pub block_manager: &'a mut BlockManager,
 }
 
 impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionContext<'a, N, T> {
@@ -1927,6 +1929,9 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                     TerminalEvent::MouseCursorDirty => self.reset_mouse_cursor(),
                     TerminalEvent::CursorBlinkingChange => self.ctx.update_cursor_blinking(),
                     TerminalEvent::Exit | TerminalEvent::ChildExit(_) | TerminalEvent::Wakeup => (),
+                    TerminalEvent::ShellMark(mark) => {
+                        self.ctx.block_manager.on_mark(&mark);
+                    },
                 },
                 #[cfg(unix)]
                 EventType::IpcConfig(_) | EventType::IpcGetConfig(..) | EventType::Shutdown => (),

@@ -42,6 +42,8 @@ use crate::event::{
 use crate::logging::LOG_TARGET_IPC_CONFIG;
 use crate::message_bar::MessageBuffer;
 use crate::scheduler::Scheduler;
+use crate::shell_block::BlockManager;
+use crate::shell_integration::{Shell, ShellEnv};
 use crate::trigger::{LineTracker, TriggerService};
 use crate::trigger_dispatch::{DispatchState, dispatch_trigger};
 use crate::{input, renderer};
@@ -73,6 +75,8 @@ pub struct WindowContext {
     trigger_service: TriggerService,
     trigger_tracker: LineTracker,
     trigger_dispatch_state: DispatchState,
+    /// Shell integration command block tracker.
+    block_manager: BlockManager,
 }
 
 impl WindowContext {
@@ -191,6 +195,13 @@ impl WindowContext {
 
         let event_proxy = EventProxy::new(proxy, display.window.id());
 
+        // Inject shell integration scripts via PTY environment.
+        {
+            let shell = Shell::detect_from_env();
+            let shell_env = ShellEnv::for_shell(shell);
+            shell_env.apply(&mut pty_config.env);
+        }
+
         // Create the terminal.
         //
         // This object contains all of the state about what's being displayed. It's
@@ -263,6 +274,7 @@ impl WindowContext {
             trigger_service: TriggerService::default(),
             trigger_tracker: LineTracker::new(),
             trigger_dispatch_state: DispatchState::new(),
+            block_manager: BlockManager::new(),
         })
     }
 
@@ -460,6 +472,7 @@ impl WindowContext {
             event_loop,
             clipboard,
             scheduler,
+            block_manager: &mut self.block_manager,
         };
         let mut processor = input::Processor::new(context);
 

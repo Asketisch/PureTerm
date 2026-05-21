@@ -17,12 +17,15 @@
 
 ### 1.1 OSC 133 Shell 集成
 - **优先级**: P0
-- **状态**: 未实现
+- **状态**: ✅ 已实现（MVP）— OSC 133 解析 + BlockManager + Shell 脚本注入
 - **描述**: 命令块检测、提示标记、输出边界、防止睡眠追踪
-- **参考**:
-  - Ghostty: `src/termio/shell_integration.zig`, `src/shell-integration/`
-  - iTerm2: `sources/Triggers/iTermShellPromptTrigger.m`
-  - Archive: `archive/pureterm-terminal/src/block.rs`, `archive/pureterm-session/src/shell_integration.rs`
+- **实现文件**:
+  - `crates/alacritty_terminal/src/event.rs` — ShellMarkKind/ShellMark 事件类型
+  - `crates/alacritty_terminal/src/event_loop.rs` — scan_osc133() 预扫描器 + 7 个单元测试
+  - `crates/pureterm-alacritty-runtime/src/alacritty/shell_block.rs` — BlockManager/CommandBlock/导航方法 + 3 个单元测试
+  - `crates/pureterm-alacritty-runtime/src/alacritty/shell_integration.rs` — Shell 检测/ShellEnv/Zsh+Bash+Fish 脚本 + 3 个单元测试
+- **已实现**: OSC 133 A/B/C/D 标记解析、exit_code + duration 参数、BlockManager 命令块追踪、Shell 自动检测与脚本注入、PTY 环境变量注入
+- **待完善**: 提示符导航快捷键、滚动补偿、Visual prompt markers、Nushell/Elvish 脚本
 
 ### 1.2 DECSCL 设备控制
 - **优先级**: P2
@@ -413,7 +416,7 @@
 ## 优先级汇总
 
 ### P0 - 关键（必须实现）
-1. OSC 133 Shell 集成
+1. ~~OSC 133 Shell 集成~~ ✅ 已实现（MVP）
 2. 多标签支持
 3. SSH 会话后端
 4. ~~触发器系统~~ ✅ 已实现（MVP）

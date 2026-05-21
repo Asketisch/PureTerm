@@ -14,7 +14,7 @@ use std::time::Instant;
 use log::error;
 use polling::{Event as PollingEvent, Events, PollMode, Poller};
 
-use crate::event::{self, Event, EventListener, WindowSize};
+use crate::event::{self, Event, EventListener, ShellMark, ShellMarkKind, WindowSize};
 use crate::sync::FairMutex;
 use crate::term::Term;
 use crate::{thread, tty};
@@ -152,6 +152,20 @@ where
 
             // Parse the incoming bytes.
             state.parser.advance(&mut **terminal, &buf[..unprocessed]);
+
+            // Scan for OSC 133 shell integration marks.
+            let marks = scan_osc133(&buf[..unprocessed]);
+            if !marks.is_empty() {
+                let cursor_row = terminal.grid().cursor.point.line.0 as usize;
+                for raw in marks {
+                    self.event_proxy.send_event(Event::ShellMark(ShellMark {
+                        kind: raw.kind,
+                        row: cursor_row,
+                        exit_code: raw.exit_code,
+                        duration_us: raw.duration_us,
+                    }));
+                }
+            }
 
             processed += unprocessed;
             unprocessed = 0;
@@ -482,5 +496,150 @@ impl<T> PeekableReceiver<T> {
                 res => res.ok(),
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// OSC 133 shell integration scanner
+// ---------------------------------------------------------------------------
+
+/// A raw OSC 133 mark extracted from the PTY byte stream.
+struct RawMark {
+    kind: ShellMarkKind,
+    exit_code: Option<i32>,
+    duration_us: Option<u64>,
+}
+
+/// Scan raw bytes for OSC 133 sequences: `\x1b]133;X[;params]\x07` or `\x1b]133;X[;params]\x1b\\`.
+fn scan_osc133(buf: &[u8]) -> Vec<RawMark> {
+    let mut marks = Vec::new();
+    let prefix = b"\x1b]133;";
+    let mut i = 0;
+    while i + prefix.len() < buf.len() {
+        // Find next OSC 133 prefix
+        if let Some(pos) = memchr::memchr(prefix[0], &buf[i..]) {
+            let start = i + pos;
+            if buf[start..].starts_with(prefix) {
+                let after = start + prefix.len();
+                if after >= buf.len() {
+                    break;
+                }
+                let kind_byte = buf[after];
+                let kind = match kind_byte {
+                    b'A' => ShellMarkKind::PromptStart,
+                    b'B' => ShellMarkKind::CommandStart,
+                    b'C' => ShellMarkKind::OutputStart,
+                    b'D' => ShellMarkKind::OutputEnd,
+                    _ => {
+                        i = start + 1;
+                        continue;
+                    }
+                };
+                let mut exit_code = None;
+                let mut duration_us = None;
+                // Scan params until terminator
+                let mut p = after + 1;
+                let params_start = p;
+                while p < buf.len() {
+                    match buf[p] {
+                        0x07 => {
+                            // BEL terminator
+                            break;
+                        }
+                        0x1b if p + 1 < buf.len() && buf[p + 1] == b'\\' => {
+                            // ST terminator
+                            break;
+                        }
+                        _ => p += 1,
+                    }
+                }
+                if p < buf.len() {
+                    let params = &buf[params_start..p];
+                    if kind == ShellMarkKind::OutputEnd && !params.is_empty() {
+                        let params_str = std::str::from_utf8(params).unwrap_or("");
+                        for part in params_str.split(';') {
+                            if let Some(val) = part.strip_prefix("exit=") {
+                                exit_code = val.parse().ok();
+                            } else if let Some(val) = part.strip_prefix("duration=") {
+                                duration_us = val.parse().ok();
+                            }
+                        }
+                    }
+                    marks.push(RawMark { kind, exit_code, duration_us });
+                    i = p + 1;
+                    continue;
+                }
+                // No terminator found — sequence spans buffer boundary, skip
+                i = start + 1;
+                continue;
+            }
+            i = start + 1;
+        } else {
+            break;
+        }
+    }
+    marks
+}
+
+#[cfg(test)]
+mod tests_osc133 {
+    use super::*;
+
+    #[test]
+    fn scan_prompt_start() {
+        let buf = b"some text\x1b]133;A\x07more text";
+        let marks = scan_osc133(buf);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].kind, ShellMarkKind::PromptStart);
+        assert!(marks[0].exit_code.is_none());
+    }
+
+    #[test]
+    fn scan_command_start() {
+        let buf = b"\x1b]133;B\x07";
+        let marks = scan_osc133(buf);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].kind, ShellMarkKind::CommandStart);
+    }
+
+    #[test]
+    fn scan_output_end_with_params() {
+        let buf = b"\x1b]133;D;exit=0;duration=12345\x07";
+        let marks = scan_osc133(buf);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].kind, ShellMarkKind::OutputEnd);
+        assert_eq!(marks[0].exit_code, Some(0));
+        assert_eq!(marks[0].duration_us, Some(12345));
+    }
+
+    #[test]
+    fn scan_st_terminated() {
+        let buf = b"\x1b]133;C\x1b\\";
+        let marks = scan_osc133(buf);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].kind, ShellMarkKind::OutputStart);
+    }
+
+    #[test]
+    fn scan_multiple_marks() {
+        let buf = b"\x1b]133;A\x07\x1b]133;B\x07";
+        let marks = scan_osc133(buf);
+        assert_eq!(marks.len(), 2);
+        assert_eq!(marks[0].kind, ShellMarkKind::PromptStart);
+        assert_eq!(marks[1].kind, ShellMarkKind::CommandStart);
+    }
+
+    #[test]
+    fn scan_no_marks() {
+        let buf = b"just regular text\nno osc here";
+        let marks = scan_osc133(buf);
+        assert!(marks.is_empty());
+    }
+
+    #[test]
+    fn scan_output_end_nonzero_exit() {
+        let buf = b"\x1b]133;D;exit=127\x07";
+        let marks = scan_osc133(buf);
+        assert_eq!(marks[0].exit_code, Some(127));
     }
 }

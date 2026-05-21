@@ -6,6 +6,32 @@ use std::sync::Arc;
 use crate::term::ClipboardType;
 use crate::vte::ansi::Rgb;
 
+/// Semantic prompt marker kind from OSC 133 shell integration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellMarkKind {
+    /// OSC 133;A — prompt starts.
+    PromptStart,
+    /// OSC 133;B — command line starts.
+    CommandStart,
+    /// OSC 133;C — command output starts.
+    OutputStart,
+    /// OSC 133;D — command output ends.
+    OutputEnd,
+}
+
+/// A semantic prompt mark detected from OSC 133 sequences.
+#[derive(Debug, Clone)]
+pub struct ShellMark {
+    /// The kind of marker.
+    pub kind: ShellMarkKind,
+    /// Cursor row when the mark was detected (grid line index).
+    pub row: usize,
+    /// Exit code, only present for OutputEnd marks.
+    pub exit_code: Option<i32>,
+    /// Duration in microseconds, only present for OutputEnd marks.
+    pub duration_us: Option<u64>,
+}
+
 /// Terminal event.
 ///
 /// These events instruct the UI over changes that can't be handled by the terminal emulation layer
@@ -56,6 +82,9 @@ pub enum Event {
 
     /// Child process exited.
     ChildExit(ExitStatus),
+
+    /// Shell integration semantic mark (OSC 133).
+    ShellMark(ShellMark),
 }
 
 impl Debug for Event {
@@ -74,6 +103,7 @@ impl Debug for Event {
             Event::Bell => write!(f, "Bell"),
             Event::Exit => write!(f, "Exit"),
             Event::ChildExit(status) => write!(f, "ChildExit({status:?})"),
+            Event::ShellMark(mark) => write!(f, "ShellMark({:?}, row={})", mark.kind, mark.row),
         }
     }
 }

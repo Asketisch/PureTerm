@@ -58,6 +58,10 @@ mod renderer;
 mod scheduler;
 #[path = "alacritty/string.rs"]
 mod string;
+#[path = "alacritty/shell_block.rs"]
+mod shell_block;
+#[path = "alacritty/shell_integration.rs"]
+mod shell_integration;
 #[path = "alacritty/trigger.rs"]
 mod trigger;
 #[path = "alacritty/trigger_dispatch.rs"]
