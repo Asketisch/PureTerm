@@ -6,9 +6,11 @@ src/ 级别模块详解：[src/AGENTS.md](src/AGENTS.md)
 
 ## 关键依赖
 
-依赖工作区中其他 5 个 crate：`pureterm-core`、`pureterm-terminal`、`pureterm-session`、`pureterm-ui`、`pureterm-gui`
+依赖工作区中其他 6 个 crate：`pureterm-alacritty-runtime`、`pureterm-core`、`pureterm-terminal`、`pureterm-session`、`pureterm-ui`、`pureterm-gui`
 
-外部依赖：`winit`（窗口）、`wgpu`（渲染）、`egui` + `egui-wgpu` + `egui-winit`（UI）、`tokio`（异步）、`pollster`（block_on）。
+默认运行时使用 `pureterm-alacritty-runtime` 的 Alacritty 单窗口终端。旧 `PureTermApp`、wgpu UI、多标签和分屏路径通过 `--legacy-ui` 或 `PURETERM_LEGACY=1` 保留。
+
+外部依赖：默认路径使用 Alacritty/glutin/OpenGL；legacy 路径使用 `winit`（窗口）、`wgpu`（渲染）、`egui` + `egui-wgpu` + `egui-winit`（UI）、`tokio`（异步）、`pollster`（block_on）。
 
 ## 文件结构
 
@@ -46,6 +48,7 @@ src/                  # 主源代码
 | `pureterm --profile <name>` | 通过配置文件连接 |
 | `pureterm --ssh <user@host>` | 快速 SSH 连接 |
 | `pureterm --quake` | 下拉终端模式 |
+| `pureterm --legacy-ui` | 使用迁移前的 PureTerm UI/runtime |
 
 ## 崩溃报告
 
@@ -95,7 +98,13 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 
 ## 核心流程
 
-### 启动（`resumed`）
+### 默认启动（Alacritty runtime）
+1. `main.rs` 解析 PureTerm CLI 子命令。
+2. 无子命令、无 legacy-only 标志时加载 PureTerm 配置。
+3. 将字体大小、scrollback、前景/背景色映射到 `PureTermRuntimeConfig`。
+4. 调用 `pureterm_alacritty_runtime::run_with_config()` 启动 Alacritty `Processor` / `WindowContext` / `Display`。
+
+### Legacy 启动（`--legacy-ui` / `PURETERM_LEGACY=1`）
 1. 创建 winit `Window`
 2. 异步初始化 `TerminalRenderer`（wgpu instance/adapter/device/queue），传入 `config.font_size * scale_factor` 作为字体像素大小
 3. 从 `AppearanceConfig` 创建 `TransparencyConfig`

@@ -21,11 +21,12 @@ cargo build --release
 
 ## 架构设计
 
-PureTerm 由 6 个 crate 组成的工作区：
+PureTerm 由 7 个 crate 组成的工作区：
 
 | Crate | 说明 |
 |-------|------|
-| `pureterm` | 二进制入口，事件循环、标签栏渲染 |
+| `pureterm` | 二进制入口，默认路由到 Alacritty runtime，保留 legacy UI |
+| `pureterm-alacritty-runtime` | Alacritty 单窗口终端运行时 |
 | `pureterm-core` | 配置、主题、快捷键、插件 |
 | `pureterm-terminal` | VTE 解析器、屏幕网格（reflow + VecDeque） |
 | `pureterm-session` | Session trait + Local/SSH/Serial/Telnet 实现 |
@@ -33,14 +34,13 @@ PureTerm 由 6 个 crate 组成的工作区：
 | `pureterm-gui` | wgpu 多 pass 渲染、字形图集、Sprite 光栅化 |
 
 ```
-用户输入 → TerminalPane::handle_key → Session::write
-会话输出 → TerminalPane::drain_output → Terminal::write → VteParser → Grid
-渲染 → ScreenSnapshot → TerminalRenderer::render → wgpu GPU
+默认：用户输入/PTY 输出 → Alacritty Processor/Term → Display damage → OpenGL renderer
+Legacy：TerminalPane::handle_key → Session::write → VteParser/Grid → ScreenSnapshot → wgpu
 ```
 
 ## 技术栈
 
-- **渲染**：wgpu 29（8 pass GPU 管线）+ egui 0.34
+- **渲染**：默认 Alacritty OpenGL display；legacy 路径为 wgpu 29（8 pass GPU 管线）+ egui 0.34
 - **终端解析**：完整 VTE（CSI/ESC/OSC/DCS/APC/PM）
 - **窗口/事件**：winit
 - **字体**：fontdue + rustybuzz（HarfBuzz）+ fontdb（5 步回退链）

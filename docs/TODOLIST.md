@@ -1,0 +1,476 @@
+# PureTerm 功能差异 Todo 列表
+
+> 基于 Alacritty v0.26.1-dev 运行时，对比 4 个开源终端项目：Alacritty、Ghostty、iTerm2、Warp
+
+## 开源参考仓库
+
+| 仓库 | 路径 | 关键特性 |
+|------|------|----------|
+| Alacritty | `/Users/admin/Code/Github/alacritty-master/` | GPU 渲染、PTY 处理、配置系统 |
+| Ghostty | `/Users/admin/Code/Github/ghostty-main/` | 8 通道渲染、独立渲染线程、Shell 集成、字体系统 |
+| iTerm2 | `/Users/admin/Code/Github/iTerm2-master/` | 30+ 触发器、智能选择、语义历史、Toolbelt、密码管理、DVR |
+| Warp | `/Users/admin/Code/Github/warp-master/` | AI 助手、Rust 终端、WarpUI |
+
+---
+
+## 类别 1：终端仿真
+
+### 1.1 OSC 133 Shell 集成
+- **优先级**: P0
+- **状态**: 未实现
+- **描述**: 命令块检测、提示标记、输出边界、防止睡眠追踪
+- **参考**:
+  - Ghostty: `src/termio/shell_integration.zig`, `src/shell-integration/`
+  - iTerm2: `sources/Triggers/iTermShellPromptTrigger.m`
+  - Archive: `archive/pureterm-terminal/src/block.rs`, `archive/pureterm-session/src/shell_integration.rs`
+
+### 1.2 DECSCL 设备控制
+- **优先级**: P2
+- **状态**: 未实现
+- **参考**: Ghostty `src/terminal/modes.zig`
+
+### 1.3 标题栈 (CSI 22/23t)
+- **优先级**: P2
+- **状态**: 未实现
+- **参考**: Ghostty `src/terminal/Terminal.zig` - 22t 处理
+
+### 1.4 BiDi 双向文本
+- **优先级**: P2
+- **状态**: 未实现（已知差距）
+- **参考**:
+  - Ghostty: `src/unicode/` 目录
+  - Archive: `archive/pureterm-terminal/src/screen/` 曾有 BiDi 支持
+
+---
+
+## 类别 2：渲染与图形
+
+### 2.1 多通道渲染管线
+- **优先级**: P0
+- **状态**: Alacritty 单通道；PureTerm legacy 曾有 8 通道
+- **参考**:
+  - Ghostty: `src/renderer/generic.zig` (8 个渲染通道)
+  - Ghostty: `src/renderer/Thread.zig` (独立渲染线程，400+ 行，mailbox 模式)
+- **关键文件**:
+  - Ghostty: `renderer/generic.zig` - `drawFrame()` 含 bg_color、bg_image、cell_bg、cell_text、image、overlay、shadertoy 管线
+  - Ghostty: `renderer/Thread.zig` - 8ms 定时器独立渲染线程
+
+### 2.2 彩色 Emoji / BGRA 字体图集
+- **优先级**: P1
+- **状态**: PureTerm 只有灰度图集
+- **参考**:
+  - Ghostty: `font/Atlas.zig` - `format: .bgra` 彩色 emoji
+  - Ghostty: `font/face/coretext.zig` / `font/face/freetype.zig` - 彩色字形光栅化
+- **关键文件**:
+  - Ghostty: `src/font/Atlas.zig`
+  - Ghostty: `src/renderer/cell.zig` - `CellText.atlas: enum { grayscale, color }`
+
+### 2.3 HarfBuzz 文本整形
+- **优先级**: P1
+- **状态**: PureTerm 只有 14 个硬编码连字对（→、≠ 等）
+- **参考**:
+  - Ghostty: `font/shaper/harfbuzz.zig` (~400 行)
+  - Ghostty: `font/shaper/Cache.zig` - 整形结果缓存
+- **关键文件**:
+  - Ghostty: `src/font/shaper/harfbuzz.zig`
+  - Ghostty: `src/font/shaper/run.zig`
+
+### 2.4 背景图像 GPU 渲染
+- **优先级**: P1
+- **状态**: 图像可加载但未渲染到 GPU
+- **参考**:
+  - Ghostty: `renderer/generic.zig` → bg_image 管线
+  - Ghostty: `renderer/image.zig` → 背景层图像处理
+- **关键文件**:
+  - Ghostty: `src/renderer/generic.zig` - bg_image 管线
+  - Ghostty: `src/config/Config.zig` - background-image-fit/position/repeat
+
+### 2.5 自定义着色器 (ShaderToy)
+- **优先级**: P1
+- **状态**: 未实现
+- **参考**:
+  - Ghostty: `renderer/shadertoy.zig` (~400 行)
+  - GLSL → SPIR-V → MSL/GLSL 编译
+- **关键文件**:
+  - Ghostty: `src/renderer/shadertoy.zig` - 自定义着色器链与 ping-pong 纹理
+
+### 2.6 Sixel 图形渲染
+- **优先级**: P2
+- **状态**: Alacritty 有部分解析但未完整 GPU 渲染
+- **参考**:
+  - iTerm2: `sources/VT100/VT100SixelParser.m`
+  - Ghostty: `src/terminal/kitty/graphics.zig` (Kitty 协议，非 Sixel)
+- **关键文件**:
+  - iTerm2: `sources/VT100/VT100SixelParser.m`
+
+### 2.7 字体图集矩形装箱
+- **优先级**: P1
+- **状态**: PureTerm 简单行式装箱；Ghostty 用 Skyline 算法
+- **参考**: Ghostty `font/Atlas.zig` 使用 Jukka Jylanki Skyline 算法
+
+### 2.8 字体回退链
+- **优先级**: P1
+- **状态**: 缺少码点回退发现
+- **参考**:
+  - Ghostty: `font/CodepointResolver.zig` (~300 行，5 步回退链)
+  - Ghostty: `font/CodepointMap.zig` (~200 行)
+- **关键文件**:
+  - Ghostty: `src/font/CodepointResolver.zig`
+  - Archive: `archive/pureterm-gui/src/font_fallback.rs` (5 步 CJK/emoji 链)
+
+---
+
+## 类别 3：窗口与标签页管理
+
+### 3.1 多标签支持
+- **优先级**: P0
+- **状态**: PureTerm 现为单窗口（基于 Alacritty）
+- **参考**:
+  - iTerm2: `sources/Toolbelt/` - 标签管理
+  - Warp: `app/src/tab.rs` 多标签
+  - Archive: `archive/pureterm-ui/src/tabs/`、`archive/pureterm-ui/src/tab_bar.rs`
+- **关键文件**:
+  - iTerm2: `sources/Toolbelt/iTermToolbeltView.m`
+  - Archive: `archive/pureterm-ui/src/tabs/manager.rs`
+
+### 3.2 分割窗格
+- **优先级**: P1
+- **状态**: Alacritty 运行时未实现
+- **参考**:
+  - iTerm2: 多窗格支持
+  - Ghostty: `datastruct/split_tree.zig` 分割树
+  - Archive: `archive/pureterm-ui/src/split/`
+- **关键文件**:
+  - Ghostty: `src/datastruct/split_tree.zig`
+  - Archive: `archive/pureterm-ui/src/split/`
+
+### 3.3 GPU 标签栏渲染
+- **优先级**: P1
+- **状态**: 未实现
+- **参考**:
+  - Ghostty: GPU 原生标签栏样式
+  - Archive: `archive/pureterm-ui/src/tab_bar.rs` - Ghostty 风格 GPU 标签栏
+- **关键文件**:
+  - Archive: `archive/pureterm-ui/src/tab_bar.rs`
+
+### 3.4 状态栏
+- **优先级**: P2
+- **状态**: 未实现（只有标签栏）
+- **参考**:
+  - iTerm2: `sources/StatusBar/` - git 分支轮询、cwd、hostname
+  - Warp: `app/src/` 状态栏
+  - Archive: `archive/pureterm-ui/src/status_bar.rs`
+- **关键文件**:
+  - iTerm2: `sources/StatusBar/iTermGitPoller.m` - git 分支/提交显示
+  - iTerm2: `sources/StatusBar/Components/` - 状态栏组件
+
+---
+
+## 类别 4：会话管理
+
+### 4.1 SSH 会话后端
+- **优先级**: P0
+- **状态**: Alacritty 只支持本地 PTY；PureTerm 曾有 SSH
+- **参考**:
+  - Warp: `crates/warp_terminal/` SSH
+  - Archive: `archive/pureterm-session/src/ssh/`
+- **关键文件**:
+  - Warp: `crates/warp_terminal/src/`
+  - Archive: `archive/pureterm-session/src/ssh/session.rs`
+
+### 4.2 Serial 会话后端
+- **优先级**: P1
+- **状态**: 未实现
+- **参考**: Archive: `archive/pureterm-session/src/serial_session.rs`
+- **关键文件**:
+  - Archive: `archive/pureterm-session/src/serial_session.rs`
+
+### 4.3 Telnet 会话后端
+- **优先级**: P2
+- **状态**: 未实现
+- **参考**: Archive: `archive/pureterm-session/src/telnet_session.rs`
+
+### 4.4 Tmux 控制模式
+- **优先级**: P2
+- **状态**: 未实现
+- **参考**:
+  - Ghostty: `terminal/tmux/*.zig`
+  - Archive: `archive/pureterm-terminal/src/tmux/`
+- **关键文件**:
+  - Ghostty: `src/terminal/tmux/tmux.zig`
+  - Ghostty: `src/terminal/tmux/` (4 文件)
+
+### 4.5 Workgroups（保存/恢复会话）
+- **优先级**: P2
+- **状态**: 只有基础标签恢复，无完整 workgroup
+- **参考**:
+  - iTerm2: `sources/Workgroups/` - 窗口布局序列化
+  - iTerm2: `sources/Workgroups/iTermWorkgroupInstance.swift`
+- **关键文件**:
+  - iTerm2: `sources/Workgroups/iTermWorkgroupInstance.swift` - 保存状态
+  - iTerm2: `sources/Workgroups/iTermWorkgroupModel.swift` - 模型
+
+### 4.6 会话录制 (DVR)
+- **优先级**: P3
+- **状态**: 只有会话日志，无回放
+- **参考**:
+  - iTerm2: `sources/DVR/` - 即时回放
+  - iTerm2: `sources/DVR/DVRBuffer.m`、`DVREncoder.m`、`DVRDecoder.m`
+- **关键文件**:
+  - iTerm2: `sources/DVR/DVR.h`、`sources/DVR/DVR.m`
+
+---
+
+## 类别 5：文本选择与搜索
+
+### 5.1 智能选择（基于精度）
+- **优先级**: P1
+- **状态**: 基础鼠标选择，无精度规则
+- **参考**:
+  - iTerm2: `sources/SearchingFiltering/iTermSmartSelectionController.m` - 带精度分数的正则规则
+  - Ghostty: `src/renderer/link.zig` - URL/链接匹配
+  - Archive: `archive/pureterm-core/src/smart_selection.rs`
+- **关键文件**:
+  - iTerm2: `sources/SearchingFiltering/SearchEngine.swift` - 基于精度的选择
+  - Archive: `archive/pureterm-core/src/smart_selection.rs`
+
+### 5.2 语义历史（悬停预览）
+- **优先级**: P1
+- **状态**: 只有 OSC 8 超链接，无悬停预览
+- **参考**:
+  - iTerm2: `sources/SemanticHistory/iTermSemanticHistoryController.m`
+  - iTerm2: `sources/SemanticHistory/iTermPathFinder.m` - 文件路径检测
+  - iTerm2: Quick Look 集成
+- **关键文件**:
+  - iTerm2: `sources/SemanticHistory/iTermSemanticHistoryController.m` (45KB)
+  - iTerm2: `sources/SemanticHistory/iTermURLActionFactory.m`
+
+### 5.3 Tail-Find（自动滚动搜索）
+- **优先级**: P2
+- **状态**: 基础搜索，无 tail-find
+- **参考**:
+  - iTerm2: `sources/SearchingFiltering/TailFindController.swift`
+  - iTerm2: `sources/SearchingFiltering/iTermDropDownFindViewController.m`
+- **关键文件**:
+  - iTerm2: `sources/SearchingFiltering/TailFindController.swift`
+  - iTerm2: `sources/SearchingFiltering/iTermFindDriver.m`
+
+### 5.4 复制模式（Vim 风格）
+- **优先级**: P2
+- **状态**: 基础鼠标选择，无 vi 模式
+- **参考**:
+  - iTerm2: `sources/CopyMode/iTermCopyModeHandler.m`
+  - Alacritty: `alacritty_terminal/src/vi_mode.rs` (部分 vi 模式存在)
+- **关键文件**:
+  - iTerm2: `sources/CopyMode/iTermCopyModeHandler.m` (24KB)
+  - Alacritty: `alacritty_terminal/src/vi_mode.rs`
+
+---
+
+## 类别 6：自动化与脚本
+
+### 6.1 触发器系统
+- **优先级**: P0
+- **状态**: 只有简单模式匹配；无丰富触发动作
+- **参考**:
+  - iTerm2: `sources/Triggers/` - 30+ 触发器类型
+  - Archive: `archive/pureterm-core/src/trigger.rs` (11 种 action 类型)
+- **关键文件**:
+  - iTerm2: `sources/Triggers/Trigger.h`、`sources/Triggers/Trigger.m` - 基础触发器
+  - iTerm2: `sources/Triggers/iTermEventTriggerEvaluator.swift` - 正则评估
+  - iTerm2: `sources/Triggers/HighlightTrigger.m` - 正则高亮
+  - iTerm2: `sources/Triggers/PasswordTrigger.m` - 密码检测
+  - iTerm2: `sources/Triggers/CaptureTrigger.m` - 捕获到文件
+- **iTerm2 触发器类型**:
+  - Alert、Bell、Bounce、Highlight、Hyperlink、Mark、Password、CaptureToFile
+  - SendText、RunCommand、DirectoryTrack、SetDirectory、SetHostname
+  - SetNamedMark、SetTabStatus、SetUserVariable、InjectJavascript
+
+### 6.2 协同处理（外部脚本集成）
+- **优先级**: P1
+- **状态**: 只有 MiddlewareStack（login script / zmodem）
+- **参考**:
+  - iTerm2: `sources/Tasks/Coprocess.m` - 外部脚本运行与终端 I/O
+- **关键文件**:
+  - iTerm2: `sources/Tasks/Coprocess.m`
+  - Archive: `archive/pureterm-session/src/coprocess.rs`
+
+### 6.3 代码片段系统
+- **优先级**: P2
+- **状态**: 未实现
+- **参考**:
+  - iTerm2: `sources/Snippets/` - 文本片段系统
+  - iTerm2: `sources/Toolbelt/iTermToolSnippets.m` - toolbelt 片段视图
+- **关键文件**:
+  - iTerm2: `sources/Snippets/iTermSnippetsModel.m`
+  - iTerm2: `sources/Toolbelt/iTermToolSnippets.m`
+
+### 6.4 输入广播（向所有窗格输入）
+- **优先级**: P3
+- **状态**: 只在 tmux_session 同步输入
+- **参考**:
+  - iTerm2: `sources/InputBroadcasting/iTermBroadcastInputHelper.m`
+- **关键文件**:
+  - iTerm2: `sources/InputBroadcasting/iTermBroadcastInputHelper.m`
+
+---
+
+## 类别 7：安全特性
+
+### 7.1 密码管理器集成
+- **优先级**: P2
+- **状态**: SecretRedaction 只掩码显示，无密码获取
+- **参考**:
+  - iTerm2: `sources/PasswordManager/` - 1Password/LastPass/Keychain
+  - iTerm2: `sources/PasswordManager/iTermPasswordManagerWindowController.m`
+- **关键文件**:
+  - iTerm2: `sources/PasswordManager/iTermPasswordManagerWindowController.m` (70KB)
+  - iTerm2: `sources/PasswordManager/KeychainPasswordDataSource.swift`
+  - iTerm2: `sources/PasswordManager/OnePasswordDataSource.swift`
+  - iTerm2: `sources/PasswordManager/LastPassDataSource.swift`
+
+### 7.2 密码触发器（掩码）
+- **优先级**: P1
+- **状态**: 未实现
+- **参考**:
+  - iTerm2: `sources/Triggers/PasswordTrigger.m`
+- **关键文件**:
+  - iTerm2: `sources/Triggers/PasswordTrigger.h`、`PasswordTrigger.m`
+
+### 7.3 注释/标记
+- **优先级**: P3
+- **状态**: 未实现
+- **参考**:
+  - iTerm2: `sources/Annotations/`
+  - iTerm2: `sources/Triggers/MarkTrigger.m`
+- **关键文件**:
+  - iTerm2: `sources/Annotations/PTYAnnotation.m`
+
+---
+
+## 类别 8：生产力特性
+
+### 8.1 Toolbelt（侧边面板）
+- **优先级**: P2
+- **状态**: 未实现（只有快速栏、命令面板）
+- **参考**:
+  - iTerm2: `sources/Toolbelt/` - 命令历史、粘贴历史、片段、配置、目录浏览器、笔记
+  - Archive: `archive/pureterm-ui/src/toolbelt.rs`
+- **关键文件**:
+  - iTerm2: `sources/Toolbelt/iTermToolbeltView.m` (35KB)
+  - iTerm2: `sources/Toolbelt/ToolCommandHistoryView.m`
+  - iTerm2: `sources/Toolbelt/ToolPasteHistory.m`
+  - iTerm2: `sources/Toolbelt/ToolDirectoriesView.m`
+
+### 8.2 命令面板
+- **优先级**: P1
+- **状态**: 基础实现存在
+- **参考**: Archive: `archive/pureterm-ui/src/command_palette.rs`
+
+### 8.3 自动 Profile 切换
+- **优先级**: P2
+- **状态**: 基础目录跟踪，无自动 profile 切换
+- **参考**:
+  - iTerm2: `sources/AutomaticProfileSwitching/`
+- **关键文件**:
+  - iTerm2: `sources/AutomaticProfileSwitching/`
+
+### 8.4 SSH 文件浏览器 (SFTP GUI)
+- **优先级**: P2
+- **状态**: 基础 SFTP 传输，无图形浏览器
+- **参考**:
+  - iTerm2: `SSHFilePanel.swift` (84KB) - 图形 SFTP 浏览器
+  - Archive: `archive/pureterm-ui/src/sftp_browser.rs`
+  - Archive: `archive/pureterm-session/src/ssh/sftp.rs`
+- **关键文件**:
+  - iTerm2: `SSHFilePanel.swift`
+
+---
+
+## 类别 9：平台集成
+
+### 9.1 Touch Bar 支持
+- **优先级**: N/A（macOS 专用，与跨平台目标不符）
+- **参考**: iTerm2: `sources/TouchBar/`
+
+### 9.2 无障碍/VoiceOver
+- **优先级**: P1
+- **状态**: Alacritty 运行时未完整实现
+- **参考**:
+  - Ghostty: `Surface.zig` 完全 VoiceOver 支持
+  - iTerm2: `sources/Accessibility/`
+  - Archive: `archive/pureterm/src/accessibility.rs`
+- **关键文件**:
+  - Ghostty: `src/Surface.zig` - 文本快照无障碍
+  - Ghostty: `src/Accessibility.zig`
+
+### 9.3 检查器/调试面板
+- **优先级**: P2
+- **状态**: 基础框架存在但不完整
+- **参考**:
+  - Ghostty: `inspector/widgets/` - 页面内存、键盘历史、渲染器信息、屏幕网格
+  - Archive: `archive/pureterm-ui/src/inspector.rs`
+- **关键文件**:
+  - Ghostty: `src/inspector/Inspector.zig`
+  - Ghostty: `src/inspector/widgets/screen.zig`
+  - Ghostty: `src/inspector/widgets/termio.zig`
+
+---
+
+## 优先级汇总
+
+### P0 - 关键（必须实现）
+1. OSC 133 Shell 集成
+2. 多标签支持
+3. SSH 会话后端
+4. 触发器系统
+5. 多通道渲染管线
+
+### P1 - 高优先级（应该有）
+6. 智能选择
+7. 语义历史 / 悬停预览
+8. 彩色 Emoji / BGRA 字体图集
+9. HarfBuzz 文本整形
+10. 背景图像 GPU 渲染
+11. 自定义着色器 (ShaderToy)
+12. 复制模式（Vi 风格）
+13. 协同处理
+14. 字体回退链
+15. 字体图集矩形装箱
+
+### P2 - 中优先级（最好有）
+16. Sixel 图形
+17. 分割窗格
+18. GPU 标签栏
+19. 状态栏
+20. Tail-Find 搜索
+21. 代码片段系统
+22. 密码管理器集成
+23. 密码触发器
+24. Serial 会话后端
+25. 自动 Profile 切换
+26. SFTP 浏览器 GUI
+27. Workgroups
+28. Tmux 控制模式
+29. BiDi 支持
+30. 检查器面板
+
+### P3 - 低优先级（未来）
+31. 输入广播
+32. 注释/标记
+33. 会话录制 (DVR)
+34. Telnet 会话后端
+
+---
+
+## 关键实现参考文件
+
+1. `/Users/admin/Code/Github/iTerm2-master/sources/Triggers/Trigger.m` - 基础触发器系统架构
+2. `/Users/admin/Code/Github/ghostty-main/src/renderer/Thread.zig` - 独立渲染线程与 mailbox
+3. `/Users/admin/Code/Github/ghostty-main/src/termio/shell_integration.zig` - OSC 133 shell 集成
+4. `/Users/admin/Code/CNB/PureTerm/archive/pureterm-core/src/trigger.rs` - Legacy 触发器实现参考
+5. `/Users/admin/Code/CNB/PureTerm/archive/pureterm-ui/src/terminal/pane.rs` - 带智能选择的终端窗格
+6. `/Users/admin/Code/Github/ghostty-main/src/font/shaper/harfbuzz.zig` - HarfBuzz 文本整形
+7. `/Users/admin/Code/Github/iTerm2-master/sources/SemanticHistory/iTermSemanticHistoryController.m` - 语义历史 (45KB)
+8. `/Users/admin/Code/Github/iTerm2-master/sources/Toolbelt/iTermToolbeltView.m` - Toolbelt (35KB)
+9. `/Users/admin/Code/Github/iTerm2-master/sources/PasswordManager/iTermPasswordManagerWindowController.m` - 密码管理 (70KB)

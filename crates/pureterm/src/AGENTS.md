@@ -4,9 +4,9 @@
 
 ## 关键依赖
 
-依赖工作区中其他 5 个 crate：`pureterm-core`、`pureterm-terminal`、`pureterm-session`、`pureterm-ui`、`pureterm-gui`
+依赖工作区中其他 6 个 crate：`pureterm-alacritty-runtime`、`pureterm-core`、`pureterm-terminal`、`pureterm-session`、`pureterm-ui`、`pureterm-gui`
 
-外部依赖：`winit`（窗口）、`wgpu`（渲染）、`egui` + `egui-wgpu` + `egui-winit`（UI 覆盖层）、`clap`（CLI）、`arboard`（剪贴板）、`objc2` + `objc2-foundation`（macOS 平台 API）。
+默认路径依赖 `pureterm-alacritty-runtime`，使用 Alacritty `Processor` / `WindowContext` / OpenGL `Display`。legacy 路径继续使用 `winit`（窗口）、`wgpu`（渲染）、`egui` + `egui-wgpu` + `egui-winit`（UI 覆盖层）、`clap`（CLI）、`arboard`（剪贴板）、`objc2` + `objc2-foundation`（macOS 平台 API）。
 
 ## 文件结构
 
@@ -34,7 +34,7 @@ src/                          # 主源代码
 ## 模块详情
 
 ### main.rs
-主入口点。按顺序执行：初始化 env_logger（debug 模式默认 debug 级别，release 默认 warn）、初始化 sentry（dsn: None 离线模式，捕获 panic 到本地文件）、解析 CLI 参数、处理子命令（list-fonts/list-themes/show-config/version/settings）、加载 ConfigService 和 ThemeService、处理 `--ssh` 快速连接、创建 winit EventLoop、构造 PureTermApp、调用 `event_loop.run_app()`。
+主入口点。按顺序执行：初始化 env_logger（debug 模式默认 debug 级别，release 默认 warn）、初始化 sentry（dsn: None 离线模式，捕获 panic 到本地文件）、解析 CLI 参数、处理子命令（list-fonts/list-themes/show-config/version/settings）。默认无子命令时加载 PureTerm 配置并调用 `pureterm_alacritty_runtime::run_with_config()`；传入 `--legacy-ui`、设置 `PURETERM_LEGACY=1`，或使用 `--profile`/`--ssh`/`--new-tab`/`--quake` 这类 legacy-only 标志时，才创建 winit EventLoop、构造 PureTermApp、调用 `event_loop.run_app()`。
 
 ### app.rs
 定义 `PureTermApp` struct 及其核心方法。持有窗口/渲染器/面板注册表/标签栏/上下文菜单/egui 后端等全部运行时状态。关键方法：
@@ -48,7 +48,7 @@ src/                          # 主源代码
 还定义了 `RenameModalState`（标签页重命名模态框）、`ColorModalState`（标签页颜色编辑模态框）、`DividerDrag`（分隔线拖拽状态）。
 
 ### cli.rs
-使用 clap 定义 CLI 参数：`--profile`（通过名称连接配置文件）、`--ssh`（快速 SSH 连接，解析 user@host:port）、`--new-tab`（IPC 新标签页）、`--quake`（下拉终端模式）。子命令：List、Settings、ListFonts、ListThemes、ShowConfig、Version。
+使用 clap 定义 CLI 参数：`--profile`（通过名称连接配置文件）、`--ssh`（快速 SSH 连接，解析 user@host:port）、`--new-tab`（IPC 新标签页）、`--quake`（下拉终端模式）、`--legacy-ui`（迁移前 UI/runtime）。子命令：List、Settings、ListFonts、ListThemes、ShowConfig、Version。
 
 辅助函数：`parse_ssh_spec()` 将 SSH 字符串解析为 Profile、`profile_to_connect_params()` 将 Profile 转为 ConnectParams（支持 Local/SSH/Serial/Telnet 四种会话类型）、`profile_title()` 生成标签页标题。
 

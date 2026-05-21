@@ -1,6 +1,5 @@
 {
   "enabledPlugins": {
-    "superpowers@claude-plugins-official": true,
-    "ecc@ecc": true
+    "superpowers@claude-plugins-official": true
   }
 }
