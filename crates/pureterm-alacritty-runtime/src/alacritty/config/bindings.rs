@@ -179,6 +179,9 @@ pub enum Action {
     /// Quit PureTerm.
     Quit,
 
+    /// Close the current tab.
+    CloseTab,
+
     /// Clear warning and error notices.
     ClearLogNotice,
 
@@ -633,7 +636,7 @@ pub fn platform_key_bindings() -> Vec<KeyBinding> {
         "h",    ModifiersState::SUPER   | ModifiersState::ALT;                 Action::HideOtherApplications;
         "m",    ModifiersState::SUPER;                                         Action::Minimize;
         "q",    ModifiersState::SUPER;                                         Action::Quit;
-        "w",    ModifiersState::SUPER;                                         Action::Quit;
+        "w",    ModifiersState::SUPER;                                         Action::CloseTab;
         "f",    ModifiersState::SUPER, ~BindingMode::SEARCH;                   Action::SearchForward;
         "b",    ModifiersState::SUPER, ~BindingMode::SEARCH;                   Action::SearchBackward;
         "+" => KeyLocation::Numpad, ModifiersState::SUPER;                     Action::IncreaseFontSize;

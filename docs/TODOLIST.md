@@ -127,14 +127,16 @@
 
 ### 3.1 多标签支持
 - **优先级**: P0
-- **状态**: PureTerm 现为单窗口（基于 Alacritty）
-- **参考**:
-  - iTerm2: `sources/Toolbelt/` - 标签管理
-  - Warp: `app/src/tab.rs` 多标签
-  - Archive: `archive/pureterm-ui/src/tabs/`、`archive/pureterm-ui/src/tab_bar.rs`
-- **关键文件**:
-  - iTerm2: `sources/Toolbelt/iTermToolbeltView.m`
-  - Archive: `archive/pureterm-ui/src/tabs/manager.rs`
+- **状态**: ✅ 已实现（Phase 1 MVP）— macOS 原生标签 + CloseTab action + SSH 标签创建
+- **描述**: macOS 原生 NSTabGroup 标签系统，每标签独立 Terminal/PTY，键盘快捷键完整支持
+- **实现文件**:
+  - `crates/pureterm-alacritty-runtime/src/alacritty/config/bindings.rs` — `CloseTab` action 枚举 + Cmd+W 绑定
+  - `crates/pureterm-alacritty-runtime/src/alacritty/input/mod.rs` — `CloseTab` 处理逻辑
+  - `crates/pureterm-alacritty-runtime/src/alacritty/event.rs` — `new_ssh_tab()` SSH 标签创建
+  - `crates/pureterm-alacritty-runtime/src/alacritty/cli.rs` — `TerminalOptions.command` 公开化
+- **已实现**: Cmd+T 创建标签、Cmd+W 关闭标签、Cmd+Shift+]/[ 切换标签、Cmd+1-9 选择标签、SSH 标签创建、标签标题 OSC 同步
+- **限制**: 仅 macOS（依赖 NSTabGroup 原生标签），Linux/Windows 跨平台标签未实现，计划后续通过自定义 GPU 标签栏实现
+- **待完善**: 自定义 GPU 标签栏（Phase 2）、标签拖拽排序、标签颜色/图标
 
 ### 3.2 分割窗格
 - **优先级**: P1
@@ -425,7 +427,7 @@
 
 ### P0 - 关键（必须实现）
 1. ~~OSC 133 Shell 集成~~ ✅ 已实现（MVP）
-2. 多标签支持
+2. ~~多标签支持~~ ✅ 已实现（Phase 1 MVP）
 3. ~~SSH 会话后端~~ ✅ 已实现（MVP）
 4. ~~触发器系统~~ ✅ 已实现（MVP）
 5. 多通道渲染管线

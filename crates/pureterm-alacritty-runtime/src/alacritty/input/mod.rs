@@ -347,6 +347,10 @@ impl<T: EventListener> Execute<T> for Action {
                 ctx.window().hold = false;
                 ctx.terminal_mut().exit();
             },
+            Action::CloseTab => {
+                ctx.window().hold = false;
+                ctx.terminal_mut().exit();
+            },
             Action::IncreaseFontSize => ctx.change_font_size(FONT_SIZE_STEP),
             Action::DecreaseFontSize => ctx.change_font_size(-FONT_SIZE_STEP),
             Action::ResetFontSize => ctx.reset_font_size(),

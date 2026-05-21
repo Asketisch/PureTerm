@@ -165,7 +165,7 @@ pub struct TerminalOptions {
 
     /// Command and args to execute (must be last argument).
     #[clap(short = 'e', long, allow_hyphen_values = true, num_args = 1..)]
-    command: Vec<String>,
+    pub command: Vec<String>,
 }
 
 impl TerminalOptions {

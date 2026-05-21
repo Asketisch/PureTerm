@@ -1716,12 +1716,21 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
 
     /// Create a new SSH tab with the specified host.
     fn new_ssh_tab(&mut self, host: &str) -> Result<(), Box<dyn Error>> {
-        let ssh_manager = self.ssh_manager.take().ok_or("SSH not initialized")?;
-        info!("SSH to {}", host);
-        // TODO: Actual SSH tab creation requires creating a new PtyEventLoop with the SSH PTY
-        // and adding it to the tab bar. This is complex and deferred to a later implementation.
-        // Put the ssh_manager back for future use
-        self.ssh_manager = Some(ssh_manager);
+        let _ = self.ssh_manager.as_ref().ok_or("SSH not initialized")?;
+        info!("Opening SSH tab to {}", host);
+
+        let mut options = WindowOptions::default();
+        options.terminal_options.command = vec!["ssh".into(), "-tt".into(), host.into()];
+
+        #[cfg(target_os = "macos")]
+        {
+            options.window_tabbing_id = Some(self.display.window.tabbing_id());
+        }
+
+        let _ = self.event_proxy.send_event(Event::new(
+            EventType::CreateWindow(options),
+            None,
+        ));
         Ok(())
     }
 }
