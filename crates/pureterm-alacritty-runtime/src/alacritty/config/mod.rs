@@ -24,6 +24,7 @@ pub mod terminal;
 pub mod trigger;
 pub mod ui_config;
 pub mod window;
+pub mod ssh;
 
 mod bindings;
 mod mouse;
@@ -32,9 +33,11 @@ use crate::cli::Options;
 #[cfg(test)]
 pub use crate::config::bindings::Binding;
 pub use crate::config::bindings::{
-    Action, BindingKey, BindingMode, KeyBinding, MouseAction, MouseEvent, SearchAction, ViAction,
+    Action, BindingKey, BindingMode, KeyBinding, MouseAction, MouseEvent, SearchAction, SshAction,
+    ViAction,
 };
 pub use crate::config::ui_config::UiConfig;
+pub use ssh::SshConfig;
 use crate::logging::LOG_TARGET_CONFIG;
 
 /// Maximum number of depth for the configuration file imports.

@@ -68,6 +68,8 @@ mod trigger;
 mod trigger_dispatch;
 #[path = "alacritty/window_context.rs"]
 mod window_context;
+#[path = "alacritty/ssh/mod.rs"]
+mod ssh;
 
 mod gl {
     #![allow(clippy::all, unsafe_op_in_unsafe_fn)]

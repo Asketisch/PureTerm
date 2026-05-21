@@ -39,7 +39,7 @@ use crate::clipboard::Clipboard;
 #[cfg(target_os = "macos")]
 use crate::config::window::Decorations;
 use crate::config::{
-    Action, BindingMode, MouseAction, MouseEvent, SearchAction, UiConfig, ViAction,
+    Action, BindingMode, MouseAction, MouseEvent, SearchAction, SshAction, UiConfig, ViAction,
 };
 use crate::display::hint::HintMatch;
 use crate::display::window::{ImeInhibitor, Window};
@@ -440,6 +440,33 @@ impl<T: EventListener> Execute<T> for Action {
             Action::SelectTab9 => ctx.window().select_tab_at_index(8),
             #[cfg(target_os = "macos")]
             Action::SelectLastTab => ctx.window().select_last_tab(),
+            Action::Ssh(SshAction::Connect) => {
+                // Dispatch SSH connection dialog via event system.
+                let event = crate::event::Event::new(
+                    crate::event::EventType::Ssh(String::new()),
+                    Some(ctx.window().id()),
+                );
+                let timer_id = TimerId::new(Topic::Frame, ctx.window().id());
+                ctx.scheduler_mut().schedule(event, std::time::Duration::ZERO, false, timer_id);
+            },
+            Action::Ssh(SshAction::OpenSettings) => {
+                // Dispatch SSH settings UI via event system.
+                let event = crate::event::Event::new(
+                    crate::event::EventType::SshSettings,
+                    Some(ctx.window().id()),
+                );
+                let timer_id = TimerId::new(Topic::Frame, ctx.window().id());
+                ctx.scheduler_mut().schedule(event, std::time::Duration::ZERO, false, timer_id);
+            },
+            Action::Ssh(SshAction::ListProfiles) => {
+                // Dispatch SSH profiles list via event system.
+                let event = crate::event::Event::new(
+                    crate::event::EventType::SshProfiles,
+                    Some(ctx.window().id()),
+                );
+                let timer_id = TimerId::new(Topic::Frame, ctx.window().id());
+                ctx.scheduler_mut().schedule(event, std::time::Duration::ZERO, false, timer_id);
+            },
             _ => (),
         }
     }

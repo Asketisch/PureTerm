@@ -173,13 +173,21 @@
 
 ### 4.1 SSH 会话后端
 - **优先级**: P0
-- **状态**: Alacritty 只支持本地 PTY；PureTerm 曾有 SSH
+- **状态**: ✅ 已实现（MVP）— ControlMaster socket 复用、AES-256-GCM 加密凭证、SSH Profile 配置、SshAction 键盘绑定
+- **描述**: 支持 ~/.ssh/config Host 别名连接和 PureTerm SSH Profile 两种方式
+- **实现文件**:
+  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/mod.rs` — SSH 模块入口
+  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/session.rs` — SshSessionManager 连接池
+  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/pty.rs` — SshPty EventedPty 实现
+  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/credential.rs` — 加密凭证存储
+  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/config.rs` — SshProfile 配置
+  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/command.rs` — SSH 命令构建器
+  - `crates/pureterm-alacritty-runtime/src/alacritty/config/ssh.rs` — SshConfig TOML 解析
+- **已实现**: ControlMaster socket 复用、~/.ssh/config 集成、AES-256-GCM + Argon2id 加密、SshAction (Connect/OpenSettings/ListProfiles)
+- **待完善**: SSH Tab UI（实际标签页创建）、SSH 设置界面、命令面板集成
 - **参考**:
   - Warp: `crates/warp_terminal/` SSH
   - Archive: `archive/pureterm-session/src/ssh/`
-- **关键文件**:
-  - Warp: `crates/warp_terminal/src/`
-  - Archive: `archive/pureterm-session/src/ssh/session.rs`
 
 ### 4.2 Serial 会话后端
 - **优先级**: P1
@@ -418,7 +426,7 @@
 ### P0 - 关键（必须实现）
 1. ~~OSC 133 Shell 集成~~ ✅ 已实现（MVP）
 2. 多标签支持
-3. SSH 会话后端
+3. ~~SSH 会话后端~~ ✅ 已实现（MVP）
 4. ~~触发器系统~~ ✅ 已实现（MVP）
 5. 多通道渲染管线
 

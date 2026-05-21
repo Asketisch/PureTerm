@@ -64,6 +64,7 @@ use crate::message_bar::{Message, MessageBuffer};
 #[cfg(unix)]
 use crate::polling::ipc::{self, SocketReply};
 use crate::scheduler::{Scheduler, TimerId, Topic};
+use crate::ssh::SshSessionManager;
 use crate::window_context::WindowContext;
 
 /// Duration after the last user input until an unlimited search is performed.
@@ -557,6 +558,11 @@ pub enum EventType {
     #[cfg(unix)]
     Shutdown,
     Frame,
+    Ssh(String),
+    /// Open SSH settings UI.
+    SshSettings,
+    /// List SSH profiles.
+    SshProfiles,
 }
 
 impl From<TerminalEvent> for EventType {
@@ -687,6 +693,7 @@ pub struct ActionContext<'a, N, T> {
     #[cfg(not(windows))]
     pub shell_pid: u32,
     pub block_manager: &'a mut BlockManager,
+    pub ssh_manager: Option<&'a mut SshSessionManager>,
 }
 
 impl<'a, N: Notify + 'a, T: EventListener> input::ActionContext<T> for ActionContext<'a, N, T> {
@@ -1706,6 +1713,17 @@ impl<'a, N: Notify + 'a, T: EventListener> ActionContext<'a, N, T> {
             self.mark_dirty();
         }
     }
+
+    /// Create a new SSH tab with the specified host.
+    fn new_ssh_tab(&mut self, host: &str) -> Result<(), Box<dyn Error>> {
+        let ssh_manager = self.ssh_manager.take().ok_or("SSH not initialized")?;
+        info!("SSH to {}", host);
+        // TODO: Actual SSH tab creation requires creating a new PtyEventLoop with the SSH PTY
+        // and adding it to the tab bar. This is complex and deferred to a later implementation.
+        // Put the ssh_manager back for future use
+        self.ssh_manager = Some(ssh_manager);
+        Ok(())
+    }
 }
 
 /// Identified purpose of the touch input.
@@ -1865,6 +1883,27 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                 EventType::Message(message) if !self.ctx.message_buffer.is_queued(&message) => {
                     self.ctx.message_buffer.push(message);
                     self.ctx.display.pending_update.dirty = true;
+                },
+                EventType::Ssh(host) => {
+                    if let Err(err) = self.ctx.new_ssh_tab(&host) {
+                        error!("Failed to create SSH tab: {}", err);
+                    }
+                },
+                EventType::SshSettings => {
+                    // Open SSH settings/profiles configuration UI.
+                    // This would typically show a modal/dialog for managing SSH profiles.
+                    // For now, log that settings were requested.
+                    info!("SSH settings UI requested");
+                },
+                EventType::SshProfiles => {
+                    // List available SSH profiles.
+                    // This would typically show a selectable list of profiles.
+                    // For now, log that profiles list was requested.
+                    if let Some(ssh_config) = self.ctx.config.ssh.profiles.first() {
+                        info!("SSH profiles: {} profiles available", ssh_config.name);
+                    } else {
+                        info!("No SSH profiles configured");
+                    }
                 },
                 EventType::Terminal(event) => match event {
                     TerminalEvent::Title(title) => {

@@ -34,6 +34,7 @@ use crate::config::scrolling::Scrolling;
 use crate::config::selection::Selection;
 use crate::config::terminal::Terminal;
 use crate::config::window::WindowConfig;
+use crate::config::ssh::SshConfig;
 
 /// Regex used for the default URL hint.
 #[rustfmt::skip]
@@ -71,6 +72,10 @@ pub struct UiConfig {
 
     /// Bell configuration.
     pub bell: BellConfig,
+
+    /// SSH configuration.
+    #[config(default)]
+    pub ssh: SshConfig,
 
     /// RGB values for colors.
     pub colors: Colors,

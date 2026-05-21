@@ -115,6 +115,10 @@ pub enum Action {
     #[config(skip)]
     Mouse(MouseAction),
 
+    /// Perform SSH action.
+    #[config(skip)]
+    Ssh(SshAction),
+
     /// Paste contents of system clipboard.
     Paste,
 
@@ -281,6 +285,12 @@ impl From<MouseAction> for Action {
     }
 }
 
+impl From<SshAction> for Action {
+    fn from(action: SshAction) -> Self {
+        Self::Ssh(action)
+    }
+}
+
 /// Display trait used for error logging.
 impl Display for Action {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -354,6 +364,17 @@ pub enum SearchAction {
     SearchHistoryPrevious,
     /// Go to the next regex in the search history.
     SearchHistoryNext,
+}
+
+/// SSH specific actions.
+#[derive(ConfigDeserialize, Debug, Copy, Clone, PartialEq, Eq)]
+pub enum SshAction {
+    /// Open SSH connection dialog.
+    Connect,
+    /// Open SSH settings/profiles UI.
+    OpenSettings,
+    /// List available SSH profiles.
+    ListProfiles,
 }
 
 /// Mouse binding specific actions.

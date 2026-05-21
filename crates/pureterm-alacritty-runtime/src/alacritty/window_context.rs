@@ -44,6 +44,7 @@ use crate::message_bar::MessageBuffer;
 use crate::scheduler::Scheduler;
 use crate::shell_block::BlockManager;
 use crate::shell_integration::{Shell, ShellEnv};
+use crate::ssh::SshSessionManager;
 use crate::trigger::{LineTracker, TriggerService};
 use crate::trigger_dispatch::{DispatchState, dispatch_trigger};
 use crate::{input, renderer};
@@ -77,6 +78,8 @@ pub struct WindowContext {
     trigger_dispatch_state: DispatchState,
     /// Shell integration command block tracker.
     block_manager: BlockManager,
+    /// SSH session manager for remote connections.
+    ssh_manager: Option<SshSessionManager>,
 }
 
 impl WindowContext {
@@ -275,6 +278,11 @@ impl WindowContext {
             trigger_tracker: LineTracker::new(),
             trigger_dispatch_state: DispatchState::new(),
             block_manager: BlockManager::new(),
+            ssh_manager: Some(SshSessionManager::new(
+                dirs::runtime_dir()
+                    .unwrap_or_else(|| std::env::temp_dir())
+                    .join("pureterm/ssh"),
+            )),
         })
     }
 
@@ -473,6 +481,7 @@ impl WindowContext {
             clipboard,
             scheduler,
             block_manager: &mut self.block_manager,
+            ssh_manager: self.ssh_manager.as_mut(),
         };
         let mut processor = input::Processor::new(context);
 
