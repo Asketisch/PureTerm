@@ -364,6 +364,7 @@ pub struct Display {
     frame_builder: FrameBuilder,
     rasterizer: Rasterizer,
     font_key: FontKey,
+    font_descent: f32,
 
     meter: Meter,
 }
@@ -390,6 +391,7 @@ impl Display {
         let font_key = rasterizer.load_font(&font_desc, font_size)?;
         let metrics = rasterizer.metrics(font_key, font_size)?;
         let (cell_width, cell_height) = compute_cell_size(config, &metrics);
+        let font_descent = metrics.descent;
 
         // Resize the window to account for the user configured size.
         if let Some(dimensions) = config.window.dimensions() {
@@ -460,6 +462,7 @@ impl Display {
             frame_builder,
             rasterizer,
             font_key,
+            font_descent,
             visual_bell: VisualBell::from(&config.bell),
             colors: List::from(&config.colors),
             frame_timer: FrameTimer::new(),
@@ -490,14 +493,14 @@ impl Display {
         config: &UiConfig,
         font: &Font,
         font_size: FontSize,
-    ) -> (f32, f32, FontKey) {
+    ) -> (f32, f32, FontKey, f32) {
         let font_desc = make_font_desc(font.normal(), Slant::Normal, Weight::Normal);
         let font_key = rasterizer.load_font(&font_desc, font_size)
             .expect("failed to load font after resize");
         let metrics = rasterizer.metrics(font_key, font_size)
             .expect("failed to get font metrics after resize");
         let (w, h) = compute_cell_size(config, &metrics);
-        (w, h, font_key)
+        (w, h, font_key, metrics.descent)
     }
 
     /// Reset glyph atlas.
@@ -537,6 +540,7 @@ impl Display {
             cell_width = cell_dimensions.0;
             cell_height = cell_dimensions.1;
             self.font_key = cell_dimensions.2;
+            self.font_descent = cell_dimensions.3;
 
             info!("Cell size: {cell_width} x {cell_height}");
 
@@ -741,6 +745,7 @@ impl Display {
             bg_rgb,
             &size_info,
             &mut self.glyph_atlas,
+            self.font_descent,
         );
 
         // Handle IME positioning and search bar rendering.

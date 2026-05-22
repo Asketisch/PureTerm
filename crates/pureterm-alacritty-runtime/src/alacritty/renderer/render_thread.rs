@@ -505,12 +505,14 @@ impl RenderThread {
             });
 
             // Execute passes in order.
+            // Cursor is drawn before text so that inverted text (block cursor)
+            // renders on top of the cursor rectangle.
             self.passes.bg_color.render(&mut render_pass);
             self.passes.bg_image.render(&mut render_pass);
+            self.passes.cursor.render(&mut render_pass);
             self.passes.cell_text.render(&mut render_pass);
             self.passes.kitty_image.render(&mut render_pass);
             self.passes.decorations.render(&mut render_pass);
-            self.passes.cursor.render(&mut render_pass);
             self.passes.debug_overlay.render(&mut render_pass);
             self.passes.post_process.render(&mut render_pass);
         }

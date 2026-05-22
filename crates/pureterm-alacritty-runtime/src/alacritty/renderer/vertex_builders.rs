@@ -94,6 +94,7 @@ impl FrameBuilder {
         mut content: RenderableContent<'a>,
         size_info: &SizeInfo,
         glyph_atlas: &mut WgpuGlyphAtlas,
+        font_descent: f32,
     ) -> FrameBuildResult {
         self.clear();
 
@@ -114,12 +115,13 @@ impl FrameBuilder {
             // --- Cell background (only if not the default background) ---
             if cell.bg_alpha > 0.0 {
                 let color = rgb_to_f32_4(cell.bg, cell.bg_alpha);
+                let bg_w = if cell.flags.contains(Flags::WIDE_CHAR) { cell_w * 2.0 } else { cell_w };
                 push_bg_quad(
                     &mut self.cell_bg_verts,
                     &mut self.cell_bg_idxs,
                     x,
                     y,
-                    cell_w,
+                    bg_w,
                     cell_h,
                     &color,
                 );
@@ -145,6 +147,7 @@ impl FrameBuilder {
                     gw,
                     cell_h,
                     &fg_color,
+                    font_descent,
                 );
 
                 // Zero-width characters rendered on top.
@@ -160,6 +163,7 @@ impl FrameBuilder {
                                 gw,
                                 cell_h,
                                 &fg_color,
+                                font_descent,
                             );
                         }
                     }
@@ -209,6 +213,7 @@ impl FrameBuilder {
         bg_rgb: Rgb,
         size_info: &SizeInfo,
         glyph_atlas: &mut WgpuGlyphAtlas,
+        font_descent: f32,
     ) -> FrameBuildResult {
         self.clear();
 
@@ -229,12 +234,13 @@ impl FrameBuilder {
             // --- Cell background (only if not the default background) ---
             if cell.bg_alpha > 0.0 {
                 let color = rgb_to_f32_4(cell.bg, cell.bg_alpha);
+                let bg_w = if cell.flags.contains(Flags::WIDE_CHAR) { cell_w * 2.0 } else { cell_w };
                 push_bg_quad(
                     &mut self.cell_bg_verts,
                     &mut self.cell_bg_idxs,
                     x,
                     y,
-                    cell_w,
+                    bg_w,
                     cell_h,
                     &color,
                 );
@@ -260,6 +266,7 @@ impl FrameBuilder {
                     gw,
                     cell_h,
                     &fg_color,
+                    font_descent,
                 );
 
                 if let Some(ref extra) = cell.extra {
@@ -274,6 +281,7 @@ impl FrameBuilder {
                                 gw,
                                 cell_h,
                                 &fg_color,
+                                font_descent,
                             );
                         }
                     }
@@ -367,6 +375,7 @@ impl FrameBuilder {
         _cell_w: f32,
         cell_h: f32,
         color: &[f32; 4],
+        font_descent: f32,
     ) {
         if let Some(glyph) = atlas.get(font_index, c) {
             if glyph.width <= 0.0 || glyph.height <= 0.0 {
@@ -374,7 +383,7 @@ impl FrameBuilder {
             }
 
             let gx = cell_x + glyph.x_offset;
-            let gy = cell_y + (cell_h - glyph.y_offset);
+            let gy = cell_y + (cell_h + font_descent - glyph.y_offset);
             let gw = glyph.width;
             let gh = glyph.height;
 
@@ -425,7 +434,6 @@ impl FrameBuilder {
 
         match cursor.shape() {
             CursorShape::Block => {
-                // Full cell block.
                 push_cursor_quad(
                     &mut self.cursor_verts,
                     &mut self.cursor_idxs,
