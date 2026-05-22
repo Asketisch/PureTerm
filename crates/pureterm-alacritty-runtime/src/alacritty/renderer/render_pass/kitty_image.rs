@@ -26,12 +26,12 @@ impl KittyImagePass {
         let uniform_bgl = create_uniform_bgl(
             device,
             "KittyImage Uniform BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
         let tex_sampler_bgl = create_texture_sampler_bgl(
             device,
             "KittyImage Texture Sampler BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
 
         let _pipeline = create_simple_pipeline(

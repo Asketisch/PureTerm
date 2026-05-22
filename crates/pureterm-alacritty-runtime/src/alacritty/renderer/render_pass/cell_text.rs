@@ -77,12 +77,12 @@ impl CellTextPass {
         let uniform_bgl = create_uniform_bgl(
             device,
             "CellText Uniform BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
         let tex_sampler_bgl = create_texture_sampler_bgl(
             device,
             "CellText Texture Sampler BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -154,7 +154,7 @@ impl CellTextPass {
         let tex_sampler_bgl = create_texture_sampler_bgl(
             device,
             "CellText Texture Sampler BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
         self.atlas_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("CellText Atlas BG"),
@@ -230,10 +230,11 @@ impl RenderPass for CellTextPass {
         if self.index_count == 0 {
             return;
         }
+        let Some(ref atlas_bg) = self.atlas_bind_group else {
+            return;
+        };
         pass.set_pipeline(&self.pipeline);
-        if let Some(ref atlas_bg) = self.atlas_bind_group {
-            pass.set_bind_group(0, atlas_bg, &[]);
-        }
+        pass.set_bind_group(0, atlas_bg, &[]);
         pass.set_bind_group(1, &self.bind_group, &[]);
         if let Some(ref vb) = self.vertex_buffer {
             pass.set_vertex_buffer(0, vb.slice(..));

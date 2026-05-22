@@ -279,55 +279,67 @@ impl RenderThread {
         log::info!("Render thread started");
 
         while self.running {
-            // Drain all pending messages, keeping only the latest Frame.
-            let latest_frame = self.drain_messages();
+            // Block until a message arrives.
+            let msg = match self.receiver.recv() {
+                Ok(msg) => msg,
+                Err(_) => {
+                    self.running = false;
+                    break;
+                }
+            };
 
-            // Update cursor blink state.
+            let mut latest_frame = match msg {
+                RenderMessage::Shutdown => {
+                    self.running = false;
+                    continue;
+                }
+                RenderMessage::Resize { width, height } => {
+                    self.handle_resize(width, height);
+                    None
+                }
+                RenderMessage::Frame { data } => Some(data),
+                RenderMessage::SetBackgroundImage { data, width, height } => {
+                    self.handle_set_background_image(data, width, height);
+                    None
+                }
+                RenderMessage::ClearBackground => {
+                    self.handle_clear_background();
+                    None
+                }
+            };
+
+            // Drain remaining messages, coalescing frames.
+            while let Ok(msg) = self.receiver.try_recv() {
+                match msg {
+                    RenderMessage::Shutdown => {
+                        self.running = false;
+                        return;
+                    }
+                    RenderMessage::Resize { width, height } => {
+                        self.handle_resize(width, height);
+                    }
+                    RenderMessage::Frame { data } => {
+                        latest_frame = Some(data);
+                    }
+                    RenderMessage::SetBackgroundImage { data, width, height } => {
+                        self.handle_set_background_image(data, width, height);
+                    }
+                    RenderMessage::ClearBackground => {
+                        self.handle_clear_background();
+                    }
+                }
+            }
+
             self.update_blink();
 
-            // Render the latest frame (if any).
             if let Some(frame_data) = latest_frame {
                 self.draw_frame(&frame_data);
             }
 
-            // Update FPS counter.
             self.update_fps();
-
-            // Brief sleep to avoid spinning when no messages arrive.
-            let _ = self.receiver.recv_timeout(Duration::from_millis(1));
         }
 
         log::info!("Render thread shutting down");
-    }
-
-    /// Drain the message queue. Returns the latest `FrameData` if any frames
-    /// were queued (coalescing multiple frame requests into one render).
-    fn drain_messages(&mut self) -> Option<Box<FrameData>> {
-        let mut latest_frame: Option<Box<FrameData>> = None;
-
-        while let Ok(msg) = self.receiver.try_recv() {
-            match msg {
-                RenderMessage::Shutdown => {
-                    self.running = false;
-                    return None;
-                }
-                RenderMessage::Resize { width, height } => {
-                    self.handle_resize(width, height);
-                }
-                RenderMessage::SetBackgroundImage { data, width, height } => {
-                    self.handle_set_background_image(data, width, height);
-                }
-                RenderMessage::ClearBackground => {
-                    self.handle_clear_background();
-                }
-                RenderMessage::Frame { data } => {
-                    // Keep only the most recent frame data.
-                    latest_frame = Some(data);
-                }
-            }
-        }
-
-        latest_frame
     }
 
     // ── Message handlers ─────────────────────────────────────────────────────

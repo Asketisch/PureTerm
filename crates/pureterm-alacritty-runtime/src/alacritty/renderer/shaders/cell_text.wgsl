@@ -27,7 +27,9 @@ fn vs_main(
     @location(2) color: vec4f,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.position = vec4f(position, 0.0, 1.0);
+    let ndc_x = position.x / u_screen.screen_width * 2.0 - 1.0;
+    let ndc_y = 1.0 - position.y / u_screen.screen_height * 2.0;
+    out.position = vec4f(ndc_x, ndc_y, 0.0, 1.0);
     out.tex_coords = tex_coords;
     out.color = color;
     return out;

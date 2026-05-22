@@ -68,12 +68,12 @@ impl BgImagePass {
         let uniform_bgl = create_uniform_bgl(
             device,
             "BgImage Uniform BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
         let tex_sampler_bgl = create_texture_sampler_bgl(
             device,
             "BgImage Texture Sampler BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -171,7 +171,7 @@ impl BgImagePass {
                 let tex_sampler_bgl = create_texture_sampler_bgl(
                     device,
                     "BgImage Texture Sampler BGL",
-                    wgpu::ShaderStages::FRAGMENT,
+                    wgpu::ShaderStages::VERTEX_FRAGMENT,
                 );
                 self.bg_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("BgImage Texture BG"),

@@ -110,13 +110,13 @@ impl PostProcessPass {
         let scene_bgl = create_texture_sampler_bgl(
             device,
             "PostProcess Scene BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
 
         let uniform_bgl = create_uniform_bgl(
             device,
             "PostProcess Uniform BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
 
         let pipeline = create_simple_pipeline(

@@ -69,7 +69,7 @@ impl BgColorPass {
         let uniform_bgl = create_uniform_bgl(
             device,
             "BgColor Uniform BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {

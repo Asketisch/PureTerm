@@ -81,7 +81,7 @@ impl CursorPass {
         surface_format: wgpu::TextureFormat,
     ) -> Self {
         let uniform_bgl =
-            create_uniform_bgl(device, "Cursor Uniform BGL", wgpu::ShaderStages::FRAGMENT);
+            create_uniform_bgl(device, "Cursor Uniform BGL", wgpu::ShaderStages::VERTEX_FRAGMENT);
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Cursor Uniform Buffer"),

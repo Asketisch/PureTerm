@@ -363,7 +363,7 @@ impl FrameBuilder {
         cell_x: f32,
         cell_y: f32,
         _cell_w: f32,
-        _cell_h: f32,
+        cell_h: f32,
         color: &[f32; 4],
     ) {
         if let Some(glyph) = atlas.get(font_index, c) {
@@ -372,7 +372,7 @@ impl FrameBuilder {
             }
 
             let gx = cell_x + glyph.x_offset;
-            let gy = cell_y + glyph.y_offset;
+            let gy = cell_y + (cell_h - glyph.y_offset);
             let gw = glyph.width;
             let gh = glyph.height;
 

@@ -244,7 +244,7 @@ impl WindowContext {
             occluded: Default::default(),
             mouse: Default::default(),
             touch: Default::default(),
-            dirty: Default::default(),
+            dirty: true,
             trigger_service: TriggerService::default(),
             trigger_tracker: LineTracker::new(),
             trigger_dispatch_state: DispatchState::new(),

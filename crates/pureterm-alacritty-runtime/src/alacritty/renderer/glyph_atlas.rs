@@ -265,89 +265,99 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Allocate a rectangle in the atlas using skyline packing.
+    /// Allocate a rectangle in the atlas using skyline bin-packing.
     ///
     /// Returns `(x, y)` top-left position or `None` if no space.
     fn allocate_rect(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
-        if width > self.atlas_width || height > self.atlas_height {
+        if width == 0 || height == 0 || width > self.atlas_width || height > self.atlas_height {
             return None;
         }
 
-        let mut best_y = self.atlas_height;
+        let mut best_y = u32::MAX;
         let mut best_idx = 0;
-        let mut best_x = 0;
 
-        // Find the skyline segment that gives the lowest Y for this width.
-        for (i, _seg) in self.skyline.iter().enumerate() {
-            let (x, y) = self.fit_width(i, width);
-            if y + height < best_y {
-                best_y = y + height;
-                best_idx = i;
-                best_x = x;
+        // Find the skyline position that gives the lowest resulting Y.
+        for i in 0..self.skyline.len() {
+            if let Some(y) = self.fit_at(i, width, height) {
+                if y + height < best_y {
+                    best_y = y + height;
+                    best_idx = i;
+                }
             }
         }
 
-        // Check that the allocation fits within the atlas.
-        if best_y > self.atlas_height {
+        if best_y == u32::MAX {
             return None;
         }
-        let top_y = best_y - height;
 
-        // Add a new skyline segment for the allocated region.
+        let top_y = best_y - height;
+        let best_x = self.skyline[best_idx].x;
+
+        // Insert new skyline node for the placed rectangle.
         let new_seg = SkylineSeg {
             x: best_x,
             y: best_y,
             width,
         };
 
-        // Merge / update skyline segments.
-        self.skyline.insert(best_idx + 1, new_seg);
+        self.skyline.insert(best_idx, new_seg);
 
-        // Remove covered segments and widen the one before if needed.
+        // Trim or remove segments covered by the new rectangle.
+        let right_edge = best_x + width;
+        let mut i = best_idx + 1;
+        while i < self.skyline.len() {
+            let seg_end = self.skyline[i].x + self.skyline[i].width;
+            if self.skyline[i].x < right_edge {
+                if seg_end <= right_edge {
+                    // Fully covered — remove.
+                    self.skyline.remove(i);
+                } else {
+                    // Partially covered — shrink from left.
+                    let shrink = right_edge - self.skyline[i].x;
+                    self.skyline[i].x += shrink;
+                    self.skyline[i].width -= shrink;
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
         self.merge_skyline();
 
         Some((best_x, top_y))
     }
 
-    /// Find the minimum Y for placing `width` pixels starting at skyline index `idx`.
-    fn fit_width(&self, idx: usize, width: u32) -> (u32, u32) {
-        let seg = &self.skyline[idx];
-        let mut x = seg.x;
-        let mut remaining = width;
-        let mut y = seg.y;
+    /// Check if a rect of `width` x `height` fits starting at skyline segment `idx`.
+    /// Returns the Y coordinate of the top of the placed rect, or None if it doesn't fit.
+    fn fit_at(&self, idx: usize, width: u32, height: u32) -> Option<u32> {
+        let start_x = self.skyline[idx].x;
+        let right_edge = start_x + width;
+        if right_edge > self.atlas_width {
+            return None;
+        }
+
+        let mut max_y = 0u32;
         let mut i = idx;
 
-        while remaining > 0 {
-            if i >= self.skyline.len() {
-                return (x, self.atlas_height);
+        while i < self.skyline.len() && self.skyline[i].x < right_edge {
+            max_y = max_y.max(self.skyline[i].y);
+            if max_y + height > self.atlas_height {
+                return None;
             }
-            let s = &self.skyline[i];
-            y = y.max(s.y);
-            if y >= self.atlas_height {
-                return (x, self.atlas_height);
-            }
-            if x + remaining <= s.x + s.width {
-                return (x, y);
-            }
-            remaining -= s.x + s.width - x;
-            x = s.x + s.width;
             i += 1;
         }
 
-        (x, y)
+        Some(max_y)
     }
 
-    /// Merge adjacent skyline segments that are at the same Y level.
+    /// Merge adjacent skyline segments at the same Y level.
     fn merge_skyline(&mut self) {
-        let mut i = 1;
-        while i < self.skyline.len() {
-            let prev = &self.skyline[i - 1];
-            let curr = &self.skyline[i];
-            // If the previous segment extends past or to the same point, merge.
-            if prev.x + prev.width >= curr.x && prev.y == curr.y {
-                let end = (prev.x + prev.width).max(curr.x + curr.width);
-                self.skyline[i - 1].width = end - prev.x;
-                self.skyline.remove(i);
+        let mut i = 0;
+        while i + 1 < self.skyline.len() {
+            if self.skyline[i].y == self.skyline[i + 1].y {
+                self.skyline[i].width += self.skyline[i + 1].width;
+                self.skyline.remove(i + 1);
             } else {
                 i += 1;
             }

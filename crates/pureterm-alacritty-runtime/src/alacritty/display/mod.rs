@@ -14,7 +14,7 @@ use winit::keyboard::ModifiersState;
 use winit::raw_window_handle::RawWindowHandle;
 use winit::window::CursorIcon;
 
-use crossfont::{FontDesc, Rasterize, Rasterizer, Size as FontSize, Slant, Style, Weight};
+use crossfont::{FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size as FontSize, Slant, Style, Weight};
 use unicode_width::UnicodeWidthChar;
 
 use alacritty_terminal::event::{EventListener, OnResize, WindowSize};
@@ -363,6 +363,7 @@ pub struct Display {
     glyph_atlas: WgpuGlyphAtlas,
     frame_builder: FrameBuilder,
     rasterizer: Rasterizer,
+    font_key: FontKey,
 
     meter: Meter,
 }
@@ -458,6 +459,7 @@ impl Display {
             glyph_atlas,
             frame_builder,
             rasterizer,
+            font_key,
             visual_bell: VisualBell::from(&config.bell),
             colors: List::from(&config.colors),
             frame_timer: FrameTimer::new(),
@@ -488,13 +490,14 @@ impl Display {
         config: &UiConfig,
         font: &Font,
         font_size: FontSize,
-    ) -> (f32, f32) {
+    ) -> (f32, f32, FontKey) {
         let font_desc = make_font_desc(font.normal(), Slant::Normal, Weight::Normal);
         let font_key = rasterizer.load_font(&font_desc, font_size)
             .expect("failed to load font after resize");
         let metrics = rasterizer.metrics(font_key, font_size)
             .expect("failed to get font metrics after resize");
-        compute_cell_size(config, &metrics)
+        let (w, h) = compute_cell_size(config, &metrics);
+        (w, h, font_key)
     }
 
     /// Reset glyph atlas.
@@ -533,6 +536,7 @@ impl Display {
                 Self::update_font_size(&mut self.rasterizer, config, font, self.font_size);
             cell_width = cell_dimensions.0;
             cell_height = cell_dimensions.1;
+            self.font_key = cell_dimensions.2;
 
             info!("Cell size: {cell_width} x {cell_height}");
 
@@ -693,6 +697,42 @@ impl Display {
 
         let _has_highlighted_hint =
             self.highlighted_hint.is_some() || self.vi_highlighted_hint.is_some();
+
+        // Phase 1.5: Prime glyph atlas — rasterize any uncached characters.
+        {
+            for cell in &cells {
+                if cell.character == ' ' {
+                    continue;
+                }
+                if self.glyph_atlas.get(0, cell.character).is_some() {
+                    continue;
+                }
+                let glyph_key = GlyphKey {
+                    character: cell.character,
+                    font_key: self.font_key,
+                    size: self.font_size,
+                };
+                if let Ok(glyph) = self.rasterizer.get_glyph(glyph_key) {
+                    self.glyph_atlas.insert(0, cell.character, &glyph);
+                }
+                if let Some(ref extra) = cell.extra {
+                    if let Some(ref zerowidth) = extra.zerowidth {
+                        for &c in zerowidth {
+                            if self.glyph_atlas.get(0, c).is_none() {
+                                let gk = GlyphKey {
+                                    character: c,
+                                    font_key: self.font_key,
+                                    size: self.font_size,
+                                };
+                                if let Ok(glyph) = self.rasterizer.get_glyph(gk) {
+                                    self.glyph_atlas.insert(0, c, &glyph);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Phase 2: Build frame vertex arrays from pre-collected cells.
         let build_result = self.frame_builder.build_from_cells(

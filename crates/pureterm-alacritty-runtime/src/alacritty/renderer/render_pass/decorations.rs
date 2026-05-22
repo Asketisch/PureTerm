@@ -68,7 +68,7 @@ impl DecorationsPass {
         let uniform_bgl = create_uniform_bgl(
             device,
             "Decorations Uniform BGL",
-            wgpu::ShaderStages::FRAGMENT,
+            wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {

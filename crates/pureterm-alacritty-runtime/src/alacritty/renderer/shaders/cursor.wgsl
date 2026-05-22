@@ -19,7 +19,9 @@ fn vs_main(
     @location(1) color: vec4f,
 ) -> VertexOutput {
     var out: VertexOutput;
-    out.position = vec4f(position, 0.0, 1.0);
+    let ndc_x = position.x / u_uniforms.screen_width * 2.0 - 1.0;
+    let ndc_y = 1.0 - position.y / u_uniforms.screen_height * 2.0;
+    out.position = vec4f(ndc_x, ndc_y, 0.0, 1.0);
     out.color = color;
     return out;
 }
