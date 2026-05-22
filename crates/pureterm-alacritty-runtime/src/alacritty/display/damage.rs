@@ -1,7 +1,7 @@
 use std::iter::Peekable;
 use std::{cmp, mem};
 
-use glutin::surface::Rect;
+use crate::display::rect::Rect;
 
 use alacritty_terminal::index::Point;
 use alacritty_terminal::selection::SelectionRange;
@@ -274,7 +274,7 @@ impl Iterator for RenderDamageIterator<'_> {
     }
 }
 
-/// Check if two given [`glutin::surface::Rect`] overlap.
+/// Check if two given [`Rect`] overlap.
 fn rects_overlap(lhs: Rect, rhs: Rect) -> bool {
     !(
         // `lhs` is left of `rhs`.
@@ -288,7 +288,7 @@ fn rects_overlap(lhs: Rect, rhs: Rect) -> bool {
     )
 }
 
-/// Merge two [`glutin::surface::Rect`] by producing the smallest rectangle that contains both.
+/// Merge two [`Rect`] by producing the smallest rectangle that contains both.
 #[inline]
 fn merge_rects(lhs: Rect, rhs: Rect) -> Rect {
     let left_x = cmp::min(lhs.x, rhs.x);

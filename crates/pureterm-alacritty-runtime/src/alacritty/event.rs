@@ -2,7 +2,6 @@
 
 use crate::shell_block::BlockManager;
 use crate::ConfigMonitor;
-use glutin::config::GetGlConfig;
 use std::borrow::Cow;
 use std::cmp::min;
 use std::collections::hash_map::Entry;
@@ -23,8 +22,6 @@ use std::{env, f32, mem};
 
 use ahash::RandomState;
 use crossfont::Size as FontSize;
-use glutin::config::Config as GlutinConfig;
-use glutin::display::GetGlDisplay;
 use log::{debug, error, info, warn};
 use winit::application::ApplicationHandler;
 use winit::event::{
@@ -34,6 +31,8 @@ use winit::event::{
 use winit::event_loop::{ActiveEventLoop, ControlFlow, DeviceEvents, EventLoop, EventLoopProxy};
 use winit::raw_window_handle::HasDisplayHandle;
 use winit::window::WindowId;
+
+use wgpu;
 
 use alacritty_terminal::event::{Event as TerminalEvent, EventListener, Notify};
 use alacritty_terminal::event_loop::Notifier;
@@ -95,7 +94,7 @@ pub struct Processor {
     initial_window_error: Option<Box<dyn Error>>,
     windows: HashMap<WindowId, WindowContext, RandomState>,
     proxy: EventLoopProxy<Event>,
-    gl_config: Option<GlutinConfig>,
+    wgpu_instance: Option<wgpu::Instance>,
     #[cfg(unix)]
     global_ipc_options: ParsedOptions,
     cli_options: CliOptions,
@@ -136,7 +135,7 @@ impl Processor {
             cli_options,
             proxy,
             scheduler,
-            gl_config: None,
+            wgpu_instance: None,
             config: Rc::new(config),
             clipboard,
             windows: Default::default(),
@@ -146,10 +145,7 @@ impl Processor {
         }
     }
 
-    /// Create initial window and load GL platform.
-    ///
-    /// This will initialize the OpenGL Api and pick a config that
-    /// will be used for the rest of the windows.
+    /// Create initial window and initialize the wgpu platform.
     pub fn create_initial_window(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -162,7 +158,6 @@ impl Processor {
             window_options,
         )?;
 
-        self.gl_config = Some(window_context.display.gl_context().config());
         self.windows.insert(window_context.id(), window_context);
 
         Ok(())
@@ -174,8 +169,6 @@ impl Processor {
         event_loop: &ActiveEventLoop,
         options: WindowOptions,
     ) -> Result<(), Box<dyn Error>> {
-        let gl_config = self.gl_config.as_ref().unwrap();
-
         // Override config with CLI/IPC options.
         let mut config_overrides = options.config_overrides();
         #[cfg(unix)]
@@ -183,8 +176,13 @@ impl Processor {
         let mut config = self.config.clone();
         config = config_overrides.override_config_rc(config);
 
+        // Use stored wgpu instance if available, otherwise create a new one.
+        let instance = self.wgpu_instance.get_or_insert_with(|| {
+            wgpu::Instance::new(&wgpu::InstanceDescriptor::default())
+        });
+
         let window_context = WindowContext::additional(
-            gl_config,
+            instance,
             event_loop,
             self.proxy.clone(),
             config,
@@ -373,15 +371,7 @@ impl ApplicationHandler<Event> for Processor {
             },
             // Create a new terminal window.
             (EventType::CreateWindow(options), _) => {
-                // XXX Ensure that no context is current when creating a new window,
-                // otherwise it may lock the backing buffer of the
-                // surface of current context when asking
-                // e.g. EGL on Wayland to create a new context.
-                for window_context in self.windows.values_mut() {
-                    window_context.display.make_not_current();
-                }
-
-                if self.gl_config.is_none() {
+                if self.wgpu_instance.is_none() {
                     // Handle initial window creation in daemon mode.
                     if let Err(err) = self.create_initial_window(event_loop, options) {
                         self.initial_window_error = Some(err);
@@ -496,21 +486,7 @@ impl ApplicationHandler<Event> for Processor {
             info!("Exiting the event loop");
         }
 
-        match self.gl_config.take().map(|config| config.display()) {
-            #[cfg(not(target_os = "macos"))]
-            Some(glutin::display::Display::Egl(display)) => {
-                // Ensure that all the windows are dropped, so the destructors for
-                // Renderer and contexts ran.
-                self.windows.clear();
-
-                // SAFETY: the display is being destroyed after destroying all the
-                // windows, thus no attempt to access the EGL state will be made.
-                unsafe {
-                    display.terminate();
-                }
-            },
-            _ => (),
-        }
+        // wgpu handles cleanup through its own RAII destructors; no manual EGL teardown needed.
 
         // SAFETY: The clipboard must be dropped before the event loop, so use the nop clipboard
         // as a safe placeholder.

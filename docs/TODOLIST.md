@@ -50,13 +50,19 @@
 
 ### 2.1 多通道渲染管线
 - **优先级**: P0
-- **状态**: Alacritty 单通道；PureTerm legacy 曾有 8 通道
+- **状态**: ✅ 已实现 — wgpu 8 通道渲染管线 + 独立渲染线程 (feature flag: `wgpu-renderer`)
+- **描述**: 替换 Alacritty OpenGL 单通道渲染器为 wgpu 8 通道管线，支持 Metal/Vulkan/DX12 跨平台
+- **实现文件**:
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_pass/` — 8 个渲染通道 (bg_color, bg_image, cell_text, decorations, cursor, kitty_image, debug_overlay, post_process)
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_thread.rs` — 独立渲染线程 + crossbeam_channel 消息传递
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/glyph_atlas.rs` — WgpuGlyphAtlas: crossfont → wgpu R8Unorm Skyline 装箱
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/vertex_builders.rs` — FrameBuilder: 可复用 Vec 避免 per-frame 分配
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/` — 8 个 WGSL 着色器
+- **已实现**: 8 通道按序渲染、独立渲染线程 (mailbox 模式)、crossfont → wgpu 字形桥接、动态 GPU 缓冲增长、光标闪烁、FPS 统计
+- **待完善**: 删除 OpenGL 旧代码、彩色 Emoji BGRA 图集、Kitty 图片渲染、ShaderToy 自定义着色器
 - **参考**:
   - Ghostty: `src/renderer/generic.zig` (8 个渲染通道)
-  - Ghostty: `src/renderer/Thread.zig` (独立渲染线程，400+ 行，mailbox 模式)
-- **关键文件**:
-  - Ghostty: `renderer/generic.zig` - `drawFrame()` 含 bg_color、bg_image、cell_bg、cell_text、image、overlay、shadertoy 管线
-  - Ghostty: `renderer/Thread.zig` - 8ms 定时器独立渲染线程
+  - Ghostty: `src/renderer/Thread.zig` (独立渲染线程，mailbox 模式)
 
 ### 2.2 彩色 Emoji / BGRA 字体图集
 - **优先级**: P1
@@ -108,7 +114,8 @@
 
 ### 2.7 字体图集矩形装箱
 - **优先级**: P1
-- **状态**: PureTerm 简单行式装箱；Ghostty 用 Skyline 算法
+- **状态**: ✅ 已实现 — WgpuGlyphAtlas 使用 Skyline 算法，2048x2048 固定 R8 图集，LRU 淘汰
+- **实现文件**: `crates/pureterm-alacritty-runtime/src/alacritty/renderer/glyph_atlas.rs`
 - **参考**: Ghostty `font/Atlas.zig` 使用 Jukka Jylanki Skyline 算法
 
 ### 2.8 字体回退链
@@ -430,7 +437,7 @@
 2. ~~多标签支持~~ ✅ 已实现（Phase 1 MVP）
 3. ~~SSH 会话后端~~ ✅ 已实现（MVP）
 4. ~~触发器系统~~ ✅ 已实现（MVP）
-5. 多通道渲染管线
+5. ~~多通道渲染管线~~ ✅ 已实现（wgpu 8 通道 + 独立渲染线程）
 
 ### P1 - 高优先级（应该有）
 6. 智能选择

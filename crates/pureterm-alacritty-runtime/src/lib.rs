@@ -71,11 +71,6 @@ mod window_context;
 #[path = "alacritty/ssh/mod.rs"]
 mod ssh;
 
-mod gl {
-    #![allow(clippy::all, unsafe_op_in_unsafe_fn)]
-    include!(concat!(env!("OUT_DIR"), "/gl_bindings.rs"));
-}
-
 #[cfg(unix)]
 use crate::cli::MessageOptions;
 #[cfg(not(any(target_os = "macos", windows)))]

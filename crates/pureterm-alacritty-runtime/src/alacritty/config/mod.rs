@@ -37,7 +37,6 @@ pub use crate::config::bindings::{
     ViAction,
 };
 pub use crate::config::ui_config::UiConfig;
-pub use ssh::SshConfig;
 use crate::logging::LOG_TARGET_CONFIG;
 
 /// Maximum number of depth for the configuration file imports.

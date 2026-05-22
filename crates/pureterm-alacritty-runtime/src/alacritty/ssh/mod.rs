@@ -12,5 +12,3 @@ pub mod ssh_config_reader;
 pub mod command;
 
 pub use session::SshSessionManager;
-pub use config::{SshProfile, SshProfileRegistry};
-pub use credential::CredentialStore;

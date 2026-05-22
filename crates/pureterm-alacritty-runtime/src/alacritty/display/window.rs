@@ -13,7 +13,6 @@ use winit::platform::wayland::WindowAttributesExtWayland;
 use {
     std::io::Cursor,
     winit::platform::x11::{WindowAttributesExtX11, ActiveEventLoopExtX11},
-    glutin::platform::x11::X11VisualInfo,
     winit::window::Icon,
     png::Decoder,
 };
@@ -133,16 +132,11 @@ impl Window {
         config: &UiConfig,
         identity: &Identity,
         options: &mut WindowOptions,
-        #[rustfmt::skip]
-        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-        x11_visual: Option<X11VisualInfo>,
     ) -> Result<Window> {
         let identity = identity.clone();
         let mut window_attributes = Window::get_platform_window(
             &identity,
             &config.window,
-            #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-            x11_visual,
             #[cfg(target_os = "macos")]
             &options.window_tabbing_id.take(),
         );
@@ -222,6 +216,12 @@ impl Window {
         self.window.window_handle().unwrap().as_raw()
     }
 
+    /// Get a reference to the inner winit window for wgpu surface creation.
+    #[inline]
+    pub fn winit_window(&self) -> &WinitWindow {
+        &self.window
+    }
+
     #[inline]
     pub fn request_inner_size(&self, size: PhysicalSize<u32>) {
         let _ = self.window.request_inner_size(size);
@@ -289,9 +289,6 @@ impl Window {
     pub fn get_platform_window(
         identity: &Identity,
         window_config: &WindowConfig,
-        #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))] x11_visual: Option<
-            X11VisualInfo,
-        >,
     ) -> WindowAttributes {
         #[cfg(feature = "x11")]
         let icon = {
@@ -310,12 +307,6 @@ impl Window {
 
         #[cfg(feature = "x11")]
         let builder = builder.with_window_icon(Some(icon));
-
-        #[cfg(feature = "x11")]
-        let builder = match x11_visual {
-            Some(visual) => builder.with_x11_visual(visual.visual_id() as u32),
-            None => builder,
-        };
 
         builder
     }

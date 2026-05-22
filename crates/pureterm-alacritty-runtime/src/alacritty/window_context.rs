@@ -10,15 +10,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use glutin::config::Config as GlutinConfig;
-use glutin::display::GetGlDisplay;
-#[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-use glutin::platform::x11::X11GlConfigExt;
 use log::info;
 use serde_json as json;
 use winit::event::{Event as WinitEvent, Modifiers, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoopProxy};
-use winit::raw_window_handle::HasDisplayHandle;
+use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use winit::window::WindowId;
 
 use alacritty_terminal::event::Event as TerminalEvent;
@@ -47,7 +43,20 @@ use crate::shell_integration::{Shell, ShellEnv};
 use crate::ssh::SshSessionManager;
 use crate::trigger::{LineTracker, TriggerService};
 use crate::trigger_dispatch::{DispatchState, dispatch_trigger};
-use crate::{input, renderer};
+use crate::input;
+
+// wgpu render pass imports for creating the RenderPasses bundle.
+use crate::renderer::render_pass::{
+    bg_color::BgColorPass,
+    bg_image::BgImagePass,
+    cell_text::CellTextPass,
+    cursor::CursorPass,
+    debug_overlay::DebugOverlayPass,
+    decorations::DecorationsPass,
+    kitty_image::KittyImagePass,
+    post_process::PostProcessPass,
+};
+use crate::renderer::render_thread::{RenderPasses, RenderThreadHandle};
 
 /// Event context for one individual Alacritty window.
 pub struct WindowContext {
@@ -83,65 +92,37 @@ pub struct WindowContext {
 }
 
 impl WindowContext {
-    /// Create initial window context that does bootstrapping the graphics API we're going to use.
+    /// Create initial window context using the wgpu renderer.
     pub fn initial(
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         config: Rc<UiConfig>,
         mut options: WindowOptions,
     ) -> Result<Self, Box<dyn Error>> {
-        let raw_display_handle = event_loop.display_handle().unwrap().as_raw();
-
         let mut identity = config.window.identity.clone();
         options.window_identity.override_identity_config(&mut identity);
 
-        // Windows has different order of GL platform initialization compared to any other platform;
-        // it requires the window first.
-        #[cfg(windows)]
         let window = Window::new(event_loop, &config, &identity, &mut options)?;
-        #[cfg(windows)]
-        let raw_window_handle = Some(window.raw_window_handle());
 
-        #[cfg(not(windows))]
-        let raw_window_handle = None;
+        let (render_thread, _device, _surface_config) = create_wgpu_renderer(&window)?;
 
-        let gl_display = renderer::platform::create_gl_display(
-            raw_display_handle,
-            raw_window_handle,
-            config.debug.prefer_egl,
-        )?;
-        let gl_config = renderer::platform::pick_gl_config(&gl_display, raw_window_handle)?;
-
-        #[cfg(not(windows))]
-        let window = Window::new(
-            event_loop,
-            &config,
-            &identity,
-            &mut options,
-            #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-            gl_config.x11_visual(),
-        )?;
-
-        // Create context.
-        let gl_context =
-            renderer::platform::create_gl_context(&gl_display, &gl_config, raw_window_handle)?;
-
-        let display = Display::new(window, gl_context, &config, false)?;
+        let display = Display::new(window, render_thread, &config, false)?;
 
         Self::new(display, config, options, proxy)
     }
 
-    /// Create additional context with the graphics platform other windows are using.
+    /// Create additional context using the wgpu renderer.
+    ///
+    /// A shared `wgpu::Instance` is passed instead of a GL config, allowing
+    /// all windows to share the same GPU adapter.
     pub fn additional(
-        gl_config: &GlutinConfig,
+        _instance: &wgpu::Instance,
         event_loop: &ActiveEventLoop,
         proxy: EventLoopProxy<Event>,
         config: Rc<UiConfig>,
         mut options: WindowOptions,
         config_overrides: ParsedOptions,
     ) -> Result<Self, Box<dyn Error>> {
-        let gl_display = gl_config.display();
-
         let mut identity = config.window.identity.clone();
         options.window_identity.override_identity_config(&mut identity);
 
@@ -152,21 +133,11 @@ impl WindowContext {
         #[cfg(not(target_os = "macos"))]
         let tabbed = false;
 
-        let window = Window::new(
-            event_loop,
-            &config,
-            &identity,
-            &mut options,
-            #[cfg(all(feature = "x11", not(any(target_os = "macos", windows))))]
-            gl_config.x11_visual(),
-        )?;
+        let window = Window::new(event_loop, &config, &identity, &mut options)?;
 
-        // Create context.
-        let raw_window_handle = window.raw_window_handle();
-        let gl_context =
-            renderer::platform::create_gl_context(&gl_display, gl_config, Some(raw_window_handle))?;
+        let (render_thread, _device, _surface_config) = create_wgpu_renderer(&window)?;
 
-        let display = Display::new(window, gl_context, &config, tabbed)?;
+        let display = Display::new(window, render_thread, &config, tabbed)?;
 
         let mut window_context = Self::new(display, config, options, proxy)?;
 
@@ -651,6 +622,90 @@ impl WindowContext {
             }
         }
     }
+}
+
+/// Create a wgpu renderer for the given window.
+///
+/// This sets up the full wgpu rendering pipeline: instance, surface, adapter,
+/// device, queue, all 8 render passes, and spawns the render thread.
+/// Returns the render thread handle, device, and surface configuration.
+fn create_wgpu_renderer(
+    window: &Window,
+) -> Result<(RenderThreadHandle, wgpu::Device, wgpu::SurfaceConfiguration), Box<dyn Error>> {
+    let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+        backends: wgpu::Backends::all(),
+        ..Default::default()
+    });
+
+    // SAFETY: The window outlives the render thread (shutdown is sent on Drop).
+    let surface = unsafe {
+        instance.create_surface_unsafe(wgpu::SurfaceTargetUnsafe::RawHandle {
+            raw_display_handle: window.winit_window().display_handle()?.as_raw(),
+            raw_window_handle: window.winit_window().window_handle()?.as_raw(),
+        })?
+    };
+
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: Some(&surface),
+        force_fallback_adapter: false,
+    }))
+    .ok_or("Failed to find a suitable wgpu adapter")?;
+
+    let (device, queue) = pollster::block_on(adapter.request_device(
+        &wgpu::DeviceDescriptor {
+            label: Some("PureTerm wgpu Device"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                .using_resolution(adapter.limits()),
+            memory_hints: Default::default(),
+        },
+        None,
+    ))?;
+
+    let surface_caps = surface.get_capabilities(&adapter);
+    let surface_format = surface_caps
+        .formats
+        .iter()
+        .find(|f| f.is_srgb())
+        .copied()
+        .unwrap_or(surface_caps.formats[0]);
+
+    let size = window.inner_size();
+    let surface_config = wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format: surface_format,
+        width: size.width.max(1),
+        height: size.height.max(1),
+        present_mode: wgpu::PresentMode::AutoVsync,
+        alpha_mode: surface_caps.alpha_modes[0],
+        view_formats: vec![],
+        desired_maximum_frame_latency: 2,
+    };
+    surface.configure(&device, &surface_config);
+
+    // Create all 8 render passes.
+    let passes = RenderPasses {
+        bg_color: BgColorPass::new(&device, &queue, &surface_config, surface_format),
+        bg_image: BgImagePass::new(&device, &queue, &surface_config, surface_format),
+        cell_text: CellTextPass::new(&device, &queue, &surface_config, surface_format),
+        kitty_image: KittyImagePass::new(&device, &queue, &surface_config, surface_format),
+        decorations: DecorationsPass::new(&device, &queue, &surface_config, surface_format),
+        cursor: CursorPass::new(&device, &queue, &surface_config, surface_format),
+        debug_overlay: DebugOverlayPass::new(&device, &surface_config, surface_format),
+        post_process: PostProcessPass::new(&device, &surface_config, surface_format),
+    };
+
+    // Spawn the render thread, transferring ownership of all wgpu resources.
+    let render_thread = RenderThreadHandle::spawn(
+        surface,
+        device.clone(),
+        queue,
+        surface_config.clone(),
+        passes,
+    );
+
+    Ok((render_thread, device, surface_config))
 }
 
 impl Drop for WindowContext {
