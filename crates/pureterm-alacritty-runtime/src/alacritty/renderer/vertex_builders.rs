@@ -186,6 +186,7 @@ impl FrameBuilder {
             &mut self.bg_color_idxs,
             screen_w,
             screen_h,
+            &bg_color,
         );
 
         let screen_uniforms = ScreenUniforms::new(0.0, screen_w, screen_h);
@@ -295,6 +296,7 @@ impl FrameBuilder {
             &mut self.bg_color_idxs,
             screen_w,
             screen_h,
+            &bg_color,
         );
 
         let screen_uniforms = ScreenUniforms::new(0.0, screen_w, screen_h);
@@ -566,14 +568,13 @@ fn push_bg_quad_fullscreen(
     indices: &mut Vec<u32>,
     screen_w: f32,
     screen_h: f32,
+    color: &[f32; 4],
 ) {
-    // Uniform white color; actual color comes from the uniform or draw clear.
-    let color = [1.0, 1.0, 1.0, 1.0];
     let base = verts.len() as u32;
-    verts.push(BgVertex { position: [0.0, 0.0], color });
-    verts.push(BgVertex { position: [screen_w, 0.0], color });
-    verts.push(BgVertex { position: [screen_w, screen_h], color });
-    verts.push(BgVertex { position: [0.0, screen_h], color });
+    verts.push(BgVertex { position: [0.0, 0.0], color: *color });
+    verts.push(BgVertex { position: [screen_w, 0.0], color: *color });
+    verts.push(BgVertex { position: [screen_w, screen_h], color: *color });
+    verts.push(BgVertex { position: [0.0, screen_h], color: *color });
     push_quad_indices(indices, base);
 }
 

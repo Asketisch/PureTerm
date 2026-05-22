@@ -318,7 +318,18 @@ impl RenderThread {
                     RenderMessage::Resize { width, height } => {
                         self.handle_resize(width, height);
                     }
-                    RenderMessage::Frame { data } => {
+                    RenderMessage::Frame { mut data } => {
+                        // Preserve atlas data from the frame being replaced.
+                        if data.atlas_data.is_none() {
+                            if let Some(ref prev) = latest_frame {
+                                if prev.atlas_data.is_some() {
+                                    data.atlas_data = prev.atlas_data.clone();
+                                    data.atlas_width = prev.atlas_width;
+                                    data.atlas_height = prev.atlas_height;
+                                    data.atlas_dirty = true;
+                                }
+                            }
+                        }
                         latest_frame = Some(data);
                     }
                     RenderMessage::SetBackgroundImage { data, width, height } => {
