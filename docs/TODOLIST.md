@@ -93,13 +93,18 @@
 
 ### 2.4 背景图像 GPU 渲染
 - **优先级**: P1
-- **状态**: 图像可加载但未渲染到 GPU
-- **参考**:
-  - Ghostty: `renderer/generic.zig` → bg_image 管线
-  - Ghostty: `renderer/image.zig` → 背景层图像处理
-- **关键文件**:
-  - Ghostty: `src/renderer/generic.zig` - bg_image 管线
-  - Ghostty: `src/config/Config.zig` - background-image-fit/position/repeat
+- **状态**: ✅ 已实现 — PNG/JPEG 加载 + wgpu 纹理上传 + WGSL fit/position/opacity shader + TOML 配置 + 实时重载
+- **描述**: 支持 PNG/JPEG 背景图片，4 种 fit 模式（Cover/Contain/Stretch/None），9 宫格位置，可调透明度
+- **实现文件**:
+  - `crates/pureterm-alacritty-runtime/src/alacritty/config/window.rs` — BackgroundImageConfig + BackgroundImageFit + BackgroundImagePosition 枚举
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/bg_image_loader.rs` — image crate PNG/JPEG → RGBA8 加载
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/bg_image.wgsl` — BgImageUniforms + Cover/Contain/Stretch/None UV 计算 + 9 宫格位置 + opacity + corner radius
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_pass/bg_image.rs` — BgImageUniforms 结构体 + set_params + GPU 纹理管理
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_thread.rs` — SetBackgroundImage 消息 + GPU 纹理上传 + clear_background
+  - `crates/pureterm-alacritty-runtime/src/alacritty/display/mod.rs` — update_background_image() 配置→渲染线程桥接
+  - `crates/pureterm-alacritty-runtime/src/alacritty/window_context.rs` — 启动加载 + 配置重载钩子
+- **已实现**: PNG/JPEG 解码、wgpu Rgba8UnormSrgb 纹理上传、Cover/Contain/Stretch/None 缩放、9 宫格位置、opacity 透明度、圆角裁剪、配置实时重载
+- **待完善**: 图片缩放优化（大图浪费 VRAM）、图片缓存（避免重复加载）、Tiling 平铺模式
 
 ### 2.5 自定义着色器 (ShaderToy)
 - **优先级**: P1
@@ -459,7 +464,7 @@
 7. ~~彩色 Emoji / BGRA 字体图集~~ ✅ 已实现（双图集 + 条件采样）
 8. 语义历史 / 悬停预览
 9. HarfBuzz 文本整形
-10. 背景图像 GPU 渲染
+10. ~~背景图像 GPU 渲染~~ ✅ 已实现（PNG/JPEG + fit/position/opacity + 实时重载）
 11. 自定义着色器 (ShaderToy)
 12. 复制模式（Vi 风格）
 13. 协同处理

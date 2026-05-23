@@ -6,10 +6,40 @@
 use bytemuck::{Pod, Zeroable};
 use wgpu::{Device, Queue, RenderPipeline, SurfaceConfiguration};
 
-use super::{
-    create_linear_sampler, create_simple_pipeline, create_texture_sampler_bgl, create_uniform_bgl,
-    PassData, RenderPass, ScreenUniforms,
-};
+use super::{create_linear_sampler, create_simple_pipeline, create_texture_sampler_bgl, create_uniform_bgl, PassData, RenderPass};
+
+/// 背景图片着色器使用的 uniform 结构体。
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct BgImageUniforms {
+    pub corner_radius: f32,
+    pub screen_width: f32,
+    pub screen_height: f32,
+    pub opacity: f32,
+    pub image_width: f32,
+    pub image_height: f32,
+    pub fit: f32,
+    pub position: f32,
+}
+
+impl BgImageUniforms {
+    pub fn new(
+        corner_radius: f32,
+        screen_width: f32,
+        screen_height: f32,
+    ) -> Self {
+        Self {
+            corner_radius,
+            screen_width,
+            screen_height,
+            opacity: 1.0,
+            image_width: 0.0,
+            image_height: 0.0,
+            fit: 2.0,
+            position: 0.0,
+        }
+    }
+}
 
 /// 背景图片全屏四边形的顶点：位置 + 纹理坐标。
 #[repr(C)]
@@ -55,6 +85,8 @@ pub struct BgImagePass {
     bg_bind_group: Option<wgpu::BindGroup>,
     sampler: wgpu::Sampler,
     visible: bool,
+    /// 当前 uniform 缓存，用于 set_params 局部更新。
+    cached_uniforms: BgImageUniforms,
 }
 
 impl BgImagePass {
@@ -76,9 +108,11 @@ impl BgImagePass {
             wgpu::ShaderStages::VERTEX_FRAGMENT,
         );
 
+        let uniforms = BgImageUniforms::new(0.0, config.width as f32, config.height as f32);
+
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("BgImage Uniform Buffer"),
-            size: std::mem::size_of::<ScreenUniforms>() as u64,
+            size: std::mem::size_of::<BgImageUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -144,8 +178,6 @@ impl BgImagePass {
         // 写入静态全屏四边形数据
         queue.write_buffer(&vertex_buffer, 0, bytemuck::cast_slice(&vertices));
         queue.write_buffer(&index_buffer, 0, bytemuck::cast_slice(&FULLSCREEN_INDICES));
-
-        let uniforms = ScreenUniforms::new(0.0, config.width as f32, config.height as f32);
         queue.write_buffer(&uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
 
         Self {
@@ -157,6 +189,7 @@ impl BgImagePass {
             bg_bind_group: None,
             sampler,
             visible: false,
+            cached_uniforms: uniforms,
         }
     }
 
@@ -196,34 +229,30 @@ impl BgImagePass {
         }
     }
 
-    /// 更新全屏四边形的 UV 坐标（用于不同的背景模式）。
-    pub fn set_uv_rect(&self, queue: &Queue, u0: f32, v0: f32, u1: f32, v1: f32) {
-        let vertices: [BgImageVertex; 4] = [
-            BgImageVertex {
-                position: [-1.0, -1.0],
-                tex_coords: [u0, v1],
-            },
-            BgImageVertex {
-                position: [1.0, -1.0],
-                tex_coords: [u1, v1],
-            },
-            BgImageVertex {
-                position: [-1.0, 1.0],
-                tex_coords: [u0, v0],
-            },
-            BgImageVertex {
-                position: [1.0, 1.0],
-                tex_coords: [u1, v0],
-            },
-        ];
-        queue.write_buffer(&self.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+    /// 更新图片参数（opacity, fit, position, 图片尺寸）。
+    pub fn set_params(
+        &mut self,
+        queue: &Queue,
+        opacity: f32,
+        fit: f32,
+        position: f32,
+        image_w: f32,
+        image_h: f32,
+    ) {
+        self.cached_uniforms.opacity = opacity;
+        self.cached_uniforms.fit = fit;
+        self.cached_uniforms.position = position;
+        self.cached_uniforms.image_width = image_w;
+        self.cached_uniforms.image_height = image_h;
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[self.cached_uniforms]));
     }
 
-    /// 更新此帧的 uniforms。
+    /// 更新此帧的 uniforms（屏幕尺寸和圆角）。
     pub fn update(&mut self, queue: &Queue, data: &PassData) {
-        let uniforms =
-            ScreenUniforms::new(data.corner_radius, data.screen_width, data.screen_height);
-        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[uniforms]));
+        self.cached_uniforms.corner_radius = data.corner_radius;
+        self.cached_uniforms.screen_width = data.screen_width;
+        self.cached_uniforms.screen_height = data.screen_height;
+        queue.write_buffer(&self.uniform_buffer, 0, bytemuck::cast_slice(&[self.cached_uniforms]));
     }
 
     /// 背景图片当前是否可见。

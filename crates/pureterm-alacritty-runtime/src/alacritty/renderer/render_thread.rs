@@ -46,6 +46,9 @@ pub enum RenderMessage {
         data: Vec<u8>,
         width: u32,
         height: u32,
+        opacity: f32,
+        fit: f32,
+        position: f32,
     },
     /// Clear the background image.
     ClearBackground,
@@ -146,6 +149,31 @@ impl RenderThreadHandle {
     /// Shut down the render thread gracefully.
     pub fn shutdown(&self) {
         let _ = self.sender.send(RenderMessage::Shutdown);
+    }
+
+    /// Set or replace the background image.
+    pub fn set_background_image(
+        &self,
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+        opacity: f32,
+        fit: f32,
+        position: f32,
+    ) {
+        let _ = self.sender.send(RenderMessage::SetBackgroundImage {
+            data,
+            width,
+            height,
+            opacity,
+            fit,
+            position,
+        });
+    }
+
+    /// Clear the background image.
+    pub fn clear_background(&self) {
+        let _ = self.sender.send(RenderMessage::ClearBackground);
     }
 
     /// Take a snapshot of the current render statistics.
@@ -303,8 +331,8 @@ impl RenderThread {
                     None
                 }
                 RenderMessage::Frame { data } => Some(data),
-                RenderMessage::SetBackgroundImage { data, width, height } => {
-                    self.handle_set_background_image(data, width, height);
+                RenderMessage::SetBackgroundImage { data, width, height, opacity, fit, position } => {
+                    self.handle_set_background_image(data, width, height, opacity, fit, position);
                     None
                 }
                 RenderMessage::ClearBackground => {
@@ -347,8 +375,8 @@ impl RenderThread {
                         }
                         latest_frame = Some(data);
                     }
-                    RenderMessage::SetBackgroundImage { data, width, height } => {
-                        self.handle_set_background_image(data, width, height);
+                    RenderMessage::SetBackgroundImage { data, width, height, opacity, fit, position } => {
+                        self.handle_set_background_image(data, width, height, opacity, fit, position);
                     }
                     RenderMessage::ClearBackground => {
                         self.handle_clear_background();
@@ -386,15 +414,57 @@ impl RenderThread {
         self.passes.post_process.resize(&self.device, &self.config);
     }
 
-    fn handle_set_background_image(&mut self, _data: Vec<u8>, _width: u32, _height: u32) {
-        // TODO: create GPU texture from RGBA bytes and call
-        // self.passes.bg_image.set_background(&self.device, Some(&view));
-        log::debug!("Render thread: set background image {}x{}", _width, _height);
+    fn handle_set_background_image(
+        &mut self,
+        data: Vec<u8>,
+        width: u32,
+        height: u32,
+        opacity: f32,
+        fit: f32,
+        position: f32,
+    ) {
+        log::debug!("Render thread: set background image {}x{}", width, height);
+
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Background Image Texture"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        self.queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            &data,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            size,
+        );
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        self.passes.bg_image.set_background(&self.device, Some(&view));
+        self.passes
+            .bg_image
+            .set_params(&self.queue, opacity, fit, position, width as f32, height as f32);
     }
 
     fn handle_clear_background(&mut self) {
         log::debug!("Render thread: clear background");
-        // TODO: self.passes.bg_image.set_background(&self.device, None);
+        self.passes.bg_image.set_background(&self.device, None);
     }
 
     // ── Frame rendering ──────────────────────────────────────────────────────

@@ -108,6 +108,9 @@ impl WindowContext {
 
         let display = Display::new(window, render_thread, &config, false)?;
 
+        // Load background image on startup.
+        display.update_background_image(&config);
+
         Self::new(display, config, options, proxy)
     }
 
@@ -138,6 +141,9 @@ impl WindowContext {
         let (render_thread, _device, _surface_config) = create_wgpu_renderer(&window)?;
 
         let display = Display::new(window, render_thread, &config, tabbed)?;
+
+        // Load background image on startup.
+        display.update_background_image(&config);
 
         let mut window_context = Self::new(display, config, options, proxy)?;
 
@@ -296,6 +302,11 @@ impl WindowContext {
 
         // Always reload the theme to account for auto-theme switching.
         self.display.window.set_theme(self.config.window.theme());
+
+        // Reload background image if config changed.
+        if old_config.window.background_image != self.config.window.background_image {
+            self.display.update_background_image(&self.config);
+        }
 
         // Update display if either padding options or resize increments were changed.
         let window_config = &old_config.window;

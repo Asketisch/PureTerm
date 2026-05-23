@@ -481,6 +481,7 @@ pub fn default_key_bindings() -> Vec<KeyBinding> {
         Backspace, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::REPORT_ALL_KEYS_AS_ESC; Action::Esc("\x7f".into());
         Backspace, ModifiersState::ALT,     ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::REPORT_ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_ESC_CODES; Action::Esc("\x1b\x7f".into());
         Backspace, ModifiersState::SHIFT,   ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::REPORT_ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_ESC_CODES; Action::Esc("\x7f".into());
+        Enter, ModifiersState::SHIFT, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::REPORT_ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_ESC_CODES; Action::Esc("\n".into());
         Enter => KeyLocation::Numpad, ~BindingMode::VI, ~BindingMode::SEARCH, ~BindingMode::REPORT_ALL_KEYS_AS_ESC, ~BindingMode::DISAMBIGUATE_ESC_CODES; Action::Esc("\n".into());
         // Vi mode.
         Space, ModifiersState::SHIFT | ModifiersState::CONTROL, ~BindingMode::SEARCH; Action::ToggleViMode;

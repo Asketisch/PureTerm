@@ -1,4 +1,5 @@
 use std::fmt::{self, Formatter};
+use std::path::PathBuf;
 
 use log::{error, warn};
 use serde::de::{self, MapAccess, Visitor};
@@ -65,6 +66,9 @@ pub struct WindowConfig {
 
     /// Window level.
     pub level: WindowLevel,
+
+    /// Background image settings.
+    pub background_image: BackgroundImageConfig,
 }
 
 impl Default for WindowConfig {
@@ -85,6 +89,7 @@ impl Default for WindowConfig {
             decorations_theme_variant: Default::default(),
             option_as_alt: Default::default(),
             level: Default::default(),
+            background_image: Default::default(),
         }
     }
 }
@@ -321,6 +326,87 @@ impl From<WindowLevel> for WinitWindowLevel {
         match level {
             WindowLevel::Normal => WinitWindowLevel::Normal,
             WindowLevel::AlwaysOnTop => WinitWindowLevel::AlwaysOnTop,
+        }
+    }
+}
+
+// ── Background Image Config ──────────────────────────────────────────────────
+
+/// Background image fit mode.
+#[derive(ConfigDeserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackgroundImageFit {
+    #[default]
+    Cover,
+    Contain,
+    Stretch,
+    None,
+}
+
+/// Background image position within the window (3x3 grid).
+#[derive(ConfigDeserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackgroundImagePosition {
+    #[default]
+    Center,
+    TopLeft,
+    TopCenter,
+    TopRight,
+    CenterLeft,
+    CenterRight,
+    BottomLeft,
+    BottomCenter,
+    BottomRight,
+}
+
+/// Background image configuration.
+#[derive(ConfigDeserialize, Serialize, Debug, Clone, PartialEq)]
+pub struct BackgroundImageConfig {
+    /// Path to PNG/JPEG image file.
+    pub path: Option<PathBuf>,
+
+    /// Image opacity (0.0 - 1.0).
+    pub opacity: Percentage,
+
+    /// How the image fits the window.
+    pub fit: BackgroundImageFit,
+
+    /// Position within the window.
+    pub position: BackgroundImagePosition,
+}
+
+impl Default for BackgroundImageConfig {
+    fn default() -> Self {
+        Self {
+            path: None,
+            opacity: Percentage::new(1.0),
+            fit: Default::default(),
+            position: Default::default(),
+        }
+    }
+}
+
+impl BackgroundImageConfig {
+    /// Convert fit enum to shader-friendly f32 value.
+    pub fn fit_as_f32(&self) -> f32 {
+        match self.fit {
+            BackgroundImageFit::None => 0.0,
+            BackgroundImageFit::Contain => 1.0,
+            BackgroundImageFit::Cover => 2.0,
+            BackgroundImageFit::Stretch => 3.0,
+        }
+    }
+
+    /// Convert position enum to shader-friendly f32 value.
+    pub fn position_as_f32(&self) -> f32 {
+        match self.position {
+            BackgroundImagePosition::Center => 0.0,
+            BackgroundImagePosition::TopLeft => 1.0,
+            BackgroundImagePosition::TopCenter => 2.0,
+            BackgroundImagePosition::TopRight => 3.0,
+            BackgroundImagePosition::CenterLeft => 4.0,
+            BackgroundImagePosition::CenterRight => 5.0,
+            BackgroundImagePosition::BottomLeft => 6.0,
+            BackgroundImagePosition::BottomCenter => 7.0,
+            BackgroundImagePosition::BottomRight => 8.0,
         }
     }
 }

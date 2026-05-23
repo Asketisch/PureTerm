@@ -893,6 +893,31 @@ impl Display {
         self.colors = List::from(&config.colors);
     }
 
+    /// Load and send the background image to the render thread.
+    pub fn update_background_image(&self, config: &UiConfig) {
+        let bg = &config.window.background_image;
+        if let Some(ref path) = bg.path {
+            match crate::renderer::bg_image_loader::load_background_image(path) {
+                Ok(raw) => {
+                    self.render_thread.set_background_image(
+                        raw.data,
+                        raw.width,
+                        raw.height,
+                        bg.opacity.as_f32(),
+                        bg.fit_as_f32(),
+                        bg.position_as_f32(),
+                    );
+                }
+                Err(e) => {
+                    log::warn!("Failed to load background image {:?}: {}", path, e);
+                    self.render_thread.clear_background();
+                }
+            }
+        } else {
+            self.render_thread.clear_background();
+        }
+    }
+
     /// Update the mouse/vi mode cursor hint highlighting.
     ///
     /// This will return whether the highlighted hints changed.
