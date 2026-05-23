@@ -1,11 +1,18 @@
 //! Wgpu glyph atlas — bridges crossfont's RasterizedGlyph to a CPU-side texture atlas.
 //!
-//! Uses skyline bin-packing to place grayscale glyphs into a fixed 2048x2048 R8 bitmap.
-//! When the atlas fills up, LRU entries are evicted and the atlas is rebuilt.
-//! A `dirty` flag tracks when the bitmap needs re-uploading to the GPU.
+//! Dual-atlas design: a grayscale R8 atlas for text glyphs and an RGBA atlas for
+//! color emoji. Skyline bin-packing places glyphs into fixed 2048x2048 bitmaps.
+//! When an atlas fills up, LRU entries are evicted and both atlases are rebuilt.
 
 use crossfont::{BitmapBuffer, RasterizedGlyph};
 use std::collections::HashMap;
+
+/// Which atlas a glyph lives in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AtlasKind {
+    Grayscale,
+    Color,
+}
 
 /// A cached glyph's location in the atlas.
 #[derive(Clone, Copy, Debug)]
@@ -26,6 +33,8 @@ pub struct CachedGlyph {
     pub width: f32,
     /// Glyph height in pixels.
     pub height: f32,
+    /// Which atlas contains this glyph.
+    pub atlas_kind: AtlasKind,
 }
 
 /// Skyline bin-packing segment.
@@ -44,14 +53,14 @@ const MAX_CACHE_ENTRIES: usize = 8192;
 
 /// WgpuGlyphAtlas — CPU-side glyph cache with skyline bin packing.
 ///
-/// Fixed 2048x2048 R8 (1 byte per pixel) bitmap = 4 MB.
+/// Dual-atlas: grayscale R8 (4 MB) for text, RGBA (16 MB) for color emoji.
 /// When full, evicts LRU entries and rebuilds.
 pub struct WgpuGlyphAtlas {
     atlas_width: u32,
     atlas_height: u32,
     /// R8 bitmap data (one byte per pixel).
     atlas_data: Vec<u8>,
-    /// Skyline segments for bin packing.
+    /// Skyline segments for grayscale bin packing.
     skyline: Vec<SkylineSeg>,
     /// Glyph cache: (font_index, character) -> atlas location.
     cache: HashMap<(usize, char), CachedGlyph>,
@@ -61,8 +70,14 @@ pub struct WgpuGlyphAtlas {
     lru_keys: Vec<(usize, char)>,
     /// Maximum cache entries.
     capacity: usize,
-    /// Whether the atlas bitmap has changed since last GPU upload.
+    /// Whether the grayscale atlas bitmap has changed since last GPU upload.
     dirty: bool,
+    /// RGBA color atlas bitmap (4 bytes per pixel).
+    color_atlas_data: Vec<u8>,
+    /// Skyline segments for color atlas bin packing.
+    color_skyline: Vec<SkylineSeg>,
+    /// Whether the color atlas bitmap has changed since last GPU upload.
+    color_dirty: bool,
 }
 
 impl WgpuGlyphAtlas {
@@ -70,6 +85,12 @@ impl WgpuGlyphAtlas {
     pub fn new() -> Self {
         let mut skyline = Vec::with_capacity(64);
         skyline.push(SkylineSeg {
+            x: 0,
+            y: 0,
+            width: ATLAS_SIZE,
+        });
+        let mut color_skyline = Vec::with_capacity(64);
+        color_skyline.push(SkylineSeg {
             x: 0,
             y: 0,
             width: ATLAS_SIZE,
@@ -85,6 +106,9 @@ impl WgpuGlyphAtlas {
             lru_keys: Vec::new(),
             capacity: MAX_CACHE_ENTRIES,
             dirty: false,
+            color_atlas_data: vec![0u8; (ATLAS_SIZE as usize) * (ATLAS_SIZE as usize) * 4],
+            color_skyline,
+            color_dirty: false,
         }
     }
 
@@ -106,8 +130,9 @@ impl WgpuGlyphAtlas {
 
     /// Insert a rasterized glyph from crossfont into the atlas.
     ///
-    /// Returns the `CachedGlyph` with UV coordinates. If the atlas is full,
-    /// triggers a rebuild (evicts half the LRU entries).
+    /// Routes `BitmapBuffer::Rgba` glyphs to the color atlas and all others
+    /// to the grayscale atlas. Returns the `CachedGlyph` with UV coordinates.
+    /// If the atlas is full, triggers a rebuild (evicts half the LRU entries).
     pub fn insert(&mut self, font_index: usize, c: char, glyph: &RasterizedGlyph) -> CachedGlyph {
         let key = (font_index, c);
 
@@ -120,54 +145,12 @@ impl WgpuGlyphAtlas {
             return cached;
         }
 
-        // Extract grayscale bitmap from crossfont's RasterizedGlyph.
-        let (glyph_width, glyph_height, grayscale) = Self::extract_grayscale(glyph);
+        let is_color = matches!(&glyph.buffer, BitmapBuffer::Rgba(_));
 
-        if glyph_width == 0 || glyph_height == 0 {
-            // Degenerate glyph — return a zero-area cached entry.
-            let cached = CachedGlyph {
-                u: 0.0,
-                v: 0.0,
-                u2: 0.0,
-                v2: 0.0,
-                x_offset: glyph.left as f32,
-                y_offset: glyph.top as f32,
-                width: 0.0,
-                height: 0.0,
-            };
-            self.cache.insert(key, cached);
-            self.lru_keys.push(key);
-            return cached;
-        }
-
-        // Try to allocate space. If it fails, rebuild the atlas.
-        let pos = match self.allocate_rect(glyph_width, glyph_height) {
-            Some(pos) => pos,
-            None => {
-                self.rebuild();
-                self.allocate_rect(glyph_width, glyph_height).unwrap_or((0, 0))
-            },
-        };
-
-        // Write glyph pixels into the atlas bitmap.
-        self.blit_glyph(pos.0, pos.1, glyph_width, glyph_height, &grayscale);
-        self.dirty = true;
-
-        // Compute UV coordinates.
-        let u = pos.0 as f32 / self.atlas_width as f32;
-        let v = pos.1 as f32 / self.atlas_height as f32;
-        let u2 = (pos.0 + glyph_width) as f32 / self.atlas_width as f32;
-        let v2 = (pos.1 + glyph_height) as f32 / self.atlas_height as f32;
-
-        let cached = CachedGlyph {
-            u,
-            v,
-            u2,
-            v2,
-            x_offset: glyph.left as f32,
-            y_offset: glyph.top as f32,
-            width: glyph_width as f32,
-            height: glyph_height as f32,
+        let cached = if is_color {
+            self.insert_color(font_index, c, glyph)
+        } else {
+            self.insert_grayscale(font_index, c, glyph)
         };
 
         // Store the rasterized glyph for potential rebuild.
@@ -176,6 +159,110 @@ impl WgpuGlyphAtlas {
         self.lru_keys.push(key);
 
         cached
+    }
+
+    /// Insert a grayscale glyph into the R8 atlas.
+    fn insert_grayscale(
+        &mut self,
+        font_index: usize,
+        c: char,
+        glyph: &RasterizedGlyph,
+    ) -> CachedGlyph {
+        let (glyph_width, glyph_height, grayscale) = Self::extract_grayscale(glyph);
+
+        if glyph_width == 0 || glyph_height == 0 {
+            return CachedGlyph {
+                u: 0.0,
+                v: 0.0,
+                u2: 0.0,
+                v2: 0.0,
+                x_offset: glyph.left as f32,
+                y_offset: glyph.top as f32,
+                width: 0.0,
+                height: 0.0,
+                atlas_kind: AtlasKind::Grayscale,
+            };
+        }
+
+        let pos = match self.allocate_rect(glyph_width, glyph_height) {
+            Some(pos) => pos,
+            None => {
+                self.rebuild();
+                self.allocate_rect(glyph_width, glyph_height).unwrap_or((0, 0))
+            },
+        };
+
+        self.blit_glyph(pos.0, pos.1, glyph_width, glyph_height, &grayscale);
+        self.dirty = true;
+
+        let u = pos.0 as f32 / self.atlas_width as f32;
+        let v = pos.1 as f32 / self.atlas_height as f32;
+        let u2 = (pos.0 + glyph_width) as f32 / self.atlas_width as f32;
+        let v2 = (pos.1 + glyph_height) as f32 / self.atlas_height as f32;
+
+        CachedGlyph {
+            u,
+            v,
+            u2,
+            v2,
+            x_offset: glyph.left as f32,
+            y_offset: glyph.top as f32,
+            width: glyph_width as f32,
+            height: glyph_height as f32,
+            atlas_kind: AtlasKind::Grayscale,
+        }
+    }
+
+    /// Insert a color (RGBA) glyph into the color atlas.
+    fn insert_color(
+        &mut self,
+        _font_index: usize,
+        _c: char,
+        glyph: &RasterizedGlyph,
+    ) -> CachedGlyph {
+        let (glyph_width, glyph_height, rgba) = Self::extract_rgba(glyph);
+
+        if glyph_width == 0 || glyph_height == 0 {
+            return CachedGlyph {
+                u: 0.0,
+                v: 0.0,
+                u2: 0.0,
+                v2: 0.0,
+                x_offset: glyph.left as f32,
+                y_offset: glyph.top as f32,
+                width: 0.0,
+                height: 0.0,
+                atlas_kind: AtlasKind::Color,
+            };
+        }
+
+        let pos = match self.allocate_color_rect(glyph_width, glyph_height) {
+            Some(pos) => pos,
+            None => {
+                self.rebuild();
+                self.allocate_color_rect(glyph_width, glyph_height).unwrap_or((0, 0))
+            },
+        };
+
+        self.blit_color_glyph(pos.0, pos.1, glyph_width, glyph_height, &rgba);
+        self.color_dirty = true;
+
+        let u = pos.0 as f32 / self.atlas_width as f32;
+        let v = pos.1 as f32 / self.atlas_height as f32;
+        let u2 = (pos.0 + glyph_width) as f32 / self.atlas_width as f32;
+        let v2 = (pos.1 + glyph_height) as f32 / self.atlas_height as f32;
+
+        CachedGlyph {
+            u,
+            v,
+            u2,
+            v2,
+            x_offset: glyph.left as f32,
+            y_offset: glyph.top as f32,
+            width: glyph_width as f32,
+            height: glyph_height as f32,
+            atlas_kind: AtlasKind::Color,
+        }
     }
 
     /// Check if the atlas texture needs to be re-uploaded.
@@ -203,13 +290,26 @@ impl WgpuGlyphAtlas {
         (self.atlas_width, self.atlas_height)
     }
 
+    /// Check if the color atlas texture needs to be re-uploaded.
+    pub fn is_color_dirty(&self) -> bool {
+        self.color_dirty
+    }
+
+    /// Get the color atlas bitmap data and mark clean. Returns `(data, width, height)`.
+    pub fn take_color_dirty_data(&mut self) -> Option<(Vec<u8>, u32, u32)> {
+        if self.color_dirty {
+            self.color_dirty = false;
+            Some((self.color_atlas_data.clone(), self.atlas_width, self.atlas_height))
+        } else {
+            None
+        }
+    }
+
     // ---- Private helpers ----
 
     /// Extract a grayscale (R8) bitmap from a crossfont `RasterizedGlyph`.
     ///
-    /// For `BitmapBuffer::Rgb`, converts RGB triplets to luminance.
-    /// For `BitmapBuffer::Rgba`, converts RGBA to luminance (ignoring alpha).
-    /// Returns `(width, height, grayscale_data)`.
+    /// Only handles `BitmapBuffer::Rgb`. Returns `(width, height, grayscale_data)`.
     fn extract_grayscale(glyph: &RasterizedGlyph) -> (u32, u32, Vec<u8>) {
         let w = glyph.width as u32;
         let h = glyph.height as u32;
@@ -219,24 +319,38 @@ impl WgpuGlyphAtlas {
 
         let gray = match &glyph.buffer {
             BitmapBuffer::Rgb(rgb) => {
-                // RGB subpixel: convert to grayscale using luminance weights.
                 rgb.chunks_exact(3)
                     .map(|px| {
                         let r = px[0] as u32;
                         let g = px[1] as u32;
                         let b = px[2] as u32;
-                        // Luminance: average of RGB channels.
                         ((r + g + b) / 3) as u8
                     })
                     .collect()
             },
             BitmapBuffer::Rgba(rgba) => {
-                // RGBA (colored emoji etc.): extract alpha as grayscale mask.
+                // Fallback: extract alpha as grayscale mask.
                 rgba.chunks_exact(4).map(|px| px[3]).collect()
             },
         };
 
         (w, h, gray)
+    }
+
+    /// Extract RGBA pixel data from a color glyph.
+    fn extract_rgba(glyph: &RasterizedGlyph) -> (u32, u32, Vec<u8>) {
+        let w = glyph.width as u32;
+        let h = glyph.height as u32;
+        if w == 0 || h == 0 {
+            return (0, 0, Vec::new());
+        }
+
+        let rgba = match &glyph.buffer {
+            BitmapBuffer::Rgba(data) => data.clone(),
+            BitmapBuffer::Rgb(_) => Vec::new(),
+        };
+
+        (w, h, rgba)
     }
 
     /// Clone a RasterizedGlyph for storage (needed for rebuild).
@@ -261,6 +375,107 @@ impl WgpuGlyphAtlas {
             if dst_offset + src_len <= self.atlas_data.len() && src_offset + src_len <= data.len() {
                 self.atlas_data[dst_offset..dst_offset + src_len]
                     .copy_from_slice(&data[src_offset..src_offset + src_len]);
+            }
+        }
+    }
+
+    /// Blit an RGBA color glyph into the color atlas at `(x, y)`.
+    fn blit_color_glyph(&mut self, x: u32, y: u32, w: u32, h: u32, data: &[u8]) {
+        let row_bytes = w as usize * 4;
+        for row in 0..h {
+            let dst_offset = ((y + row) * self.atlas_width + x) as usize * 4;
+            let src_offset = (row as usize) * row_bytes;
+            if dst_offset + row_bytes <= self.color_atlas_data.len()
+                && src_offset + row_bytes <= data.len()
+            {
+                self.color_atlas_data[dst_offset..dst_offset + row_bytes]
+                    .copy_from_slice(&data[src_offset..src_offset + row_bytes]);
+            }
+        }
+    }
+
+    /// Allocate a rectangle in the color atlas using skyline bin-packing.
+    fn allocate_color_rect(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
+        if width == 0 || height == 0 || width > self.atlas_width || height > self.atlas_height {
+            return None;
+        }
+
+        let mut best_y = u32::MAX;
+        let mut best_idx = 0;
+
+        for i in 0..self.color_skyline.len() {
+            if let Some(y) = self.fit_color_at(i, width, height) {
+                if y + height < best_y {
+                    best_y = y + height;
+                    best_idx = i;
+                }
+            }
+        }
+
+        if best_y == u32::MAX {
+            return None;
+        }
+
+        let top_y = best_y - height;
+        let best_x = self.color_skyline[best_idx].x;
+
+        let new_seg = SkylineSeg {
+            x: best_x,
+            y: best_y,
+            width,
+        };
+        self.color_skyline.insert(best_idx, new_seg);
+
+        let right_edge = best_x + width;
+        let mut i = best_idx + 1;
+        while i < self.color_skyline.len() {
+            let seg_end = self.color_skyline[i].x + self.color_skyline[i].width;
+            if self.color_skyline[i].x < right_edge {
+                if seg_end <= right_edge {
+                    self.color_skyline.remove(i);
+                } else {
+                    let shrink = right_edge - self.color_skyline[i].x;
+                    self.color_skyline[i].x += shrink;
+                    self.color_skyline[i].width -= shrink;
+                    break;
+                }
+            } else {
+                break;
+            }
+        }
+
+        self.merge_color_skyline();
+
+        Some((best_x, top_y))
+    }
+
+    fn fit_color_at(&self, idx: usize, width: u32, height: u32) -> Option<u32> {
+        let start_x = self.color_skyline[idx].x;
+        let right_edge = start_x + width;
+        if right_edge > self.atlas_width {
+            return None;
+        }
+
+        let mut max_y = 0u32;
+        let mut i = idx;
+        while i < self.color_skyline.len() && self.color_skyline[i].x < right_edge {
+            max_y = max_y.max(self.color_skyline[i].y);
+            if max_y + height > self.atlas_height {
+                return None;
+            }
+            i += 1;
+        }
+        Some(max_y)
+    }
+
+    fn merge_color_skyline(&mut self) {
+        let mut i = 0;
+        while i + 1 < self.color_skyline.len() {
+            if self.color_skyline[i].y == self.color_skyline[i + 1].y {
+                self.color_skyline[i].width += self.color_skyline[i + 1].width;
+                self.color_skyline.remove(i + 1);
+            } else {
+                i += 1;
             }
         }
     }
@@ -364,88 +579,101 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Rebuild the atlas after eviction.
+    /// Rebuild both atlases after eviction.
     ///
     /// Evicts the oldest half of the LRU entries and re-packs remaining glyphs.
     fn rebuild(&mut self) {
-        // Determine how many entries to evict (half).
         let evict_count = self.lru_keys.len() / 2;
         if evict_count == 0 && self.lru_keys.len() > 0 {
-            // If very small, just evict all and start fresh.
             self.cache.clear();
             self.stored_glyphs.clear();
             self.lru_keys.clear();
             self.skyline.clear();
-            self.skyline.push(SkylineSeg {
-                x: 0,
-                y: 0,
-                width: self.atlas_width,
-            });
+            self.skyline.push(SkylineSeg { x: 0, y: 0, width: self.atlas_width });
             self.atlas_data.fill(0);
+            self.color_skyline.clear();
+            self.color_skyline.push(SkylineSeg { x: 0, y: 0, width: self.atlas_width });
+            self.color_atlas_data.fill(0);
             self.dirty = true;
+            self.color_dirty = true;
             return;
         }
 
-        // Collect keys to evict (oldest = front).
         let evict_keys: Vec<_> = self.lru_keys.drain(..evict_count).collect();
         for key in &evict_keys {
             self.cache.remove(key);
             self.stored_glyphs.remove(key);
         }
 
-        // Reset atlas bitmap and skyline.
+        // Reset both atlas bitmaps and skylines.
         self.atlas_data.fill(0);
         self.skyline.clear();
-        self.skyline.push(SkylineSeg {
-            x: 0,
-            y: 0,
-            width: self.atlas_width,
-        });
+        self.skyline.push(SkylineSeg { x: 0, y: 0, width: self.atlas_width });
+        self.color_atlas_data.fill(0);
+        self.color_skyline.clear();
+        self.color_skyline.push(SkylineSeg { x: 0, y: 0, width: self.atlas_width });
 
-        // Re-insert remaining glyphs. We need to clone the stored glyphs first
-        // to avoid borrowing issues.
         let remaining: Vec<(usize, char, RasterizedGlyph)> = self
             .stored_glyphs
             .iter()
             .map(|((fi, c), g)| (*fi, *c, Self::clone_rasterized(g)))
             .collect();
 
-        // Clear caches for re-insertion.
         self.cache.clear();
         self.stored_glyphs.clear();
         self.lru_keys.clear();
 
         for (font_index, c, glyph) in remaining {
-            // Re-insert without triggering another rebuild.
-            let (w, h, gray) = Self::extract_grayscale(&glyph);
-            if w == 0 || h == 0 {
-                continue;
-            }
-            if let Some((x, y)) = self.allocate_rect(w, h) {
-                self.blit_glyph(x, y, w, h, &gray);
-                let u = x as f32 / self.atlas_width as f32;
-                let v = y as f32 / self.atlas_height as f32;
-                let u2 = (x + w) as f32 / self.atlas_width as f32;
-                let v2 = (y + h) as f32 / self.atlas_height as f32;
-
-                let key = (font_index, c);
-                let cached = CachedGlyph {
-                    u,
-                    v,
-                    u2,
-                    v2,
-                    x_offset: glyph.left as f32,
-                    y_offset: glyph.top as f32,
-                    width: w as f32,
-                    height: h as f32,
-                };
-                self.cache.insert(key, cached);
-                self.stored_glyphs.insert(key, Self::clone_rasterized(&glyph));
-                self.lru_keys.push(key);
+            let is_color = matches!(&glyph.buffer, BitmapBuffer::Rgba(_));
+            if is_color {
+                let (w, h, rgba) = Self::extract_rgba(&glyph);
+                if w == 0 || h == 0 { continue; }
+                if let Some((x, y)) = self.allocate_color_rect(w, h) {
+                    self.blit_color_glyph(x, y, w, h, &rgba);
+                    let u = x as f32 / self.atlas_width as f32;
+                    let v = y as f32 / self.atlas_height as f32;
+                    let u2 = (x + w) as f32 / self.atlas_width as f32;
+                    let v2 = (y + h) as f32 / self.atlas_height as f32;
+                    let key = (font_index, c);
+                    let cached = CachedGlyph {
+                        u, v, u2, v2,
+                        x_offset: glyph.left as f32,
+                        y_offset: glyph.top as f32,
+                        width: w as f32,
+                        height: h as f32,
+                        atlas_kind: AtlasKind::Color,
+                    };
+                    self.cache.insert(key, cached);
+                    self.stored_glyphs.insert(key, Self::clone_rasterized(&glyph));
+                    self.lru_keys.push(key);
+                }
+            } else {
+                let (w, h, gray) = Self::extract_grayscale(&glyph);
+                if w == 0 || h == 0 { continue; }
+                if let Some((x, y)) = self.allocate_rect(w, h) {
+                    self.blit_glyph(x, y, w, h, &gray);
+                    let u = x as f32 / self.atlas_width as f32;
+                    let v = y as f32 / self.atlas_height as f32;
+                    let u2 = (x + w) as f32 / self.atlas_width as f32;
+                    let v2 = (y + h) as f32 / self.atlas_height as f32;
+                    let key = (font_index, c);
+                    let cached = CachedGlyph {
+                        u, v, u2, v2,
+                        x_offset: glyph.left as f32,
+                        y_offset: glyph.top as f32,
+                        width: w as f32,
+                        height: h as f32,
+                        atlas_kind: AtlasKind::Grayscale,
+                    };
+                    self.cache.insert(key, cached);
+                    self.stored_glyphs.insert(key, Self::clone_rasterized(&glyph));
+                    self.lru_keys.push(key);
+                }
             }
         }
 
         self.dirty = true;
+        self.color_dirty = true;
     }
 }
 
@@ -479,8 +707,30 @@ mod tests {
         };
         let cached = atlas.insert(0, 'A', &glyph);
         assert!(atlas.is_dirty());
+        assert!(!atlas.is_color_dirty());
         assert_eq!(cached.width, 10.0);
         assert_eq!(cached.height, 14.0);
+        assert_eq!(cached.atlas_kind, AtlasKind::Grayscale);
+    }
+
+    #[test]
+    fn test_insert_color_glyph() {
+        let mut atlas = WgpuGlyphAtlas::new();
+        // Simulate a color emoji glyph (RGBA).
+        let glyph = RasterizedGlyph {
+            character: '🎉',
+            top: 0,
+            left: 0,
+            width: 16,
+            height: 16,
+            buffer: BitmapBuffer::Rgba(vec![255u8; 16 * 16 * 4]),
+            advance: (16, 16),
+        };
+        let cached = atlas.insert(0, '🎉', &glyph);
+        assert!(atlas.is_color_dirty());
+        assert_eq!(cached.width, 16.0);
+        assert_eq!(cached.height, 16.0);
+        assert_eq!(cached.atlas_kind, AtlasKind::Color);
     }
 
     #[test]

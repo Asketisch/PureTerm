@@ -66,12 +66,19 @@
 
 ### 2.2 彩色 Emoji / BGRA 字体图集
 - **优先级**: P1
-- **状态**: PureTerm 只有灰度图集
+- **状态**: ✅ 已实现 — 双图集架构（灰度 R8 + 彩色 RGBA），per-vertex atlas_selector，WGSL 条件采样
+- **描述**: Emoji 通过独立的 Rgba8UnormSrgb 图集渲染全彩色，文本仍走灰度 R8 图集
+- **实现文件**:
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/glyph_atlas.rs` — AtlasKind 枚举、双图集（灰度+彩色）、Skyline 装箱、LRU 淘汰
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_pass/cell_text.rs` — TextVertex.atlas_selector、双纹理 bind group layout
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/cell_text.wgsl` — 双纹理声明、条件采样片段着色器
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/vertex_builders.rs` — 彩色字形白色顶点颜色 + atlas_selector 设置
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_thread.rs` — FrameData 彩色图集字段、双格式 upload_atlas
+  - `crates/pureterm-alacritty-runtime/src/alacritty/display/mod.rs` — 彩色图集数据流提取
+- **已实现**: 双图集路由（BitmapBuffer::Rgba → 彩色图集，Rgb → 灰度图集）、独立 Skyline 装箱、WGSL if-else 条件采样、1x1 透明占位纹理
 - **参考**:
   - Ghostty: `font/Atlas.zig` - `format: .bgra` 彩色 emoji
   - Ghostty: `font/face/coretext.zig` / `font/face/freetype.zig` - 彩色字形光栅化
-- **关键文件**:
-  - Ghostty: `src/font/Atlas.zig`
   - Ghostty: `src/renderer/cell.zig` - `CellText.atlas: enum { grayscale, color }`
 
 ### 2.3 HarfBuzz 文本整形
@@ -443,8 +450,8 @@
 
 ### P1 - 高优先级（应该有）
 6. ~~智能选择~~ ✅ 已实现（9 条规则 + TOML 配置）
-7. 语义历史 / 悬停预览
-8. 彩色 Emoji / BGRA 字体图集
+7. ~~彩色 Emoji / BGRA 字体图集~~ ✅ 已实现（双图集 + 条件采样）
+8. 语义历史 / 悬停预览
 9. HarfBuzz 文本整形
 10. 背景图像 GPU 渲染
 11. 自定义着色器 (ShaderToy)

@@ -11,7 +11,7 @@ use crate::display::color::Rgb;
 use crate::display::SizeInfo;
 use crate::display::content::{RenderableCell, RenderableContent, RenderableCursor};
 
-use super::glyph_atlas::WgpuGlyphAtlas;
+use super::glyph_atlas::{AtlasKind, WgpuGlyphAtlas};
 use super::render_pass::ScreenUniforms;
 
 // Re-export vertex types from render_pass modules so all code uses the same types.
@@ -389,26 +389,41 @@ impl FrameBuilder {
 
             let idx_base = self.text_verts.len() as u32;
 
+            let atlas_sel = match glyph.atlas_kind {
+                AtlasKind::Grayscale => 0.0f32,
+                AtlasKind::Color => 1.0f32,
+            };
+            // For color glyphs, use white so the emoji's own colors show through.
+            let vertex_color = if glyph.atlas_kind == AtlasKind::Color {
+                [1.0, 1.0, 1.0, 1.0]
+            } else {
+                *color
+            };
+
             // Four corners.
             self.text_verts.push(TextVertex {
                 position: [gx, gy],
                 tex_coords: [glyph.u, glyph.v],
-                color: *color,
+                color: vertex_color,
+                atlas_selector: atlas_sel,
             });
             self.text_verts.push(TextVertex {
                 position: [gx + gw, gy],
                 tex_coords: [glyph.u2, glyph.v],
-                color: *color,
+                color: vertex_color,
+                atlas_selector: atlas_sel,
             });
             self.text_verts.push(TextVertex {
                 position: [gx + gw, gy + gh],
                 tex_coords: [glyph.u2, glyph.v2],
-                color: *color,
+                color: vertex_color,
+                atlas_selector: atlas_sel,
             });
             self.text_verts.push(TextVertex {
                 position: [gx, gy + gh],
                 tex_coords: [glyph.u, glyph.v2],
-                color: *color,
+                color: vertex_color,
+                atlas_selector: atlas_sel,
             });
 
             push_quad_indices(&mut self.text_idxs, idx_base);

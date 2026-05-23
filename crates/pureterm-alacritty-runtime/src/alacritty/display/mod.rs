@@ -792,6 +792,13 @@ impl Display {
             .map(|(data, w, h)| (Some(data), w, h))
             .unwrap_or_else(|| (None, 0, 0));
 
+        let color_atlas_dirty = self.glyph_atlas.is_color_dirty();
+        let (color_atlas_data, color_atlas_width, color_atlas_height) = self
+            .glyph_atlas
+            .take_color_dirty_data()
+            .map(|(data, w, h)| (Some(data), w, h))
+            .unwrap_or_else(|| (None, 0, 0));
+
         // Package vertex data into FrameData and send to render thread.
         let frame_data = Box::new(FrameData {
             bg_color_verts: std::mem::take(&mut self.frame_builder.bg_color_verts),
@@ -811,6 +818,10 @@ impl Display {
             atlas_data,
             atlas_width,
             atlas_height,
+            color_atlas_data,
+            color_atlas_width,
+            color_atlas_height,
+            color_atlas_dirty,
         });
 
         self.render_thread.request_frame(frame_data);

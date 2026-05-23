@@ -82,6 +82,11 @@ pub struct FrameData {
     pub atlas_data: Option<Vec<u8>>,
     pub atlas_width: u32,
     pub atlas_height: u32,
+    // Updated color atlas pixels (RGBA), if changed.
+    pub color_atlas_data: Option<Vec<u8>>,
+    pub color_atlas_width: u32,
+    pub color_atlas_height: u32,
+    pub color_atlas_dirty: bool,
 }
 
 // ── Handle ───────────────────────────────────────────────────────────────────
@@ -330,6 +335,16 @@ impl RenderThread {
                                 }
                             }
                         }
+                        if data.color_atlas_data.is_none() {
+                            if let Some(ref prev) = latest_frame {
+                                if prev.color_atlas_data.is_some() {
+                                    data.color_atlas_data = prev.color_atlas_data.clone();
+                                    data.color_atlas_width = prev.color_atlas_width;
+                                    data.color_atlas_height = prev.color_atlas_height;
+                                    data.color_atlas_dirty = true;
+                                }
+                            }
+                        }
                         latest_frame = Some(data);
                     }
                     RenderMessage::SetBackgroundImage { data, width, height } => {
@@ -385,9 +400,19 @@ impl RenderThread {
     // ── Frame rendering ──────────────────────────────────────────────────────
 
     fn draw_frame(&mut self, frame: &FrameData) {
-        // Upload glyph atlas if dirty.
+        // Upload grayscale glyph atlas if dirty.
         if let Some(ref atlas_bytes) = frame.atlas_data {
-            self.upload_atlas(atlas_bytes, frame.atlas_width, frame.atlas_height);
+            self.upload_atlas(atlas_bytes, frame.atlas_width, frame.atlas_height, false);
+        }
+
+        // Upload color glyph atlas if dirty.
+        if let Some(ref color_bytes) = frame.color_atlas_data {
+            self.upload_atlas(
+                color_bytes,
+                frame.color_atlas_width,
+                frame.color_atlas_height,
+                true,
+            );
         }
 
         // Build the shared pass data for this frame.
@@ -524,28 +549,31 @@ impl RenderThread {
         self.frame_count += 1;
     }
 
-    fn upload_atlas(&mut self, data: &[u8], width: u32, height: u32) {
-        // Upload glyph atlas pixels to the CellTextPass texture.
-        // The texture is created by the CellTextPass; here we write into it
-        // via the queue.  The pass stores its own atlas texture internally;
-        // for now we create a temporary texture and copy, or the pass
-        // exposes a method for this.
-        //
-        // NOTE: A future enhancement should expose an atlas texture handle
-        // on CellTextPass so we can write directly.  For now this is a
-        // placeholder that logs the upload size.
+    fn upload_atlas(&mut self, data: &[u8], width: u32, height: u32, is_color: bool) {
+        let format = if is_color {
+            wgpu::TextureFormat::Rgba8UnormSrgb
+        } else {
+            wgpu::TextureFormat::R8Unorm
+        };
+        let bytes_per_row = if is_color { width * 4 } else { width };
+        let label = if is_color {
+            "Color Glyph Atlas Upload"
+        } else {
+            "Glyph Atlas Upload"
+        };
+
         let size = wgpu::Extent3d {
             width,
             height,
             depth_or_array_layers: 1,
         };
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Glyph Atlas Upload"),
+            label: Some(label),
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
+            format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
@@ -559,13 +587,23 @@ impl RenderThread {
             data,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(width),
+                bytes_per_row: Some(bytes_per_row),
                 rows_per_image: Some(height),
             },
             size,
         );
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        self.passes.cell_text.set_atlas_texture(&self.device, &view);
+
+        // Ensure color placeholder exists on first grayscale upload.
+        if !is_color {
+            self.passes.cell_text.ensure_color_placeholder(&self.device, &self.queue);
+        }
+
+        if is_color {
+            self.passes.cell_text.update_color_atlas(&self.device, &view);
+        } else {
+            self.passes.cell_text.update_grayscale_atlas(&self.device, &view);
+        }
     }
 
     // ── Cursor blink ─────────────────────────────────────────────────────────
