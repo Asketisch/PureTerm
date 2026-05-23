@@ -6,6 +6,7 @@
 
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::vte::ansi::CursorShape;
+use std::collections::HashMap;
 
 use crate::display::color::Rgb;
 use crate::display::SizeInfo;
@@ -214,6 +215,7 @@ impl FrameBuilder {
         size_info: &SizeInfo,
         glyph_atlas: &mut WgpuGlyphAtlas,
         font_descent: f32,
+        fallback_map: &HashMap<char, usize>,
     ) -> FrameBuildResult {
         self.clear();
 
@@ -257,9 +259,10 @@ impl FrameBuilder {
                 let fg_color = rgb_to_f32_4(cell.fg, 1.0);
                 let wide = flags.contains(Flags::WIDE_CHAR);
                 let gw = if wide { cell_w * 2.0 } else { cell_w };
+                let font_idx = fallback_map.get(&cell.character).copied().unwrap_or(0);
                 self.push_text_glyph(
                     glyph_atlas,
-                    0,
+                    font_idx,
                     cell.character,
                     x,
                     y,
@@ -272,9 +275,10 @@ impl FrameBuilder {
                 if let Some(ref extra) = cell.extra {
                     if let Some(ref zerowidth) = extra.zerowidth {
                         for &zw_char in zerowidth {
+                            let zw_idx = fallback_map.get(&zw_char).copied().unwrap_or(0);
                             self.push_text_glyph(
                                 glyph_atlas,
-                                0,
+                                zw_idx,
                                 zw_char,
                                 x,
                                 y,

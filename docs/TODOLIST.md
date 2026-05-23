@@ -127,12 +127,18 @@
 
 ### 2.8 字体回退链
 - **优先级**: P1
-- **状态**: 缺少码点回退发现
+- **状态**: ✅ 已实现 — fontdb 系统字体发现 + 5 步回退链 + per-character atlas index
+- **描述**: 主字体不支持 CJK/Emoji/特殊 Unicode 时自动查找系统字体
+- **实现文件**:
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/font_fallback.rs` — FontFallbackRegistry 5 步回退链 + is_emoji/is_cjk + 平台字体列表
+  - `crates/pureterm-alacritty-runtime/src/alacritty/display/mod.rs` — glyph priming loop 集成回退逻辑 + fallback_map
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/vertex_builders.rs` — build_from_cells 使用 per-character font_index
+  - `crates/pureterm-alacritty-runtime/src/alacritty/config/font.rs` — fallback_families TOML 配置
+- **已实现**: fontdb 系统字体扫描、5 步回退（缓存→用户配置→Emoji→CJK→通用）、ttf-parser 码点覆盖验证、crossfont FontKey 桥接、per-character atlas font_index 路由
+- **待完善**: font-codepoint-map 用户自定义码点范围映射、字体 size-adjust（ic_width 对齐）、sprite 回退
 - **参考**:
-  - Ghostty: `font/CodepointResolver.zig` (~300 行，5 步回退链)
+  - Ghostty: `font/CodepointResolver.zig` (~300 行，7 步回退链)
   - Ghostty: `font/CodepointMap.zig` (~200 行)
-- **关键文件**:
-  - Ghostty: `src/font/CodepointResolver.zig`
   - Archive: `archive/pureterm-gui/src/font_fallback.rs` (5 步 CJK/emoji 链)
 
 ---
@@ -457,7 +463,7 @@
 11. 自定义着色器 (ShaderToy)
 12. 复制模式（Vi 风格）
 13. 协同处理
-14. 字体回退链
+14. ~~字体回退链~~ ✅ 已实现（fontdb 5 步回退 + per-character atlas index）
 15. 字体图集矩形装箱
 
 ### P2 - 中优先级（最好有）

@@ -20,6 +20,8 @@ copypasta = { version = "0.10.1", default-features = false }
 crossbeam-channel = "0.5"
 crossfont = "0.8.1"
 dirs = "6.0.0"
+fontdb = "0.21"
+ttf-parser = "0.24"
 home = "0.5.5"
 libc = "0.2"
 log = { version = "0.4", features = ["std", "serde"] }

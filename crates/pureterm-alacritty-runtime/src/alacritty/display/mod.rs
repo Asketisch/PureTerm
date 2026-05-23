@@ -2,6 +2,7 @@
 //! GPU drawing.
 
 use std::cmp;
+use std::collections::HashMap;
 use std::fmt::{self, Formatter};
 use std::mem;
 use std::time::{Duration, Instant};
@@ -43,6 +44,7 @@ use crate::message_bar::MessageBuffer;
 use crate::renderer::glyph_atlas::WgpuGlyphAtlas;
 use crate::renderer::render_thread::{FrameData, RenderThreadHandle};
 use crate::renderer::vertex_builders::FrameBuilder;
+use crate::renderer::font_fallback::FontFallbackRegistry;
 use crate::scheduler::{Scheduler, TimerId, Topic};
 use crate::string::{ShortenDirection, StrShortener};
 
@@ -365,6 +367,7 @@ pub struct Display {
     rasterizer: Rasterizer,
     font_key: FontKey,
     font_descent: f32,
+    font_fallback: FontFallbackRegistry,
 
     meter: Meter,
 }
@@ -455,6 +458,7 @@ impl Display {
 
         let glyph_atlas = WgpuGlyphAtlas::new();
         let frame_builder = FrameBuilder::new();
+        let font_fallback = FontFallbackRegistry::new(config.font.fallback_families.clone());
 
         Ok(Self {
             render_thread,
@@ -463,6 +467,7 @@ impl Display {
             rasterizer,
             font_key,
             font_descent,
+            font_fallback,
             visual_bell: VisualBell::from(&config.bell),
             colors: List::from(&config.colors),
             frame_timer: FrameTimer::new(),
@@ -503,10 +508,10 @@ impl Display {
         (w, h, font_key, metrics.descent)
     }
 
-    /// Reset glyph atlas.
+    /// Reset glyph atlas and fallback char cache.
     fn reset_glyph_cache(&mut self) {
-        // WgpuGlyphAtlas handles its own eviction; clearing it forces re-rasterization.
         self.glyph_atlas = WgpuGlyphAtlas::new();
+        self.font_fallback.clear_char_cache();
     }
 
     // XXX: this function must not call to any rendering related tasks. Renderer updates are
@@ -703,13 +708,21 @@ impl Display {
             self.highlighted_hint.is_some() || self.vi_highlighted_hint.is_some();
 
         // Phase 1.5: Prime glyph atlas — rasterize any uncached characters.
+        let mut fallback_map: HashMap<char, usize> = HashMap::new();
         {
             for cell in &cells {
                 if cell.character == ' ' {
                     continue;
                 }
+                // Try primary font first (atlas index 0).
                 if self.glyph_atlas.get(0, cell.character).is_some() {
                     continue;
+                }
+                // Also check if already resolved via fallback.
+                if let Some(&fb_idx) = fallback_map.get(&cell.character) {
+                    if self.glyph_atlas.get(fb_idx, cell.character).is_some() {
+                        continue;
+                    }
                 }
                 let glyph_key = GlyphKey {
                     character: cell.character,
@@ -718,18 +731,55 @@ impl Display {
                 };
                 if let Ok(glyph) = self.rasterizer.get_glyph(glyph_key) {
                     self.glyph_atlas.insert(0, cell.character, &glyph);
+                } else if let Some(fb_idx) = self.font_fallback.resolve(
+                    cell.character,
+                    &mut self.rasterizer,
+                    self.font_size,
+                ) {
+                    let fb_key = self.font_fallback.font_key_for_index(fb_idx).unwrap();
+                    let fb_glyph_key = GlyphKey {
+                        character: cell.character,
+                        font_key: fb_key,
+                        size: self.font_size,
+                    };
+                    if let Ok(glyph) = self.rasterizer.get_glyph(fb_glyph_key) {
+                        self.glyph_atlas.insert(fb_idx, cell.character, &glyph);
+                        fallback_map.insert(cell.character, fb_idx);
+                    }
                 }
+                // Zero-width characters.
                 if let Some(ref extra) = cell.extra {
                     if let Some(ref zerowidth) = extra.zerowidth {
                         for &c in zerowidth {
-                            if self.glyph_atlas.get(0, c).is_none() {
-                                let gk = GlyphKey {
+                            if self.glyph_atlas.get(0, c).is_some() {
+                                continue;
+                            }
+                            if let Some(&fb_idx) = fallback_map.get(&c) {
+                                if self.glyph_atlas.get(fb_idx, c).is_some() {
+                                    continue;
+                                }
+                            }
+                            let gk = GlyphKey {
+                                character: c,
+                                font_key: self.font_key,
+                                size: self.font_size,
+                            };
+                            if let Ok(glyph) = self.rasterizer.get_glyph(gk) {
+                                self.glyph_atlas.insert(0, c, &glyph);
+                            } else if let Some(fb_idx) = self.font_fallback.resolve(
+                                c,
+                                &mut self.rasterizer,
+                                self.font_size,
+                            ) {
+                                let fb_key = self.font_fallback.font_key_for_index(fb_idx).unwrap();
+                                let fb_gk = GlyphKey {
                                     character: c,
-                                    font_key: self.font_key,
+                                    font_key: fb_key,
                                     size: self.font_size,
                                 };
-                                if let Ok(glyph) = self.rasterizer.get_glyph(gk) {
-                                    self.glyph_atlas.insert(0, c, &glyph);
+                                if let Ok(glyph) = self.rasterizer.get_glyph(fb_gk) {
+                                    self.glyph_atlas.insert(fb_idx, c, &glyph);
+                                    fallback_map.insert(c, fb_idx);
                                 }
                             }
                         }
@@ -746,6 +796,7 @@ impl Display {
             &size_info,
             &mut self.glyph_atlas,
             self.font_descent,
+            &fallback_map,
         );
 
         // Handle IME positioning and search bar rendering.
