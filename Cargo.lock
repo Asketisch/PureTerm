@@ -1661,6 +1661,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "harfbuzz-sys"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb86e2fef3ba40cebffb8fa2cba811f06aa5c5fd296a4e469473e5398d166594"
+dependencies = [
+ "cc",
+ "core-graphics",
+ "core-text",
+ "foreign-types",
+ "freetype-sys",
+ "pkg-config",
+ "winapi",
+]
+
+[[package]]
 name = "harfrust"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3196,6 +3211,7 @@ dependencies = [
  "dirs",
  "embed-resource",
  "fontdb 0.21.0",
+ "harfbuzz-sys",
  "home",
  "image",
  "libc",

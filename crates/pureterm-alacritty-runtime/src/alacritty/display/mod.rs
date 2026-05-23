@@ -34,7 +34,7 @@ use crate::config::window::Dimensions;
 use crate::config::window::StartupMode;
 use crate::display::bell::VisualBell;
 use crate::display::color::{List, Rgb};
-use crate::display::content::RenderableContent;
+use crate::display::content::{RenderableCell, RenderableContent};
 use crate::display::damage::DamageTracker;
 use crate::display::hint::{HintMatch, HintState};
 use crate::display::meter::Meter;
@@ -42,6 +42,7 @@ use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::MessageBuffer;
 use crate::renderer::glyph_atlas::WgpuGlyphAtlas;
+use crate::renderer::harfbuzz_shaper::{HarfBuzzShaper, ShapedGlyphCache};
 use crate::renderer::render_thread::{FrameData, RenderThreadHandle};
 use crate::renderer::vertex_builders::FrameBuilder;
 use crate::renderer::font_fallback::FontFallbackRegistry;
@@ -368,6 +369,7 @@ pub struct Display {
     font_key: FontKey,
     font_descent: f32,
     font_fallback: FontFallbackRegistry,
+    harfbuzz_shaper: crate::renderer::harfbuzz_shaper::HarfBuzzShaper,
 
     meter: Meter,
 }
@@ -459,6 +461,7 @@ impl Display {
         let glyph_atlas = WgpuGlyphAtlas::new();
         let frame_builder = FrameBuilder::new();
         let font_fallback = FontFallbackRegistry::new(config.font.fallback_families.clone());
+        let harfbuzz_shaper = crate::renderer::harfbuzz_shaper::HarfBuzzShaper::new();
 
         Ok(Self {
             render_thread,
@@ -468,6 +471,7 @@ impl Display {
             font_key,
             font_descent,
             font_fallback,
+            harfbuzz_shaper,
             visual_bell: VisualBell::from(&config.bell),
             colors: List::from(&config.colors),
             frame_timer: FrameTimer::new(),
@@ -707,8 +711,12 @@ impl Display {
         let _has_highlighted_hint =
             self.highlighted_hint.is_some() || self.vi_highlighted_hint.is_some();
 
-        // Phase 1.5: Prime glyph atlas — rasterize any uncached characters.
+        // Phase 1.5: Prime glyph atlas and compute HarfBuzz shaping.
         let mut fallback_map: HashMap<char, usize> = HashMap::new();
+        let mut shaped_cache = ShapedGlyphCache::new();
+        shaped_cache.set_columns(size_info.columns());
+
+        // Phase 1.5a: Glyph atlas priming (existing logic).
         {
             for cell in &cells {
                 if cell.character == ' ' {
@@ -788,6 +796,57 @@ impl Display {
             }
         }
 
+        // Phase 1.5b: HarfBuzz text shaping for complex scripts.
+        // Group cells by font and compute shaping offsets.
+        {
+            // Collect text runs grouped by font index.
+            let mut runs: Vec<(usize, Vec<&RenderableCell>)> = Vec::new();
+
+            for cell in &cells {
+                if cell.character == ' ' {
+                    continue;
+                }
+                let font_idx = fallback_map.get(&cell.character).copied().unwrap_or(0);
+
+                // Find existing run with same font or create new one.
+                if let Some(existing) = runs.iter_mut().find(|r| r.0 == font_idx) {
+                    existing.1.push(cell);
+                } else {
+                    runs.push((font_idx, vec![cell]));
+                }
+            }
+
+            // Shape each run and store offsets.
+            for (font_idx, run_cells) in runs {
+                // Build text string from cells.
+                let text: String = run_cells.iter().map(|c| c.character).collect();
+
+                // Get font family names for this font index.
+                let families: Vec<&str> = if font_idx == 0 {
+                    // Primary font - use config font family.
+                    vec![]
+                } else {
+                    // Fallback font - would need to look up family name.
+                    vec![]
+                };
+
+                // Shape the text.
+                let shaped = self.harfbuzz_shaper.shape(&text, font_idx, &families);
+
+                // Apply offsets to cells based on cluster mapping.
+                for (i, cell) in run_cells.iter().enumerate() {
+                    if i < shaped.glyphs.len() {
+                        let glyph = &shaped.glyphs[i];
+                        shaped_cache.set_offset_for_point(
+                            &cell.point,
+                            glyph.x_offset,
+                            glyph.y_offset,
+                        );
+                    }
+                }
+            }
+        }
+
         // Phase 2: Build frame vertex arrays from pre-collected cells.
         let build_result = self.frame_builder.build_from_cells(
             cells,
@@ -797,6 +856,7 @@ impl Display {
             &mut self.glyph_atlas,
             self.font_descent,
             &fallback_map,
+            &shaped_cache,
         );
 
         // Handle IME positioning and search bar rendering.

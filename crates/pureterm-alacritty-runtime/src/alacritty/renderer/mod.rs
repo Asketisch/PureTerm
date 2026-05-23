@@ -6,6 +6,7 @@
 pub mod bg_image_loader;
 pub mod font_fallback;
 pub mod glyph_atlas;
+pub mod harfbuzz_shaper;
 pub mod render_pass;
 pub mod render_thread;
 pub mod vertex_builders;

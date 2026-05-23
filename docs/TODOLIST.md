@@ -83,13 +83,19 @@
 
 ### 2.3 HarfBuzz 文本整形
 - **优先级**: P1
-- **状态**: PureTerm 只有 14 个硬编码连字对（→、≠ 等）
+- **状态**: ✅ 已完成 — HarfBuzzShaper + ShapedGlyphCache + TextVertex 偏移量 + WGSL 支持
+- **描述**: 使用 harfbuzz-sys 绑定进行复杂脚本（阿拉伯文、梵文、缅甸文等）整形，支持连字和组合字符定位
+- **实现文件**:
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/harfbuzz_shaper.rs` — HarfBuzzShaper + ShapedGlyph + ShapedRun + ShapedGlyphCache
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_pass/cell_text.rs` — TextVertex 新增 x_offset/y_offset 字段
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/cell_text.wgsl` — 顶点着色器接收 x_offset/y_offset
+  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/vertex_builders.rs` — push_text_glyph 支持 shaping 偏移量
+  - `crates/pureterm-alacritty-runtime/src/alacritty/display/mod.rs` — glyph_prime_loop 集成文本 run 分组和整形
+- **已实现**: harfbuzz-sys bundled 绑定、fontdb 字体查找、text run 按 font_index 分组、cluster 映射回 Point、x/y 偏移量应用到顶点
+- **待完善**: 字体 family 名称查找（当前为空）、BiDi 重排序（后续 P2）
 - **参考**:
   - Ghostty: `font/shaper/harfbuzz.zig` (~400 行)
   - Ghostty: `font/shaper/Cache.zig` - 整形结果缓存
-- **关键文件**:
-  - Ghostty: `src/font/shaper/harfbuzz.zig`
-  - Ghostty: `src/font/shaper/run.zig`
 
 ### 2.4 背景图像 GPU 渲染
 - **优先级**: P1
@@ -463,7 +469,7 @@
 6. ~~智能选择~~ ✅ 已实现（9 条规则 + TOML 配置）
 7. ~~彩色 Emoji / BGRA 字体图集~~ ✅ 已实现（双图集 + 条件采样）
 8. 语义历史 / 悬停预览
-9. HarfBuzz 文本整形
+9. ~~HarfBuzz 文本整形~~ ✅ 已完成（harfbuzz-sys + ShapedGlyphCache + 偏移量）
 10. ~~背景图像 GPU 渲染~~ ✅ 已实现（PNG/JPEG + fit/position/opacity + 实时重载）
 11. 自定义着色器 (ShaderToy)
 12. 复制模式（Vi 风格）
@@ -503,7 +509,7 @@
 3. `/Users/admin/Code/Github/ghostty-main/src/termio/shell_integration.zig` - OSC 133 shell 集成
 4. `/Users/admin/Code/CNB/PureTerm/archive/pureterm-core/src/trigger.rs` - Legacy 触发器实现参考
 5. `/Users/admin/Code/CNB/PureTerm/archive/pureterm-ui/src/terminal/pane.rs` - 带智能选择的终端窗格
-6. `/Users/admin/Code/Github/ghostty-main/src/font/shaper/harfbuzz.zig` - HarfBuzz 文本整形
+6. `/Users/admin/Code/Github/ghostty-main/src/font/shaper/harfbuzz.zig` - HarfBuzz 文本整形 ✅ 已实现
 7. `/Users/admin/Code/Github/iTerm2-master/sources/SemanticHistory/iTermSemanticHistoryController.m` - 语义历史 (45KB)
 8. `/Users/admin/Code/Github/iTerm2-master/sources/Toolbelt/iTermToolbeltView.m` - Toolbelt (35KB)
 9. `/Users/admin/Code/Github/iTerm2-master/sources/PasswordManager/iTermPasswordManagerWindowController.m` - 密码管理 (70KB)

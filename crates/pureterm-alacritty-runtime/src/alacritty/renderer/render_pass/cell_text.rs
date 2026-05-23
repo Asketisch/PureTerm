@@ -12,7 +12,7 @@ use super::{
     RenderPass, ScreenUniforms,
 };
 
-/// 文本字形四边形的顶点：位置 + 纹理坐标 + RGBA 颜色 + 图集选择器。
+/// 文本字形四边形的顶点：位置 + 纹理坐标 + RGBA 颜色 + 图集选择器 + 字形偏移。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct TextVertex {
@@ -21,10 +21,14 @@ pub struct TextVertex {
     pub color: [f32; 4],
     /// 0.0 = 灰度图集, 1.0 = 彩色图集.
     pub atlas_selector: f32,
+    /// 字形 X 偏移（组合字符定位）.
+    pub x_offset: f32,
+    /// 字形 Y 偏移（组合字符定位）.
+    pub y_offset: f32,
 }
 
 impl TextVertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 4] = [
+    const ATTRIBS: [wgpu::VertexAttribute; 6] = [
         wgpu::VertexAttribute {
             offset: 0,
             shader_location: 0,
@@ -36,13 +40,23 @@ impl TextVertex {
             format: wgpu::VertexFormat::Float32x2,
         },
         wgpu::VertexAttribute {
-            offset: std::mem::size_of::<[f32; 4]>() as u64,
+            offset: (std::mem::size_of::<[f32; 2]>() * 2) as u64,
             shader_location: 2,
             format: wgpu::VertexFormat::Float32x4,
         },
         wgpu::VertexAttribute {
-            offset: (std::mem::size_of::<[f32; 2]>() + std::mem::size_of::<[f32; 2]>() + std::mem::size_of::<[f32; 4]>()) as u64,
+            offset: (std::mem::size_of::<[f32; 2]>() * 2 + std::mem::size_of::<[f32; 4]>()) as u64,
             shader_location: 3,
+            format: wgpu::VertexFormat::Float32,
+        },
+        wgpu::VertexAttribute {
+            offset: (std::mem::size_of::<[f32; 2]>() * 2 + std::mem::size_of::<[f32; 4]>() + std::mem::size_of::<f32>()) as u64,
+            shader_location: 4,
+            format: wgpu::VertexFormat::Float32,
+        },
+        wgpu::VertexAttribute {
+            offset: (std::mem::size_of::<[f32; 2]>() * 2 + std::mem::size_of::<[f32; 4]>() + std::mem::size_of::<f32>() * 2) as u64,
+            shader_location: 5,
             format: wgpu::VertexFormat::Float32,
         },
     ];

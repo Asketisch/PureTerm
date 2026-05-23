@@ -3,6 +3,8 @@ struct VertexOutput {
     @location(0) tex_coords: vec2f,
     @location(1) color: vec4f,
     @location(2) atlas_selector: f32,
+    @location(4) x_offset: f32,
+    @location(5) y_offset: f32,
 }
 
 struct ScreenUniforms {
@@ -35,6 +37,8 @@ fn vs_main(
     @location(1) tex_coords: vec2f,
     @location(2) color: vec4f,
     @location(3) atlas_selector: f32,
+    @location(4) x_offset: f32,
+    @location(5) y_offset: f32,
 ) -> VertexOutput {
     var out: VertexOutput;
     let ndc_x = position.x / u_screen.screen_width * 2.0 - 1.0;
@@ -43,6 +47,8 @@ fn vs_main(
     out.tex_coords = tex_coords;
     out.color = color;
     out.atlas_selector = atlas_selector;
+    out.x_offset = x_offset;
+    out.y_offset = y_offset;
     return out;
 }
 

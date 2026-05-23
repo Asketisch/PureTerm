@@ -13,6 +13,7 @@ use crate::display::SizeInfo;
 use crate::display::content::{RenderableCell, RenderableContent, RenderableCursor};
 
 use super::glyph_atlas::{AtlasKind, WgpuGlyphAtlas};
+use super::harfbuzz_shaper::ShapedGlyphCache;
 use super::render_pass::ScreenUniforms;
 
 // Re-export vertex types from render_pass modules so all code uses the same types.
@@ -149,6 +150,8 @@ impl FrameBuilder {
                     cell_h,
                     &fg_color,
                     font_descent,
+                    0.0, // shaped_x_offset
+                    0.0, // shaped_y_offset
                 );
 
                 // Zero-width characters rendered on top.
@@ -165,6 +168,8 @@ impl FrameBuilder {
                                 cell_h,
                                 &fg_color,
                                 font_descent,
+                                0.0, // shaped_x_offset
+                                0.0, // shaped_y_offset
                             );
                         }
                     }
@@ -216,6 +221,7 @@ impl FrameBuilder {
         glyph_atlas: &mut WgpuGlyphAtlas,
         font_descent: f32,
         fallback_map: &HashMap<char, usize>,
+        shaped_cache: &ShapedGlyphCache,
     ) -> FrameBuildResult {
         self.clear();
 
@@ -260,6 +266,10 @@ impl FrameBuilder {
                 let wide = flags.contains(Flags::WIDE_CHAR);
                 let gw = if wide { cell_w * 2.0 } else { cell_w };
                 let font_idx = fallback_map.get(&cell.character).copied().unwrap_or(0);
+
+                // Get shaping offsets from HarfBuzz cache.
+                let (shaped_x, shaped_y) = shaped_cache.get_offset_for_point(&cell.point);
+
                 self.push_text_glyph(
                     glyph_atlas,
                     font_idx,
@@ -270,6 +280,8 @@ impl FrameBuilder {
                     cell_h,
                     &fg_color,
                     font_descent,
+                    shaped_x,
+                    shaped_y,
                 );
 
                 if let Some(ref extra) = cell.extra {
@@ -286,6 +298,8 @@ impl FrameBuilder {
                                 cell_h,
                                 &fg_color,
                                 font_descent,
+                                0.0, // Zero-width chars don't get shaped offset
+                                0.0,
                             );
                         }
                     }
@@ -380,14 +394,16 @@ impl FrameBuilder {
         cell_h: f32,
         color: &[f32; 4],
         font_descent: f32,
+        shaped_x_offset: f32,
+        shaped_y_offset: f32,
     ) {
         if let Some(glyph) = atlas.get(font_index, c) {
             if glyph.width <= 0.0 || glyph.height <= 0.0 {
                 return;
             }
 
-            let gx = cell_x + glyph.x_offset;
-            let gy = cell_y + (cell_h + font_descent - glyph.y_offset);
+            let gx = cell_x + glyph.x_offset + shaped_x_offset;
+            let gy = cell_y + (cell_h + font_descent - glyph.y_offset) + shaped_y_offset;
             let gw = glyph.width;
             let gh = glyph.height;
 
@@ -410,24 +426,32 @@ impl FrameBuilder {
                 tex_coords: [glyph.u, glyph.v],
                 color: vertex_color,
                 atlas_selector: atlas_sel,
+                x_offset: shaped_x_offset,
+                y_offset: shaped_y_offset,
             });
             self.text_verts.push(TextVertex {
                 position: [gx + gw, gy],
                 tex_coords: [glyph.u2, glyph.v],
                 color: vertex_color,
                 atlas_selector: atlas_sel,
+                x_offset: shaped_x_offset,
+                y_offset: shaped_y_offset,
             });
             self.text_verts.push(TextVertex {
                 position: [gx + gw, gy + gh],
                 tex_coords: [glyph.u2, glyph.v2],
                 color: vertex_color,
                 atlas_selector: atlas_sel,
+                x_offset: shaped_x_offset,
+                y_offset: shaped_y_offset,
             });
             self.text_verts.push(TextVertex {
                 position: [gx, gy + gh],
                 tex_coords: [glyph.u, glyph.v2],
                 color: vertex_color,
                 atlas_selector: atlas_sel,
+                x_offset: shaped_x_offset,
+                y_offset: shaped_y_offset,
             });
 
             push_quad_indices(&mut self.text_idxs, idx_base);
