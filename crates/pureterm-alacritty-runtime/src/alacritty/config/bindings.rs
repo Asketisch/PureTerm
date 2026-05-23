@@ -254,6 +254,9 @@ pub enum Action {
     /// Start a backward buffer search.
     SearchBackward,
 
+    /// Open settings window.
+    OpenSettings,
+
     /// No action.
     None,
 }
@@ -640,6 +643,7 @@ pub fn platform_key_bindings() -> Vec<KeyBinding> {
         "w",    ModifiersState::SUPER;                                         Action::CloseTab;
         "f",    ModifiersState::SUPER, ~BindingMode::SEARCH;                   Action::SearchForward;
         "b",    ModifiersState::SUPER, ~BindingMode::SEARCH;                   Action::SearchBackward;
+        ",",    ModifiersState::SUPER;                                         Action::OpenSettings;
         "+" => KeyLocation::Numpad, ModifiersState::SUPER;                     Action::IncreaseFontSize;
         "-" => KeyLocation::Numpad, ModifiersState::SUPER;                     Action::DecreaseFontSize;
     )

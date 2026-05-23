@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/pureterm",
     "crates/pureterm-alacritty-runtime",
+    "crates/pureterm-settings",
     "crates/alacritty_terminal",
     "crates/alacritty_config",
     "crates/alacritty_config_derive",

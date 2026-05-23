@@ -453,11 +453,10 @@ impl<T: EventListener> Execute<T> for Action {
                 let timer_id = TimerId::new(Topic::Frame, ctx.window().id());
                 ctx.scheduler_mut().schedule(event, std::time::Duration::ZERO, false, timer_id);
             },
-            Action::Ssh(SshAction::OpenSettings) => {
-                // Dispatch SSH settings UI via event system.
+            Action::OpenSettings | Action::Ssh(SshAction::OpenSettings) => {
                 let event = crate::event::Event::new(
-                    crate::event::EventType::SshSettings,
-                    Some(ctx.window().id()),
+                    crate::event::EventType::OpenSettings,
+                    None,
                 );
                 let timer_id = TimerId::new(Topic::Frame, ctx.window().id());
                 ctx.scheduler_mut().schedule(event, std::time::Duration::ZERO, false, timer_id);

@@ -9,13 +9,14 @@ cargo build --release
 ./target/release/pureterm
 ```
 
-配置文件：标准 `alacritty.toml`（`~/.config/alacritty/alacritty.toml`）
+配置文件：`~/.config/pureterm/alacritty.toml`（兼容回退 `~/.config/alacritty/alacritty.toml`）
 
 ## 架构
 
-5 个 crate 的工作区：
+6 个 crate 的工作区：
 - `pureterm` — 二进制入口（薄封装）
 - `pureterm-alacritty-runtime` — Alacritty 运行时（GUI、事件循环、渲染）
+- `pureterm-settings` — Iced 0.14 设置 UI（独立进程，Cmd+, 打开）
 - `alacritty_terminal` — 终端内核、PTY、Grid（vendored 上游源码）
 - `alacritty_config` — 配置反序列化抽象（vendored 上游源码）
 - `alacritty_config_derive` — 配置 derive 宏（vendored 上游源码）
@@ -31,6 +32,16 @@ cargo build --release
 - vendored Alacritty 源码不做无关格式化或重构，便于同步上游
 - 新功能应在 `pureterm-alacritty-runtime` 中以最小 patch 方式集成
 - 修改 alacritty 源码时在修改处添加注释说明原因
+
+## Settings UI
+
+基于 Iced 0.14 的图形化设置界面，作为独立进程运行：
+
+- **快捷键**：`Cmd+,`（macOS）打开设置窗口
+- **架构**：独立进程 `pureterm-settings`，通过配置文件通信（写文件 → ConfigMonitor 自动热重载）
+- **主题**：Halloy 风格暖色调暗色（Ferra 配色方向）
+- **页面**：General / Appearance / Colors / Terminal / SSH Profiles / Keyboard Shortcuts
+- **配置 I/O**：使用 `toml_edit::DocumentMut` 格式保留读写，`NamedTempFile::persist()` 原子写入
 
 ## SSH 会话后端
 

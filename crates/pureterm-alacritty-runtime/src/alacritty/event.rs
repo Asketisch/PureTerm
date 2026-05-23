@@ -99,6 +99,7 @@ pub struct Processor {
     global_ipc_options: ParsedOptions,
     cli_options: CliOptions,
     config: Rc<UiConfig>,
+    settings_process: Option<std::process::Child>,
 }
 
 impl Processor {
@@ -142,7 +143,52 @@ impl Processor {
             #[cfg(unix)]
             global_ipc_options: Default::default(),
             config_monitor,
+            settings_process: None,
         }
+    }
+
+    /// Open the settings UI as a separate process.
+    fn open_settings_window(&mut self) {
+        if let Some(ref mut child) = self.settings_process {
+            match child.try_wait() {
+                Ok(None) => return,
+                _ => {},
+            }
+        }
+
+        let config_path = self.config.config_paths.first().cloned().unwrap_or_else(|| {
+            dirs::home_dir().unwrap_or_default().join(".config/pureterm/alacritty.toml")
+        });
+
+        let settings_bin = Self::find_settings_binary();
+
+        match std::process::Command::new(&settings_bin)
+            .arg("--config")
+            .arg(&config_path)
+            .spawn()
+        {
+            Ok(child) => {
+                info!("Settings window opened (pid {})", child.id());
+                self.settings_process = Some(child);
+            },
+            Err(err) => {
+                warn!("Failed to open settings window at '{}': {err}", settings_bin.display());
+            },
+        }
+    }
+
+    /// Find the pureterm-settings binary.
+    /// Searches: same directory as current executable, then PATH.
+    fn find_settings_binary() -> PathBuf {
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(dir) = exe.parent() {
+                let candidate = dir.join("pureterm-settings");
+                if candidate.exists() {
+                    return candidate;
+                }
+            }
+        }
+        PathBuf::from("pureterm-settings")
     }
 
     /// Create initial window and initialize the wgpu platform.
@@ -339,6 +385,9 @@ impl ApplicationHandler<Event> for Processor {
                 if let Ok(mut stream) = stream.try_clone() {
                     ipc::send_reply(&mut stream, SocketReply::GetConfig(config_json));
                 }
+            },
+            (EventType::SshSettings | EventType::OpenSettings, _) => {
+                self.open_settings_window();
             },
             (EventType::ConfigReload(path), _) => {
                 // Clear config logs from message bar for all terminals.
@@ -539,6 +588,8 @@ pub enum EventType {
     SshSettings,
     /// List SSH profiles.
     SshProfiles,
+    /// Open settings window.
+    OpenSettings,
 }
 
 impl From<TerminalEvent> for EventType {
@@ -1874,16 +1925,10 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                         error!("Failed to create SSH tab: {}", err);
                     }
                 },
-                EventType::SshSettings => {
-                    // Open SSH settings/profiles configuration UI.
-                    // This would typically show a modal/dialog for managing SSH profiles.
-                    // For now, log that settings were requested.
-                    info!("SSH settings UI requested");
+                EventType::SshSettings | EventType::OpenSettings => {
+                    // Handled at Processor level in user_event().
                 },
                 EventType::SshProfiles => {
-                    // List available SSH profiles.
-                    // This would typically show a selectable list of profiles.
-                    // For now, log that profiles list was requested.
                     if let Some(ssh_config) = self.ctx.config.ssh.profiles.first() {
                         info!("SSH profiles: {} profiles available", ssh_config.name);
                     } else {

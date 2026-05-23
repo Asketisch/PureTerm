@@ -1,0 +1,19 @@
+[package]
+name = "pureterm-settings"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "pureterm-settings"
+path = "src/main.rs"
+
+[dependencies]
+iced = { version = "0.14", features = ["advanced"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+toml_edit = "0.22"
+tempfile = "3"
+dirs = "6"
+log = "0.4"
+env_logger = "0.11"
+clap = { version = "4", features = ["derive"] }

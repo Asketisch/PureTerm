@@ -187,8 +187,17 @@ build_release() {
 # =============================================================================
 
 build_app() {
-    # 先执行 release 构建
+    # 先执行 release 构建（主二进制 + settings）
     build_release || return 1
+
+    step "构建 pureterm-settings..."
+    local settings_cmd="cargo build --release --bin pureterm-settings"
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        settings_cmd="${settings_cmd} --target ${TARGET_TRIPLE}"
+    fi
+    if ! $settings_cmd; then
+        warn "pureterm-settings 构建失败，Settings UI 将不可用"
+    fi
 
     local bin
     bin="$(get_binary_path release)"
@@ -238,6 +247,19 @@ bundle_macos() {
     # 复制二进制文件
     cp "$bin" "${contents_dir}/MacOS/${BINARY_NAME}"
     chmod +x "${contents_dir}/MacOS/${BINARY_NAME}"
+
+    # 复制 pureterm-settings（如果存在）
+    local settings_bin
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        settings_bin="target/${TARGET_TRIPLE}/release/pureterm-settings"
+    else
+        settings_bin="target/release/pureterm-settings"
+    fi
+    if [ -f "$settings_bin" ]; then
+        cp "$settings_bin" "${contents_dir}/MacOS/pureterm-settings"
+        chmod +x "${contents_dir}/MacOS/pureterm-settings"
+        step "已复制 pureterm-settings"
+    fi
 
     # 生成 Info.plist
     cat > "${contents_dir}/Info.plist" <<EOF
