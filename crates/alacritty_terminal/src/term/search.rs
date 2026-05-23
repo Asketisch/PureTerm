@@ -11,9 +11,9 @@ use regex_automata::util::syntax::Config as SyntaxConfig;
 use regex_automata::{Anchored, Input, MatchKind};
 
 use crate::grid::{BidirectionalIterator, Dimensions, GridIterator, Indexed};
-use crate::index::{Boundary, Column, Direction, Point, Side};
+use crate::index::{Boundary, Column, Direction, Line, Point, Side};
 use crate::term::Term;
-use crate::term::cell::{Cell, Flags};
+use crate::term::cell::{Cell, Flags, LineLength};
 
 /// Used to match equal brackets, when performing a bracket-pair selection.
 const BRACKET_PAIRS: [(char, char); 4] = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
@@ -613,6 +613,73 @@ impl<T> Term<T> {
         point.column = self.last_column();
 
         point
+    }
+
+    /// Extract the logical line text for smart selection and compute byte offset for click.
+    ///
+    /// Returns `(text, byte_offset, line_start_point, char_columns)` where `char_columns`
+    /// maps each UTF-8 char index to its grid column (used for byte→Point conversion).
+    pub fn smart_selection_line_text(
+        &self,
+        point: Point,
+    ) -> Option<(String, usize, Point, Vec<(usize, Line, Column)>)> {
+        // Find the start of the logical line (follow WRAPLINE backwards).
+        let mut line_start = point;
+        while line_start.line > self.topmost_line()
+            && self.grid[line_start.line - 1i32][self.last_column()]
+                .flags
+                .contains(Flags::WRAPLINE)
+        {
+            line_start.line -= 1;
+        }
+
+        // Find the end of the logical line (follow WRAPLINE forwards).
+        let mut line_end = point;
+        while line_end.line + 1 < self.screen_lines()
+            && self.grid[line_end.line][self.last_column()]
+                .flags
+                .contains(Flags::WRAPLINE)
+        {
+            line_end.line += 1;
+        }
+
+        // Extract text and track char→(byte_offset, line, column) mapping.
+        let mut text = String::new();
+        let mut char_columns: Vec<(usize, Line, Column)> = vec![(0, line_start.line, Column(0))];
+        let mut byte_offset = 0;
+
+        for line in (line_start.line.0..=line_end.line.0).map(Line::from) {
+            let grid_line = &self.grid[line];
+            let line_length = grid_line.line_length();
+
+            for col in (0..line_length.0).map(Column::from) {
+                let cell = &grid_line[col];
+                if cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
+                    continue;
+                }
+
+                let char_byte_start = text.len();
+
+                // Match the click position.
+                if line == point.line && col == point.column {
+                    byte_offset = char_byte_start;
+                }
+
+                text.push(cell.c);
+
+                char_columns.push((char_byte_start, line, col));
+
+                // Handle wide chars: also match on the spacer cell.
+                if cell.flags.contains(Flags::WIDE_CHAR)
+                    && line == point.line
+                    && col + 1 == point.column
+                {
+                    byte_offset = char_byte_start;
+                }
+            }
+        }
+
+        Some((text, byte_offset, line_start, char_columns))
     }
 }
 

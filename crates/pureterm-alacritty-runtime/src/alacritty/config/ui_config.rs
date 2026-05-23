@@ -35,6 +35,7 @@ use crate::config::selection::Selection;
 use crate::config::terminal::Terminal;
 use crate::config::window::WindowConfig;
 use crate::config::ssh::SshConfig;
+use crate::config::smart_selection::SmartSelectionConfig;
 
 /// Regex used for the default URL hint.
 #[rustfmt::skip]
@@ -76,6 +77,10 @@ pub struct UiConfig {
     /// SSH configuration.
     #[config(default)]
     pub ssh: SshConfig,
+
+    /// Smart selection configuration.
+    #[config(default)]
+    pub smart_selection: SmartSelectionConfig,
 
     /// RGB values for colors.
     pub colors: Colors,

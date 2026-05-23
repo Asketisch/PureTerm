@@ -245,14 +245,16 @@
 
 ### 5.1 智能选择（基于精度）
 - **优先级**: P1
-- **状态**: 基础鼠标选择，无精度规则
-- **参考**:
-  - iTerm2: `sources/SearchingFiltering/iTermSmartSelectionController.m` - 带精度分数的正则规则
-  - Ghostty: `src/renderer/link.zig` - URL/链接匹配
-  - Archive: `archive/pureterm-core/src/smart_selection.rs`
-- **关键文件**:
-  - iTerm2: `sources/SearchingFiltering/SearchEngine.swift` - 基于精度的选择
-  - Archive: `archive/pureterm-core/src/smart_selection.rs`
+- **状态**: ✅ 已实现 — Precision 5 级正则规则 + 双击触发 + TOML 配置
+- **描述**: 双击时先尝试 smart selection（URL/邮箱/路径/Git SHA 等），无匹配 fallback 到词边界
+- **实现文件**:
+  - `crates/alacritty_terminal/src/smart_selection.rs` — SmartSelectionService/Precision/SmartRule/SmartMatch + 9 条默认规则 + 10 个测试
+  - `crates/alacritty_terminal/src/selection.rs` — range_semantic 集成 smart selection + range_smart/byte_offset_to_point
+  - `crates/alacritty_terminal/src/term/search.rs` — smart_selection_line_text() 行文本提取
+  - `crates/pureterm-alacritty-runtime/src/alacritty/config/smart_selection.rs` — TOML 配置
+  - `crates/pureterm-alacritty-runtime/src/alacritty/window_context.rs` — 运行时配置注入
+- **已实现**: 9 条默认规则（URL/SSH URL/邮箱/引号字符串/文件路径/C++ namespace/dotted include/Git SHA/IPv4）、5 级精度排序、TOML `[[smart_selection.rules]]` 自定义规则、双击触发 + 词边界 fallback
+- **待完善**: 右键上下文菜单集成（actions 触发）、evaluate_all 用于悬停高亮、规则热重载
 
 ### 5.2 语义历史（悬停预览）
 - **优先级**: P1
@@ -440,7 +442,7 @@
 5. ~~多通道渲染管线~~ ✅ 已实现（wgpu 8 通道 + 独立渲染线程）
 
 ### P1 - 高优先级（应该有）
-6. 智能选择
+6. ~~智能选择~~ ✅ 已实现（9 条规则 + TOML 配置）
 7. 语义历史 / 悬停预览
 8. 彩色 Emoji / BGRA 字体图集
 9. HarfBuzz 文本整形

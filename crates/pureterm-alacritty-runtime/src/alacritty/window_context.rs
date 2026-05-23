@@ -181,7 +181,18 @@ impl WindowContext {
         // This object contains all of the state about what's being displayed. It's
         // wrapped in a clonable mutex since both the I/O loop and display need to
         // access it.
-        let terminal = Term::new(config.term_options(), &display.size_info, event_proxy.clone());
+        let mut terminal = Term::new(config.term_options(), &display.size_info, event_proxy.clone());
+
+        // Apply smart selection config.
+        {
+            let ss = &config.smart_selection;
+            if !ss.enabled {
+                terminal.smart_selection.set_enabled(false);
+            } else if !ss.rules.is_empty() {
+                terminal.smart_selection.replace_rules(ss.to_rules());
+            }
+        }
+
         let terminal = Arc::new(FairMutex::new(terminal));
 
         // Create the PTY.

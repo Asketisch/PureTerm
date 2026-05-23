@@ -20,6 +20,7 @@ pub mod monitor;
 pub mod scrolling;
 pub mod selection;
 pub mod serde_utils;
+pub mod smart_selection;
 pub mod terminal;
 pub mod trigger;
 pub mod ui_config;

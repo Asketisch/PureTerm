@@ -297,6 +297,12 @@ impl Selection {
 
     fn range_semantic<T>(term: &Term<T>, mut start: Point, mut end: Point) -> SelectionRange {
         if start == end {
+            // Try smart selection first.
+            if let Some(range) = Self::range_smart(term, start) {
+                return range;
+            }
+
+            // Fallback: bracket matching.
             if let Some(matching) = term.bracket_search(start) {
                 if (matching.line == start.line && matching.column < start.column)
                     || (matching.line < start.line)
@@ -314,6 +320,32 @@ impl Selection {
         let end = term.semantic_search_right(end);
 
         SelectionRange { start, end, is_block: false }
+    }
+
+    /// Try smart selection at a single click point.
+    fn range_smart<T>(term: &Term<T>, point: Point) -> Option<SelectionRange> {
+        if !term.smart_selection.is_enabled() {
+            return None;
+        }
+
+        // Extract the logical line text (spanning wraplines) and map click column to byte offset.
+        let (text, byte_offset, line_start, char_columns) = term.smart_selection_line_text(point)?;
+
+        let m = term.smart_selection.evaluate(&text, byte_offset)?;
+
+        // Convert match byte offsets back to grid Points.
+        let start_point = byte_offset_to_point(&char_columns, m.start, line_start, term)?;
+        let end_point = byte_offset_to_point(&char_columns, m.end, line_start, term)?;
+
+        // End is exclusive in byte offset but inclusive in SelectionRange.
+        let end_point = if end_point == start_point {
+            end_point
+        } else {
+            // Step back one cell for inclusive end.
+            step_back(term, end_point)
+        };
+
+        Some(SelectionRange { start: start_point, end: end_point, is_block: false })
     }
 
     fn range_lines<T>(term: &Term<T>, start: Point, end: Point) -> SelectionRange {
@@ -392,6 +424,35 @@ impl Selection {
 /// looks like [XX], [BX] (at the start), [XB] (at the end), [XE] (at the end),
 /// and [EX] (at the start), or [BE] for a single cell. Partially selected cells
 /// look like [ B] and [E ].
+
+/// Convert a byte offset to a grid Point using the char_columns mapping.
+fn byte_offset_to_point<T>(
+    char_columns: &[(usize, Line, Column)],
+    byte_offset: usize,
+    _line_start: Point,
+    _term: &Term<T>,
+) -> Option<Point> {
+    // Binary search for the largest (byte, line, col) where byte <= byte_offset.
+    let idx = char_columns.partition_point(|(b, _, _)| *b <= byte_offset);
+    if idx == 0 {
+        return None;
+    }
+    let (_, line, col) = char_columns[idx - 1];
+    Some(Point::new(line, col))
+}
+
+/// Step back one cell in the grid (for converting exclusive end to inclusive).
+fn step_back<T>(term: &Term<T>, point: Point) -> Point {
+    if point.column > Column(0) {
+        Point::new(point.line, point.column - 1)
+    } else if point.line > term.topmost_line() {
+        // Wrap to end of previous line.
+        Point::new(point.line - 1, term.last_column())
+    } else {
+        point
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

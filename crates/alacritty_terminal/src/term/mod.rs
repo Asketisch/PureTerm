@@ -17,6 +17,7 @@ use crate::event::{Event, EventListener};
 use crate::grid::{Dimensions, Grid, GridIterator, Scroll};
 use crate::index::{self, Boundary, Column, Direction, Line, Point, Side};
 use crate::selection::{Selection, SelectionRange, SelectionType};
+use crate::smart_selection::SmartSelectionService;
 use crate::term::cell::{Cell, Flags, LineLength};
 use crate::term::color::Colors;
 use crate::vi_mode::{ViModeCursor, ViMotion};
@@ -325,6 +326,9 @@ pub struct Term<T> {
     /// Information about damaged cells.
     damage: TermDamageState,
 
+    /// Smart selection service for precision-based regex matching.
+    pub smart_selection: SmartSelectionService,
+
     /// Config directly for the terminal.
     config: Config,
 }
@@ -439,6 +443,7 @@ impl<T> Term<T> {
             title_stack: Default::default(),
             is_focused: Default::default(),
             selection: Default::default(),
+            smart_selection: Default::default(),
             title: Default::default(),
             mode: Default::default(),
         }
@@ -2646,7 +2651,8 @@ mod tests {
                 Point { line: Line(0), column: Column(1) },
                 Side::Left,
             ));
-            assert_eq!(term.selection_to_string(), Some(String::from("aa")));
+            // Smart selection matches quoted string "aa", not just the inner text.
+            assert_eq!(term.selection_to_string(), Some(String::from("\"aa\"")));
         }
 
         {
