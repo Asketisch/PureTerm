@@ -2,6 +2,7 @@ use iced::widget::{column, container, row, text, text_input};
 use iced::{Color, Element, Length, Padding};
 
 use crate::app::Message;
+use crate::i18n::I18n;
 use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
 use crate::widgets::color_swatch;
 
@@ -93,22 +94,26 @@ impl ColorsState {
     }
 }
 
-pub fn view(state: &ColorsState) -> Element<'static, Message> {
+pub fn view(state: &ColorsState, i18n: &I18n) -> Element<'static, Message> {
     let content = column![
-        section_title("Primary"),
-        color_row("Foreground", &state.foreground, |v| {
-            Message::Colors(ColorsMsg::ForegroundChanged(v))
-        }),
-        color_row("Background", &state.background, |v| {
-            Message::Colors(ColorsMsg::BackgroundChanged(v))
-        }),
+        section_title(i18n.t("colors.section.primary")),
+        color_row(
+            i18n.t("colors.foreground"),
+            &state.foreground,
+            |v| Message::Colors(ColorsMsg::ForegroundChanged(v))
+        ),
+        color_row(
+            i18n.t("colors.background"),
+            &state.background,
+            |v| Message::Colors(ColorsMsg::BackgroundChanged(v))
+        ),
         iced::widget::rule::horizontal(1),
-        section_title("Normal Colors (0-7)"),
+        section_title(i18n.t("colors.section.normal")),
         color_grid(&state.normal, |i, v| {
             Message::Colors(ColorsMsg::NormalColorChanged(i, v))
         }),
         iced::widget::rule::horizontal(1),
-        section_title("Bright Colors (8-15)"),
+        section_title(i18n.t("colors.section.bright")),
         color_grid(&state.bright, |i, v| {
             Message::Colors(ColorsMsg::BrightColorChanged(i, v))
         }),
@@ -119,20 +124,20 @@ pub fn view(state: &ColorsState) -> Element<'static, Message> {
     container(content).width(Length::Fill).into()
 }
 
-fn section_title(title: &str) -> Element<'static, Message> {
-    text(title.to_string())
+fn section_title(title: String) -> Element<'static, Message> {
+    text(title)
         .size(theme::FONT_SIZE + 2.0)
         .color(theme::TEXT_PRIMARY)
         .into()
 }
 
-fn color_row<F>(label: &str, hex: &str, on_change: F) -> Element<'static, Message>
+fn color_row<F>(label: String, hex: &str, on_change: F) -> Element<'static, Message>
 where
     F: 'static + Fn(String) -> Message,
 {
     let color = parse_hex(hex);
     row![
-        text(label.to_string())
+        text(label)
             .size(theme::FONT_SIZE)
             .color(TEXT_SECONDARY)
             .width(120),

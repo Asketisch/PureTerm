@@ -2,6 +2,7 @@ use iced::widget::{column, container, scrollable, text};
 use iced::{Element, Length, Padding};
 
 use crate::app::Message;
+use crate::i18n::I18n;
 use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
 
 #[derive(Debug, Clone)]
@@ -52,17 +53,17 @@ impl KeybindingsState {
     }
 }
 
-pub fn view(state: &KeybindingsState) -> Element<'static, Message> {
+pub fn view(state: &KeybindingsState, i18n: &I18n) -> Element<'static, Message> {
     let header = iced::widget::row![
-        text("Key".to_string())
+        text(i18n.t("keybindings.key"))
             .size(11.0)
             .color(TEXT_SECONDARY)
             .width(120),
-        text("Modifiers".to_string())
+        text(i18n.t("keybindings.modifiers"))
             .size(11.0)
             .color(TEXT_SECONDARY)
             .width(200),
-        text("Action".to_string())
+        text(i18n.t("keybindings.action"))
             .size(11.0)
             .color(TEXT_SECONDARY)
             .width(Length::Fill),
@@ -92,10 +93,10 @@ pub fn view(state: &KeybindingsState) -> Element<'static, Message> {
 
     let list = if rows.is_empty() {
         column![
-            text("No custom keyboard bindings configured.".to_string())
+            text(i18n.t("keybindings.empty"))
                 .size(theme::FONT_SIZE)
                 .color(TEXT_SECONDARY),
-            text("Default bindings are built into PureTerm.".to_string())
+            text(i18n.t("keybindings.default_hint"))
                 .size(12.0)
                 .color(TEXT_SECONDARY),
         ]

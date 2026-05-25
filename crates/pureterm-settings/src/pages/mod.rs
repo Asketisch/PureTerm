@@ -5,6 +5,8 @@ pub mod keybindings;
 pub mod ssh_profiles;
 pub mod terminal;
 
+use crate::i18n::I18n;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     General,
@@ -16,14 +18,14 @@ pub enum Page {
 }
 
 impl Page {
-    pub fn title(&self) -> &'static str {
+    pub fn title(&self, i18n: &I18n) -> String {
         match self {
-            Page::General => "General",
-            Page::Appearance => "Appearance",
-            Page::Colors => "Colors",
-            Page::Terminal => "Terminal",
-            Page::SshProfiles => "SSH Profiles",
-            Page::Keybindings => "Keyboard Shortcuts",
+            Page::General => i18n.t("page.general"),
+            Page::Appearance => i18n.t("page.appearance"),
+            Page::Colors => i18n.t("page.colors"),
+            Page::Terminal => i18n.t("page.terminal"),
+            Page::SshProfiles => i18n.t("page.ssh_profiles"),
+            Page::Keybindings => i18n.t("page.keybindings"),
         }
     }
 }

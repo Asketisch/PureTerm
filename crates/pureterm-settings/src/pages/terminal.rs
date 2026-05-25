@@ -2,6 +2,7 @@ use iced::widget::{checkbox, column, container, row, text, text_input};
 use iced::{Element, Length, Padding};
 
 use crate::app::Message;
+use crate::i18n::I18n;
 use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
 
 #[derive(Debug, Clone)]
@@ -103,11 +104,11 @@ impl TerminalState {
     }
 }
 
-pub fn view(state: &TerminalState) -> Element<'static, Message> {
+pub fn view(state: &TerminalState, i18n: &I18n) -> Element<'static, Message> {
     let content = column![
-        section_title("Scrolling"),
+        section_title(i18n.t("terminal.section.scrolling")),
         labeled_row(
-            "History (lines)",
+            i18n.t("terminal.history"),
             text_input("10000", &state.history)
                 .on_input(|v| Message::Terminal(TerminalMsg::HistoryChanged(v)))
                 .style(theme::text_input::field)
@@ -115,7 +116,7 @@ pub fn view(state: &TerminalState) -> Element<'static, Message> {
                 .into(),
         ),
         labeled_row(
-            "Scroll multiplier",
+            i18n.t("terminal.scroll_multiplier"),
             text_input("3", &state.multiplier)
                 .on_input(|v| Message::Terminal(TerminalMsg::MultiplierChanged(v)))
                 .style(theme::text_input::field)
@@ -123,9 +124,9 @@ pub fn view(state: &TerminalState) -> Element<'static, Message> {
                 .into(),
         ),
         iced::widget::rule::horizontal(1),
-        section_title("Selection"),
+        section_title(i18n.t("terminal.section.selection")),
         labeled_row(
-            "Word separators",
+            i18n.t("terminal.word_separators"),
             text_input("semantic chars", &state.semantic_chars)
                 .on_input(|v| Message::Terminal(TerminalMsg::SemanticCharsChanged(v)))
                 .style(theme::text_input::field)
@@ -133,19 +134,19 @@ pub fn view(state: &TerminalState) -> Element<'static, Message> {
                 .into(),
         ),
         checkbox(state.save_to_clipboard)
-            .label("Save selection to clipboard")
+            .label(i18n.t("terminal.save_to_clipboard"))
             .on_toggle(|v| Message::Terminal(TerminalMsg::SaveToClipboardToggled(v)))
             .style(theme::checkbox::field),
         iced::widget::rule::horizontal(1),
-        section_title("Mouse"),
+        section_title(i18n.t("terminal.section.mouse")),
         checkbox(state.hide_when_typing)
-            .label("Hide cursor when typing")
+            .label(i18n.t("terminal.hide_when_typing"))
             .on_toggle(|v| Message::Terminal(TerminalMsg::HideWhenTypingToggled(v)))
             .style(theme::checkbox::field),
         iced::widget::rule::horizontal(1),
-        section_title("Bell"),
+        section_title(i18n.t("terminal.section.bell")),
         labeled_row(
-            "Duration (ms)",
+            i18n.t("terminal.bell_duration"),
             text_input("0", &state.bell_duration)
                 .on_input(|v| Message::Terminal(TerminalMsg::BellDurationChanged(v)))
                 .style(theme::text_input::field)
@@ -153,7 +154,7 @@ pub fn view(state: &TerminalState) -> Element<'static, Message> {
                 .into(),
         ),
         labeled_row(
-            "Color",
+            i18n.t("terminal.bell_color"),
             text_input("#ffffff", &state.bell_color)
                 .on_input(|v| Message::Terminal(TerminalMsg::BellColorChanged(v)))
                 .style(theme::text_input::field)
@@ -167,16 +168,16 @@ pub fn view(state: &TerminalState) -> Element<'static, Message> {
     container(content).width(Length::Fill).into()
 }
 
-fn section_title(title: &str) -> Element<'static, Message> {
-    text(title.to_string())
+fn section_title(title: String) -> Element<'static, Message> {
+    text(title)
         .size(theme::FONT_SIZE + 2.0)
         .color(theme::TEXT_PRIMARY)
         .into()
 }
 
-fn labeled_row<'a>(label: &str, widget: Element<'a, Message>) -> Element<'a, Message> {
+fn labeled_row<'a>(label: String, widget: Element<'a, Message>) -> Element<'a, Message> {
     row![
-        text(label.to_string())
+        text(label)
             .size(theme::FONT_SIZE)
             .color(TEXT_SECONDARY)
             .width(160),

@@ -4,6 +4,7 @@ use iced::widget::{button, column, container, row, rule, scrollable, space, text
 use iced::{Element, Length, Padding, Task};
 
 use crate::config_io;
+use crate::i18n::I18n;
 use crate::pages::appearance::{AppearanceMsg, AppearanceState};
 use crate::pages::colors::{ColorsMsg, ColorsState};
 use crate::pages::general::{GeneralMsg, GeneralState};
@@ -14,12 +15,20 @@ use crate::pages::Page;
 use crate::theme;
 use crate::widgets::sidebar;
 
+enum StatusMessage {
+    Saved,
+    Reverted,
+    SaveFailed(String),
+    RevertFailed(String),
+}
+
 pub struct SettingsApp {
     config_path: PathBuf,
     document: toml_edit::DocumentMut,
     current_page: Page,
     dirty: bool,
-    status_msg: Option<String>,
+    status_msg: Option<StatusMessage>,
+    i18n: I18n,
     general: GeneralState,
     appearance: AppearanceState,
     colors: ColorsState,
@@ -47,6 +56,11 @@ impl SettingsApp {
             "".parse().unwrap()
         });
 
+        let mut i18n = I18n::new();
+        let locale = config_io::get_string(&document, &["pureterm"], "locale")
+            .unwrap_or_else(|| "en".to_string());
+        i18n.set_locale(&locale);
+
         let general = GeneralState::load(&document);
         let appearance = AppearanceState::load(&document);
         let colors = ColorsState::load(&document);
@@ -60,6 +74,7 @@ impl SettingsApp {
             current_page: Page::Appearance,
             dirty: false,
             status_msg: None,
+            i18n,
             general,
             appearance,
             colors,
@@ -79,11 +94,11 @@ impl SettingsApp {
                 match config_io::save_document(&self.config_path, &self.document) {
                     Ok(()) => {
                         self.dirty = false;
-                        self.status_msg = Some("Saved".to_string());
+                        self.status_msg = Some(StatusMessage::Saved);
                         log::info!("Config saved to {}", self.config_path.display());
                     }
                     Err(e) => {
-                        self.status_msg = Some(format!("Save failed: {e}"));
+                        self.status_msg = Some(StatusMessage::SaveFailed(e.to_string()));
                         log::error!("Failed to save config: {e}");
                     }
                 }
@@ -99,14 +114,20 @@ impl SettingsApp {
                         self.ssh = SshState::load(&self.document);
                         self.keybindings = KeybindingsState::load(&self.document);
                         self.dirty = false;
-                        self.status_msg = Some("Reverted".to_string());
+                        self.status_msg = Some(StatusMessage::Reverted);
                     }
                     Err(e) => {
-                        self.status_msg = Some(format!("Revert failed: {e}"));
+                        self.status_msg = Some(StatusMessage::RevertFailed(e.to_string()));
                     }
                 }
             }
             Message::General(msg) => {
+                if let GeneralMsg::LocaleChanged(ref display) = msg {
+                    if let Some(code) = self.i18n.locale_code_for_display(display).map(|s| s.to_string()) {
+                        self.i18n.set_locale(&code);
+                        config_io::set_string(&mut self.document, &["pureterm"], "locale", &code);
+                    }
+                }
                 self.general.update(msg, &mut self.document);
                 self.dirty = true;
                 self.status_msg = None;
@@ -135,46 +156,53 @@ impl SettingsApp {
         Task::none()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         let page_content: Element<Message> = match self.current_page {
-            Page::General => crate::pages::general::view(&self.general),
-            Page::Appearance => crate::pages::appearance::view(&self.appearance),
-            Page::Colors => crate::pages::colors::view(&self.colors),
-            Page::Terminal => crate::pages::terminal::view(&self.terminal),
-            Page::SshProfiles => crate::pages::ssh_profiles::view(&self.ssh),
-            Page::Keybindings => crate::pages::keybindings::view(&self.keybindings),
+            Page::General => crate::pages::general::view(&self.general, &self.i18n),
+            Page::Appearance => crate::pages::appearance::view(&self.appearance, &self.i18n),
+            Page::Colors => crate::pages::colors::view(&self.colors, &self.i18n),
+            Page::Terminal => crate::pages::terminal::view(&self.terminal, &self.i18n),
+            Page::SshProfiles => crate::pages::ssh_profiles::view(&self.ssh, &self.i18n),
+            Page::Keybindings => crate::pages::keybindings::view(&self.keybindings, &self.i18n),
         };
 
-        let page_header = text(self.current_page.title().to_string())
+        let page_header = text(self.current_page.title(&self.i18n))
             .size(theme::FONT_SIZE + 4.0)
             .color(theme::TEXT_PRIMARY);
 
-        let mut save_btn = button(text("Save").size(theme::FONT_SIZE))
+        let mut save_btn = button(text(self.i18n.t("footer.save")).size(theme::FONT_SIZE))
             .padding(Padding::from([6, 20]))
             .style(theme::button::primary);
         if self.dirty {
             save_btn = save_btn.on_press(Message::Save);
         }
 
-        let revert_btn = button(text("Revert").size(theme::FONT_SIZE))
+        let revert_btn = button(text(self.i18n.t("footer.revert")).size(theme::FONT_SIZE))
             .padding(Padding::from([6, 20]))
             .style(theme::button::secondary)
             .on_press(Message::Revert);
 
-        let status = if let Some(ref msg) = self.status_msg {
-            text(msg.clone())
+        let status = match &self.status_msg {
+            Some(StatusMessage::Saved) => text(self.i18n.t("footer.saved"))
                 .size(12.0)
-                .color(if msg.starts_with("Save failed") || msg.starts_with("Revert failed") {
-                    theme::DANGER
-                } else {
-                    theme::SUCCESS
-                })
-        } else if self.dirty {
-            text("Unsaved changes".to_string())
+                .color(theme::SUCCESS),
+            Some(StatusMessage::Reverted) => text(self.i18n.t("footer.reverted"))
                 .size(12.0)
-                .color(theme::WARNING)
-        } else {
-            text(String::new()).size(12.0)
+                .color(theme::SUCCESS),
+            Some(StatusMessage::SaveFailed(e)) => {
+                text(format!("{}{e}", self.i18n.t("footer.save_failed")))
+                    .size(12.0)
+                    .color(theme::DANGER)
+            }
+            Some(StatusMessage::RevertFailed(e)) => {
+                text(format!("{}{e}", self.i18n.t("footer.revert_failed")))
+                    .size(12.0)
+                    .color(theme::DANGER)
+            }
+            None if self.dirty => text(self.i18n.t("footer.unsaved_changes"))
+                .size(12.0)
+                .color(theme::WARNING),
+            None => text(String::new()).size(12.0),
         };
 
         let footer = row![
@@ -201,7 +229,7 @@ impl SettingsApp {
         .height(Length::Fill);
 
         let layout = row![
-            sidebar::view(self.current_page),
+            sidebar::view(self.current_page, &self.i18n),
             rule::vertical(1),
             content_area,
         ]

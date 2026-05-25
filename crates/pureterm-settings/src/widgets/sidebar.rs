@@ -2,17 +2,18 @@ use iced::widget::{button, container, text, Column};
 use iced::{Element, Length, Padding, Theme};
 
 use crate::app::Message;
+use crate::i18n::I18n;
 use crate::pages::Page;
 use crate::theme::{self, PADDING, SIDEBAR_WIDTH, SPACING};
 
-pub fn view(current_page: Page) -> Element<'static, Message> {
+pub fn view(current_page: Page, i18n: &I18n) -> Element<'static, Message> {
     let items = vec![
-        ("General", Page::General),
-        ("Appearance", Page::Appearance),
-        ("Colors", Page::Colors),
-        ("Terminal", Page::Terminal),
-        ("SSH Profiles", Page::SshProfiles),
-        ("Shortcuts", Page::Keybindings),
+        (i18n.t("sidebar.general"), Page::General),
+        (i18n.t("sidebar.appearance"), Page::Appearance),
+        (i18n.t("sidebar.colors"), Page::Colors),
+        (i18n.t("sidebar.terminal"), Page::Terminal),
+        (i18n.t("sidebar.ssh_profiles"), Page::SshProfiles),
+        (i18n.t("sidebar.shortcuts"), Page::Keybindings),
     ];
 
     let buttons: Vec<Element<Message>> = items

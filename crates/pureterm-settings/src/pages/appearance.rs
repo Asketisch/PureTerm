@@ -2,6 +2,7 @@ use iced::widget::{checkbox, column, pick_list, row, slider, text, text_input, c
 use iced::{Element, Length, Padding};
 
 use crate::app::Message;
+use crate::i18n::{I18n, PickMapping};
 use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
 
 #[derive(Debug, Clone)]
@@ -140,31 +141,25 @@ impl AppearanceState {
     }
 }
 
-pub fn view(state: &AppearanceState) -> Element<'static, Message> {
-    let decorations_options = vec![
-        "Full".to_string(),
-        "Transparent".to_string(),
-        "Buttonless".to_string(),
-        "None".to_string(),
-    ];
-    let cursor_options = vec![
-        "Block".to_string(),
-        "Underline".to_string(),
-        "Beam".to_string(),
-    ];
+pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {
+    let deco_mapping = PickMapping::new(i18n, "pick_list.decorations", &["Full", "Transparent", "Buttonless", "None"]);
+    let deco_display = deco_mapping.display_options();
+
+    let cursor_mapping = PickMapping::new(i18n, "pick_list.cursor", &["Block", "Underline", "Beam"]);
+    let cursor_display = cursor_mapping.display_options();
 
     let content = column![
-        section_title("Font"),
+        section_title(i18n.t("appearance.section.font")),
         labeled_row(
-            "Family",
-            text_input("e.g. JetBrains Mono", &state.font_family)
+            i18n.t("appearance.family"),
+            text_input(&i18n.t("appearance.placeholder.font"), &state.font_family)
                 .on_input(|v| Message::Appearance(AppearanceMsg::FontFamilyChanged(v)))
                 .style(theme::text_input::field)
                 .width(250)
                 .into(),
         ),
         labeled_row(
-            "Size",
+            i18n.t("appearance.size"),
             text_input("11.25", &state.font_size)
                 .on_input(|v| Message::Appearance(AppearanceMsg::FontSizeChanged(v)))
                 .style(theme::text_input::field)
@@ -172,9 +167,9 @@ pub fn view(state: &AppearanceState) -> Element<'static, Message> {
                 .into(),
         ),
         iced::widget::rule::horizontal(1),
-        section_title("Window"),
+        section_title(i18n.t("appearance.section.window")),
         labeled_row(
-            "Opacity",
+            i18n.t("appearance.opacity"),
             row![
                 slider(0.0..=1.0, state.opacity, |v| Message::Appearance(
                     AppearanceMsg::OpacityChanged(v)
@@ -191,11 +186,11 @@ pub fn view(state: &AppearanceState) -> Element<'static, Message> {
             .into(),
         ),
         checkbox(state.blur)
-            .label("Background blur")
+            .label(i18n.t("appearance.background_blur"))
             .on_toggle(|v| Message::Appearance(AppearanceMsg::BlurToggled(v)))
             .style(theme::checkbox::field),
         labeled_row(
-            "Padding",
+            i18n.t("appearance.padding"),
             row![
                 text("X").size(theme::FONT_SIZE).color(TEXT_SECONDARY),
                 text_input("0", &state.padding_x)
@@ -213,35 +208,47 @@ pub fn view(state: &AppearanceState) -> Element<'static, Message> {
             .into(),
         ),
         labeled_row(
-            "Decorations",
-            pick_list(
-                decorations_options,
-                Some(state.decorations.clone()),
-                |v| Message::Appearance(AppearanceMsg::DecorationsChanged(v)),
-            )
-            .style(theme::pick_list::field)
-            .width(150)
-            .into(),
+            i18n.t("appearance.decorations"),
+            {
+                let selected = deco_mapping.display_for(&state.decorations);
+                pick_list(
+                    deco_display,
+                    Some(selected),
+                    move |v| {
+                        let config = deco_mapping.config_for(&v).unwrap_or_default();
+                        Message::Appearance(AppearanceMsg::DecorationsChanged(config))
+                    },
+                )
+                .style(theme::pick_list::field)
+                .width(150)
+                .into()
+            },
         ),
         iced::widget::rule::horizontal(1),
-        section_title("Cursor"),
+        section_title(i18n.t("appearance.section.cursor")),
         labeled_row(
-            "Shape",
-            pick_list(
-                cursor_options,
-                Some(state.cursor_shape.clone()),
-                |v| Message::Appearance(AppearanceMsg::CursorShapeChanged(v)),
-            )
-            .style(theme::pick_list::field)
-            .width(150)
-            .into(),
+            i18n.t("appearance.shape"),
+            {
+                let selected = cursor_mapping.display_for(&state.cursor_shape);
+                pick_list(
+                    cursor_display,
+                    Some(selected),
+                    move |v| {
+                        let config = cursor_mapping.config_for(&v).unwrap_or_default();
+                        Message::Appearance(AppearanceMsg::CursorShapeChanged(config))
+                    },
+                )
+                .style(theme::pick_list::field)
+                .width(150)
+                .into()
+            },
         ),
         checkbox(state.cursor_blinking)
-            .label("Blinking")
+            .label(i18n.t("appearance.blinking"))
             .on_toggle(|v| Message::Appearance(AppearanceMsg::CursorBlinkingToggled(v)))
             .style(theme::checkbox::field),
         labeled_row(
-            "Thickness",
+            i18n.t("appearance.thickness"),
             row![
                 slider(0.05..=0.5, state.cursor_thickness, |v| Message::Appearance(
                     AppearanceMsg::CursorThicknessChanged(v)
@@ -258,7 +265,7 @@ pub fn view(state: &AppearanceState) -> Element<'static, Message> {
             .into(),
         ),
         checkbox(state.unfocused_hollow)
-            .label("Unfocused hollow")
+            .label(i18n.t("appearance.unfocused_hollow"))
             .on_toggle(|v| Message::Appearance(AppearanceMsg::UnfocusedHollowToggled(v)))
             .style(theme::checkbox::field),
     ]
@@ -268,16 +275,16 @@ pub fn view(state: &AppearanceState) -> Element<'static, Message> {
     container(content).width(Length::Fill).into()
 }
 
-fn section_title(title: &str) -> Element<'static, Message> {
-    text(title.to_string())
+fn section_title(title: String) -> Element<'static, Message> {
+    text(title)
         .size(theme::FONT_SIZE + 2.0)
         .color(theme::TEXT_PRIMARY)
         .into()
 }
 
-fn labeled_row<'a>(label: &str, widget: Element<'a, Message>) -> Element<'a, Message> {
+fn labeled_row<'a>(label: String, widget: Element<'a, Message>) -> Element<'a, Message> {
     row![
-        text(label.to_string())
+        text(label)
             .size(theme::FONT_SIZE)
             .color(TEXT_SECONDARY)
             .width(160),

@@ -2,6 +2,7 @@ use iced::widget::{button, column, container, row, scrollable, text, text_input}
 use iced::{Element, Length, Padding};
 
 use crate::app::Message;
+use crate::i18n::I18n;
 use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
 
 #[derive(Debug, Clone)]
@@ -156,19 +157,22 @@ impl SshState {
     }
 }
 
-pub fn view(state: &SshState) -> Element<'static, Message> {
+pub fn view(state: &SshState, i18n: &I18n) -> Element<'static, Message> {
+    let unnamed = i18n.t("ssh.unnamed");
+    let no_host = i18n.t("ssh.no_host");
+
     let profile_list: Vec<Element<Message>> = state
         .profiles
         .iter()
         .enumerate()
         .map(|(i, p)| {
             let selected = state.selected == Some(i);
-            let label = if p.name.is_empty() { "(unnamed)" } else { &p.name };
-            let subtitle = if p.host.is_empty() { "No host" } else { &p.host };
+            let label = if p.name.is_empty() { unnamed.clone() } else { p.name.clone() };
+            let subtitle = if p.host.is_empty() { no_host.clone() } else { p.host.clone() };
             button(
                 column![
-                    text(label.to_string()).size(theme::FONT_SIZE),
-                    text(subtitle.to_string()).size(11.0).color(TEXT_SECONDARY),
+                    text(label).size(theme::FONT_SIZE),
+                    text(subtitle).size(11.0).color(TEXT_SECONDARY),
                 ]
                 .spacing(2),
             )
@@ -187,7 +191,7 @@ pub fn view(state: &SshState) -> Element<'static, Message> {
                 .width(Length::Fill),
         )
         .height(Length::Fill),
-        button(text("+ Add Profile").size(theme::FONT_SIZE))
+        button(text(i18n.t("ssh.add_profile")).size(theme::FONT_SIZE))
             .width(Length::Fill)
             .padding(8)
             .style(theme::button::secondary)
@@ -203,31 +207,31 @@ pub fn view(state: &SshState) -> Element<'static, Message> {
             container(
                 column![
                     labeled_row(
-                        "Name",
-                        text_input("Profile name", &p.name)
+                        i18n.t("ssh.name"),
+                        text_input(&i18n.t("ssh.placeholder.name"), &p.name)
                             .on_input(|v| Message::Ssh(SshMsg::NameChanged(v)))
                             .style(theme::text_input::field)
                             .width(250)
                             .into(),
                     ),
                     labeled_row(
-                        "Host",
-                        text_input("hostname or IP", &p.host)
+                        i18n.t("ssh.host"),
+                        text_input(&i18n.t("ssh.placeholder.host"), &p.host)
                             .on_input(|v| Message::Ssh(SshMsg::HostChanged(v)))
                             .style(theme::text_input::field)
                             .width(250)
                             .into(),
                     ),
                     labeled_row(
-                        "User",
-                        text_input("username", &p.user)
+                        i18n.t("ssh.user"),
+                        text_input(&i18n.t("ssh.placeholder.user"), &p.user)
                             .on_input(|v| Message::Ssh(SshMsg::UserChanged(v)))
                             .style(theme::text_input::field)
                             .width(200)
                             .into(),
                     ),
                     labeled_row(
-                        "Port",
+                        i18n.t("ssh.port"),
                         text_input("22", &p.port)
                             .on_input(|v| Message::Ssh(SshMsg::PortChanged(v)))
                             .style(theme::text_input::field)
@@ -235,8 +239,8 @@ pub fn view(state: &SshState) -> Element<'static, Message> {
                             .into(),
                     ),
                     labeled_row(
-                        "Key Path",
-                        text_input("~/.ssh/id_rsa", &p.key_path)
+                        i18n.t("ssh.key_path"),
+                        text_input(&i18n.t("ssh.placeholder.key_path"), &p.key_path)
                             .on_input(|v| Message::Ssh(SshMsg::KeyPathChanged(v)))
                             .style(theme::text_input::field)
                             .width(300)
@@ -244,7 +248,7 @@ pub fn view(state: &SshState) -> Element<'static, Message> {
                     ),
                     row![
                         iced::widget::space::horizontal(),
-                        button(text("Delete").size(theme::FONT_SIZE))
+                        button(text(i18n.t("ssh.delete")).size(theme::FONT_SIZE))
                             .padding(Padding::from([6, 16]))
                             .style(theme::button::danger)
                             .on_press(Message::Ssh(SshMsg::DeleteProfile(idx))),
@@ -256,10 +260,10 @@ pub fn view(state: &SshState) -> Element<'static, Message> {
             .width(Length::Fill)
             .into()
         } else {
-            placeholder("Select a profile")
+            placeholder(i18n.t("ssh.select_profile"))
         }
     } else {
-        placeholder("No profiles. Click '+ Add Profile' to create one.")
+        placeholder(i18n.t("ssh.no_profiles"))
     };
 
     container(
@@ -272,9 +276,9 @@ pub fn view(state: &SshState) -> Element<'static, Message> {
     .into()
 }
 
-fn placeholder(msg: &str) -> Element<'static, Message> {
+fn placeholder(msg: String) -> Element<'static, Message> {
     container(
-        text(msg.to_string())
+        text(msg)
             .size(theme::FONT_SIZE)
             .color(TEXT_SECONDARY),
     )
@@ -285,9 +289,9 @@ fn placeholder(msg: &str) -> Element<'static, Message> {
     .into()
 }
 
-fn labeled_row<'a>(label: &str, widget: Element<'a, Message>) -> Element<'a, Message> {
+fn labeled_row<'a>(label: String, widget: Element<'a, Message>) -> Element<'a, Message> {
     row![
-        text(label.to_string())
+        text(label)
             .size(theme::FONT_SIZE)
             .color(TEXT_SECONDARY)
             .width(100),
