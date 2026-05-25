@@ -92,3 +92,13 @@ action = { Ssh = "ListProfiles" }
 - SSH Tab UI（实际标签页创建）
 - SSH 设置 UI 界面
 - 命令面板集成
+
+## graphify
+
+本项目在 graphify-out/ 目录下有一个知识图谱，包含核心节点、社区结构和跨文件关系。
+
+规则：
+- 回答代码库相关问题时，先运行 `graphify query "<问题>"`（当 graphify-out/graph.json 存在时）。用 `graphify path "<A>" "<B>"` 查找两个概念之间的关系，用 `graphify explain "<概念>"` 深入了解某个概念。这些命令返回一个局部子图，通常比 GRAPH_REPORT.md 或原始 grep 输出小得多。
+- 如果 graphify-out/wiki/index.md 存在，用它做宽泛导航，而不是直接浏览源码。
+- 只有在架构概览或 query/path/explain 无法提供足够上下文时，才阅读 graphify-out/GRAPH_REPORT.md。
+- 修改代码后，运行 `graphify update .` 保持图谱最新（仅 AST，无需 API 消耗）。

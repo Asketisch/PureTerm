@@ -157,7 +157,7 @@ impl Processor {
         }
 
         let config_path = self.config.config_paths.first().cloned().unwrap_or_else(|| {
-            dirs::home_dir().unwrap_or_default().join(".config/pureterm/alacritty.toml")
+            dirs::home_dir().unwrap_or_default().join(".config/pureterm/pureterm.toml")
         });
 
         let settings_bin = Self::find_settings_binary();

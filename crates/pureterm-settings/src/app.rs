@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 
 use iced::widget::{button, column, container, row, rule, scrollable, space, text};
-use iced::{Element, Length, Padding, Task};
+use iced::{window, Element, Length, Padding, Task};
 
 use crate::config_io;
 use crate::i18n::I18n;
 use crate::pages::appearance::{AppearanceMsg, AppearanceState};
-use crate::pages::colors::{ColorsMsg, ColorsState};
+use crate::pages::colors::{ColorPickerTarget, ColorsMsg, ColorsState};
 use crate::pages::general::{GeneralMsg, GeneralState};
 use crate::pages::keybindings::KeybindingsState;
 use crate::pages::ssh_profiles::{SshMsg, SshState};
@@ -35,6 +35,9 @@ pub struct SettingsApp {
     terminal: TerminalState,
     ssh: SshState,
     keybindings: KeybindingsState,
+    main_window: Option<window::Id>,
+    color_picker_window: Option<window::Id>,
+    pending_color_target: Option<ColorPickerTarget>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,6 +50,9 @@ pub enum Message {
     Colors(ColorsMsg),
     Terminal(TerminalMsg),
     Ssh(SshMsg),
+    MainWindowOpened(window::Id),
+    ColorPickerOpened(window::Id),
+    ColorPickerClosed(window::Id),
 }
 
 impl SettingsApp {
@@ -81,14 +87,25 @@ impl SettingsApp {
             terminal,
             ssh,
             keybindings,
+            main_window: None,
+            color_picker_window: None,
+            pending_color_target: None,
         };
-        (app, Task::none())
+        let settings = window::Settings {
+            size: iced::Size::new(850.0, 620.0),
+            decorations: true,
+            resizable: true,
+            closeable: true,
+            ..Default::default()
+        };
+        (app, window::open(settings).1.map(|id| Message::MainWindowOpened(id)))
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::NavigateTo(page) => {
                 self.current_page = page;
+                Task::none()
             }
             Message::Save => {
                 match config_io::save_document(&self.config_path, &self.document) {
@@ -102,6 +119,7 @@ impl SettingsApp {
                         log::error!("Failed to save config: {e}");
                     }
                 }
+                Task::none()
             }
             Message::Revert => {
                 match config_io::load_document(&self.config_path) {
@@ -120,6 +138,7 @@ impl SettingsApp {
                         self.status_msg = Some(StatusMessage::RevertFailed(e.to_string()));
                     }
                 }
+                Task::none()
             }
             Message::General(msg) => {
                 if let GeneralMsg::LocaleChanged(ref display) = msg {
@@ -131,36 +150,90 @@ impl SettingsApp {
                 self.general.update(msg, &mut self.document);
                 self.dirty = true;
                 self.status_msg = None;
+                Task::none()
             }
             Message::Appearance(msg) => {
                 self.appearance.update(msg, &mut self.document);
                 self.dirty = true;
                 self.status_msg = None;
+                Task::none()
             }
             Message::Colors(msg) => {
+                if let ColorsMsg::OpenColorPicker(target) = &msg {
+                    self.pending_color_target = Some(target.clone());
+                    let settings = window::Settings {
+                        size: iced::Size::new(300.0, 350.0),
+                        decorations: true,
+                        resizable: false,
+                        closeable: true,
+                        ..Default::default()
+                    };
+                    return window::open(settings).1.map(|id| Message::ColorPickerOpened(id));
+                }
                 self.colors.update(msg, &mut self.document);
                 self.dirty = true;
                 self.status_msg = None;
+                Task::none()
             }
             Message::Terminal(msg) => {
                 self.terminal.update(msg, &mut self.document);
                 self.dirty = true;
                 self.status_msg = None;
+                Task::none()
             }
             Message::Ssh(msg) => {
                 self.ssh.update(msg, &mut self.document);
                 self.dirty = true;
                 self.status_msg = None;
+                Task::none()
+            }
+            Message::MainWindowOpened(id) => {
+                self.main_window = Some(id);
+                Task::none()
+            }
+            Message::ColorPickerOpened(id) => {
+                self.color_picker_window = Some(id);
+                Task::none()
+            }
+            Message::ColorPickerClosed(id) => {
+                if self.color_picker_window == Some(id) {
+                    self.color_picker_window = None;
+                    self.pending_color_target = None;
+                }
+                Task::none()
             }
         }
-        Task::none()
     }
 
-    fn view(&self) -> Element<'_, Message> {
+    fn view(&self, window: window::Id) -> Element<'_, Message> {
+        // Check if this is the color picker window
+        if let Some(picker_id) = self.color_picker_window {
+            if picker_id == window {
+                if let Some(target) = &self.pending_color_target {
+                    let hex = self.colors.hex_for_target(target);
+                    return crate::pages::colors::color_picker_window_view(
+                        target.clone(),
+                        &hex,
+                        window,
+                    );
+                }
+            }
+        }
+
+        // Check if this is the main settings window
+        if self.main_window != Some(window) {
+            // Unknown window, render nothing or a placeholder
+            return container(text("Loading..."))
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+        }
+
+        // Main settings window view
         let page_content: Element<Message> = match self.current_page {
             Page::General => crate::pages::general::view(&self.general, &self.i18n),
             Page::Appearance => crate::pages::appearance::view(&self.appearance, &self.i18n),
-            Page::Colors => crate::pages::colors::view(&self.colors, &self.i18n),
+            Page::Colors => crate::pages::colors::main_view(&self.colors, &self.i18n),
             Page::Terminal => crate::pages::terminal::view(&self.terminal, &self.i18n),
             Page::SshProfiles => crate::pages::ssh_profiles::view(&self.ssh, &self.i18n),
             Page::Keybindings => crate::pages::keybindings::view(&self.keybindings, &self.i18n),
@@ -241,10 +314,26 @@ impl SettingsApp {
             .style(theme::container::page)
             .into()
     }
+
+    fn title(&self, window: window::Id) -> String {
+        if let Some(picker_id) = self.color_picker_window {
+            if picker_id == window {
+                return "Color Picker".to_string();
+            }
+        }
+        if self.main_window == Some(window) {
+            return "PureTerm Settings".to_string();
+        }
+        "PureTerm Settings".to_string()
+    }
+
+    fn subscription(&self) -> iced::Subscription<Message> {
+        iced::Subscription::none()
+    }
 }
 
 pub fn run(config_path: PathBuf) -> iced::Result {
-    iced::application(
+    iced::daemon(
         {
             let path = config_path;
             move || SettingsApp::new(path.clone())
@@ -252,8 +341,8 @@ pub fn run(config_path: PathBuf) -> iced::Result {
         SettingsApp::update,
         SettingsApp::view,
     )
-    .window_size((850.0, 620.0))
-    .title("PureTerm Settings")
-    .theme(|_: &SettingsApp| theme::pureterm_theme())
+    .title(SettingsApp::title)
+    .theme(|_: &SettingsApp, _| theme::pureterm_theme())
+    .subscription(SettingsApp::subscription)
     .run()
 }

@@ -62,5 +62,5 @@ unsafe fn macos_activate() {
 fn default_config_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_default()
-        .join(".config/pureterm/alacritty.toml")
+        .join(".config/pureterm/pureterm.toml")
 }

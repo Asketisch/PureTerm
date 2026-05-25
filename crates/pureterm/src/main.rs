@@ -8,7 +8,7 @@ fn main() {
 
 fn ensure_default_config() {
     let config_dir = pureterm_config_dir();
-    let config_file = config_dir.join("alacritty.toml");
+    let config_file = config_dir.join("pureterm.toml");
 
     if config_file.exists() {
         return;

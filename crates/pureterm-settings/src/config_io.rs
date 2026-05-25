@@ -124,15 +124,15 @@ fn config_candidates() -> Vec<PathBuf> {
     {
         if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
             let xdg = PathBuf::from(xdg);
-            paths.push(xdg.join("pureterm/alacritty.toml"));
             paths.push(xdg.join("pureterm/pureterm.toml"));
+            paths.push(xdg.join("pureterm/alacritty.toml"));
             paths.push(xdg.join("alacritty/alacritty.toml"));
         }
 
         if let Some(home) = dirs::home_dir() {
             let config = home.join(".config");
-            paths.push(config.join("pureterm/alacritty.toml"));
             paths.push(config.join("pureterm/pureterm.toml"));
+            paths.push(config.join("pureterm/alacritty.toml"));
             paths.push(config.join("alacritty/alacritty.toml"));
         }
     }
@@ -140,8 +140,8 @@ fn config_candidates() -> Vec<PathBuf> {
     #[cfg(target_os = "windows")]
     {
         if let Some(appdata) = dirs::config_dir() {
-            paths.push(appdata.join("pureterm/alacritty.toml"));
             paths.push(appdata.join("pureterm/pureterm.toml"));
+            paths.push(appdata.join("pureterm/alacritty.toml"));
             paths.push(appdata.join("alacritty/alacritty.toml"));
         }
     }

@@ -1,9 +1,10 @@
-use iced::widget::{column, container, row, text, text_input};
-use iced::{Color, Element, Length, Padding};
+use iced::widget::{button, canvas, column, container, row, text, text_input};
+use iced::{Color, Element, Length, Padding, Theme, window};
 
 use crate::app::Message;
 use crate::i18n::I18n;
 use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::widgets::color_picker::{self, hsv_to_hex, hex_to_color, WheelProgram};
 use crate::widgets::color_swatch;
 
 #[derive(Debug, Clone)]
@@ -12,6 +13,17 @@ pub enum ColorsMsg {
     BackgroundChanged(String),
     NormalColorChanged(usize, String),
     BrightColorChanged(usize, String),
+    OpenColorPicker(ColorPickerTarget),
+    HueSatChanged(ColorPickerTarget, f32, f32),
+    ColorPickerResult(ColorPickerTarget, String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ColorPickerTarget {
+    Foreground,
+    Background,
+    Normal(usize),
+    Bright(usize),
 }
 
 #[derive(Debug, Clone)]
@@ -68,7 +80,12 @@ impl ColorsState {
             }
         }
 
-        Self { foreground: fg, background: bg, normal, bright }
+        Self {
+            foreground: fg,
+            background: bg,
+            normal,
+            bright,
+        }
     }
 
     pub fn update(&mut self, msg: ColorsMsg, doc: &mut toml_edit::DocumentMut) {
@@ -90,38 +107,125 @@ impl ColorsState {
                 self.bright[i] = v.clone();
                 crate::config_io::set_string(doc, &["colors", "bright"], keys[i], &v);
             }
+            ColorsMsg::OpenColorPicker(target) => {
+                // Handled by app, not directly here
+            }
+            ColorsMsg::HueSatChanged(target, hue, sat) => {
+                let hex = hsv_to_hex(hue, sat, 1.0);
+                self.apply_hex(&target, &hex, doc);
+            }
+            ColorsMsg::ColorPickerResult(target, hex) => {
+                self.apply_hex(&target, &hex, doc);
+            }
+        }
+    }
+
+    pub fn hex_for_target(&self, target: &ColorPickerTarget) -> String {
+        match target {
+            ColorPickerTarget::Foreground => self.foreground.clone(),
+            ColorPickerTarget::Background => self.background.clone(),
+            ColorPickerTarget::Normal(i) => self.normal[*i].clone(),
+            ColorPickerTarget::Bright(i) => self.bright[*i].clone(),
+        }
+    }
+
+    fn apply_hex(&mut self, target: &ColorPickerTarget, hex: &str, doc: &mut toml_edit::DocumentMut) {
+        let keys = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+        match target {
+            ColorPickerTarget::Foreground => {
+                self.foreground = hex.to_string();
+                crate::config_io::set_string(doc, &["colors", "primary"], "foreground", hex);
+            }
+            ColorPickerTarget::Background => {
+                self.background = hex.to_string();
+                crate::config_io::set_string(doc, &["colors", "primary"], "background", hex);
+            }
+            ColorPickerTarget::Normal(i) => {
+                self.normal[*i] = hex.to_string();
+                crate::config_io::set_string(doc, &["colors", "normal"], keys[*i], hex);
+            }
+            ColorPickerTarget::Bright(i) => {
+                self.bright[*i] = hex.to_string();
+                crate::config_io::set_string(doc, &["colors", "bright"], keys[*i], hex);
+            }
         }
     }
 }
 
-pub fn view(state: &ColorsState, i18n: &I18n) -> Element<'static, Message> {
+pub fn main_view(state: &ColorsState, i18n: &I18n) -> Element<'static, Message> {
     let content = column![
         section_title(i18n.t("colors.section.primary")),
         color_row(
             i18n.t("colors.foreground"),
             &state.foreground,
-            |v| Message::Colors(ColorsMsg::ForegroundChanged(v))
+            ColorPickerTarget::Foreground,
+            ColorsMsg::ForegroundChanged
         ),
         color_row(
             i18n.t("colors.background"),
             &state.background,
-            |v| Message::Colors(ColorsMsg::BackgroundChanged(v))
+            ColorPickerTarget::Background,
+            ColorsMsg::BackgroundChanged
         ),
         iced::widget::rule::horizontal(1),
         section_title(i18n.t("colors.section.normal")),
-        color_grid(&state.normal, |i, v| {
-            Message::Colors(ColorsMsg::NormalColorChanged(i, v))
-        }),
+        color_grid(&state.normal, |i, v| ColorsMsg::NormalColorChanged(i, v), ColorPickerTarget::Normal),
         iced::widget::rule::horizontal(1),
         section_title(i18n.t("colors.section.bright")),
-        color_grid(&state.bright, |i, v| {
-            Message::Colors(ColorsMsg::BrightColorChanged(i, v))
-        }),
+        color_grid(&state.bright, |i, v| ColorsMsg::BrightColorChanged(i, v), ColorPickerTarget::Bright),
     ]
     .spacing(SPACING)
     .padding(Padding::from(PADDING as u16));
 
     container(content).width(Length::Fill).into()
+}
+
+pub fn color_picker_window_view(target: ColorPickerTarget, hex: &str, window_id: window::Id) -> Element<'static, Message> {
+    let (hue, sat, _) = hex_to_color(hex)
+        .map(color_picker::color_to_hsv)
+        .unwrap_or((0.0, 0.0, 1.0));
+
+    let target_clone = target.clone();
+    let wheel = canvas(WheelProgram::new(hue, sat, 1.0, move |h, s| {
+        Message::Colors(ColorsMsg::HueSatChanged(target_clone.clone(), h, s))
+    }))
+    .width(Length::Fixed(250.0))
+    .height(Length::Fixed(250.0));
+
+    let ok_btn = button(text("OK").size(14))
+        .padding([8, 24])
+        .style(theme::button::primary)
+        .on_press(Message::Colors(ColorsMsg::ColorPickerResult(target.clone(), hex.to_string())));
+
+    let cancel_btn = button(text("Cancel").size(14))
+        .padding([8, 24])
+        .style(theme::button::secondary)
+        .on_press(Message::ColorPickerClosed(window_id));
+
+    let target_name = match &target {
+        ColorPickerTarget::Foreground => "Foreground",
+        ColorPickerTarget::Background => "Background",
+        ColorPickerTarget::Normal(i) | ColorPickerTarget::Bright(i) => COLOR_NAMES[*i],
+    };
+
+    let display_hex = hex.to_string();
+
+    column![
+        text(format!("Color: {}", target_name)).size(16).color(theme::TEXT_PRIMARY),
+        wheel,
+        row![
+            text("Hex:").size(14).color(TEXT_SECONDARY),
+            text(hex.to_string()).size(14).color(theme::TEXT_PRIMARY),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center),
+        row![ok_btn, cancel_btn]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+    ]
+    .spacing(SPACING)
+    .padding(PADDING)
+    .into()
 }
 
 fn section_title(title: String) -> Element<'static, Message> {
@@ -131,9 +235,9 @@ fn section_title(title: String) -> Element<'static, Message> {
         .into()
 }
 
-fn color_row<F>(label: String, hex: &str, on_change: F) -> Element<'static, Message>
+fn color_row<F>(label: String, hex: &str, target: ColorPickerTarget, msg_fn: F) -> Element<'static, Message>
 where
-    F: 'static + Fn(String) -> Message,
+    F: 'static + Fn(String) -> ColorsMsg,
 {
     let color = parse_hex(hex);
     row![
@@ -143,29 +247,35 @@ where
             .width(120),
         color_swatch::view(color, 24.0),
         text_input("#rrggbb", hex)
-            .on_input(on_change)
+            .on_input(move |s| Message::Colors(msg_fn(s)))
             .style(theme::text_input::field)
             .width(100),
+        open_picker_button(target),
     ]
     .spacing(SPACING)
     .align_y(iced::Alignment::Center)
     .into()
 }
 
-fn color_grid<F>(colors: &[String; 8], on_change: F) -> Element<'static, Message>
+fn color_grid<F, G>(
+    colors: &[String; 8],
+    msg_fn: F,
+    target_fn: G,
+) -> Element<'static, Message>
 where
-    F: 'static + Fn(usize, String) -> Message + Clone,
+    F: 'static + Fn(usize, String) -> ColorsMsg + Clone,
+    G: 'static + Fn(usize) -> ColorPickerTarget,
 {
     let row1: Vec<Element<Message>> = (0..4)
         .map(|i| {
-            let f = on_change.clone();
-            color_cell(COLOR_NAMES[i], &colors[i], move |v| f(i, v))
+            let f = msg_fn.clone();
+            color_cell(COLOR_NAMES[i], &colors[i], target_fn(i), move |v| f(i, v))
         })
         .collect();
     let row2: Vec<Element<Message>> = (4..8)
         .map(|i| {
-            let f = on_change.clone();
-            color_cell(COLOR_NAMES[i], &colors[i], move |v| f(i, v))
+            let f = msg_fn.clone();
+            color_cell(COLOR_NAMES[i], &colors[i], target_fn(i), move |v| f(i, v))
         })
         .collect();
 
@@ -177,9 +287,14 @@ where
     .into()
 }
 
-fn color_cell<F>(name: &str, hex: &str, on_change: F) -> Element<'static, Message>
+fn color_cell<F>(
+    name: &str,
+    hex: &str,
+    target: ColorPickerTarget,
+    on_change: F,
+) -> Element<'static, Message>
 where
-    F: 'static + Fn(String) -> Message,
+    F: 'static + Fn(String) -> ColorsMsg,
 {
     let color = parse_hex(hex);
     column![
@@ -187,14 +302,31 @@ where
         row![
             color_swatch::view(color, 20.0),
             text_input("#hex", hex)
-                .on_input(on_change)
+                .on_input(move |s| Message::Colors(on_change(s)))
                 .style(theme::text_input::field)
                 .width(80),
+            open_picker_button(target),
         ]
         .spacing(4)
         .align_y(iced::Alignment::Center),
     ]
     .spacing(2)
+    .into()
+}
+
+fn open_picker_button(target: ColorPickerTarget) -> Element<'static, Message> {
+    let label = match &target {
+        ColorPickerTarget::Foreground => "FG",
+        ColorPickerTarget::Background => "BG",
+        ColorPickerTarget::Normal(i) | ColorPickerTarget::Bright(i) => COLOR_NAMES[*i],
+    };
+
+    iced::widget::button(
+        text(label).size(11)
+    )
+    .padding([4, 8])
+    .style(theme::button::secondary)
+    .on_press(Message::Colors(ColorsMsg::OpenColorPicker(target)))
     .into()
 }
 
