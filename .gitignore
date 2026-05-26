@@ -24,3 +24,13 @@
 dist
 # Large assets (loaded at runtime, not embedded)
 crates/pureterm-gui/src/fonts/AppleColorEmoji.ttc
+
+
+# graphify — 机器特定 & 可重新生成的文件
+graphify-out/.graphify_python
+graphify-out/.graphify_root
+graphify-out/.graphify_labels.json
+graphify-out/cache/
+graphify-out/manifest.json
+graphify-out/graph.html
+graphify-out/cost.json

@@ -57,6 +57,10 @@ pub enum Message {
 }
 
 impl SettingsState {
+    pub fn owns_window(&self, id: window::Id) -> bool {
+        self.main_window == Some(id) || self.color_picker_window == Some(id)
+    }
+
     pub fn new(config_path: PathBuf) -> Self {
         let document = config_io::load_document(&config_path).unwrap_or_else(|e| {
             log::warn!("Failed to load config: {e}, using empty document");

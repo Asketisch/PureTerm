@@ -1,4 +1,4 @@
-use iced::widget::{button, canvas, column, container, row, text, text_input};
+use iced::widget::{button, canvas, column, container, row, slider, text, text_input};
 use iced::{Color, Element, Length, Padding, Theme, window};
 
 use crate::app::Message;
@@ -15,6 +15,7 @@ pub enum ColorsMsg {
     BrightColorChanged(usize, String),
     OpenColorPicker(ColorPickerTarget),
     HueSatChanged(ColorPickerTarget, f32, f32),
+    ValueChanged(ColorPickerTarget, f32),
     ColorPickerResult(ColorPickerTarget, String),
 }
 
@@ -111,7 +112,17 @@ impl ColorsState {
                 // Handled by app, not directly here
             }
             ColorsMsg::HueSatChanged(target, hue, sat) => {
-                let hex = hsv_to_hex(hue, sat, 1.0);
+                let (_, _, current_v) = hex_to_color(&self.hex_for_target(&target))
+                    .map(color_picker::color_to_hsv)
+                    .unwrap_or((0.0, 0.0, 1.0));
+                let hex = hsv_to_hex(hue, sat, current_v);
+                self.apply_hex(&target, &hex, doc);
+            }
+            ColorsMsg::ValueChanged(target, val) => {
+                let (h, s, _) = hex_to_color(&self.hex_for_target(&target))
+                    .map(color_picker::color_to_hsv)
+                    .unwrap_or((0.0, 0.0, 1.0));
+                let hex = hsv_to_hex(h, s, val);
                 self.apply_hex(&target, &hex, doc);
             }
             ColorsMsg::ColorPickerResult(target, hex) => {
@@ -181,16 +192,43 @@ pub fn main_view(state: &ColorsState, i18n: &I18n) -> Element<'static, Message> 
 }
 
 pub fn color_picker_window_view(target: ColorPickerTarget, hex: &str, window_id: window::Id) -> Element<'static, Message> {
-    let (hue, sat, _) = hex_to_color(hex)
+    let (hue, sat, val) = hex_to_color(hex)
         .map(color_picker::color_to_hsv)
         .unwrap_or((0.0, 0.0, 1.0));
 
     let target_clone = target.clone();
-    let wheel = canvas(WheelProgram::new(hue, sat, 1.0, move |h, s| {
+    let wheel = canvas(WheelProgram::new(hue, sat, val, move |h, s| {
         Message::Colors(ColorsMsg::HueSatChanged(target_clone.clone(), h, s))
     }))
     .width(Length::Fixed(250.0))
     .height(Length::Fixed(250.0));
+
+    let target_for_slider = target.clone();
+    let brightness_slider = row![
+        text("Brightness").size(13).color(TEXT_SECONDARY).width(80),
+        slider(0.0..=1.0, val, move |v| {
+            Message::Colors(ColorsMsg::ValueChanged(target_for_slider.clone(), v))
+        })
+        .step(0.01)
+        .width(Length::Fixed(170.0)),
+        text(format!("{:.0}%", val * 100.0)).size(13).color(theme::TEXT_PRIMARY).width(40),
+    ]
+    .spacing(SPACING)
+    .align_y(iced::Alignment::Center);
+
+    let preview_color = hex_to_color(hex).unwrap_or(Color::BLACK);
+    let preview = container(text(""))
+        .width(Length::Fill)
+        .height(24)
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(iced::Background::Color(preview_color)),
+            border: iced::Border {
+                radius: 4.0.into(),
+                width: 1.0,
+                color: Color::from_rgb(0.3, 0.3, 0.3),
+            },
+            ..Default::default()
+        });
 
     let ok_btn = button(text("OK").size(14))
         .padding([8, 24])
@@ -208,11 +246,11 @@ pub fn color_picker_window_view(target: ColorPickerTarget, hex: &str, window_id:
         ColorPickerTarget::Normal(i) | ColorPickerTarget::Bright(i) => COLOR_NAMES[*i],
     };
 
-    let display_hex = hex.to_string();
-
     column![
         text(format!("Color: {}", target_name)).size(16).color(theme::TEXT_PRIMARY),
         wheel,
+        brightness_slider,
+        preview,
         row![
             text("Hex:").size(14).color(TEXT_SECONDARY),
             text(hex.to_string()).size(14).color(theme::TEXT_PRIMARY),

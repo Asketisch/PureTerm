@@ -476,11 +476,14 @@ pub struct GlyphState {
 }
 
 impl GlyphState {
-    pub fn new() -> Self {
+    pub fn new_with_config(font_family: &str, size_pt: f32) -> Self {
         let mut rasterizer = Rasterizer::new().expect("Failed to create rasterizer");
-        let font_size = Size::new(14.0);
-        let font_desc = FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal });
-        let font_key = rasterizer.load_font(&font_desc, font_size).expect("Failed to load font");
+        let font_size = Size::new(size_pt);
+        let font_desc = FontDesc::new(font_family, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
+        let font_key = rasterizer.load_font(&font_desc, font_size).unwrap_or_else(|_| {
+            let fallback = FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal });
+            rasterizer.load_font(&fallback, font_size).expect("Failed to load fallback font")
+        });
         let metrics = rasterizer.metrics(font_key, font_size).expect("Failed to get metrics");
 
         let cell_width = metrics.average_advance.floor().max(1.0) as f32;
@@ -496,6 +499,23 @@ impl GlyphState {
             cell_height,
             font_descent,
         }
+    }
+
+    pub fn reconfigure(&mut self, font_family: &str, size_pt: f32) {
+        let font_size = Size::new(size_pt);
+        let font_desc = FontDesc::new(font_family, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
+        let font_key = self.rasterizer.load_font(&font_desc, font_size).unwrap_or_else(|_| {
+            let fallback = FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal });
+            self.rasterizer.load_font(&fallback, font_size).expect("Failed to load fallback font")
+        });
+        let metrics = self.rasterizer.metrics(font_key, font_size).expect("Failed to get metrics");
+
+        self.font_key = font_key;
+        self.font_size = font_size;
+        self.cell_width = metrics.average_advance.floor().max(1.0) as f32;
+        self.cell_height = metrics.line_height.floor().max(1.0) as f32;
+        self.font_descent = metrics.descent as f32;
+        self.atlas = WgpuGlyphAtlas::new();
     }
 
     pub fn get_or_rasterize(&mut self, c: char) -> Option<CachedGlyph> {
@@ -516,6 +536,7 @@ impl GlyphState {
 pub struct TerminalProgram {
     pub ctx: Arc<TerminalContext>,
     pub glyph_state: Arc<RefCell<GlyphState>>,
+    pub background_color: [f32; 4],
 }
 
 #[derive(Default)]
@@ -533,7 +554,7 @@ impl<M> shader::Program<M> for TerminalProgram {
     ) -> Self::Primitive {
         let screen_w = bounds.width;
         let screen_h = bounds.height;
-        let bg_color = [0.11, 0.11, 0.12, 1.0];
+        let bg_color = self.background_color;
 
         let term = self.ctx.terminal.lock();
         let colors = term.colors();

@@ -15,9 +15,21 @@ wgpu = { version = "27", features = ["webgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 crossfont = "0.8.1"
+notify = "8.0.0"
+tokio = { version = "1", features = ["sync", "time"] }
 env_logger = "0.11"
 log = "0.4"
 parking_lot = "0.12"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6.1"
+objc2-foundation = { version = "0.3.1", default-features = false, features = ["std", "NSArray"] }
+objc2-app-kit = { version = "0.3.1", default-features = false, features = [
+    "std", "NSApplication", "NSResponder", "NSView", "NSWindow", "objc2-quartz-core",
+] }
+objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
+    "std", "CALayer", "CAMetalLayer", "objc2-metal",
+] }
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xdg = "3.0.0"
