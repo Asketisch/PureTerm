@@ -22,7 +22,8 @@ enum StatusMessage {
     RevertFailed(String),
 }
 
-pub struct SettingsApp {
+/// Reusable settings state — can be embedded in any Iced daemon.
+pub struct SettingsState {
     config_path: PathBuf,
     document: toml_edit::DocumentMut,
     current_page: Page,
@@ -35,7 +36,7 @@ pub struct SettingsApp {
     terminal: TerminalState,
     ssh: SshState,
     keybindings: KeybindingsState,
-    main_window: Option<window::Id>,
+    pub main_window: Option<window::Id>,
     color_picker_window: Option<window::Id>,
     pending_color_target: Option<ColorPickerTarget>,
 }
@@ -55,8 +56,8 @@ pub enum Message {
     ColorPickerClosed(window::Id),
 }
 
-impl SettingsApp {
-    fn new(config_path: PathBuf) -> (Self, Task<Message>) {
+impl SettingsState {
+    pub fn new(config_path: PathBuf) -> Self {
         let document = config_io::load_document(&config_path).unwrap_or_else(|e| {
             log::warn!("Failed to load config: {e}, using empty document");
             "".parse().unwrap()
@@ -74,7 +75,7 @@ impl SettingsApp {
         let ssh = SshState::load(&document);
         let keybindings = KeybindingsState::load(&document);
 
-        let app = Self {
+        Self {
             config_path,
             document,
             current_page: Page::Appearance,
@@ -90,18 +91,10 @@ impl SettingsApp {
             main_window: None,
             color_picker_window: None,
             pending_color_target: None,
-        };
-        let settings = window::Settings {
-            size: iced::Size::new(850.0, 620.0),
-            decorations: true,
-            resizable: true,
-            closeable: true,
-            ..Default::default()
-        };
-        (app, window::open(settings).1.map(|id| Message::MainWindowOpened(id)))
+        }
     }
 
-    fn update(&mut self, message: Message) -> Task<Message> {
+    pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::NavigateTo(page) => {
                 self.current_page = page;
@@ -205,8 +198,7 @@ impl SettingsApp {
         }
     }
 
-    fn view(&self, window: window::Id) -> Element<'_, Message> {
-        // Check if this is the color picker window
+    pub fn view(&self, window: window::Id) -> Element<'_, Message> {
         if let Some(picker_id) = self.color_picker_window {
             if picker_id == window {
                 if let Some(target) = &self.pending_color_target {
@@ -220,16 +212,13 @@ impl SettingsApp {
             }
         }
 
-        // Check if this is the main settings window
         if self.main_window != Some(window) {
-            // Unknown window, render nothing or a placeholder
             return container(text("Loading..."))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into();
         }
 
-        // Main settings window view
         let page_content: Element<Message> = match self.current_page {
             Page::General => crate::pages::general::view(&self.general, &self.i18n),
             Page::Appearance => crate::pages::appearance::view(&self.appearance, &self.i18n),
@@ -315,24 +304,53 @@ impl SettingsApp {
             .into()
     }
 
-    fn title(&self, window: window::Id) -> String {
+    pub fn title(&self, window: window::Id) -> String {
         if let Some(picker_id) = self.color_picker_window {
             if picker_id == window {
                 return "Color Picker".to_string();
             }
         }
-        if self.main_window == Some(window) {
-            return "PureTerm Settings".to_string();
-        }
         "PureTerm Settings".to_string()
-    }
-
-    fn subscription(&self) -> iced::Subscription<Message> {
-        iced::Subscription::none()
     }
 }
 
+/// Run settings as a standalone daemon (for the independent binary).
 pub fn run(config_path: PathBuf) -> iced::Result {
+    struct SettingsApp {
+        state: SettingsState,
+    }
+
+    impl SettingsApp {
+        fn new(config_path: PathBuf) -> (Self, Task<Message>) {
+            let state = SettingsState::new(config_path);
+            let settings = window::Settings {
+                size: iced::Size::new(850.0, 620.0),
+                decorations: true,
+                resizable: true,
+                closeable: true,
+                ..Default::default()
+            };
+            let app = Self { state };
+            (app, window::open(settings).1.map(|id| Message::MainWindowOpened(id)))
+        }
+
+        fn update(&mut self, message: Message) -> Task<Message> {
+            self.state.update(message)
+        }
+
+        fn view(&self, window: window::Id) -> Element<'_, Message> {
+            self.state.view(window)
+        }
+
+        fn title(&self, window: window::Id) -> String {
+            self.state.title(window)
+        }
+
+        fn subscription(&self) -> iced::Subscription<Message> {
+            iced::Subscription::none()
+        }
+    }
+
     iced::daemon(
         {
             let path = config_path;

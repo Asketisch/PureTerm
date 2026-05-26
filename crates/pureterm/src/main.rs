@@ -1,9 +1,11 @@
-fn main() {
+mod iced_app;
+mod terminal_context;
+mod terminal_shader;
+
+fn main() -> iced::Result {
+    env_logger::init();
     ensure_default_config();
-    if let Err(err) = pureterm_alacritty_runtime::run_from_env() {
-        eprintln!("PureTerm: {err}");
-        std::process::exit(1);
-    }
+    iced_app::run()
 }
 
 fn ensure_default_config() {

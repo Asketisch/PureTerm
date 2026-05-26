@@ -3,6 +3,10 @@ name = "pureterm-settings"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "pureterm_settings"
+path = "src/lib.rs"
+
 [[bin]]
 name = "pureterm-settings"
 path = "src/main.rs"

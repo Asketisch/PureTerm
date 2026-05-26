@@ -53,7 +53,7 @@ mod panic;
 #[path = "alacritty/polling/mod.rs"]
 mod polling;
 #[path = "alacritty/renderer/mod.rs"]
-mod renderer;
+pub mod renderer;
 #[path = "alacritty/scheduler.rs"]
 mod scheduler;
 #[path = "alacritty/string.rs"]
