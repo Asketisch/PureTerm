@@ -569,8 +569,12 @@ impl<M> shader::Program<M> for TerminalProgram {
         // Use the terminal's actual grid dimensions (set by resize)
         let cols = term.columns();
         let rows = term.screen_lines();
-        let pad_x = (screen_w - cols as f32 * cell_w).max(0.0) / 2.0;
-        let pad_y = (screen_h - rows as f32 * cell_h).max(0.0) / 2.0;
+        // 计算 padding 时：用当前窗口像素尺寸重新计算列数，避免 terminal grid 尺寸
+        // 滞后于窗口尺寸时导致的视觉漂移
+        let computed_cols = (screen_w / cell_w).floor().max(1.0) as usize;
+        let computed_rows = (screen_h / cell_h).floor().max(1.0) as usize;
+        let pad_x = (screen_w - computed_cols as f32 * cell_w).max(0.0) / 2.0;
+        let pad_y = (screen_h - computed_rows as f32 * cell_h).max(0.0) / 2.0;
 
         let mut bg_vertices = Vec::new();
         let mut bg_indices = Vec::new();
