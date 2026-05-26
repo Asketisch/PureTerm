@@ -64,6 +64,9 @@ impl DamageTracker {
 
     /// Resize the damage information in the tracker.
     pub fn resize(&mut self, screen_lines: usize, columns: usize) {
+        if self.screen_lines == screen_lines && self.columns == columns {
+            return;
+        }
         self.screen_lines = screen_lines;
         self.columns = columns;
         for frame in &mut self.frames {

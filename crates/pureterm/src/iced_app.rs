@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use iced::widget::{button, column, container, mouse_area, row, space, text, Shader};
 use iced::{event, time, window, Color, Element, Event, Length, Size, Subscription, Task, Theme};
@@ -33,6 +33,7 @@ pub struct PureTermApp {
     config_path: PathBuf,
     settings_state: Option<SettingsState>,
     settings_window: Option<window::Id>,
+    last_resize_time: Option<Instant>,
     #[cfg(target_os = "macos")]
     metal_layer_configured: bool,
 }
@@ -92,6 +93,7 @@ impl PureTermApp {
             config_path,
             settings_state: None,
             settings_window: None,
+            last_resize_time: None,
             #[cfg(target_os = "macos")]
             metal_layer_configured: false,
         };
@@ -181,12 +183,34 @@ impl PureTermApp {
                 let cw = gs.cell_width as u16;
                 let ch = gs.cell_height as u16;
                 drop(gs);
-                for tab in &mut self.tabs {
-                    if cols != tab.cols || rows != tab.rows {
-                        tab.cols = cols;
-                        tab.rows = rows;
-                        tab.terminal_ctx.resize(cols, rows, cw, ch);
+
+                // 尺寸去重：如果行列数没变，直接跳过
+                let changed = {
+                    let mut changed = false;
+                    for tab in &mut self.tabs {
+                        if cols != tab.cols || rows != tab.rows {
+                            changed = true;
+                            break;
+                        }
                     }
+                    changed
+                };
+                if !changed {
+                    return Task::none();
+                }
+
+                // 时间防抖：跳过 16ms 内的重复事件
+                if let Some(last) = self.last_resize_time {
+                    if last.elapsed() < Duration::from_millis(16) {
+                        return Task::none();
+                    }
+                }
+                self.last_resize_time = Some(Instant::now());
+
+                for tab in &mut self.tabs {
+                    tab.cols = cols;
+                    tab.rows = rows;
+                    tab.terminal_ctx.resize(cols, rows, cw, ch);
                 }
             }
             Message::WindowClosed(win_id) => {

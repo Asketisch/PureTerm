@@ -30,6 +30,9 @@ crates/pureterm-gui/src/fonts/AppleColorEmoji.ttc
 graphify-out/.graphify_python
 graphify-out/.graphify_root
 graphify-out/.graphify_labels.json
+graphify-out/.graphify_analysis.json
+graphify-out/.graphify_ast.json
+graphify-out/.graphify_extract.json
 graphify-out/cache/
 graphify-out/manifest.json
 graphify-out/graph.html
