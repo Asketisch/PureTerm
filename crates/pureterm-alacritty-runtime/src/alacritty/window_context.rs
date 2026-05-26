@@ -672,7 +672,7 @@ fn create_wgpu_renderer(
         compatible_surface: Some(&surface),
         force_fallback_adapter: false,
     }))
-    .ok_or("Failed to find a suitable wgpu adapter")?;
+    .map_err(|e| Box::<dyn Error>::from(e.to_string()))?;
 
     let (device, queue) = pollster::block_on(adapter.request_device(
         &wgpu::DeviceDescriptor {
@@ -681,8 +681,9 @@ fn create_wgpu_renderer(
             required_limits: wgpu::Limits::downlevel_webgl2_defaults()
                 .using_resolution(adapter.limits()),
             memory_hints: Default::default(),
+            trace: wgpu::Trace::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
         },
-        None,
     ))?;
 
     let surface_caps = surface.get_capabilities(&adapter);
