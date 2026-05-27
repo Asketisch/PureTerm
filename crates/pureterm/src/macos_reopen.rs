@@ -1,50 +1,49 @@
-use iced::futures::SinkExt;
-use iced::Subscription;
+use std::mem::transmute;
+use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Debug, Clone)]
-pub struct DockReopen;
+use objc2::runtime::{AnyClass, AnyObject, Imp};
+use objc2::{ffi, MainThreadMarker};
 
-pub fn dock_reopen_subscription() -> Subscription<DockReopen> {
-    Subscription::run(dock_reopen_stream)
-}
+/// Set to `true` when macOS calls `applicationShouldHandleReopen:hasVisibleWindows:`
+/// on the delegate (Dock icon click).
+static DOCK_REOPEN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-fn dock_reopen_stream() -> impl iced::futures::Stream<Item = DockReopen> {
-    iced::stream::channel(1, move |mut output: iced::futures::channel::mpsc::Sender<DockReopen>| async move {
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            if is_active_with_no_visible_windows() {
-                let _ = output.send(DockReopen).await;
-                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-            }
-        }
-    })
-}
-
-fn is_active_with_no_visible_windows() -> bool {
-    use objc2::MainThreadMarker;
-    use objc2_app_kit::NSApplication;
-
-    let Some(mtm) = MainThreadMarker::new() else {
-        return false;
-    };
-    let app = NSApplication::sharedApplication(mtm);
-
-    if !app.isActive() {
-        return false;
-    }
-
-    let windows = app.windows();
-    let count = windows.count();
-    if count == 0 {
-        return true;
-    }
-
-    for i in 0..count {
-        let window: objc2::rc::Retained<objc2_app_kit::NSWindow> = windows.objectAtIndex(i);
-        if window.isVisible() {
-            return false;
-        }
-    }
+unsafe extern "C" fn handle_reopen(
+    _obj: *mut AnyObject,
+    _sel: objc2::runtime::Sel,
+    _sender: *mut AnyObject,
+    _has_visible_windows: bool,
+) -> bool {
+    DOCK_REOPEN_REQUESTED.store(true, Ordering::SeqCst);
     true
+}
+
+/// Add `applicationShouldHandleReopen:hasVisibleWindows:` to winit's delegate class.
+/// Must be called on the main thread, AFTER winit has set its delegate.
+pub fn add_reopen_method() {
+    let Some(_mtm) = MainThreadMarker::new() else {
+        return;
+    };
+    let Some(class) = AnyClass::get(c"WinitApplicationDelegate") else {
+        return;
+    };
+
+    let sel = objc2::sel!(applicationShouldHandleReopen:hasVisibleWindows:);
+    let types = b"B@:@B\0";
+    let imp: Imp = unsafe { transmute(handle_reopen as usize) };
+
+    unsafe {
+        let _success = ffi::class_addMethod(
+            class as *const _ as *mut _,
+            sel,
+            imp,
+            types.as_ptr() as *const i8,
+        );
+    }
+}
+
+/// Check whether the Dock icon was clicked, consuming the flag.
+/// Returns `true` exactly once per Dock click.
+pub fn consume_dock_reopen() -> bool {
+    DOCK_REOPEN_REQUESTED.swap(false, Ordering::SeqCst)
 }

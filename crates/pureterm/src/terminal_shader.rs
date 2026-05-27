@@ -529,6 +529,10 @@ impl GlyphState {
             Err(_) => None,
         }
     }
+
+    pub fn mark_atlas_dirty(&mut self) {
+        self.atlas.mark_dirty();
+    }
 }
 
 // --- TerminalProgram ---

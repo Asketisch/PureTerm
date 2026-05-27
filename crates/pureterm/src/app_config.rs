@@ -8,6 +8,7 @@ pub struct AppConfig {
     pub font_size: f32,
     pub background_color: [f32; 4],
     pub opacity: f32,
+    pub locale: String,
 }
 
 impl Default for AppConfig {
@@ -17,6 +18,7 @@ impl Default for AppConfig {
             font_size: 14.0,
             background_color: [0.11, 0.11, 0.12, 1.0],
             opacity: 1.0,
+            locale: "en".to_string(),
         }
     }
 }
@@ -50,6 +52,12 @@ impl AppConfig {
 
         if let Some(opacity) = config_io::get_float(&doc, &["window"], "opacity") {
             config.opacity = opacity.clamp(0.0, 1.0) as f32;
+        }
+
+        if let Some(locale) = config_io::get_string(&doc, &["pureterm"], "locale") {
+            if !locale.is_empty() {
+                config.locale = locale;
+            }
         }
 
         config

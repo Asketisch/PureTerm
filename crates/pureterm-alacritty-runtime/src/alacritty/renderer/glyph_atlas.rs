@@ -270,6 +270,12 @@ impl WgpuGlyphAtlas {
         self.dirty
     }
 
+    /// Force both grayscale and color atlas textures to be re-uploaded on next render.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+        self.color_dirty = true;
+    }
+
     /// Get the atlas bitmap data and mark clean. Returns `(data, width, height)`.
     pub fn take_dirty_data(&mut self) -> Option<(Vec<u8>, u32, u32)> {
         if self.dirty {

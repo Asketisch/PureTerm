@@ -210,6 +210,22 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("pick_list.cursor.Underline".into(), "Underline".into());
     m.insert("pick_list.cursor.Beam".into(), "Beam".into());
 
+    // Tab context menu
+    m.insert("context_menu.close_tab".into(), "Close Tab".into());
+    m.insert("context_menu.close_other_tabs".into(), "Close Other Tabs".into());
+    m.insert("context_menu.close_tabs_left".into(), "Close Tabs to the Left".into());
+    m.insert("context_menu.close_tabs_right".into(), "Close Tabs to the Right".into());
+    m.insert("context_menu.move_to_new_window".into(), "Move Tab to New Window".into());
+    m.insert("context_menu.show_all_tabs".into(), "Show All Tabs".into());
+    m.insert("context_menu.rename_tab".into(), "Rename Tab".into());
+    m.insert("context_menu.change_tab_color".into(), "Change Tab Color".into());
+
+    // Tab UI
+    m.insert("tab.rename_placeholder".into(), "Tab name".into());
+    m.insert("tab.clear_color".into(), "Clear".into());
+    m.insert("tab.search_placeholder".into(), "Search tabs...".into());
+    m.insert("tab.no_match".into(), "No matching tabs".into());
+
     m
 }
 
@@ -332,6 +348,22 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("pick_list.cursor.Block".into(), "方块".into());
     m.insert("pick_list.cursor.Underline".into(), "下划线".into());
     m.insert("pick_list.cursor.Beam".into(), "竖线".into());
+
+    // Tab context menu
+    m.insert("context_menu.close_tab".into(), "关闭标签页".into());
+    m.insert("context_menu.close_other_tabs".into(), "关闭其他标签页".into());
+    m.insert("context_menu.close_tabs_left".into(), "关闭左侧标签页".into());
+    m.insert("context_menu.close_tabs_right".into(), "关闭右侧标签页".into());
+    m.insert("context_menu.move_to_new_window".into(), "移动到新窗口".into());
+    m.insert("context_menu.show_all_tabs".into(), "显示所有标签页".into());
+    m.insert("context_menu.rename_tab".into(), "重命名标签页".into());
+    m.insert("context_menu.change_tab_color".into(), "修改标签页颜色".into());
+
+    // Tab UI
+    m.insert("tab.rename_placeholder".into(), "标签页名称".into());
+    m.insert("tab.clear_color".into(), "清除".into());
+    m.insert("tab.search_placeholder".into(), "搜索标签页...".into());
+    m.insert("tab.no_match".into(), "无匹配标签页".into());
 
     m
 }

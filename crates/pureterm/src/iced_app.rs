@@ -3,13 +3,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use iced::widget::{button, column, container, mouse_area, row, space, text, Shader};
-use iced::{event, time, window, Color, Element, Event, Length, Size, Subscription, Task, Theme};
+use iced::widget::{
+    button, column, container, mouse_area, opaque, pin, row, scrollable, space, stack, text,
+    text_input, Shader,
+};
+use iced::{
+    event, time, window, Background, Border, Color, Element, Event, Length, Point, Shadow, Size,
+    Subscription, Task, Theme, Vector,
+};
 
 use crate::app_config::AppConfig;
 use crate::terminal_context::TerminalContext;
 use crate::terminal_shader::{GlyphState, TerminalProgram};
 use pureterm_settings::app::{Message as SettingsMessage, SettingsState};
+use pureterm_settings::i18n::I18n;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TabId(u64);
@@ -20,6 +27,7 @@ pub struct Tab {
     terminal_ctx: Arc<TerminalContext>,
     cols: usize,
     rows: usize,
+    tab_color: Option<Color>,
 }
 
 pub struct PureTermApp {
@@ -36,6 +44,83 @@ pub struct PureTermApp {
     last_resize_time: Option<Instant>,
     #[cfg(target_os = "macos")]
     metal_layer_configured: bool,
+    #[cfg(target_os = "macos")]
+    delegate_installed: bool,
+    // i18n
+    i18n: I18n,
+    // Context menu
+    context_menu: Option<ContextMenuState>,
+    last_cursor_pos: Point,
+    viewport_size: Size,
+    // Rename
+    renaming_tab: Option<RenamingState>,
+    // Tab color picker
+    color_picker_tab: Option<TabId>,
+    // Tab list (command palette)
+    tab_list: Option<TabListState>,
+    // Detached windows
+    detached_windows: Vec<DetachedWindow>,
+}
+
+#[derive(Debug, Clone)]
+struct ContextMenuState {
+    tab_id: TabId,
+    position: Point,
+    hovered_item: Option<ContextMenuItem>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContextMenuItem {
+    CloseTab,
+    CloseOtherTabs,
+    CloseTabsToLeft,
+    CloseTabsToRight,
+    MoveToNewWindow,
+    ShowAllTabs,
+    RenameTab,
+    ChangeTabColor,
+}
+
+impl ContextMenuItem {
+    const ALL: [ContextMenuItem; 8] = [
+        ContextMenuItem::CloseTab,
+        ContextMenuItem::CloseOtherTabs,
+        ContextMenuItem::CloseTabsToLeft,
+        ContextMenuItem::CloseTabsToRight,
+        ContextMenuItem::MoveToNewWindow,
+        ContextMenuItem::ShowAllTabs,
+        ContextMenuItem::RenameTab,
+        ContextMenuItem::ChangeTabColor,
+    ];
+
+    fn label(self, i18n: &I18n) -> String {
+        match self {
+            ContextMenuItem::CloseTab => i18n.t("context_menu.close_tab"),
+            ContextMenuItem::CloseOtherTabs => i18n.t("context_menu.close_other_tabs"),
+            ContextMenuItem::CloseTabsToLeft => i18n.t("context_menu.close_tabs_left"),
+            ContextMenuItem::CloseTabsToRight => i18n.t("context_menu.close_tabs_right"),
+            ContextMenuItem::MoveToNewWindow => i18n.t("context_menu.move_to_new_window"),
+            ContextMenuItem::ShowAllTabs => i18n.t("context_menu.show_all_tabs"),
+            ContextMenuItem::RenameTab => i18n.t("context_menu.rename_tab"),
+            ContextMenuItem::ChangeTabColor => i18n.t("context_menu.change_tab_color"),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RenamingState {
+    tab_id: TabId,
+    draft: String,
+}
+
+#[derive(Debug, Clone)]
+struct TabListState {
+    query: String,
+}
+
+struct DetachedWindow {
+    window_id: window::Id,
+    tab: Tab,
 }
 
 const TAB_BAR_HEIGHT: f32 = 32.0;
@@ -59,8 +144,21 @@ pub enum Message {
     ActivateTabByIndex(usize),
     TabHoverEnter(TabId),
     TabHoverExit(TabId),
-    #[cfg(target_os = "macos")]
-    DockReopenRequest,
+    // Context menu
+    TabRightClick(TabId),
+    CursorMoved(Point),
+    DismissContextMenu,
+    ContextMenuAction(ContextMenuItem),
+    ContextMenuHovered(Option<ContextMenuItem>),
+    // Rename
+    RenameInputChanged(String),
+    RenameConfirmed,
+    // Tab color
+    TabColorPicked(Color),
+    ClearTabColor,
+    // Tab list (command palette)
+    TabListQueryChanged(String),
+    TabListSelected(TabId),
 }
 
 impl PureTermApp {
@@ -82,6 +180,10 @@ impl PureTermApp {
             GlyphState::new_with_config(&config.font_family, config.font_size),
         ));
 
+        let locale = config.locale.clone();
+        let mut i18n = I18n::new();
+        i18n.set_locale(&locale);
+
         let mut app = Self {
             main_window: Some(id),
             tabs: Vec::new(),
@@ -96,6 +198,16 @@ impl PureTermApp {
             last_resize_time: None,
             #[cfg(target_os = "macos")]
             metal_layer_configured: false,
+            #[cfg(target_os = "macos")]
+            delegate_installed: false,
+            i18n,
+            context_menu: None,
+            last_cursor_pos: Point::default(),
+            viewport_size: Size::new(1024.0, 768.0),
+            renaming_tab: None,
+            color_picker_tab: None,
+            tab_list: None,
+            detached_windows: Vec::new(),
         };
 
         let first_id = app.create_tab(1024.0, 768.0);
@@ -127,6 +239,7 @@ impl PureTermApp {
             terminal_ctx,
             cols,
             rows,
+            tab_color: None,
         });
         id
     }
@@ -164,9 +277,33 @@ impl PureTermApp {
             }
             Message::TerminalWakeup => {
                 #[cfg(target_os = "macos")]
-                if !self.metal_layer_configured {
-                    self.metal_layer_configured = true;
-                    set_metal_presents_with_transaction();
+                {
+                    if !self.delegate_installed {
+                        crate::macos_reopen::add_reopen_method();
+                        self.delegate_installed = true;
+                    }
+                    if !self.metal_layer_configured {
+                        self.metal_layer_configured = true;
+                        set_metal_presents_with_transaction();
+                    }
+                    if self.main_window.is_none()
+                        && crate::macos_reopen::consume_dock_reopen()
+                    {
+                        let settings = window::Settings {
+                            size: Size::new(1024.0, 768.0),
+                            decorations: true,
+                            resizable: true,
+                            closeable: true,
+                            ..Default::default()
+                        };
+                        let (id, task) = window::open(settings);
+                        self.main_window = Some(id);
+                        let first_id = self.create_tab(1024.0, 768.0);
+                        self.active_tab = first_id;
+                        self.metal_layer_configured = false;
+                        self.glyph_state.borrow_mut().mark_atlas_dirty();
+                        return task.map(Message::MainWindowOpened);
+                    }
                 }
             }
             Message::Keyboard(event) => {
@@ -174,8 +311,27 @@ impl PureTermApp {
             }
             Message::WindowResized(win_id, size) => {
                 if Some(win_id) != self.main_window {
+                    // Resize detached windows too
+                    for dw in &mut self.detached_windows {
+                        if dw.window_id == win_id {
+                            let terminal_height = (size.height - TAB_BAR_HEIGHT).max(0.0);
+                            let gs = self.glyph_state.borrow();
+                            let cols =
+                                (size.width / gs.cell_width).floor().max(1.0) as usize;
+                            let rows =
+                                (terminal_height / gs.cell_height).floor().max(1.0) as usize;
+                            let cw = gs.cell_width as u16;
+                            let ch = gs.cell_height as u16;
+                            drop(gs);
+                            dw.tab.cols = cols;
+                            dw.tab.rows = rows;
+                            dw.tab.terminal_ctx.resize(cols, rows, cw, ch);
+                            return Task::none();
+                        }
+                    }
                     return Task::none();
                 }
+                self.viewport_size = size;
                 let terminal_height = (size.height - TAB_BAR_HEIGHT).max(0.0);
                 let gs = self.glyph_state.borrow();
                 let cols = (size.width / gs.cell_width).floor().max(1.0) as usize;
@@ -219,6 +375,8 @@ impl PureTermApp {
                     self.settings_state = None;
                     return Task::done(Message::ConfigReloaded);
                 }
+                // Clean up detached windows
+                self.detached_windows.retain(|dw| dw.window_id != win_id);
                 if Some(win_id) == self.main_window {
                     self.main_window = None;
                     self.tabs.clear();
@@ -228,6 +386,9 @@ impl PureTermApp {
                 let new_config = AppConfig::load(&self.config_path);
                 let font_changed = new_config.font_family != self.config.font_family
                     || new_config.font_size != self.config.font_size;
+                if new_config.locale != self.config.locale {
+                    self.i18n.set_locale(&new_config.locale);
+                }
                 self.config = new_config;
 
                 if font_changed {
@@ -334,38 +495,241 @@ impl PureTermApp {
                     self.hovered_tab = None;
                 }
             }
-            #[cfg(target_os = "macos")]
-            Message::DockReopenRequest => {
-                if self.main_window.is_none() {
-                    let settings = window::Settings {
-                        size: Size::new(1024.0, 768.0),
-                        decorations: true,
-                        resizable: true,
-                        closeable: true,
-                        ..Default::default()
-                    };
-                    let (id, task) = window::open(settings);
-                    self.main_window = Some(id);
-                    let first_id = self.create_tab(1024.0, 768.0);
-                    self.active_tab = first_id;
-                    #[cfg(target_os = "macos")]
-                    {
-                        self.metal_layer_configured = false;
+            // Context menu
+            Message::TabRightClick(tab_id) => {
+                self.context_menu = Some(ContextMenuState {
+                    tab_id,
+                    position: self.last_cursor_pos,
+                    hovered_item: None,
+                });
+                self.color_picker_tab = None;
+                self.renaming_tab = None;
+                self.tab_list = None;
+            }
+            Message::CursorMoved(pos) => {
+                self.last_cursor_pos = pos;
+            }
+            Message::DismissContextMenu => {
+                self.context_menu = None;
+                self.renaming_tab = None;
+                self.color_picker_tab = None;
+                self.tab_list = None;
+            }
+            Message::ContextMenuAction(item) => {
+                let menu = match self.context_menu.take() {
+                    Some(m) => m,
+                    None => return Task::none(),
+                };
+                let tab_idx = self.tabs.iter().position(|t| t.id == menu.tab_id);
+                match item {
+                    ContextMenuItem::CloseTab => {
+                        return Task::done(Message::CloseTab(menu.tab_id));
                     }
-                    return task.map(Message::MainWindowOpened);
+                    ContextMenuItem::CloseOtherTabs => {
+                        let keep_id = menu.tab_id;
+                        self.tabs.retain(|t| t.id == keep_id);
+                        self.active_tab = keep_id;
+                    }
+                    ContextMenuItem::CloseTabsToLeft => {
+                        if let Some(idx) = tab_idx {
+                            self.tabs.drain(0..idx);
+                            if !self.tabs.iter().any(|t| t.id == self.active_tab) {
+                                self.active_tab = menu.tab_id;
+                            }
+                        }
+                    }
+                    ContextMenuItem::CloseTabsToRight => {
+                        if let Some(idx) = tab_idx {
+                            self.tabs.drain(idx + 1..);
+                        }
+                    }
+                    ContextMenuItem::MoveToNewWindow => {
+                        if let Some(idx) = tab_idx {
+                            let tab = self.tabs.remove(idx);
+                            if self.active_tab == tab.id {
+                                let new_idx = idx.min(self.tabs.len().saturating_sub(1));
+                                if !self.tabs.is_empty() {
+                                    self.active_tab = self.tabs[new_idx].id;
+                                }
+                            }
+                            let settings = window::Settings {
+                                size: Size::new(1024.0, 768.0),
+                                decorations: true,
+                                resizable: true,
+                                closeable: true,
+                                ..Default::default()
+                            };
+                            let (win_id, task) = window::open(settings);
+                            let win_id_for_task = win_id;
+                            let resize_task = {
+                                let gs = self.glyph_state.borrow();
+                                let cw = gs.cell_width;
+                                let ch = gs.cell_height;
+                                drop(gs);
+                                window::set_resize_increments(
+                                    win_id,
+                                    Some(Size::new(cw, ch)),
+                                )
+                            };
+                            self.detached_windows.push(DetachedWindow {
+                                window_id: win_id_for_task,
+                                tab,
+                            });
+                            if self.tabs.is_empty() {
+                                if let Some(main_id) = self.main_window {
+                                    return Task::batch(vec![
+                                        window::close(main_id),
+                                        task.map(move |_| Message::MainWindowOpened(win_id)),
+                                        resize_task.map(|_: ()| Message::TerminalWakeup),
+                                    ]) as Task<Message>;
+                                }
+                            }
+                            return Task::batch(vec![
+                                task.map(|_| Message::TerminalWakeup),
+                                resize_task.map(|_| Message::TerminalWakeup),
+                            ]) as Task<Message>;
+                        }
+                    }
+                    ContextMenuItem::ShowAllTabs => {
+                        self.tab_list = Some(TabListState {
+                            query: String::new(),
+                        });
+                    }
+                    ContextMenuItem::RenameTab => {
+                        let title = self
+                            .tabs
+                            .iter()
+                            .find(|t| t.id == menu.tab_id)
+                            .map(|t| t.title.clone())
+                            .unwrap_or_default();
+                        self.renaming_tab = Some(RenamingState {
+                            tab_id: menu.tab_id,
+                            draft: title,
+                        });
+                    }
+                    ContextMenuItem::ChangeTabColor => {
+                        self.color_picker_tab = Some(menu.tab_id);
+                    }
+                }
+            }
+            Message::ContextMenuHovered(item) => {
+                if let Some(ref mut menu) = self.context_menu {
+                    menu.hovered_item = item;
+                }
+            }
+            // Rename
+            Message::RenameInputChanged(text) => {
+                if let Some(ref mut state) = self.renaming_tab {
+                    state.draft = text;
+                }
+            }
+            Message::RenameConfirmed => {
+                if let Some(rename) = self.renaming_tab.take() {
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == rename.tab_id) {
+                        if !rename.draft.is_empty() {
+                            tab.title = rename.draft;
+                        }
+                    }
+                }
+            }
+            // Tab color
+            Message::TabColorPicked(color) => {
+                if let Some(tab_id) = self.color_picker_tab.take() {
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        tab.tab_color = Some(color);
+                    }
+                }
+            }
+            Message::ClearTabColor => {
+                if let Some(tab_id) = self.color_picker_tab.take() {
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        tab.tab_color = None;
+                    }
+                }
+            }
+            // Tab list (command palette)
+            Message::TabListQueryChanged(query) => {
+                if let Some(ref mut state) = self.tab_list {
+                    state.query = query;
+                }
+            }
+            Message::TabListSelected(tab_id) => {
+                self.tab_list = None;
+                if self.tabs.iter().any(|t| t.id == tab_id) {
+                    self.active_tab = tab_id;
                 }
             }
         }
         Task::none()
     }
 
-    fn handle_keyboard(&self, event: iced::keyboard::Event) -> Task<Message> {
+    fn handle_keyboard(&mut self, event: iced::keyboard::Event) -> Task<Message> {
         use iced::keyboard::Event as KEvent;
+        use iced::keyboard::Key;
+        use iced::keyboard::key::Named;
 
         match event {
+            KEvent::KeyPressed { key: Key::Named(Named::Escape), .. } => {
+                if self.context_menu.is_some()
+                    || self.renaming_tab.is_some()
+                    || self.color_picker_tab.is_some()
+                    || self.tab_list.is_some()
+                {
+                    self.context_menu = None;
+                    self.renaming_tab = None;
+                    self.color_picker_tab = None;
+                    self.tab_list = None;
+                    return Task::none();
+                }
+                // Fall through to send Escape to PTY
+                if let Some(ctx) = self.active_terminal_ctx() {
+                    ctx.write_to_pty(b"\x1b");
+                }
+            }
+            KEvent::KeyPressed { key: Key::Named(Named::ArrowDown), .. }
+                if self.context_menu.is_some() =>
+            {
+                if let Some(ref mut menu) = self.context_menu {
+                    let current = menu
+                        .hovered_item
+                        .and_then(|h| ContextMenuItem::ALL.iter().position(|i| *i == h))
+                        .map(|p| p + 1)
+                        .unwrap_or(0)
+                        .min(ContextMenuItem::ALL.len() - 1);
+                    menu.hovered_item = Some(ContextMenuItem::ALL[current]);
+                }
+                return Task::none();
+            }
+            KEvent::KeyPressed { key: Key::Named(Named::ArrowUp), .. }
+                if self.context_menu.is_some() =>
+            {
+                if let Some(ref mut menu) = self.context_menu {
+                    let current = menu
+                        .hovered_item
+                        .and_then(|h| ContextMenuItem::ALL.iter().position(|i| *i == h))
+                        .unwrap_or(ContextMenuItem::ALL.len());
+                    let prev = current.saturating_sub(1);
+                    menu.hovered_item = Some(ContextMenuItem::ALL[prev]);
+                }
+                return Task::none();
+            }
+            KEvent::KeyPressed { key: Key::Named(Named::Enter), .. } => {
+                if let Some(ref menu) = self.context_menu {
+                    if let Some(item) = menu.hovered_item {
+                        return Task::done(Message::ContextMenuAction(item));
+                    }
+                }
+                if self.renaming_tab.is_some() {
+                    return Task::done(Message::RenameConfirmed);
+                }
+                // Fall through to send Enter to PTY
+                if let Some(ctx) = self.active_terminal_ctx() {
+                    ctx.write_to_pty(b"\r");
+                }
+            }
             KEvent::KeyPressed { key, text, modifiers, .. } => {
                 if modifiers.command() {
-                    if let iced::keyboard::Key::Character(ref c) = key {
+                    if let Key::Character(ref c) = key {
                         match c.as_str() {
                             "," => return Task::none(),
                             "t" => return Task::done(Message::NewTab),
@@ -498,9 +862,9 @@ impl PureTermApp {
                 .padding([4, 6])
                 .width(Length::Fill)
                 .style(move |_theme: &Theme, _status: button::Status| button::Style {
-                    background: Some(iced::Background::Color(bg)),
+                    background: Some(Background::Color(bg)),
                     text_color: Color::WHITE,
-                    border: iced::Border {
+                    border: Border {
                         radius: 4.0.into(),
                         ..Default::default()
                     },
@@ -509,9 +873,31 @@ impl PureTermApp {
 
             let tab_widget = mouse_area(tab_btn)
                 .on_enter(Message::TabHoverEnter(tab.id))
-                .on_exit(Message::TabHoverExit(tab.id));
+                .on_exit(Message::TabHoverExit(tab.id))
+                .on_right_press(Message::TabRightClick(tab.id));
 
-            bar = bar.push(container(tab_widget).width(Length::Fill));
+            // Color indicator bar on top of tab
+            let tab_with_color: Element<'_, Message, Theme, iced::Renderer> =
+                if let Some(color) = tab.tab_color {
+                    let color_bar: Element<'_, Message, Theme, iced::Renderer> = container(
+                        space().height(2).width(Length::Fill),
+                    )
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(color)),
+                        text_color: None,
+                        snap: false,
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                    })
+                    .into();
+                    column![color_bar, tab_widget]
+                        .width(Length::Fill)
+                        .into()
+                } else {
+                    tab_widget.into()
+                };
+
+            bar = bar.push(container(tab_with_color).width(Length::Fill));
         }
 
         let new_tab_btn = button(text("+").size(14))
@@ -527,23 +913,334 @@ impl PureTermApp {
         bar = bar.push(new_tab_btn);
         bar = bar.push(settings_btn);
 
-        container(bar)
+        let bar_container = container(bar)
             .width(Length::Fill)
             .height(TAB_BAR_HEIGHT)
             .padding([4, 8])
-            .style(|_theme: &Theme| container::Style {
-                background: Some(iced::Background::Color(
+            .style(|_| container::Style {
+                background: Some(Background::Color(
                     Color::from_rgba(0.12, 0.12, 0.14, 1.0),
                 )),
-                ..Default::default()
-            })
+                text_color: None,
+                snap: false,
+                border: Border::default(),
+                shadow: Shadow::default(),
+            });
+
+        mouse_area(bar_container)
+            .on_move(|p| Message::CursorMoved(p))
             .into()
+    }
+
+    fn view_context_menu(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        let menu = self.context_menu.as_ref()?;
+
+        let items: Vec<Element<'_, Message, Theme, iced::Renderer>> = ContextMenuItem::ALL
+            .iter()
+            .map(|&item| {
+                let is_hovered = self
+                    .context_menu
+                    .as_ref()
+                    .and_then(|m| m.hovered_item)
+                    == Some(item);
+                let bg = if is_hovered {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+                } else {
+                    Color::TRANSPARENT
+                };
+
+                mouse_area(
+                    container(text(item.label(&self.i18n)).size(12).color(Color::WHITE))
+                        .padding([6, 16])
+                        .width(200)
+                        .style(move |_| container::Style {
+                            background: Some(Background::Color(bg)),
+                            text_color: None,
+                            snap: false,
+                            border: Border::default(),
+                            shadow: Shadow::default(),
+                        }),
+                )
+                .on_press(Message::ContextMenuAction(item))
+                .on_enter(Message::ContextMenuHovered(Some(item)))
+                .on_exit(Message::ContextMenuHovered(None))
+                .into()
+            })
+            .collect();
+
+        let menu_col = container(column(items))
+            .style(|_| container::Style {
+                background: Some(Background::Color(
+                    Color::from_rgba(0.18, 0.18, 0.20, 0.97),
+                )),
+                text_color: None,
+                snap: false,
+                border: Border {
+                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+                    offset: Vector::new(2.0, 4.0),
+                    blur_radius: 8.0,
+                },
+            });
+
+        // Clamp position to stay within viewport
+        let menu_width = 200.0f32;
+        let menu_height = (ContextMenuItem::ALL.len() as f32) * 30.0;
+        let x = menu.position.x.min(self.viewport_size.width - menu_width).max(0.0);
+        let y = menu
+            .position
+            .y
+            .min(self.viewport_size.height - menu_height)
+            .max(0.0);
+
+        Some(pin(menu_col).x(x).y(y).into())
+    }
+
+    fn view_rename_overlay(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        let state = self.renaming_tab.as_ref()?;
+
+        // Find the tab index to position the input roughly above it
+        let tab_idx = self
+            .tabs
+            .iter()
+            .position(|t| t.id == state.tab_id)
+            .unwrap_or(0);
+
+        let input = text_input(&self.i18n.t("tab.rename_placeholder"), &state.draft)
+            .on_input(Message::RenameInputChanged)
+            .on_submit(Message::RenameConfirmed)
+            .size(12)
+            .padding([4, 8])
+            .width(180);
+
+        let container_input = container(input)
+            .padding(4)
+            .style(|_| container::Style {
+                background: Some(Background::Color(
+                    Color::from_rgba(0.2, 0.2, 0.22, 1.0),
+                )),
+                text_color: None,
+                snap: false,
+                border: Border {
+                    color: Color::from_rgba(0.3, 0.6, 1.0, 1.0),
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                shadow: Shadow::default(),
+            });
+
+        let x = (tab_idx as f32 * 120.0 + 40.0)
+            .min(self.viewport_size.width - 200.0)
+            .max(8.0);
+        let y = TAB_BAR_HEIGHT + 4.0;
+
+        Some(pin(container_input).x(x).y(y).into())
+    }
+
+    fn view_color_picker(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        let tab_id = self.color_picker_tab?;
+
+        const PRESET_COLORS: [(Color, &str); 12] = [
+            (Color::from_rgb(0.90, 0.30, 0.30), "红"),
+            (Color::from_rgb(1.00, 0.60, 0.20), "橙"),
+            (Color::from_rgb(0.95, 0.85, 0.25), "黄"),
+            (Color::from_rgb(0.40, 0.80, 0.30), "绿"),
+            (Color::from_rgb(0.20, 0.75, 0.75), "青"),
+            (Color::from_rgb(0.30, 0.50, 0.95), "蓝"),
+            (Color::from_rgb(0.60, 0.30, 0.85), "紫"),
+            (Color::from_rgb(0.95, 0.45, 0.70), "粉"),
+            (Color::from_rgb(0.70, 0.45, 0.20), "棕"),
+            (Color::from_rgb(0.55, 0.55, 0.55), "灰"),
+            (Color::from_rgb(0.20, 0.65, 0.90), "浅蓝"),
+            (Color::from_rgb(0.85, 0.85, 0.85), "白"),
+        ];
+
+        let mut color_row = row![].spacing(4);
+        for (color, _name) in PRESET_COLORS {
+            let swatch = mouse_area(
+                container(space().width(24).height(24))
+                    .style(move |_| container::Style {
+                        background: Some(Background::Color(color)),
+                        text_color: None,
+                        snap: false,
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: 4.0.into(),
+                        },
+                        shadow: Shadow::default(),
+                    }),
+            )
+            .on_press(Message::TabColorPicked(color));
+            color_row = color_row.push(swatch);
+        }
+
+        // Clear color button
+        let clear_btn = button(text(self.i18n.t("tab.clear_color")).size(10))
+            .on_press(Message::ClearTabColor)
+            .padding([2, 6])
+            .style(button::text);
+
+        let content = column![color_row, clear_btn]
+            .spacing(6)
+            .align_x(iced::Alignment::Center);
+
+        let picker_container = container(content)
+            .padding(8)
+            .style(|_| container::Style {
+                background: Some(Background::Color(
+                    Color::from_rgba(0.18, 0.18, 0.20, 0.97),
+                )),
+                text_color: None,
+                snap: false,
+                border: Border {
+                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+                    offset: Vector::new(2.0, 4.0),
+                    blur_radius: 8.0,
+                },
+            });
+
+        let x = self
+            .context_menu
+            .as_ref()
+            .map(|m| m.position.x + 10.0)
+            .unwrap_or(100.0)
+            .min(self.viewport_size.width - 340.0)
+            .max(8.0);
+        let y = self
+            .context_menu
+            .as_ref()
+            .map(|m| m.position.y + 20.0)
+            .unwrap_or(TAB_BAR_HEIGHT + 4.0)
+            .min(self.viewport_size.height - 60.0)
+            .max(TAB_BAR_HEIGHT);
+
+        Some(pin(picker_container).x(x).y(y).into())
+    }
+
+    fn view_tab_list(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        let state = self.tab_list.as_ref()?;
+
+        let search = text_input(&self.i18n.t("tab.search_placeholder"), &state.query)
+            .on_input(Message::TabListQueryChanged)
+            .size(13)
+            .padding([6, 10])
+            .width(Length::Fill);
+
+        let filtered: Vec<(TabId, String, usize)> = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, tab)| {
+                state.query.is_empty()
+                    || tab
+                        .title
+                        .to_lowercase()
+                        .contains(&state.query.to_lowercase())
+            })
+            .map(|(i, tab)| (tab.id, tab.title.clone(), i))
+            .collect();
+
+        let list_items: Vec<Element<'_, Message, Theme, iced::Renderer>> = filtered
+            .iter()
+            .map(|(id, title, idx)| {
+                let is_active = *id == self.active_tab;
+                let label = format!("{}. {}", idx + 1, title);
+                let bg = if is_active {
+                    Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                } else {
+                    Color::TRANSPARENT
+                };
+                mouse_area(
+                    container(text(label).size(12).color(Color::WHITE))
+                        .padding([6, 12])
+                        .width(Length::Fill)
+                        .style(move |_| container::Style {
+                            background: Some(Background::Color(bg)),
+                            text_color: None,
+                            snap: false,
+                            border: Border {
+                                color: Color::TRANSPARENT,
+                                width: 0.0,
+                                radius: 3.0.into(),
+                            },
+                            shadow: Shadow::default(),
+                        }),
+                )
+                .on_press(Message::TabListSelected(*id))
+                .into()
+            })
+            .collect();
+
+        let list_content: Element<'_, Message, Theme, iced::Renderer> = if list_items.is_empty() {
+            container(text(self.i18n.t("tab.no_match")).size(12).color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)))
+                .padding(12)
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Center)
+                .into()
+        } else {
+            scrollable(column(list_items).width(Length::Fill))
+                .width(Length::Fill)
+                .height(250)
+                .into()
+        };
+
+        let panel = container(column![search, list_content].spacing(4).width(360))
+            .padding(8)
+            .style(|_| container::Style {
+                background: Some(Background::Color(
+                    Color::from_rgba(0.16, 0.16, 0.18, 0.98),
+                )),
+                text_color: None,
+                snap: false,
+                border: Border {
+                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+                    width: 1.0,
+                    radius: 8.0.into(),
+                },
+                shadow: Shadow {
+                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.6),
+                    offset: Vector::new(0.0, 8.0),
+                    blur_radius: 16.0,
+                },
+            });
+
+        // Center the panel
+        let panel_w = 376.0;
+        let panel_h = 320.0;
+        let x = (self.viewport_size.width - panel_w).max(0.0) / 2.0;
+        let y = (self.viewport_size.height - panel_h).max(0.0) / 3.0;
+
+        Some(pin(panel).x(x).y(y).into())
     }
 
     pub fn view(&self, id: window::Id) -> Element<'_, Message, Theme, iced::Renderer> {
         if let Some(ref state) = self.settings_state {
             if state.owns_window(id) {
                 return state.view(id).map(Message::Settings);
+            }
+        }
+
+        // Detached windows render their own terminal
+        for dw in &self.detached_windows {
+            if dw.window_id == id {
+                return Shader::new(TerminalProgram {
+                    ctx: dw.tab.terminal_ctx.clone(),
+                    glyph_state: self.glyph_state.clone(),
+                    background_color: self.config.background_color,
+                })
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
             }
         }
 
@@ -571,10 +1268,46 @@ impl PureTermApp {
                     .into()
             };
 
-        column![self.view_top_bar(), terminal]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+        let base: Element<'_, Message, Theme, iced::Renderer> =
+            column![self.view_top_bar(), terminal]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+
+        let has_overlay = self.context_menu.is_some()
+            || self.renaming_tab.is_some()
+            || self.color_picker_tab.is_some()
+            || self.tab_list.is_some();
+
+        if has_overlay {
+            let dismiss: Element<'_, Message, Theme, iced::Renderer> = opaque(
+                mouse_area(container(space().width(Length::Fill).height(Length::Fill)))
+                    .on_press(Message::DismissContextMenu),
+            );
+
+            let mut layers: Vec<Element<'_, Message, Theme, iced::Renderer>> =
+                vec![base, dismiss];
+
+            if let Some(menu_el) = self.view_context_menu() {
+                layers.push(menu_el);
+            }
+            if let Some(rename_el) = self.view_rename_overlay() {
+                layers.push(rename_el);
+            }
+            if let Some(color_el) = self.view_color_picker() {
+                layers.push(color_el);
+            }
+            if let Some(list_el) = self.view_tab_list() {
+                layers.push(list_el);
+            }
+
+            stack(layers)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            base
+        }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
@@ -603,15 +1336,7 @@ impl PureTermApp {
         let config_sub = crate::config_watcher::watch(self.config_path.clone())
             .map(|_| Message::ConfigReloaded);
 
-        let mut subs = vec![keyboard_sub, wakeup_sub, resize_sub, config_sub];
-
-        #[cfg(target_os = "macos")]
-        if self.main_window.is_none() {
-            subs.push(
-                crate::macos_reopen::dock_reopen_subscription()
-                    .map(|_| Message::DockReopenRequest),
-            );
-        }
+        let subs = vec![keyboard_sub, wakeup_sub, resize_sub, config_sub];
 
         Subscription::batch(subs)
     }
