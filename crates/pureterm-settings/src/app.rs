@@ -39,6 +39,11 @@ pub struct SettingsState {
     pub main_window: Option<window::Id>,
     color_picker_window: Option<window::Id>,
     pending_color_target: Option<ColorPickerTarget>,
+    /// Color value when the picker was opened (used to restore on cancel).
+    picker_original_hex: Option<String>,
+    /// Live preview value while user is adjusting the picker.
+    /// Only written to state/TOML on confirm.
+    picker_preview_hex: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +100,8 @@ impl SettingsState {
             main_window: None,
             color_picker_window: None,
             pending_color_target: None,
+            picker_original_hex: None,
+            picker_preview_hex: None,
         }
     }
 
@@ -156,10 +163,18 @@ impl SettingsState {
                 Task::none()
             }
             Message::Colors(msg) => {
+                // Handle color picker lifecycle messages specially so that
+                // the picker uses a preview/confirm flow:
+                // - OpenColorPicker: snapshot the current value
+                // - HueSatChanged/ValueChanged: only update the preview, never commit
+                // - ColorPickerResult: commit the preview and close the window
                 if let ColorsMsg::OpenColorPicker(target) = &msg {
+                    let current_hex = self.colors.hex_for_target(target);
                     self.pending_color_target = Some(target.clone());
+                    self.picker_original_hex = Some(current_hex.clone());
+                    self.picker_preview_hex = Some(current_hex);
                     let settings = window::Settings {
-                        size: iced::Size::new(300.0, 350.0),
+                        size: iced::Size::new(320.0, 450.0),
                         decorations: true,
                         resizable: false,
                         closeable: true,
@@ -167,6 +182,49 @@ impl SettingsState {
                     };
                     return window::open(settings).1.map(|id| Message::ColorPickerOpened(id));
                 }
+
+                if matches!(msg, ColorsMsg::HueSatChanged(..) | ColorsMsg::ValueChanged(..)) {
+                    if let Some(target) = &self.pending_color_target {
+                        // Compute new hex from current preview, don't touch state/TOML
+                        let current = self
+                            .picker_preview_hex
+                            .clone()
+                            .unwrap_or_else(|| self.colors.hex_for_target(target));
+                        let new_hex = match &msg {
+                            ColorsMsg::HueSatChanged(_, hue, sat) => {
+                                let (_, _, v) = crate::widgets::color_picker::hex_to_color(&current)
+                                    .map(crate::widgets::color_picker::color_to_hsv)
+                                    .unwrap_or((0.0, 0.0, 1.0));
+                                crate::widgets::color_picker::hsv_to_hex(*hue, *sat, v)
+                            }
+                            ColorsMsg::ValueChanged(_, val) => {
+                                let (h, s, _) = crate::widgets::color_picker::hex_to_color(&current)
+                                    .map(crate::widgets::color_picker::color_to_hsv)
+                                    .unwrap_or((0.0, 0.0, 1.0));
+                                crate::widgets::color_picker::hsv_to_hex(h, s, *val)
+                            }
+                            _ => unreachable!(),
+                        };
+                        self.picker_preview_hex = Some(new_hex);
+                        return Task::none();
+                    }
+                }
+
+                if let ColorsMsg::ColorPickerResult(target, hex) = &msg {
+                    self.colors.apply_hex(target, hex, &mut self.document);
+                    self.dirty = true;
+                    self.status_msg = None;
+                    let window_id = self.color_picker_window;
+                    self.color_picker_window = None;
+                    self.pending_color_target = None;
+                    self.picker_original_hex = None;
+                    self.picker_preview_hex = None;
+                    return match window_id {
+                        Some(id) => window::close(id),
+                        None => Task::none(),
+                    };
+                }
+
                 self.colors.update(msg, &mut self.document);
                 self.dirty = true;
                 self.status_msg = None;
@@ -196,6 +254,9 @@ impl SettingsState {
                 if self.color_picker_window == Some(id) {
                     self.color_picker_window = None;
                     self.pending_color_target = None;
+                    self.picker_original_hex = None;
+                    self.picker_preview_hex = None;
+                    return window::close(id);
                 }
                 Task::none()
             }
@@ -206,7 +267,11 @@ impl SettingsState {
         if let Some(picker_id) = self.color_picker_window {
             if picker_id == window {
                 if let Some(target) = &self.pending_color_target {
-                    let hex = self.colors.hex_for_target(target);
+                    // Show live preview while the picker is open, not the committed value
+                    let hex = self
+                        .picker_preview_hex
+                        .clone()
+                        .unwrap_or_else(|| self.colors.hex_for_target(target));
                     return crate::pages::colors::color_picker_window_view(
                         target.clone(),
                         &hex,

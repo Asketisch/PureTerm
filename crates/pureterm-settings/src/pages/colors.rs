@@ -1,4 +1,4 @@
-use iced::widget::{button, canvas, column, container, row, slider, text, text_input};
+use iced::widget::{button, canvas, column, container, mouse_area, row, slider, text, text_input};
 use iced::{Color, Element, Length, Padding, Theme, window};
 
 use crate::app::Message;
@@ -140,7 +140,7 @@ impl ColorsState {
         }
     }
 
-    fn apply_hex(&mut self, target: &ColorPickerTarget, hex: &str, doc: &mut toml_edit::DocumentMut) {
+    pub fn apply_hex(&mut self, target: &ColorPickerTarget, hex: &str, doc: &mut toml_edit::DocumentMut) {
         let keys = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
         match target {
             ColorPickerTarget::Foreground => {
@@ -278,17 +278,19 @@ where
     F: 'static + Fn(String) -> ColorsMsg,
 {
     let color = parse_hex(hex);
+    let target_for_swatch = target.clone();
+    let swatch = mouse_area(color_swatch::view(color, 24.0))
+        .on_press(Message::Colors(ColorsMsg::OpenColorPicker(target_for_swatch)));
     row![
         text(label)
             .size(theme::FONT_SIZE)
             .color(TEXT_SECONDARY)
             .width(120),
-        color_swatch::view(color, 24.0),
+        swatch,
         text_input("#rrggbb", hex)
             .on_input(move |s| Message::Colors(msg_fn(s)))
             .style(theme::text_input::field)
             .width(100),
-        open_picker_button(target),
     ]
     .spacing(SPACING)
     .align_y(iced::Alignment::Center)
@@ -335,36 +337,22 @@ where
     F: 'static + Fn(String) -> ColorsMsg,
 {
     let color = parse_hex(hex);
+    let target_for_swatch = target.clone();
+    let swatch = mouse_area(color_swatch::view(color, 20.0))
+        .on_press(Message::Colors(ColorsMsg::OpenColorPicker(target_for_swatch)));
     column![
         text(name.to_string()).size(11.0).color(TEXT_SECONDARY),
         row![
-            color_swatch::view(color, 20.0),
+            swatch,
             text_input("#hex", hex)
                 .on_input(move |s| Message::Colors(on_change(s)))
                 .style(theme::text_input::field)
                 .width(80),
-            open_picker_button(target),
         ]
         .spacing(4)
         .align_y(iced::Alignment::Center),
     ]
     .spacing(2)
-    .into()
-}
-
-fn open_picker_button(target: ColorPickerTarget) -> Element<'static, Message> {
-    let label = match &target {
-        ColorPickerTarget::Foreground => "FG",
-        ColorPickerTarget::Background => "BG",
-        ColorPickerTarget::Normal(i) | ColorPickerTarget::Bright(i) => COLOR_NAMES[*i],
-    };
-
-    iced::widget::button(
-        text(label).size(11)
-    )
-    .padding([4, 8])
-    .style(theme::button::secondary)
-    .on_press(Message::Colors(ColorsMsg::OpenColorPicker(target)))
     .into()
 }
 
