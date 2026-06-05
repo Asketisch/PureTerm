@@ -2,6 +2,8 @@ mod app_config;
 mod config_watcher;
 mod iced_app;
 #[cfg(target_os = "macos")]
+mod macos_menu;
+#[cfg(target_os = "macos")]
 mod macos_reopen;
 mod terminal_context;
 mod terminal_shader;

@@ -103,7 +103,8 @@ impl TerminalContext {
     /// Resize the terminal grid and notify the PTY.
     pub fn resize(&self, cols: usize, rows: usize, cell_w: u16, cell_h: u16) {
         let size = TermSize::new(cols, rows);
-        self.terminal.lock().resize(size);
+        // 使用 unfair lock 避免 UI 线程在 PTY 读取线程持有锁时阻塞
+        self.terminal.lock_unfair().resize(size);
         let window_size = WindowSize {
             num_cols: cols as u16,
             num_lines: rows as u16,

@@ -24,7 +24,10 @@ use vte::ansi;
 pub(crate) const READ_BUFFER_SIZE: usize = 0x10_0000;
 
 /// Max bytes to read from the PTY while the terminal is locked.
-const MAX_LOCKED_READ: usize = u16::MAX as usize;
+// PureTerm: reduced from u16::MAX (65535) to 4096 to prevent render thread starvation
+// under heavy PTY output. The render thread needs the data lock to snapshot the grid,
+// and holding it for 65535 bytes of parsing caused multi-millisecond blocks.
+const MAX_LOCKED_READ: usize = 4096;
 
 /// Messages that may be sent to the `EventLoop`.
 #[derive(Debug)]

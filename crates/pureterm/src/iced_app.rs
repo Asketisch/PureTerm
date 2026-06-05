@@ -12,8 +12,13 @@ use iced::{
     Subscription, Task, Theme, Vector,
 };
 
+use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
+use alacritty_terminal::term::TermMode;
+
 use crate::app_config::AppConfig;
-use crate::terminal_context::TerminalContext;
+use crate::terminal_context::{TerminalContext, TerminalEvent};
 use crate::terminal_shader::{GlyphState, TerminalProgram};
 use pureterm_settings::app::{Message as SettingsMessage, SettingsState};
 use pureterm_settings::i18n::I18n;
@@ -159,6 +164,11 @@ pub enum Message {
     // Tab list (command palette)
     TabListQueryChanged(String),
     TabListSelected(TabId),
+    ClipboardPaste(String),
+    ClipboardCopy,
+    SelectAll,
+    // PTY lifecycle
+    PtyExited(TabId),
 }
 
 impl PureTermApp {
@@ -210,7 +220,7 @@ impl PureTermApp {
             detached_windows: Vec::new(),
         };
 
-        let first_id = app.create_tab(1024.0, 768.0);
+        let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
         app.active_tab = first_id;
 
         (app, task.map(Message::MainWindowOpened))
@@ -280,7 +290,27 @@ impl PureTermApp {
                 {
                     if !self.delegate_installed {
                         crate::macos_reopen::add_reopen_method();
+                        crate::macos_menu::install_edit_menu();
                         self.delegate_installed = true;
+                    }
+                    // Handle menu-bar triggered clipboard actions.
+                    if crate::macos_menu::consume_paste() {
+                        let text = std::panic::catch_unwind(|| {
+                            arboard::Clipboard::new()
+                                .and_then(|mut cb| cb.get_text())
+                                .ok()
+                        })
+                        .ok()
+                        .flatten();
+                        if let Some(text) = text {
+                            return Task::done(Message::ClipboardPaste(text));
+                        }
+                    }
+                    if crate::macos_menu::consume_copy() {
+                        return Task::done(Message::ClipboardCopy);
+                    }
+                    if crate::macos_menu::consume_select_all() {
+                        return Task::done(Message::SelectAll);
                     }
                     if !self.metal_layer_configured {
                         self.metal_layer_configured = true;
@@ -298,12 +328,27 @@ impl PureTermApp {
                         };
                         let (id, task) = window::open(settings);
                         self.main_window = Some(id);
-                        let first_id = self.create_tab(1024.0, 768.0);
+                        let first_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
                         self.active_tab = first_id;
                         self.metal_layer_configured = false;
                         self.glyph_state.borrow_mut().mark_atlas_dirty();
                         return task.map(Message::MainWindowOpened);
                     }
+                }
+
+                // 消费所有 tab 的 PTY 事件（Wakeup / Exit）
+                let mut exited_tabs = Vec::new();
+                for tab in &self.tabs {
+                    while let Ok(event) = tab.terminal_ctx.event_rx.try_recv() {
+                        match event {
+                            TerminalEvent::Wakeup => { /* PTY 有新数据，重绘已在进行 */ }
+                            TerminalEvent::Exit => { exited_tabs.push(tab.id); }
+                        }
+                    }
+                }
+                // 处理退出事件：关闭已退出的 tab
+                if let Some(tab_id) = exited_tabs.first() {
+                    return Task::done(Message::PtyExited(*tab_id));
                 }
             }
             Message::Keyboard(event) => {
@@ -340,17 +385,10 @@ impl PureTermApp {
                 let ch = gs.cell_height as u16;
                 drop(gs);
 
-                // 尺寸去重：如果行列数没变，直接跳过
-                let changed = {
-                    let mut changed = false;
-                    for tab in &mut self.tabs {
-                        if cols != tab.cols || rows != tab.rows {
-                            changed = true;
-                            break;
-                        }
-                    }
-                    changed
-                };
+                // 尺寸去重：只检查活跃 tab，避免新建 tab 的旧尺寸干扰
+                let changed = self.active_tab_ref().map_or(true, |tab| {
+                    cols != tab.cols || rows != tab.rows
+                });
                 if !changed {
                     return Task::none();
                 }
@@ -435,20 +473,7 @@ impl PureTermApp {
                 }
             }
             Message::NewTab => {
-                let new_id = self.create_tab(1024.0, 768.0);
-                if let Some(existing) = self.active_tab_ref() {
-                    let cols = existing.cols;
-                    let rows = existing.rows;
-                    let gs = self.glyph_state.borrow();
-                    let cw = gs.cell_width as u16;
-                    let ch = gs.cell_height as u16;
-                    drop(gs);
-                    if let Some(new_tab) = self.tabs.iter_mut().find(|t| t.id == new_id) {
-                        new_tab.cols = cols;
-                        new_tab.rows = rows;
-                        new_tab.terminal_ctx.resize(cols, rows, cw, ch);
-                    }
-                }
+                let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
                 self.active_tab = new_id;
             }
             Message::CloseTab(tab_id) => {
@@ -486,6 +511,60 @@ impl PureTermApp {
                 if i < self.tabs.len() {
                     self.active_tab = self.tabs[i].id;
                 }
+            }
+            Message::ClipboardPaste(text) => {
+                if let Some(ctx) = self.active_terminal_ctx() {
+                    let payload = {
+                        let term = ctx.terminal.lock();
+                        if term.mode().contains(TermMode::BRACKETED_PASTE) {
+                            let filtered = text.replace(['\x1b', '\x03'], "");
+                            let mut bytes = b"\x1b[200~".to_vec();
+                            bytes.extend(filtered.into_bytes());
+                            bytes.extend(b"\x1b[201~");
+                            bytes
+                        } else {
+                            text.replace("\r\n", "\r").replace('\n', "\r").into_bytes()
+                        }
+                    };
+                    ctx.write_to_pty(&payload);
+                }
+            }
+            Message::ClipboardCopy => {
+                if let Some(ctx) = self.active_terminal_ctx() {
+                    let text = {
+                        let term = ctx.terminal.lock();
+                        term.selection_to_string()
+                    };
+                    if let Some(text) = text {
+                        let _ = std::panic::catch_unwind(|| {
+                            arboard::Clipboard::new()
+                                .and_then(|mut cb| cb.set_text(&text))
+                        });
+                    } else {
+                        ctx.write_to_pty(b"\x03");
+                    }
+                }
+            }
+            Message::SelectAll => {
+                if let Some(ctx) = self.active_terminal_ctx() {
+                    let mut term = ctx.terminal.lock();
+                    let start = alacritty_terminal::index::Point::new(
+                        term.topmost_line(),
+                        Column(0),
+                    );
+                    let end = alacritty_terminal::index::Point::new(
+                        term.bottommost_line(),
+                        term.last_column(),
+                    );
+                    let mut sel = Selection::new(SelectionType::Simple, start, Side::Left);
+                    sel.update(end, Side::Right);
+                    sel.include_all();
+                    term.selection = Some(sel);
+                }
+            }
+            Message::PtyExited(tab_id) => {
+                // 子进程退出，关闭对应 tab
+                return Task::done(Message::CloseTab(tab_id));
             }
             Message::TabHoverEnter(id) => {
                 self.hovered_tab = Some(id);
@@ -734,6 +813,21 @@ impl PureTermApp {
                             "," => return Task::none(),
                             "t" => return Task::done(Message::NewTab),
                             "w" => return Task::done(Message::CloseTab(self.active_tab)),
+                            "v" => {
+                                let text = std::panic::catch_unwind(|| {
+                                    arboard::Clipboard::new()
+                                        .and_then(|mut cb| cb.get_text())
+                                        .ok()
+                                })
+                                .ok()
+                                .flatten();
+                                if let Some(text) = text {
+                                    return Task::done(Message::ClipboardPaste(text));
+                                }
+                                return Task::none();
+                            }
+                            "c" => return Task::done(Message::ClipboardCopy),
+                            "a" => return Task::done(Message::SelectAll),
                             "}" => return Task::done(Message::NextTab),
                             "{" => return Task::done(Message::PrevTab),
                             s if s.len() == 1 => {
@@ -752,7 +846,7 @@ impl PureTermApp {
                 }
 
                 if let Some(ctx) = self.active_terminal_ctx() {
-                    let bytes = self.key_to_bytes(&key, text.as_deref());
+                    let bytes = self.key_to_bytes(&key, text.as_deref(), modifiers);
                     if !bytes.is_empty() {
                         ctx.write_to_pty(&bytes);
                     }
@@ -763,10 +857,19 @@ impl PureTermApp {
         Task::none()
     }
 
-    fn key_to_bytes(&self, key: &iced::keyboard::Key, text: Option<&str>) -> Vec<u8> {
+    fn key_to_bytes(
+        &self,
+        key: &iced::keyboard::Key,
+        text: Option<&str>,
+        modifiers: iced::keyboard::Modifiers,
+    ) -> Vec<u8> {
         use iced::keyboard::Key;
+        use iced::keyboard::key::Named;
 
         if let Key::Named(named) = key {
+            if modifiers.shift() && matches!(named, Named::Tab) {
+                return b"\x1b[Z".to_vec();
+            }
             let escape = self.named_key_to_escape(*named);
             if !escape.is_empty() {
                 return escape;

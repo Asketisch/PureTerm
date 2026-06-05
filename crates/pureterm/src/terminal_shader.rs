@@ -560,21 +560,40 @@ impl<M> shader::Program<M> for TerminalProgram {
         let screen_h = bounds.height;
         let bg_color = self.background_color;
 
-        let term = self.ctx.terminal.lock();
-        let colors = term.colors();
-        let display_offset = term.grid().display_offset();
-        let cursor = &term.grid().cursor;
+        // Phase 1: Snapshot terminal state under a short lock
+        struct CellSnapshot {
+            row: usize,
+            col: usize,
+            c: char,
+            fg: Color,
+            bg: Color,
+        }
 
+        let (cells, display_offset, cursor_row, cursor_col, colors) = {
+            let term = self.ctx.terminal.lock_unfair();
+            let display_offset = term.grid().display_offset();
+            let cursor = &term.grid().cursor;
+            let cursor_row = (cursor.point.line.0 + display_offset as i32) as usize;
+            let cursor_col = cursor.point.column.0;
+            let colors = *term.colors();
+            let cells: Vec<CellSnapshot> = term.grid().display_iter()
+                .map(|indexed| CellSnapshot {
+                    row: (indexed.point.line.0 + display_offset as i32) as usize,
+                    col: indexed.point.column.0,
+                    c: indexed.cell.c,
+                    fg: indexed.cell.fg,
+                    bg: indexed.cell.bg,
+                })
+                .collect();
+            (cells, display_offset, cursor_row, cursor_col, colors)
+        }; // Lock released here
+
+        // Phase 2: Build GPU primitives from snapshot (no lock held)
         let mut gs = self.glyph_state.borrow_mut();
         let cell_w = gs.cell_width;
         let cell_h = gs.cell_height;
         let font_descent = gs.font_descent;
 
-        // Use the terminal's actual grid dimensions (set by resize)
-        let cols = term.columns();
-        let rows = term.screen_lines();
-        // 计算 padding 时：用当前窗口像素尺寸重新计算列数，避免 terminal grid 尺寸
-        // 滞后于窗口尺寸时导致的视觉漂移
         let computed_cols = (screen_w / cell_w).floor().max(1.0) as usize;
         let computed_rows = (screen_h / cell_h).floor().max(1.0) as usize;
         let pad_x = (screen_w - computed_cols as f32 * cell_w).max(0.0) / 2.0;
@@ -588,29 +607,24 @@ impl<M> shader::Program<M> for TerminalProgram {
         // Full-screen background
         push_bg_quad(&mut bg_vertices, &mut bg_indices, 0.0, 0.0, screen_w, screen_h, bg_color);
 
-        // Iterate cells: backgrounds + text glyphs
-        for indexed in term.grid().display_iter() {
-            let point = indexed.point;
-            let visual_row = (point.line.0 + display_offset as i32) as usize;
-            let visual_col = point.column.0;
-            let x = pad_x + visual_col as f32 * cell_w;
-            let y = pad_y + visual_row as f32 * cell_h;
+        // Iterate cell snapshots: backgrounds + text glyphs
+        for cell in &cells {
+            let x = pad_x + cell.col as f32 * cell_w;
+            let y = pad_y + cell.row as f32 * cell_h;
 
             // Cell background
-            let cell_bg = indexed.cell.bg;
-            if cell_bg != Color::Named(NamedColor::Background) {
-                let color = color_to_f32(cell_bg, colors);
+            if cell.bg != Color::Named(NamedColor::Background) {
+                let color = color_to_f32(cell.bg, &colors);
                 push_bg_quad(&mut bg_vertices, &mut bg_indices, x, y, cell_w, cell_h, color);
             }
 
             // Text glyph
-            let c = indexed.cell.c;
-            if c == ' ' || c == '\t' || c == '\0' {
+            if cell.c == ' ' || cell.c == '\t' || cell.c == '\0' {
                 continue;
             }
 
-            if let Some(glyph) = gs.get_or_rasterize(c) {
-                let fg = color_to_f32(indexed.cell.fg, colors);
+            if let Some(glyph) = gs.get_or_rasterize(cell.c) {
+                let fg = color_to_f32(cell.fg, &colors);
                 let atlas_sel = if glyph.atlas_kind == AtlasKind::Color { 1.0 } else { 0.0 };
                 let glyph_color = if glyph.atlas_kind == AtlasKind::Color {
                     [1.0, 1.0, 1.0, 1.0]
@@ -635,11 +649,9 @@ impl<M> shader::Program<M> for TerminalProgram {
         }
 
         // Cursor
-        let cursor_visual_row = (cursor.point.line.0 + display_offset as i32) as usize;
-        let cursor_visual_col = cursor.point.column.0;
         let cursor_color = [0.6, 0.6, 0.6, 0.8];
-        let cx = pad_x + cursor_visual_col as f32 * cell_w;
-        let cy = pad_y + cursor_visual_row as f32 * cell_h;
+        let cx = pad_x + cursor_col as f32 * cell_w;
+        let cy = pad_y + cursor_row as f32 * cell_h;
         push_bg_quad(&mut bg_vertices, &mut bg_indices, cx, cy, cell_w, cell_h, cursor_color);
 
         // Take dirty atlas data
@@ -647,7 +659,6 @@ impl<M> shader::Program<M> for TerminalProgram {
         let color_atlas = gs.atlas.take_color_dirty_data();
 
         drop(gs);
-        drop(term);
 
         TerminalPrimitive {
             bg_vertices,
