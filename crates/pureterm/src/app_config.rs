@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub font_family: String,
     pub font_size: f32,
     pub background_color: [f32; 4],
+    pub foreground_color: [f32; 4],
     pub opacity: f32,
     pub locale: String,
 }
@@ -17,6 +18,7 @@ impl Default for AppConfig {
             font_family: "monospace".to_string(),
             font_size: 14.0,
             background_color: [0.11, 0.11, 0.12, 1.0],
+            foreground_color: [0.83, 0.84, 0.81, 1.0],
             opacity: 1.0,
             locale: "en".to_string(),
         }
@@ -47,6 +49,12 @@ impl AppConfig {
         if let Some(bg) = config_io::get_string(&doc, &["colors", "primary"], "background") {
             if let Some(color) = parse_hex_color(&bg) {
                 config.background_color = color;
+            }
+        }
+
+        if let Some(fg) = config_io::get_string(&doc, &["colors", "primary"], "foreground") {
+            if let Some(color) = parse_hex_color(&fg) {
+                config.foreground_color = color;
             }
         }
 

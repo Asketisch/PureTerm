@@ -181,6 +181,7 @@ impl PureTermApp {
             decorations: true,
             resizable: true,
             closeable: true,
+            transparent: true,
             ..Default::default()
         };
 
@@ -324,6 +325,7 @@ impl PureTermApp {
                             decorations: true,
                             resizable: true,
                             closeable: true,
+                            transparent: true,
                             ..Default::default()
                         };
                         let (id, task) = window::open(settings);
@@ -636,6 +638,7 @@ impl PureTermApp {
                                 decorations: true,
                                 resizable: true,
                                 closeable: true,
+                                transparent: true,
                                 ..Default::default()
                             };
                             let (win_id, task) = window::open(settings);
@@ -1340,6 +1343,8 @@ impl PureTermApp {
                     ctx: dw.tab.terminal_ctx.clone(),
                     glyph_state: self.glyph_state.clone(),
                     background_color: self.config.background_color,
+                    foreground_color: self.config.foreground_color,
+                    opacity: self.config.opacity,
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -1360,6 +1365,8 @@ impl PureTermApp {
                     ctx: tab.terminal_ctx.clone(),
                     glyph_state: self.glyph_state.clone(),
                     background_color: self.config.background_color,
+                    foreground_color: self.config.foreground_color,
+                    opacity: self.config.opacity,
                 })
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -1483,5 +1490,18 @@ pub fn run() -> iced::Result {
     .title(PureTermApp::title)
     .theme(PureTermApp::theme)
     .subscription(PureTermApp::subscription)
+    .style(|state: &PureTermApp, _theme: &Theme| iced::theme::Style {
+        background_color: if state.config.opacity < 1.0 {
+            Color::TRANSPARENT
+        } else {
+            // opacity = 1.0 时使用与终端背景匹配的不透明颜色
+            Color::from_rgb(
+                state.config.background_color[0],
+                state.config.background_color[1],
+                state.config.background_color[2],
+            )
+        },
+        text_color: Color::WHITE,
+    })
     .run()
 }

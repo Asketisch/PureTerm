@@ -144,7 +144,7 @@ fn builtin_en() -> HashMap<String, String> {
 
     // Colors page
     m.insert("colors.section.primary".into(), "Primary".into());
-    m.insert("colors.foreground".into(), "Foreground".into());
+    m.insert("colors.foreground".into(), "Text Color".into());
     m.insert("colors.background".into(), "Background".into());
     m.insert("colors.section.normal".into(), "Normal Colors (0-7)".into());
     m.insert("colors.section.bright".into(), "Bright Colors (8-15)".into());
@@ -283,7 +283,7 @@ fn builtin_zh() -> HashMap<String, String> {
 
     // Colors page
     m.insert("colors.section.primary".into(), "主要".into());
-    m.insert("colors.foreground".into(), "前景色".into());
+    m.insert("colors.foreground".into(), "文字颜色".into());
     m.insert("colors.background".into(), "背景色".into());
     m.insert("colors.section.normal".into(), "标准颜色 (0-7)".into());
     m.insert("colors.section.bright".into(), "亮色 (8-15)".into());

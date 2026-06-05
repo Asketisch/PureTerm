@@ -541,6 +541,8 @@ pub struct TerminalProgram {
     pub ctx: Arc<TerminalContext>,
     pub glyph_state: Arc<RefCell<GlyphState>>,
     pub background_color: [f32; 4],
+    pub foreground_color: [f32; 4],
+    pub opacity: f32,
 }
 
 #[derive(Default)]
@@ -558,7 +560,13 @@ impl<M> shader::Program<M> for TerminalProgram {
     ) -> Self::Primitive {
         let screen_w = bounds.width;
         let screen_h = bounds.height;
-        let bg_color = self.background_color;
+        // Apply window opacity to background color alpha channel
+        let bg_color = [
+            self.background_color[0],
+            self.background_color[1],
+            self.background_color[2],
+            self.background_color[3] * self.opacity,
+        ];
 
         // Phase 1: Snapshot terminal state under a short lock
         struct CellSnapshot {
@@ -587,6 +595,17 @@ impl<M> shader::Program<M> for TerminalProgram {
                 .collect();
             (cells, display_offset, cursor_row, cursor_col, colors)
         }; // Lock released here
+
+        // Inject configured foreground color into the colors array so that
+        // color_to_f32() can resolve NamedColor::Foreground from config
+        // instead of falling back to hardcoded defaults.
+        let mut colors = colors;
+        let fg_rgb = Rgb {
+            r: (self.foreground_color[0] * 255.0) as u8,
+            g: (self.foreground_color[1] * 255.0) as u8,
+            b: (self.foreground_color[2] * 255.0) as u8,
+        };
+        colors[NamedColor::Foreground as usize] = Some(fg_rgb);
 
         // Phase 2: Build GPU primitives from snapshot (no lock held)
         let mut gs = self.glyph_state.borrow_mut();
