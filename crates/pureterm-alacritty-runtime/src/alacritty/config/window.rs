@@ -49,6 +49,11 @@ pub struct WindowConfig {
     /// Request blur behind the window.
     pub blur: bool,
 
+    /// PureTerm: Blur material style (macOS only).
+    /// Controls the vibrancy material when `blur` is enabled.
+    #[cfg(target_os = "macos")]
+    pub blur_style: BlurStyle,
+
     /// Controls which `Option` key should be treated as `Alt`.
     option_as_alt: OptionAsAlt,
 
@@ -76,6 +81,8 @@ impl Default for WindowConfig {
         Self {
             dynamic_title: true,
             blur: Default::default(),
+            #[cfg(target_os = "macos")]
+            blur_style: Default::default(),
             embed: Default::default(),
             padding: Default::default(),
             opacity: Default::default(),
@@ -328,6 +335,24 @@ impl From<WindowLevel> for WinitWindowLevel {
             WindowLevel::AlwaysOnTop => WinitWindowLevel::AlwaysOnTop,
         }
     }
+}
+
+// ── Blur Style (macOS) ──────────────────────────────────────────────────────────
+
+/// PureTerm: 模糊风格预设，映射到 macOS `NSVisualEffectMaterial`。
+/// `System` 保持 winit 默认行为（CGSSetWindowBackgroundBlurRadius），
+/// 其余选项通过 `NSVisualEffectView` 的 `material` 属性控制模糊强度。
+#[derive(ConfigDeserialize, Serialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg(target_os = "macos")]
+pub enum BlurStyle {
+    #[default]
+    System,
+    Titlebar,
+    Selection,
+    Menu,
+    Sidebar,
+    HUDWindow,
+    FullScreenUI,
 }
 
 // ── Background Image Config ──────────────────────────────────────────────────

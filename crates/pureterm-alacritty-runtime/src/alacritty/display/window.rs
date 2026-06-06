@@ -21,8 +21,11 @@ use std::fmt::{self, Display, Formatter};
 
 #[cfg(target_os = "macos")]
 use {
-    objc2::MainThreadMarker,
-    objc2_app_kit::{NSColorSpace, NSView},
+    objc2::{msg_send, MainThreadMarker, MainThreadOnly},
+    objc2_app_kit::{
+        NSColorSpace, NSView, NSVisualEffectBlendingMode, NSVisualEffectMaterial,
+        NSVisualEffectState, NSVisualEffectView, NSWindowOrderingMode,
+    },
     winit::platform::macos::{OptionAsAlt, WindowAttributesExtMacOS, WindowExtMacOS},
 };
 
@@ -472,6 +475,131 @@ impl Window {
         };
 
         view.window().unwrap().setHasShadow(has_shadows);
+    }
+
+    /// PureTerm: Set blur style using NSVisualEffectView material.
+    ///
+    /// When `style` is `System`, falls back to winit's native blur (CGSSetWindowBackgroundBlurRadius).
+    /// For other styles, creates an NSVisualEffectView with the specified material behind the
+    /// Metal rendering layer.
+    #[cfg(target_os = "macos")]
+    pub fn set_blur_style(
+        &self,
+        style: crate::config::window::BlurStyle,
+        blur_enabled: bool,
+    ) {
+        use crate::config::window::BlurStyle;
+
+        let view = match self.raw_window_handle() {
+            RawWindowHandle::AppKit(handle) => {
+                assert!(MainThreadMarker::new().is_some());
+                unsafe { handle.ns_view.cast::<NSView>().as_ref() }
+            },
+            _ => return,
+        };
+
+        let ns_window = match view.window() {
+            Some(w) => w,
+            None => return,
+        };
+
+        match style {
+            BlurStyle::System => {
+                // Use winit's native CGS blur.
+                self.set_blur(blur_enabled);
+                // Remove any previously inserted NSVisualEffectView.
+                Self::remove_effect_view(&ns_window);
+            },
+            _ if blur_enabled => {
+                // Disable winit's CGS blur — we use NSVisualEffectView instead.
+                self.set_blur(false);
+                // Ensure the window is transparent so vibrancy shows through.
+                self.set_transparent(true);
+                Self::ensure_effect_view(&ns_window, style);
+            },
+            _ => {
+                // Blur disabled — clean up everything.
+                self.set_blur(false);
+                Self::remove_effect_view(&ns_window);
+            },
+        }
+    }
+
+    /// Find or create the PureTerm NSVisualEffectView and apply the given material.
+    #[cfg(target_os = "macos")]
+    fn ensure_effect_view(
+        ns_window: &objc2_app_kit::NSWindow,
+        style: crate::config::window::BlurStyle,
+    ) {
+        use objc2::rc::Retained;
+
+        let content_view = match ns_window.contentView() {
+            Some(cv) => cv,
+            None => return,
+        };
+
+        // Look for an existing effect view by downcasting subviews to NSVisualEffectView.
+        let existing: Option<Retained<NSVisualEffectView>> = content_view
+            .subviews()
+            .iter()
+            .find_map(|subview| Retained::downcast::<NSVisualEffectView>(subview).ok());
+
+        let effect_view = match existing {
+            Some(ev) => ev,
+            None => {
+                // Create a new NSVisualEffectView and insert it behind all other subviews.
+                let mtm = MainThreadMarker::new().expect("must be on main thread");
+                let frame = content_view.frame();
+                let ev = unsafe {
+                    NSVisualEffectView::initWithFrame(NSVisualEffectView::alloc(mtm), frame)
+                };
+                unsafe {
+                    let _: () = msg_send![
+                        &ev,
+                        setAutoresizingMask: (1u64 | 2u64) // NSViewWidthSizable | NSViewHeightSizable
+                    ];
+                }
+                ev.setBlendingMode(NSVisualEffectBlendingMode::BehindWindow);
+                ev.setState(NSVisualEffectState::FollowsWindowActiveState);
+                content_view.addSubview_positioned_relativeTo(
+                    &ev,
+                    NSWindowOrderingMode::Below,
+                    None,
+                );
+                ev
+            },
+        };
+
+        let material = match style {
+            crate::config::window::BlurStyle::Titlebar => NSVisualEffectMaterial::Titlebar,
+            crate::config::window::BlurStyle::Selection => NSVisualEffectMaterial::Selection,
+            crate::config::window::BlurStyle::Menu => NSVisualEffectMaterial::Menu,
+            crate::config::window::BlurStyle::Sidebar => NSVisualEffectMaterial::Sidebar,
+            crate::config::window::BlurStyle::HUDWindow => NSVisualEffectMaterial::HUDWindow,
+            crate::config::window::BlurStyle::FullScreenUI => NSVisualEffectMaterial::FullScreenUI,
+            crate::config::window::BlurStyle::System => unreachable!(),
+        };
+
+        effect_view.setMaterial(material);
+    }
+
+    /// Remove the PureTerm NSVisualEffectView from the window if present.
+    #[cfg(target_os = "macos")]
+    fn remove_effect_view(ns_window: &objc2_app_kit::NSWindow) {
+        use objc2::rc::Retained;
+
+        let content_view = match ns_window.contentView() {
+            Some(cv) => cv,
+            None => return,
+        };
+
+        let subviews = content_view.subviews();
+        for subview in &subviews {
+            if Retained::downcast::<NSVisualEffectView>(subview.clone()).is_ok() {
+                subview.removeFromSuperview();
+                return;
+            }
+        }
     }
 
     /// Select tab at the given `index`.

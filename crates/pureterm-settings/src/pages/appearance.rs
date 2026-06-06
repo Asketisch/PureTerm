@@ -1,4 +1,8 @@
-use iced::widget::{checkbox, column, pick_list, row, slider, text, text_input, container};
+use std::path::PathBuf;
+
+use iced::widget::{
+    button, checkbox, column, container, pick_list, row, slider, space, text, text_input,
+};
 use iced::{Element, Length, Padding};
 
 use crate::app::Message;
@@ -11,6 +15,8 @@ pub enum AppearanceMsg {
     FontSizeChanged(String),
     OpacityChanged(f32),
     BlurToggled(bool),
+    BlurStyleChanged(String),
+    SettingsWindowBlurToggled(bool),
     PaddingXChanged(String),
     PaddingYChanged(String),
     DecorationsChanged(String),
@@ -18,6 +24,8 @@ pub enum AppearanceMsg {
     CursorBlinkingToggled(bool),
     CursorThicknessChanged(f32),
     UnfocusedHollowToggled(bool),
+    BackgroundImagePicked(Option<PathBuf>),
+    BackgroundImageOpacityChanged(f32),
 }
 
 #[derive(Debug, Clone)]
@@ -25,7 +33,15 @@ pub struct AppearanceState {
     pub font_family: String,
     pub font_size: String,
     pub opacity: f32,
+    /// 终端的 `window.blur`（写到 alacritty 的 [window] blur）。
     pub blur: bool,
+    /// PureTerm: 模糊风格预设（写到 [window] blur_style）。
+    pub blur_style: String,
+    /// PureTerm: 设置窗口自身的 `window.blur`（写到 [pureterm.window] blur）。
+    /// 决定 macOS NSVisualEffectView 磨砂效果是否启用。
+    /// 注意：Iced 0.14 的 `window::Settings.blur` 一旦创建不可改，本字段的
+    /// 实际效果在「设置窗口下次启动」时才会呈现。
+    pub settings_window_blur: bool,
     pub padding_x: String,
     pub padding_y: String,
     pub decorations: String,
@@ -33,6 +49,10 @@ pub struct AppearanceState {
     pub cursor_blinking: bool,
     pub cursor_thickness: f32,
     pub unfocused_hollow: bool,
+    /// PureTerm: 设置窗口背景图（纯装饰，不影响终端）。None = 无图。
+    pub background_image: Option<PathBuf>,
+    /// PureTerm: 背景图不透明度（0.0..=1.0），仅作用于图片层。
+    pub background_image_opacity: f32,
 }
 
 impl Default for AppearanceState {
@@ -40,8 +60,14 @@ impl Default for AppearanceState {
         Self {
             font_family: String::new(),
             font_size: "11.25".to_string(),
-            opacity: 1.0,
+            // PureTerm: 默认 0.85 让设置窗口 palette 背景半透明，配合 window.blur
+            // 让磨砂效果开箱即用。该字段同时被 [window] opacity 写回 TOML 供终端使用；
+            // 没有显式设置终端 window.opacity 的用户，终端也会是 0.85 透明。
+            opacity: 0.85,
             blur: false,
+            blur_style: "System".to_string(),
+            // PureTerm: 设置窗口默认开启磨砂。
+            settings_window_blur: true,
             padding_x: "0".to_string(),
             padding_y: "0".to_string(),
             decorations: "Full".to_string(),
@@ -49,6 +75,8 @@ impl Default for AppearanceState {
             cursor_blinking: false,
             cursor_thickness: 0.15,
             unfocused_hollow: true,
+            background_image: None,
+            background_image_opacity: 0.5,
         }
     }
 }
@@ -63,6 +91,16 @@ impl AppearanceState {
             .map(|f| f as f32)
             .unwrap_or(1.0);
         let blur = crate::config_io::get_bool(doc, &["window"], "blur").unwrap_or(false);
+        // PureTerm: 模糊风格预设（默认 System = winit 原生行为）。
+        let blur_style = crate::config_io::get_string(doc, &["window"], "blur_style")
+            .unwrap_or_else(|| "System".to_string());
+        // PureTerm: 设置窗口自身的 blur（默认开启）。
+        let settings_window_blur = crate::config_io::get_bool(
+            doc,
+            &["pureterm", "window"],
+            "blur",
+        )
+        .unwrap_or(true);
 
         let padding_x = get_padding_val(doc, "x").unwrap_or_else(|| "0".to_string());
         let padding_y = get_padding_val(doc, "y").unwrap_or_else(|| "0".to_string());
@@ -78,10 +116,29 @@ impl AppearanceState {
         let unfocused_hollow =
             crate::config_io::get_bool(doc, &["cursor"], "unfocused_hollow").unwrap_or(true);
 
+        // PureTerm: 读取 [pureterm.background] 节下的图片背景设置。
+        let background_image = crate::config_io::get_string(
+            doc,
+            &["pureterm", "background"],
+            "image",
+        )
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from);
+        let background_image_opacity = crate::config_io::get_float(
+            doc,
+            &["pureterm", "background"],
+            "opacity",
+        )
+        .map(|f| f as f32)
+        .unwrap_or(0.5);
+
         Self {
-            font_family, font_size, opacity, blur,
+            font_family, font_size, opacity, blur, blur_style,
+            settings_window_blur,
             padding_x, padding_y, decorations,
             cursor_shape, cursor_blinking, cursor_thickness, unfocused_hollow,
+            background_image,
+            background_image_opacity,
         }
     }
 
@@ -104,6 +161,19 @@ impl AppearanceState {
             AppearanceMsg::BlurToggled(v) => {
                 self.blur = v;
                 crate::config_io::set_bool(doc, &["window"], "blur", v);
+            }
+            AppearanceMsg::BlurStyleChanged(v) => {
+                self.blur_style = v.clone();
+                crate::config_io::set_string(doc, &["window"], "blur_style", &v);
+            }
+            AppearanceMsg::SettingsWindowBlurToggled(v) => {
+                self.settings_window_blur = v;
+                crate::config_io::set_bool(
+                    doc,
+                    &["pureterm", "window"],
+                    "blur",
+                    v,
+                );
             }
             AppearanceMsg::PaddingXChanged(v) => {
                 self.padding_x = v.clone();
@@ -136,6 +206,40 @@ impl AppearanceState {
             AppearanceMsg::UnfocusedHollowToggled(v) => {
                 self.unfocused_hollow = v;
                 crate::config_io::set_bool(doc, &["cursor"], "unfocused_hollow", v);
+            }
+            AppearanceMsg::BackgroundImagePicked(maybe_path) => {
+                self.background_image = maybe_path.clone();
+                match maybe_path {
+                    Some(p) => {
+                        let s = p.to_string_lossy().into_owned();
+                        crate::config_io::set_string(
+                            doc,
+                            &["pureterm", "background"],
+                            "image",
+                            &s,
+                        );
+                    }
+                    None => {
+                        // 清除：删除对应键（让 toml_edit 保留节结构）。
+                        if let Some(t) = doc
+                            .get_mut("pureterm")
+                            .and_then(|p| p.as_table_mut())
+                            .and_then(|t| t.get_mut("background"))
+                            .and_then(|b| b.as_table_mut())
+                        {
+                            t.remove("image");
+                        }
+                    }
+                }
+            }
+            AppearanceMsg::BackgroundImageOpacityChanged(v) => {
+                self.background_image_opacity = v.clamp(0.0, 1.0);
+                crate::config_io::set_float(
+                    doc,
+                    &["pureterm", "background"],
+                    "opacity",
+                    self.background_image_opacity as f64,
+                );
             }
         }
     }
@@ -189,6 +293,38 @@ pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {
             .label(i18n.t("appearance.background_blur"))
             .on_toggle(|v| Message::Appearance(AppearanceMsg::BlurToggled(v)))
             .style(theme::checkbox::field),
+        // PureTerm: 模糊风格选择器（仅 blur 开启时显示）。
+        if state.blur {
+            let style_mapping = PickMapping::new(
+                i18n,
+                "pick_list.blur_style",
+                &["System", "Titlebar", "Selection", "Menu", "Sidebar", "HUDWindow", "FullScreenUI"],
+            );
+            let style_display = style_mapping.display_options();
+            let selected = style_mapping.display_for(&state.blur_style);
+            labeled_row(
+                i18n.t("appearance.blur_style"),
+                pick_list(
+                    style_display,
+                    Some(selected),
+                    move |v| {
+                        let config = style_mapping.config_for(&v).unwrap_or_default();
+                        Message::Appearance(AppearanceMsg::BlurStyleChanged(config))
+                    },
+                )
+                .style(theme::pick_list::field)
+                .width(150)
+                .into(),
+            )
+        } else {
+            text("").into()
+        },
+        // PureTerm: 设置窗口自身的磨砂开关（与上面的「Background Blur」区分，
+        // 后者控制终端的 [window] blur；本项控制 [pureterm.window] blur）。
+        checkbox(state.settings_window_blur)
+            .label(i18n.t("appearance.settings_window_blur"))
+            .on_toggle(|v| Message::Appearance(AppearanceMsg::SettingsWindowBlurToggled(v)))
+            .style(theme::checkbox::field),
         labeled_row(
             i18n.t("appearance.padding"),
             row![
@@ -207,6 +343,8 @@ pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {
             .align_y(iced::Alignment::Center)
             .into(),
         ),
+        // PureTerm: 设置窗口背景图设置。
+        background_image_section(state, i18n),
         labeled_row(
             i18n.t("appearance.decorations"),
             {
@@ -279,6 +417,88 @@ fn section_title(title: String) -> Element<'static, Message> {
     text(title)
         .size(theme::FONT_SIZE + 2.0)
         .color(theme::TEXT_PRIMARY)
+        .into()
+}
+
+/// PureTerm: 「设置窗口背景图」一节。包含选择按钮、当前路径、清除按钮、透明度滑条。
+fn background_image_section(
+    state: &AppearanceState,
+    i18n: &I18n,
+) -> Element<'static, Message> {
+    let path_display: String = state
+        .background_image
+        .as_ref()
+        .map(|p| {
+            // 长路径截断，避免破坏布局
+            let s = p.to_string_lossy().into_owned();
+            if s.len() > 40 {
+                format!("…{}", &s[s.len() - 39..])
+            } else {
+                s
+            }
+        })
+        .unwrap_or_else(|| i18n.t("appearance.no_image"));
+
+    let pick_btn = button(
+        text(i18n.t("appearance.choose_image"))
+            .size(theme::FONT_SIZE),
+    )
+    .padding(Padding::from([6, 14]))
+    .style(theme::button::secondary)
+    .on_press(Message::PickBackgroundImage);
+
+    let clear_btn = if state.background_image.is_some() {
+        Some(
+            button(text(i18n.t("appearance.clear")).size(theme::FONT_SIZE))
+                .padding(Padding::from([6, 14]))
+                .style(theme::button::secondary)
+                .on_press(Message::Appearance(AppearanceMsg::BackgroundImagePicked(
+                    None,
+                ))),
+        )
+    } else {
+        None
+    };
+
+    let mut row_path = row![
+        text(path_display)
+            .size(theme::FONT_SIZE)
+            .color(TEXT_SECONDARY),
+        space::horizontal(),
+        pick_btn,
+    ]
+    .spacing(SPACING)
+    .align_y(iced::Alignment::Center);
+
+    if let Some(btn) = clear_btn {
+        row_path = row_path.push(btn);
+    }
+
+    let opacity_row = row![
+        text(i18n.t("appearance.background_image_opacity"))
+            .size(theme::FONT_SIZE)
+            .color(TEXT_SECONDARY)
+            .width(160),
+        slider(
+            0.0..=1.0,
+            state.background_image_opacity,
+            |v| Message::Appearance(AppearanceMsg::BackgroundImageOpacityChanged(v)),
+        )
+        .step(0.05)
+        .width(200)
+        .style(theme::slider::field),
+        text(format!(
+            "{:.0}%",
+            state.background_image_opacity * 100.0
+        ))
+        .size(theme::FONT_SIZE)
+        .color(TEXT_SECONDARY),
+    ]
+    .spacing(SPACING)
+    .align_y(iced::Alignment::Center);
+
+    column![section_title(i18n.t("appearance.background_image")), row_path, opacity_row]
+        .spacing(SPACING)
         .into()
 }
 

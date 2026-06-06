@@ -41,6 +41,28 @@ pub fn pureterm_theme() -> Theme {
     )
 }
 
+/// PureTerm：根据用户配置的 background opacity 动态生成 Theme。
+/// `appearance.opacity` 越低，调色板背景 alpha 越小，越能透出磨砂层。
+/// 注意：Iced 0.14 的 `window::Settings.transparent/blur` 一旦创建不可改，
+/// 所以该 opacity 的实际效果在「设置窗口下次启动」时才会呈现。
+pub fn pureterm_theme_with_opacity(opacity: f32) -> Theme {
+    let bg = Color {
+        a: opacity.clamp(0.0, 1.0),
+        ..BACKGROUND
+    };
+    Theme::custom(
+        "PureTerm".to_string(),
+        iced::theme::Palette {
+            background: bg,
+            text: TEXT_PRIMARY,
+            primary: ACCENT,
+            success: SUCCESS,
+            danger: DANGER,
+            warning: WARNING,
+        },
+    )
+}
+
 pub fn lighten(color: Color, amount: f32) -> Color {
     Color {
         r: (color.r + amount).min(1.0),

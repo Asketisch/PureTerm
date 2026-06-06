@@ -12,8 +12,8 @@ use iced::{
     Subscription, Task, Theme, Vector,
 };
 
-use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Side};
+use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Column, Line, Point as TermPoint, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::TermMode;
 
@@ -152,6 +152,7 @@ pub enum Message {
     // Context menu
     TabRightClick(TabId),
     CursorMoved(Point),
+    MouseScroll(iced::mouse::ScrollDelta),
     DismissContextMenu,
     ContextMenuAction(ContextMenuItem),
     ContextMenuHovered(Option<ContextMenuItem>),
@@ -330,6 +331,9 @@ impl PureTermApp {
                         };
                         let (id, task) = window::open(settings);
                         self.main_window = Some(id);
+                        // PureTerm: 每个主窗口都从 Tab 1 开始计数（避免 dock 重新打开时
+                        // 跨窗口累加 `next_tab_id`，导致新窗口首个 tab 叫 "Tab 6"）。
+                        self.next_tab_id = 0;
                         let first_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
                         self.active_tab = first_id;
                         self.metal_layer_configured = false;
@@ -420,6 +424,17 @@ impl PureTermApp {
                 if Some(win_id) == self.main_window {
                     self.main_window = None;
                     self.tabs.clear();
+                }
+                // PureTerm: 全部窗口（主终端 + 设置 + detached）都关闭时退出进程
+                // （Alacritty 上游规范行为）。这样 16ms TerminalWakeup 循环里
+                // 的 dock-reopen 消费逻辑再也跑不到——也就不会"关闭后又自动
+                // 开新窗口"了。下次点 dock 由 macOS 重新启动一个新进程。
+                if self.main_window.is_none()
+                    && self.settings_window.is_none()
+                    && self.detached_windows.is_empty()
+                {
+                    log::info!("All windows closed, exiting");
+                    return iced::exit();
                 }
             }
             Message::ConfigReloaded => {
@@ -590,6 +605,9 @@ impl PureTermApp {
             Message::CursorMoved(pos) => {
                 self.last_cursor_pos = pos;
             }
+            Message::MouseScroll(delta) => {
+                self.handle_scroll(delta);
+            }
             Message::DismissContextMenu => {
                 self.context_menu = None;
                 self.renaming_tab = None;
@@ -626,13 +644,19 @@ impl PureTermApp {
                     }
                     ContextMenuItem::MoveToNewWindow => {
                         if let Some(idx) = tab_idx {
-                            let tab = self.tabs.remove(idx);
+                            let mut tab = self.tabs.remove(idx);
                             if self.active_tab == tab.id {
                                 let new_idx = idx.min(self.tabs.len().saturating_sub(1));
                                 if !self.tabs.is_empty() {
                                     self.active_tab = self.tabs[new_idx].id;
                                 }
                             }
+                            // PureTerm: 新窗口是「干净的窗口」，从 Tab 1 开始计数。
+                            // 被搬走的 tab 在新窗口中成为 Tab 1；后续在该窗口里新建 tab
+                            // 会从 Tab 2 开始。原窗口中剩余 tab 保留各自编号。
+                            self.next_tab_id = 0;
+                            tab.id = TabId(0);
+                            tab.title = "Tab 1".to_string();
                             let settings = window::Settings {
                                 size: Size::new(1024.0, 768.0),
                                 decorations: true,
@@ -916,6 +940,118 @@ impl PureTermApp {
             Named::F11 => b"\x1b[23~".to_vec(),
             Named::F12 => b"\x1b[24~".to_vec(),
             _ => Vec::new(),
+        }
+    }
+
+    /// Handle a mouse wheel event over the terminal area.
+    ///
+    /// Mirrors the priority chain in Alacritty's `scroll_terminal`:
+    /// 1. Mouse protocol mode → encode scroll as button 64/65/66/67 reports
+    /// 2. Alternate screen + alternate scroll → send cursor-key escape sequences
+    /// 3. Normal mode → scroll the grid display offset (scrollback)
+    fn handle_scroll(&mut self, delta: iced::mouse::ScrollDelta) {
+        let Some(ctx) = self.active_terminal_ctx() else {
+            return;
+        };
+
+        let (cell_width, cell_height) = {
+            let gs = self.glyph_state.borrow();
+            (gs.cell_width, gs.cell_height)
+        };
+        if cell_width <= 0.0 || cell_height <= 0.0 {
+            return;
+        }
+
+        // Normalize to a signed pixel delta. Iced/winit convention: positive y = scroll UP.
+        let (delta_x_px, delta_y_px) = match delta {
+            iced::mouse::ScrollDelta::Lines { x, y } => (x * cell_width, y * cell_height),
+            iced::mouse::ScrollDelta::Pixels { x, y } => (x, y),
+        };
+
+        let lines = (delta_y_px / cell_height).abs() as usize;
+        let columns = (delta_x_px / cell_width).abs() as usize;
+        if lines == 0 && columns == 0 {
+            return;
+        }
+
+        let is_scroll_up = delta_y_px > 0.0;
+        let is_scroll_left = delta_x_px > 0.0;
+
+        // Snapshot the current mode. Lock with `lock_unfair` to avoid blocking the
+        // PTY reader thread; release before writing to the PTY to prevent reentry.
+        let mode = *ctx.terminal.lock_unfair().mode();
+
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            // Path 1: forward as mouse report. last_cursor_pos is widget-relative
+            // (set by the terminal mouse_area's on_move), so dividing by cell size
+            // gives terminal cell coordinates directly.
+            let pos = self.last_cursor_pos;
+            let col = (pos.x / cell_width).floor().max(0.0) as usize;
+            let row = (pos.y / cell_height).floor().max(0.0) as usize;
+            let point = TermPoint::new(Line(row as i32), Column(col));
+
+            let mut bytes: Vec<u8> = Vec::new();
+            let code_v: u8 = if is_scroll_up { 64 } else { 65 };
+            let code_h: u8 = if is_scroll_left { 66 } else { 67 };
+
+            for _ in 0..lines {
+                Self::encode_mouse_report(&mut bytes, mode, point, code_v);
+            }
+            for _ in 0..columns {
+                Self::encode_mouse_report(&mut bytes, mode, point, code_h);
+            }
+
+            if !bytes.is_empty() {
+                ctx.write_to_pty(&bytes);
+            }
+        } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+            // Path 2: convert to cursor-key escape sequences. This is what
+            // Claude Code CLI / vim / less expect in alternate screen mode.
+            let line_cmd = if is_scroll_up { b'A' } else { b'B' };
+            let col_cmd = if is_scroll_left { b'D' } else { b'C' };
+
+            let mut content = Vec::with_capacity(3 * (lines + columns));
+            for _ in 0..lines {
+                content.push(0x1b);
+                content.push(b'O');
+                content.push(line_cmd);
+            }
+            for _ in 0..columns {
+                content.push(0x1b);
+                content.push(b'O');
+                content.push(col_cmd);
+            }
+            ctx.write_to_pty(&content);
+        } else if lines != 0 {
+            // Path 3: scroll the display offset (history) on the primary screen.
+            let delta = if is_scroll_up { lines as i32 } else { -(lines as i32) };
+            let mut term = ctx.terminal.lock_unfair();
+            term.grid_mut().scroll_display(Scroll::Delta(delta));
+        }
+    }
+
+    /// Append one mouse-report escape sequence to `bytes` using either SGR
+    /// encoding (mode 1006) or the legacy X10 normal encoding.
+    fn encode_mouse_report(bytes: &mut Vec<u8>, mode: TermMode, point: TermPoint, button: u8) {
+        if mode.contains(TermMode::SGR_MOUSE) {
+            // \x1b[<button;col;rowM
+            let msg = format!(
+                "\x1b[<{};{};{}M",
+                button,
+                point.column + 1,
+                point.line + 1
+            );
+            bytes.extend_from_slice(msg.as_bytes());
+        } else {
+            // \x1b[M<button+32><col+33><row+33>
+            let col_byte = 32u16.saturating_add(1).saturating_add(point.column.0 as u16).min(255) as u8;
+            let line_byte = 32u16.saturating_add(1).saturating_add(point.line.0.max(0) as u16).min(255) as u8;
+            bytes.push(0x1b);
+            bytes.push(b'[');
+            bytes.push(b'M');
+            bytes.push(32 + button);
+            bytes.push(col_byte);
+            bytes.push(line_byte);
         }
     }
 
@@ -1339,7 +1475,7 @@ impl PureTermApp {
         // Detached windows render their own terminal
         for dw in &self.detached_windows {
             if dw.window_id == id {
-                return Shader::new(TerminalProgram {
+                let shader = Shader::new(TerminalProgram {
                     ctx: dw.tab.terminal_ctx.clone(),
                     glyph_state: self.glyph_state.clone(),
                     background_color: self.config.background_color,
@@ -1347,8 +1483,12 @@ impl PureTermApp {
                     opacity: self.config.opacity,
                 })
                 .width(Length::Fill)
-                .height(Length::Fill)
-                .into();
+                .height(Length::Fill);
+
+                return mouse_area(shader)
+                    .on_scroll(Message::MouseScroll)
+                    .on_move(Message::CursorMoved)
+                    .into();
             }
         }
 
@@ -1361,7 +1501,7 @@ impl PureTermApp {
 
         let terminal: Element<'_, Message, Theme, iced::Renderer> =
             if let Some(tab) = self.active_tab_ref() {
-                Shader::new(TerminalProgram {
+                let shader = Shader::new(TerminalProgram {
                     ctx: tab.terminal_ctx.clone(),
                     glyph_state: self.glyph_state.clone(),
                     background_color: self.config.background_color,
@@ -1369,8 +1509,12 @@ impl PureTermApp {
                     opacity: self.config.opacity,
                 })
                 .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+                .height(Length::Fill);
+
+                mouse_area(shader)
+                    .on_scroll(Message::MouseScroll)
+                    .on_move(Message::CursorMoved)
+                    .into()
             } else {
                 container("No tabs open")
                     .width(Length::Fill)

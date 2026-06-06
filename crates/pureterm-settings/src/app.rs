@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
-use iced::widget::{button, column, container, row, rule, scrollable, space, text};
-use iced::{window, Element, Length, Padding, Task};
+use iced::widget::{
+    button, column, container, image, row, rule, scrollable, space, stack, text, Stack,
+};
+use iced::{window, ContentFit, Element, Length, Padding, Task};
 
 use crate::config_io;
 use crate::i18n::I18n;
@@ -59,6 +61,8 @@ pub enum Message {
     MainWindowOpened(window::Id),
     ColorPickerOpened(window::Id),
     ColorPickerClosed(window::Id),
+    /// PureTerm: 触发原生文件对话框选择图片作为设置窗口背景。
+    PickBackgroundImage,
 }
 
 impl SettingsState {
@@ -178,6 +182,7 @@ impl SettingsState {
                         decorations: true,
                         resizable: false,
                         closeable: true,
+                        transparent: true,
                         ..Default::default()
                     };
                     return window::open(settings).1.map(|id| Message::ColorPickerOpened(id));
@@ -259,6 +264,22 @@ impl SettingsState {
                     return window::close(id);
                 }
                 Task::none()
+            }
+            Message::PickBackgroundImage => {
+                // PureTerm: rfd 跨平台异步文件选择器（macOS NSOpenPanel / Linux GTK /
+                // Windows native dialog），通过 Task::perform 把结果转回主消息循环。
+                let task = Task::perform(
+                    rfd::AsyncFileDialog::new()
+                        .add_filter("Image", &["png", "jpg", "jpeg", "bmp", "webp", "gif"])
+                        .set_title("选择背景图片")
+                        .pick_file(),
+                    |maybe| {
+                        Message::Appearance(AppearanceMsg::BackgroundImagePicked(
+                            maybe.map(|h| h.path().to_path_buf()),
+                        ))
+                    },
+                );
+                task
             }
         }
     }
@@ -366,11 +387,29 @@ impl SettingsState {
         ]
         .height(Length::Fill);
 
-        container(layout)
+        // PureTerm: 如果用户配置了背景图，把它放在 layout 下面作为底图。
+        // 用 `stack!` 把图片与原 page 容器叠加（图片在底层）。无图时退回
+        // 原来的 page 容器，保持现有 blur 效果不变。
+        let main_container: Element<Message> = container(layout)
             .width(Length::Fill)
             .height(Length::Fill)
             .style(theme::container::page)
-            .into()
+            .into();
+
+        if let Some(path) = &self.appearance.background_image {
+            let bg_image: Element<Message> = image(image::Handle::from_path(path.clone()))
+                .opacity(self.appearance.background_image_opacity)
+                .content_fit(ContentFit::Cover)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+            stack![bg_image, main_container]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            main_container
+        }
     }
 
     pub fn title(&self, window: window::Id) -> String {
@@ -397,6 +436,12 @@ pub fn run(config_path: PathBuf) -> iced::Result {
                 decorations: true,
                 resizable: true,
                 closeable: true,
+                // PureTerm: 设置窗口走 macOS 磨砂玻璃效果。
+                // `transparent` 必须开启，`blur` 才会有视觉效果（背景色 alpha < 1.0
+                // 才能透出磨砂层）。`rfd` 文件选择器在透明窗口上工作正常。
+                // `blur` 由 Appearance 页的「Settings Window Blur」控件决定。
+                transparent: true,
+                blur: state.appearance.settings_window_blur,
                 ..Default::default()
             };
             let app = Self { state };
@@ -429,7 +474,10 @@ pub fn run(config_path: PathBuf) -> iced::Result {
         SettingsApp::view,
     )
     .title(SettingsApp::title)
-    .theme(|_: &SettingsApp, _| theme::pureterm_theme())
+    // PureTerm: 用动态 opacity 构造调色板，使设置窗口背景随外观设置而变化。
+    .theme(|app: &SettingsApp, _| {
+        theme::pureterm_theme_with_opacity(app.state.appearance.opacity)
+    })
     .subscription(SettingsApp::subscription)
     .run()
 }

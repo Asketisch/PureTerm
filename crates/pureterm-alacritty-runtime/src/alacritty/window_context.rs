@@ -342,6 +342,13 @@ impl WindowContext {
 
         // Change opacity and blur state.
         self.display.window.set_transparent(!opaque);
+        // PureTerm: Apply blur style (uses NSVisualEffectView on macOS, winit blur otherwise).
+        #[cfg(target_os = "macos")]
+        self.display.window.set_blur_style(
+            self.config.window.blur_style,
+            self.config.window.blur,
+        );
+        #[cfg(not(target_os = "macos"))]
         self.display.window.set_blur(self.config.window.blur);
 
         // Update hint keys.

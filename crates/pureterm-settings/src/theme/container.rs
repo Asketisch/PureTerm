@@ -1,5 +1,5 @@
 use iced::widget::container;
-use iced::{Background, Border, Theme};
+use iced::{Background, Border, Color, Theme};
 
 use super::{BACKGROUND, CORNER_RADIUS, SURFACE};
 
@@ -10,9 +10,15 @@ pub fn sidebar(_theme: &Theme) -> container::Style {
     }
 }
 
+/// PureTerm: 整页容器改成完全透明，让磨砂层（window.blur）从底层透出。
+/// 实际可见的背景由调色板 `Palette::background` 的 alpha 决定（见
+/// `theme::pureterm_theme_with_opacity`）。
 pub fn page(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(BACKGROUND)),
+        background: Some(Background::Color(Color {
+            a: 0.0,
+            ..BACKGROUND
+        })),
         ..container::Style::default()
     }
 }

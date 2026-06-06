@@ -12,7 +12,7 @@ name = "pureterm-settings"
 path = "src/main.rs"
 
 [dependencies]
-iced = { version = "0.14", features = ["advanced", "canvas"] }
+iced = { version = "0.14", features = ["advanced", "canvas", "image"] }
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 toml_edit = "0.22"
@@ -21,3 +21,4 @@ dirs = "6"
 log = "0.4"
 env_logger = "0.11"
 clap = { version = "4", features = ["derive"] }
+rfd = "0.15"

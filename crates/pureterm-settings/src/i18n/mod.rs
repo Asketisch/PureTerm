@@ -134,6 +134,9 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("appearance.section.window".into(), "Window".into());
     m.insert("appearance.opacity".into(), "Opacity".into());
     m.insert("appearance.background_blur".into(), "Background blur".into());
+    m.insert("appearance.blur_style".into(), "Blur Style".into());
+    // PureTerm: 设置窗口自身的磨砂开关（与「Background blur」区分）。
+    m.insert("appearance.settings_window_blur".into(), "Settings window blur".into());
     m.insert("appearance.padding".into(), "Padding".into());
     m.insert("appearance.decorations".into(), "Decorations".into());
     m.insert("appearance.section.cursor".into(), "Cursor".into());
@@ -141,6 +144,13 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("appearance.blinking".into(), "Blinking".into());
     m.insert("appearance.thickness".into(), "Thickness".into());
     m.insert("appearance.unfocused_hollow".into(), "Unfocused hollow".into());
+
+    // PureTerm: 背景图设置（仅作用于设置窗口，不影响终端）
+    m.insert("appearance.background_image".into(), "Background Image".into());
+    m.insert("appearance.background_image_opacity".into(), "Image Opacity".into());
+    m.insert("appearance.choose_image".into(), "Choose Image…".into());
+    m.insert("appearance.clear".into(), "Clear".into());
+    m.insert("appearance.no_image".into(), "(no image selected)".into());
 
     // Colors page
     m.insert("colors.section.primary".into(), "Primary".into());
@@ -210,6 +220,15 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("pick_list.cursor.Underline".into(), "Underline".into());
     m.insert("pick_list.cursor.Beam".into(), "Beam".into());
 
+    // PureTerm: blur style pick list
+    m.insert("pick_list.blur_style.System".into(), "System Default".into());
+    m.insert("pick_list.blur_style.Titlebar".into(), "Titlebar (Light)".into());
+    m.insert("pick_list.blur_style.Selection".into(), "Selection".into());
+    m.insert("pick_list.blur_style.Menu".into(), "Menu (Medium)".into());
+    m.insert("pick_list.blur_style.Sidebar".into(), "Sidebar (Strong)".into());
+    m.insert("pick_list.blur_style.HUDWindow".into(), "HUD (Dark)".into());
+    m.insert("pick_list.blur_style.FullScreenUI".into(), "Full Screen (Heavy)".into());
+
     // Tab context menu
     m.insert("context_menu.close_tab".into(), "Close Tab".into());
     m.insert("context_menu.close_other_tabs".into(), "Close Other Tabs".into());
@@ -273,6 +292,9 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("appearance.section.window".into(), "窗口".into());
     m.insert("appearance.opacity".into(), "不透明度".into());
     m.insert("appearance.background_blur".into(), "背景模糊".into());
+    m.insert("appearance.blur_style".into(), "模糊风格".into());
+    // PureTerm: 设置窗口自身的磨砂开关。
+    m.insert("appearance.settings_window_blur".into(), "设置窗口模糊".into());
     m.insert("appearance.padding".into(), "内边距".into());
     m.insert("appearance.decorations".into(), "窗口装饰".into());
     m.insert("appearance.section.cursor".into(), "光标".into());
@@ -280,6 +302,13 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("appearance.blinking".into(), "闪烁".into());
     m.insert("appearance.thickness".into(), "粗细".into());
     m.insert("appearance.unfocused_hollow".into(), "失焦时空心".into());
+
+    // PureTerm: 背景图设置
+    m.insert("appearance.background_image".into(), "背景图片".into());
+    m.insert("appearance.background_image_opacity".into(), "图片不透明度".into());
+    m.insert("appearance.choose_image".into(), "选择图片…".into());
+    m.insert("appearance.clear".into(), "清除".into());
+    m.insert("appearance.no_image".into(), "（未选择图片）".into());
 
     // Colors page
     m.insert("colors.section.primary".into(), "主要".into());
@@ -348,6 +377,15 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("pick_list.cursor.Block".into(), "方块".into());
     m.insert("pick_list.cursor.Underline".into(), "下划线".into());
     m.insert("pick_list.cursor.Beam".into(), "竖线".into());
+
+    // PureTerm: 模糊风格选择
+    m.insert("pick_list.blur_style.System".into(), "系统默认".into());
+    m.insert("pick_list.blur_style.Titlebar".into(), "标题栏（浅）".into());
+    m.insert("pick_list.blur_style.Selection".into(), "选中区域".into());
+    m.insert("pick_list.blur_style.Menu".into(), "菜单（中）".into());
+    m.insert("pick_list.blur_style.Sidebar".into(), "侧边栏（强）".into());
+    m.insert("pick_list.blur_style.HUDWindow".into(), "HUD（深色）".into());
+    m.insert("pick_list.blur_style.FullScreenUI".into(), "全屏（重）".into());
 
     // Tab context menu
     m.insert("context_menu.close_tab".into(), "关闭标签页".into());
