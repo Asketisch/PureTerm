@@ -246,23 +246,28 @@ pub fn color_picker_window_view(target: ColorPickerTarget, hex: &str, window_id:
         ColorPickerTarget::Normal(i) | ColorPickerTarget::Bright(i) => COLOR_NAMES[*i],
     };
 
-    column![
-        text(format!("Color: {}", target_name)).size(16).color(theme::TEXT_PRIMARY),
-        wheel,
-        brightness_slider,
-        preview,
-        row![
-            text("Hex:").size(14).color(TEXT_SECONDARY),
-            text(hex.to_string()).size(14).color(theme::TEXT_PRIMARY),
-        ]
-        .spacing(SPACING)
-        .align_y(iced::Alignment::Center),
-        row![ok_btn, cancel_btn]
+    container(
+        column![
+            text(format!("Color: {}", target_name)).size(16).color(theme::TEXT_PRIMARY),
+            wheel,
+            brightness_slider,
+            preview,
+            row![
+                text("Hex:").size(14).color(TEXT_SECONDARY),
+                text(hex.to_string()).size(14).color(theme::TEXT_PRIMARY),
+            ]
             .spacing(SPACING)
             .align_y(iced::Alignment::Center),
-    ]
-    .spacing(SPACING)
-    .padding(PADDING)
+            row![ok_btn, cancel_btn]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACING)
+        .padding(PADDING),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(theme::container::card)
     .into()
 }
 
