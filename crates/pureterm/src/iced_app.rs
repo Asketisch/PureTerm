@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -18,6 +19,10 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::TermMode;
 
 use crate::app_config::AppConfig;
+use crate::split_tree::{
+    DividerRect, Pane, PaneId, PaneRect, SplitDirection, SplitNode,
+    DIVIDER_HIT_WIDTH, DIVIDER_WIDTH, MAX_RATIO, MIN_RATIO,
+};
 use crate::terminal_context::{TerminalContext, TerminalEvent};
 use crate::terminal_shader::{GlyphState, TerminalProgram};
 use pureterm_settings::app::{Message as SettingsMessage, SettingsState};
@@ -29,9 +34,9 @@ pub struct TabId(u64);
 pub struct Tab {
     id: TabId,
     title: String,
-    terminal_ctx: Arc<TerminalContext>,
-    cols: usize,
-    rows: usize,
+    panes: HashMap<PaneId, Pane>,
+    split_tree: SplitNode,
+    active_pane: PaneId,
     tab_color: Option<Color>,
 }
 
@@ -65,6 +70,8 @@ pub struct PureTermApp {
     tab_list: Option<TabListState>,
     // Detached windows
     detached_windows: Vec<DetachedWindow>,
+    // Split pane drag state
+    drag_state: Option<DragState>,
 }
 
 #[derive(Debug, Clone)]
@@ -75,7 +82,7 @@ struct ContextMenuState {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ContextMenuItem {
+pub enum ContextMenuItem {
     CloseTab,
     CloseOtherTabs,
     CloseTabsToLeft,
@@ -84,10 +91,14 @@ enum ContextMenuItem {
     ShowAllTabs,
     RenameTab,
     ChangeTabColor,
+    // Split pane
+    SplitHorizontal,
+    SplitVertical,
+    ClosePane,
 }
 
 impl ContextMenuItem {
-    const ALL: [ContextMenuItem; 8] = [
+    const ALL: [ContextMenuItem; 11] = [
         ContextMenuItem::CloseTab,
         ContextMenuItem::CloseOtherTabs,
         ContextMenuItem::CloseTabsToLeft,
@@ -96,6 +107,9 @@ impl ContextMenuItem {
         ContextMenuItem::ShowAllTabs,
         ContextMenuItem::RenameTab,
         ContextMenuItem::ChangeTabColor,
+        ContextMenuItem::SplitHorizontal,
+        ContextMenuItem::SplitVertical,
+        ContextMenuItem::ClosePane,
     ];
 
     fn label(self, i18n: &I18n) -> String {
@@ -108,6 +122,9 @@ impl ContextMenuItem {
             ContextMenuItem::ShowAllTabs => i18n.t("context_menu.show_all_tabs"),
             ContextMenuItem::RenameTab => i18n.t("context_menu.rename_tab"),
             ContextMenuItem::ChangeTabColor => i18n.t("context_menu.change_tab_color"),
+            ContextMenuItem::SplitHorizontal => "分屏 (左右)".to_string(),
+            ContextMenuItem::SplitVertical => "分屏 (上下)".to_string(),
+            ContextMenuItem::ClosePane => "关闭面板".to_string(),
         }
     }
 }
@@ -129,6 +146,23 @@ struct DetachedWindow {
 }
 
 const TAB_BAR_HEIGHT: f32 = 32.0;
+
+/// 分割线拖拽状态。
+#[derive(Debug, Clone)]
+pub struct DragState {
+    /// 拖拽的分割线所属的 tab。
+    pub tab_id: TabId,
+    /// 拖拽的分割线左边/上边的 pane。
+    pub first_pane: PaneId,
+    /// 分割线方向。
+    pub direction: SplitDirection,
+    /// 分割线在屏幕上的坐标（Horizontal 取 x，Vertical 取 y）。
+    pub divider_screen_pos: f32,
+    /// 分割方向上可用像素总量（不含分割线本身）。
+    pub usable_size: f32,
+    /// 拖拽起始时的 ratio。
+    pub start_ratio: f32,
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -170,6 +204,21 @@ pub enum Message {
     SelectAll,
     // PTY lifecycle
     PtyExited(TabId),
+    PtyExitedPane(TabId, PaneId),
+    // Split pane
+    SplitHorizontal,
+    SplitVertical,
+    ClosePane,
+    PaneFocused(PaneId),
+    PaneMouseScroll(PaneId, iced::mouse::ScrollDelta),
+    PaneCursorMoved(PaneId, Point),
+    PaneRightClick(PaneId),
+    DividerPress(DragState),
+    DividerDrag(Point),
+    DividerRelease,
+    // Global mouse events for drag tracking
+    GlobalCursorMoved(Point),
+    GlobalMouseRelease,
 }
 
 impl PureTermApp {
@@ -220,6 +269,7 @@ impl PureTermApp {
             color_picker_tab: None,
             tab_list: None,
             detached_windows: Vec::new(),
+            drag_state: None,
         };
 
         let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
@@ -232,6 +282,7 @@ impl PureTermApp {
         let id = TabId(self.next_tab_id);
         self.next_tab_id += 1;
 
+        let pane_id = PaneId::next();
         let terminal_ctx = Arc::new(
             TerminalContext::new().expect("Failed to create terminal context"),
         );
@@ -245,12 +296,22 @@ impl PureTermApp {
         drop(gs);
 
         let tab_num = self.next_tab_id;
+        let mut panes = HashMap::new();
+        panes.insert(
+            pane_id,
+            Pane {
+                id: pane_id,
+                terminal_ctx,
+                title: format!("Tab {}", tab_num),
+            },
+        );
+
         self.tabs.push(Tab {
             id,
             title: format!("Tab {}", tab_num),
-            terminal_ctx,
-            cols,
-            rows,
+            panes,
+            split_tree: SplitNode::single(pane_id),
+            active_pane: pane_id,
             tab_color: None,
         });
         id
@@ -261,7 +322,16 @@ impl PureTermApp {
     }
 
     fn active_terminal_ctx(&self) -> Option<Arc<TerminalContext>> {
-        self.active_tab_ref().map(|t| t.terminal_ctx.clone())
+        self.active_tab_ref()
+            .and_then(|tab| tab.panes.get(&tab.active_pane))
+            .map(|pane| pane.terminal_ctx.clone())
+    }
+
+    /// 获取活跃 tab 中活跃 pane 的可变引用。
+    fn active_pane_mut(&mut self) -> Option<&mut Pane> {
+        let active_tab = self.active_tab;
+        let tab = self.tabs.iter_mut().find(|t| t.id == active_tab)?;
+        tab.panes.get_mut(&tab.active_pane)
     }
 
     pub fn title(&self, id: window::Id) -> String {
@@ -342,19 +412,32 @@ impl PureTermApp {
                     }
                 }
 
-                // 消费所有 tab 的 PTY 事件（Wakeup / Exit）
-                let mut exited_tabs = Vec::new();
+                // 消费所有 tab 中所有 pane 的 PTY 事件（Wakeup / Exit）
+                let mut exited_panes = Vec::new();
                 for tab in &self.tabs {
-                    while let Ok(event) = tab.terminal_ctx.event_rx.try_recv() {
-                        match event {
-                            TerminalEvent::Wakeup => { /* PTY 有新数据，重绘已在进行 */ }
-                            TerminalEvent::Exit => { exited_tabs.push(tab.id); }
+                    for (pane_id, pane) in &tab.panes {
+                        while let Ok(event) = pane.terminal_ctx.event_rx.try_recv() {
+                            match event {
+                                TerminalEvent::Wakeup => { /* PTY 有新数据，重绘已在进行 */ }
+                                TerminalEvent::Exit => {
+                                    exited_panes.push((tab.id, *pane_id));
+                                }
+                            }
                         }
                     }
                 }
-                // 处理退出事件：关闭已退出的 tab
-                if let Some(tab_id) = exited_tabs.first() {
-                    return Task::done(Message::PtyExited(*tab_id));
+                // 处理退出事件：关闭已退出的 pane（如果只有一个 pane 则关闭整个 tab）
+                if let Some((tab_id, pane_id)) = exited_panes.first() {
+                    let tab = self.tabs.iter().find(|t| t.id == *tab_id);
+                    if let Some(tab) = tab {
+                        if tab.panes.len() <= 1 {
+                            // 最后一个 pane 退出，关闭整个 tab
+                            return Task::done(Message::CloseTab(*tab_id));
+                        } else {
+                            // 关闭特定 pane
+                            return Task::done(Message::PtyExitedPane(*tab_id, *pane_id));
+                        }
+                    }
                 }
             }
             Message::Keyboard(event) => {
@@ -374,30 +457,16 @@ impl PureTermApp {
                             let cw = gs.cell_width as u16;
                             let ch = gs.cell_height as u16;
                             drop(gs);
-                            dw.tab.cols = cols;
-                            dw.tab.rows = rows;
-                            dw.tab.terminal_ctx.resize(cols, rows, cw, ch);
+                            // Resize all panes in the detached tab
+                            for pane in dw.tab.panes.values() {
+                                pane.terminal_ctx.resize(cols, rows, cw, ch);
+                            }
                             return Task::none();
                         }
                     }
                     return Task::none();
                 }
                 self.viewport_size = size;
-                let terminal_height = (size.height - TAB_BAR_HEIGHT).max(0.0);
-                let gs = self.glyph_state.borrow();
-                let cols = (size.width / gs.cell_width).floor().max(1.0) as usize;
-                let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
-                let cw = gs.cell_width as u16;
-                let ch = gs.cell_height as u16;
-                drop(gs);
-
-                // 尺寸去重：只检查活跃 tab，避免新建 tab 的旧尺寸干扰
-                let changed = self.active_tab_ref().map_or(true, |tab| {
-                    cols != tab.cols || rows != tab.rows
-                });
-                if !changed {
-                    return Task::none();
-                }
 
                 // 时间防抖：跳过 16ms 内的重复事件
                 if let Some(last) = self.last_resize_time {
@@ -407,10 +476,25 @@ impl PureTermApp {
                 }
                 self.last_resize_time = Some(Instant::now());
 
+                let gs = self.glyph_state.borrow();
+                let cw = gs.cell_width as u16;
+                let ch = gs.cell_height as u16;
+                drop(gs);
+
+                let terminal_height = (size.height - TAB_BAR_HEIGHT).max(0.0);
+
+                // Resize all panes in all tabs based on their layout
                 for tab in &mut self.tabs {
-                    tab.cols = cols;
-                    tab.rows = rows;
-                    tab.terminal_ctx.resize(cols, rows, cw, ch);
+                    let layout = tab.split_tree.compute_layout(
+                        0.0, 0.0, size.width, terminal_height,
+                    );
+                    for (pane_id, rect) in &layout {
+                        if let Some(pane) = tab.panes.get(pane_id) {
+                            let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                            let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                            pane.terminal_ctx.resize(cols, rows, cw, ch);
+                        }
+                    }
                 }
             }
             Message::WindowClosed(win_id) => {
@@ -449,13 +533,23 @@ impl PureTermApp {
                 if font_changed {
                     let mut gs = self.glyph_state.borrow_mut();
                     gs.reconfigure(&self.config.font_family, self.config.font_size);
-                    let cw = gs.cell_width;
-                    let ch = gs.cell_height;
+                    let cw = gs.cell_width as u16;
+                    let ch = gs.cell_height as u16;
                     drop(gs);
 
-                    // Resize all tabs with new cell dimensions
+                    // Resize all panes in all tabs with new cell dimensions
+                    let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
                     for tab in &mut self.tabs {
-                        tab.terminal_ctx.resize(tab.cols, tab.rows, cw as u16, ch as u16);
+                        let layout = tab.split_tree.compute_layout(
+                            0.0, 0.0, self.viewport_size.width, terminal_height,
+                        );
+                        for (pane_id, rect) in &layout {
+                            if let Some(pane) = tab.panes.get(pane_id) {
+                                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                                pane.terminal_ctx.resize(cols, rows, cw, ch);
+                            }
+                        }
                     }
                 }
             }
@@ -716,6 +810,18 @@ impl PureTermApp {
                     ContextMenuItem::ChangeTabColor => {
                         self.color_picker_tab = Some(menu.tab_id);
                     }
+                    ContextMenuItem::SplitHorizontal => {
+                        self.active_tab = menu.tab_id;
+                        self.split_pane(SplitDirection::Horizontal);
+                    }
+                    ContextMenuItem::SplitVertical => {
+                        self.active_tab = menu.tab_id;
+                        self.split_pane(SplitDirection::Vertical);
+                    }
+                    ContextMenuItem::ClosePane => {
+                        self.active_tab = menu.tab_id;
+                        self.close_active_pane();
+                    }
                 }
             }
             Message::ContextMenuHovered(item) => {
@@ -763,6 +869,165 @@ impl PureTermApp {
                 self.tab_list = None;
                 if self.tabs.iter().any(|t| t.id == tab_id) {
                     self.active_tab = tab_id;
+                }
+            }
+            // Split pane messages
+            Message::SplitHorizontal => {
+                self.split_pane(SplitDirection::Horizontal);
+            }
+            Message::SplitVertical => {
+                self.split_pane(SplitDirection::Vertical);
+            }
+            Message::ClosePane => {
+                self.close_active_pane();
+            }
+            Message::PaneFocused(pane_id) => {
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == self.active_tab) {
+                    if tab.panes.contains_key(&pane_id) {
+                        tab.active_pane = pane_id;
+                    }
+                }
+            }
+            Message::PaneMouseScroll(pane_id, delta) => {
+                self.handle_scroll_for_pane(pane_id, delta);
+            }
+            Message::PaneCursorMoved(pane_id, pos) => {
+                self.last_cursor_pos = pos;
+                // Also update active pane on click/move
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == self.active_tab) {
+                    if tab.panes.contains_key(&pane_id) {
+                        tab.active_pane = pane_id;
+                    }
+                }
+            }
+            Message::PaneRightClick(pane_id) => {
+                // 在 pane 上右键：切换活跃 tab+ pane，然后弹出 context menu
+                if let Some((tab_id, _)) = self.tabs.iter()
+                    .find(|t| t.panes.contains_key(&pane_id))
+                    .map(|t| (t.id, ()))
+                {
+                    self.active_tab = tab_id;
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                        tab.active_pane = pane_id;
+                    }
+                    self.context_menu = Some(ContextMenuState {
+                        tab_id,
+                        position: self.last_cursor_pos,
+                        hovered_item: None,
+                    });
+                    // 关闭其他可能冲突的覆盖层
+                    self.color_picker_tab = None;
+                    self.renaming_tab = None;
+                    self.tab_list = None;
+                }
+            }
+            Message::DividerPress(mut drag) => {
+                // 在按下时计算分割线屏幕位置和可用大小
+                if let Some(tab) = self.tabs.iter().find(|t| t.id == drag.tab_id) {
+                    let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                    if let Some(divider) = tab.split_tree.compute_divider_for_pane(
+                        drag.first_pane,
+                        0.0, 0.0,
+                        self.viewport_size.width, terminal_height,
+                    ) {
+                        drag.divider_screen_pos = match divider.direction {
+                            SplitDirection::Horizontal => divider.rect.x,
+                            SplitDirection::Vertical => divider.rect.y,
+                        };
+                        drag.usable_size = divider.usable_size;
+                        drag.direction = divider.direction;
+                    }
+                }
+                self.drag_state = Some(drag);
+            }
+            Message::DividerDrag(_pos) => {
+                // 保留消息变体以兼容旧版 view_divider 路由，
+                // 实际拖动现在由 GlobalCursorMoved 处理。
+            }
+            Message::GlobalCursorMoved(pos) => {
+                if let Some(ref drag) = self.drag_state {
+                    let current_pos = match drag.direction {
+                        SplitDirection::Horizontal => pos.x,
+                        SplitDirection::Vertical => pos.y,
+                    };
+                    let delta_px = current_pos - drag.divider_screen_pos;
+                    let delta_ratio = if drag.usable_size > 0.0 {
+                        delta_px / drag.usable_size
+                    } else {
+                        0.0
+                    };
+                    let new_ratio = (drag.start_ratio + delta_ratio)
+                        .clamp(MIN_RATIO, MAX_RATIO);
+
+                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == drag.tab_id) {
+                        Self::update_ratio_for_pane(&mut tab.split_tree, drag.first_pane, new_ratio);
+                    }
+                } else {
+                    // 没有拖拽时只更新 last_cursor_pos
+                    self.last_cursor_pos = pos;
+                }
+            }
+            Message::GlobalMouseRelease => {
+                if let Some(drag) = self.drag_state.take() {
+                    // 触发最终 PTY resize
+                    let tab = self.tabs.iter_mut().find(|t| t.id == drag.tab_id);
+                    if let Some(tab) = tab {
+                        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                        let layout = tab.split_tree.compute_layout(
+                            0.0, 0.0, self.viewport_size.width, terminal_height,
+                        );
+                        let gs = self.glyph_state.borrow();
+                        let cw = gs.cell_width as u16;
+                        let ch = gs.cell_height as u16;
+                        drop(gs);
+                        for (pid, rect) in &layout {
+                            if let Some(pane) = tab.panes.get(pid) {
+                                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                                pane.terminal_ctx.resize(cols, rows, cw, ch);
+                            }
+                        }
+                    }
+                }
+            }
+            Message::DividerRelease => {
+                // 兼容旧路径：清理 drag_state（若 GlobalMouseRelease 未触发）
+                self.drag_state = None;
+            }
+            Message::PtyExitedPane(tab_id, pane_id) => {
+                // Close specific pane, keep tab alive if other panes exist
+                let pane_count = self.tabs.iter()
+                    .find(|t| t.id == tab_id)
+                    .map(|t| t.panes.len())
+                    .unwrap_or(0);
+                if pane_count <= 1 {
+                    // Last pane, close entire tab
+                    return Task::done(Message::CloseTab(tab_id));
+                }
+                let new_active = {
+                    let tab = self.tabs.iter_mut().find(|t| t.id == tab_id).unwrap();
+                    tab.split_tree.remove(pane_id)
+                };
+                if let Some(new_active) = new_active {
+                    let tab = self.tabs.iter_mut().find(|t| t.id == tab_id).unwrap();
+                    tab.panes.remove(&pane_id);
+                    tab.active_pane = new_active;
+                    // Resize remaining panes
+                    let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                    let layout = tab.split_tree.compute_layout(
+                        0.0, 0.0, self.viewport_size.width, terminal_height,
+                    );
+                    let gs = self.glyph_state.borrow();
+                    let cw = gs.cell_width as u16;
+                    let ch = gs.cell_height as u16;
+                    drop(gs);
+                    for (pid, rect) in &layout {
+                        if let Some(pane) = tab.panes.get(pid) {
+                            let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                            let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                            pane.terminal_ctx.resize(cols, rows, cw, ch);
+                        }
+                    }
                 }
             }
         }
@@ -839,7 +1104,24 @@ impl PureTermApp {
                         match c.as_str() {
                             "," => return Task::none(),
                             "t" => return Task::done(Message::NewTab),
-                            "w" => return Task::done(Message::CloseTab(self.active_tab)),
+                            "w" => {
+                                // Close pane first; if last pane, close tab
+                                let has_multiple_panes = self.active_tab_ref()
+                                    .map(|t| t.panes.len() > 1)
+                                    .unwrap_or(false);
+                                if has_multiple_panes {
+                                    return Task::done(Message::ClosePane);
+                                } else {
+                                    return Task::done(Message::CloseTab(self.active_tab));
+                                }
+                            }
+                            "d" => {
+                                if modifiers.shift() {
+                                    return Task::done(Message::SplitVertical);
+                                } else {
+                                    return Task::done(Message::SplitHorizontal);
+                                }
+                            }
                             "v" => {
                                 let text = std::panic::catch_unwind(|| {
                                     arboard::Clipboard::new()
@@ -870,6 +1152,25 @@ impl PureTermApp {
                         }
                     }
                     return Task::none();
+                }
+
+                // Cmd+Option+Arrow for pane navigation
+                if modifiers.command() && modifiers.alt() {
+                    if let Key::Named(named) = &key {
+                        let dir: Option<SplitDirection> = match named {
+                            Named::ArrowLeft | Named::ArrowRight => Some(SplitDirection::Horizontal),
+                            Named::ArrowUp | Named::ArrowDown => Some(SplitDirection::Vertical),
+                            _ => None,
+                        };
+                        if let Some(split_dir) = dir {
+                            if let Some(tab) = self.active_tab_ref() {
+                                if let Some(adj) = tab.split_tree.find_adjacent(tab.active_pane, split_dir) {
+                                    return Task::done(Message::PaneFocused(adj));
+                                }
+                            }
+                            return Task::none();
+                        }
+                    }
                 }
 
                 if let Some(ctx) = self.active_terminal_ctx() {
@@ -1052,6 +1353,236 @@ impl PureTermApp {
             bytes.push(32 + button);
             bytes.push(col_byte);
             bytes.push(line_byte);
+        }
+    }
+
+    // ── Split pane helpers ──────────────────────────────────────────
+
+    /// Split the active pane in the given direction.
+    fn split_pane(&mut self, direction: SplitDirection) {
+        let active_tab_id = self.active_tab;
+        let active_pane_id = self.active_tab_ref()
+            .map(|t| t.active_pane);
+
+        let Some(active_pane_id) = active_pane_id else { return };
+        let new_pane_id = PaneId::next();
+
+        let terminal_ctx = Arc::new(
+            TerminalContext::new().expect("Failed to create terminal context"),
+        );
+
+        // Find the tab and perform the split
+        let tab = match self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+            Some(t) => t,
+            None => return,
+        };
+
+        // Calculate new pane dimensions from layout
+        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let layout = tab.split_tree.compute_layout(
+            0.0, 0.0, self.viewport_size.width, terminal_height,
+        );
+
+        tab.split_tree.split(active_pane_id, new_pane_id, direction);
+
+        // Compute new layout to get the new pane's size
+        let new_layout = tab.split_tree.compute_layout(
+            0.0, 0.0, self.viewport_size.width, terminal_height,
+        );
+
+        let gs = self.glyph_state.borrow();
+        let cw = gs.cell_width as u16;
+        let ch = gs.cell_height as u16;
+        drop(gs);
+
+        // Resize new pane to its allocated area
+        if let Some(rect) = new_layout.get(&new_pane_id) {
+            let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+            let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+            terminal_ctx.resize(cols, rows, cw, ch);
+        }
+
+        // Also resize the original pane since it got smaller
+        if let Some(rect) = new_layout.get(&active_pane_id) {
+            if let Some(pane) = tab.panes.get(&active_pane_id) {
+                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                pane.terminal_ctx.resize(cols, rows, cw, ch);
+            }
+        }
+
+        tab.panes.insert(
+            new_pane_id,
+            Pane {
+                id: new_pane_id,
+                terminal_ctx,
+                title: format!("Pane {:?}", new_pane_id),
+            },
+        );
+        tab.active_pane = new_pane_id;
+    }
+
+    /// Close the active pane. If it's the last pane, close the tab.
+    fn close_active_pane(&mut self) {
+        let active_tab_id = self.active_tab;
+
+        let pane_count = self.tabs.iter()
+            .find(|t| t.id == active_tab_id)
+            .map(|t| t.panes.len())
+            .unwrap_or(0);
+
+        if pane_count <= 1 {
+            // Last pane — the caller should handle closing the tab
+            return;
+        }
+
+        let active_pane_id = self.tabs.iter()
+            .find(|t| t.id == active_tab_id)
+            .map(|t| t.active_pane);
+
+        let Some(active_pane_id) = active_pane_id else { return };
+
+        let new_active = {
+            let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id).unwrap();
+            tab.split_tree.remove(active_pane_id)
+        };
+
+        if let Some(new_active) = new_active {
+            let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id).unwrap();
+            tab.panes.remove(&active_pane_id);
+            tab.active_pane = new_active;
+            // Resize remaining panes
+            let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+            let layout = tab.split_tree.compute_layout(
+                0.0, 0.0, self.viewport_size.width, terminal_height,
+            );
+            let gs = self.glyph_state.borrow();
+            let cw = gs.cell_width as u16;
+            let ch = gs.cell_height as u16;
+            drop(gs);
+            for (pid, rect) in &layout {
+                if let Some(pane) = tab.panes.get(pid) {
+                    let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                    let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                    pane.terminal_ctx.resize(cols, rows, cw, ch);
+                }
+            }
+        }
+    }
+
+    /// Resize all panes in a tab according to the current split layout.
+    fn resize_tab_panes(&mut self, tab: &mut Tab) {
+        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let layout = tab.split_tree.compute_layout(
+            0.0, 0.0, self.viewport_size.width, terminal_height,
+        );
+
+        let gs = self.glyph_state.borrow();
+        let cw = gs.cell_width as u16;
+        let ch = gs.cell_height as u16;
+        drop(gs);
+
+        for (pane_id, rect) in &layout {
+            if let Some(pane) = tab.panes.get(pane_id) {
+                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                pane.terminal_ctx.resize(cols, rows, cw, ch);
+            }
+        }
+    }
+
+    /// Update the ratio of the Split node that directly parents the given pane.
+    fn update_ratio_for_pane(node: &mut SplitNode, first_pane: PaneId, new_ratio: f32) {
+        match node {
+            SplitNode::Leaf(_) => {}
+            SplitNode::Split { ratio, first, second, .. } => {
+                if let SplitNode::Leaf(id) = first.as_ref() {
+                    if *id == first_pane {
+                        *ratio = new_ratio;
+                        return;
+                    }
+                }
+                if first.contains(first_pane) {
+                    Self::update_ratio_for_pane(first, first_pane, new_ratio);
+                } else {
+                    Self::update_ratio_for_pane(second, first_pane, new_ratio);
+                }
+            }
+        }
+    }
+
+    /// Handle scroll for a specific pane.
+    fn handle_scroll_for_pane(&mut self, pane_id: PaneId, delta: iced::mouse::ScrollDelta) {
+        let ctx = self.active_tab_ref()
+            .and_then(|tab| tab.panes.get(&pane_id))
+            .map(|p| p.terminal_ctx.clone());
+
+        let Some(ctx) = ctx else { return };
+
+        let (cell_width, cell_height) = {
+            let gs = self.glyph_state.borrow();
+            (gs.cell_width, gs.cell_height)
+        };
+        if cell_width <= 0.0 || cell_height <= 0.0 {
+            return;
+        }
+
+        let (delta_x_px, delta_y_px) = match delta {
+            iced::mouse::ScrollDelta::Lines { x, y } => (x * cell_width, y * cell_height),
+            iced::mouse::ScrollDelta::Pixels { x, y } => (x, y),
+        };
+
+        let lines = (delta_y_px / cell_height).abs() as usize;
+        let columns = (delta_x_px / cell_width).abs() as usize;
+        if lines == 0 && columns == 0 {
+            return;
+        }
+
+        let is_scroll_up = delta_y_px > 0.0;
+        let is_scroll_left = delta_x_px > 0.0;
+
+        let mode = *ctx.terminal.lock_unfair().mode();
+
+        if mode.intersects(TermMode::MOUSE_MODE) {
+            let pos = self.last_cursor_pos;
+            let col = (pos.x / cell_width).floor().max(0.0) as usize;
+            let row = (pos.y / cell_height).floor().max(0.0) as usize;
+            let point = TermPoint::new(Line(row as i32), Column(col));
+
+            let mut bytes: Vec<u8> = Vec::new();
+            let code_v: u8 = if is_scroll_up { 64 } else { 65 };
+            let code_h: u8 = if is_scroll_left { 66 } else { 67 };
+
+            for _ in 0..lines {
+                Self::encode_mouse_report(&mut bytes, mode, point, code_v);
+            }
+            for _ in 0..columns {
+                Self::encode_mouse_report(&mut bytes, mode, point, code_h);
+            }
+
+            if !bytes.is_empty() {
+                ctx.write_to_pty(&bytes);
+            }
+        } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
+            let line_cmd = if is_scroll_up { b'A' } else { b'B' };
+            let col_cmd = if is_scroll_left { b'D' } else { b'C' };
+
+            let mut content = Vec::with_capacity(3 * (lines + columns));
+            for _ in 0..lines {
+                content.push(0x1b);
+                content.push(b'O');
+                content.push(line_cmd);
+            }
+            for _ in 0..columns {
+                content.push(0x1b);
+                content.push(b'O');
+                content.push(col_cmd);
+            }
+            ctx.write_to_pty(&content);
+        } else if lines != 0 {
+            let delta = if is_scroll_up { lines as i32 } else { -(lines as i32) };
+            let mut term = ctx.terminal.lock_unfair();
+            term.grid_mut().scroll_display(Scroll::Delta(delta));
         }
     }
 
@@ -1472,11 +2003,16 @@ impl PureTermApp {
             }
         }
 
-        // Detached windows render their own terminal
+        // Detached windows render their own terminal (single pane)
         for dw in &self.detached_windows {
             if dw.window_id == id {
+                // Use the first pane's terminal context for detached windows
+                let ctx = dw.tab.panes.values().next()
+                    .map(|p| p.terminal_ctx.clone());
+                let Some(ctx) = ctx else { continue };
+
                 let shader = Shader::new(TerminalProgram {
-                    ctx: dw.tab.terminal_ctx.clone(),
+                    ctx,
                     glyph_state: self.glyph_state.clone(),
                     background_color: self.config.background_color,
                     foreground_color: self.config.foreground_color,
@@ -1501,20 +2037,7 @@ impl PureTermApp {
 
         let terminal: Element<'_, Message, Theme, iced::Renderer> =
             if let Some(tab) = self.active_tab_ref() {
-                let shader = Shader::new(TerminalProgram {
-                    ctx: tab.terminal_ctx.clone(),
-                    glyph_state: self.glyph_state.clone(),
-                    background_color: self.config.background_color,
-                    foreground_color: self.config.foreground_color,
-                    opacity: self.config.opacity,
-                })
-                .width(Length::Fill)
-                .height(Length::Fill);
-
-                mouse_area(shader)
-                    .on_scroll(Message::MouseScroll)
-                    .on_move(Message::CursorMoved)
-                    .into()
+                self.view_split_tree(tab)
             } else {
                 container("No tabs open")
                     .width(Length::Fill)
@@ -1564,10 +2087,153 @@ impl PureTermApp {
         }
     }
 
+    /// Render the split tree for a tab.
+    fn view_split_tree(&self, tab: &Tab) -> Element<'_, Message, Theme, iced::Renderer> {
+        self.view_node(&tab.split_tree, tab.active_pane, tab.id)
+    }
+
+    /// Recursively render a split node.
+    fn view_node(
+        &self,
+        node: &SplitNode,
+        active_pane: PaneId,
+        tab_id: TabId,
+    ) -> Element<'_, Message, Theme, iced::Renderer> {
+        match node {
+            SplitNode::Leaf(pane_id) => {
+                self.view_pane(*pane_id, active_pane == *pane_id)
+            }
+            SplitNode::Split { direction, ratio, first, second } => {
+                let first_el = self.view_node(first, active_pane, tab_id);
+                let second_el = self.view_node(second, active_pane, tab_id);
+
+                // Create divider
+                let first_pane_id = first.first_pane();
+                let divider_el = self.view_divider(*direction, *ratio, tab_id, first_pane_id);
+
+                match direction {
+                    SplitDirection::Horizontal => {
+                        row!(first_el, divider_el, second_el)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .into()
+                    }
+                    SplitDirection::Vertical => {
+                        column!(first_el, divider_el, second_el)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .into()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Render a single terminal pane with its shader.
+    fn view_pane(
+        &self,
+        pane_id: PaneId,
+        is_active: bool,
+    ) -> Element<'_, Message, Theme, iced::Renderer> {
+        let tab = self.active_tab_ref();
+        let ctx = tab
+            .and_then(|t| t.panes.get(&pane_id))
+            .map(|p| p.terminal_ctx.clone());
+
+        let Some(ctx) = ctx else {
+            return container(space())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+        };
+
+        let shader = Shader::new(TerminalProgram {
+            ctx,
+            glyph_state: self.glyph_state.clone(),
+            background_color: self.config.background_color,
+            foreground_color: self.config.foreground_color,
+            opacity: self.config.opacity,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        let el: Element<'_, Message, Theme, iced::Renderer> = mouse_area(shader)
+            .on_scroll(move |delta| Message::PaneMouseScroll(pane_id, delta))
+            .on_move(move |pos| Message::PaneCursorMoved(pane_id, pos))
+            .on_press(Message::PaneFocused(pane_id))
+            .on_right_press(Message::PaneRightClick(pane_id))
+            .into();
+
+        // Active pane gets a subtle border highlight
+        if is_active {
+            container(el)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_| container::Style {
+                    border: Border {
+                        color: Color::from_rgba(0.3, 0.6, 1.0, 0.3),
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        } else {
+            el
+        }
+    }
+
+    /// Render a draggable divider between panes.
+    /// 拖动由全局事件（GlobalCursorMoved/GlobalMouseRelease）处理，
+    /// 这里只需要响应 on_press 启动拖动。
+    fn view_divider(
+        &self,
+        direction: SplitDirection,
+        ratio: f32,
+        tab_id: TabId,
+        first_pane: PaneId,
+    ) -> Element<'_, Message, Theme, iced::Renderer> {
+        let divider_color = Color::from_rgba(0.4, 0.4, 0.45, 1.0);
+        let _hover_color = Color::from_rgba(0.3, 0.6, 1.0, 0.8);
+
+        let (w, h) = match direction {
+            SplitDirection::Horizontal => (Length::Fixed(DIVIDER_WIDTH), Length::Fill),
+            SplitDirection::Vertical => (Length::Fill, Length::Fixed(DIVIDER_WIDTH)),
+        };
+
+        let divider = container(space())
+            .width(w)
+            .height(h)
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(Background::Color(divider_color)),
+                text_color: None,
+                snap: false,
+                border: Border::default(),
+                shadow: Shadow::default(),
+            });
+
+        // Pre-build the DragState. 屏幕位置和可用大小在 DividerPress 处理器中填充。
+        let drag_msg = Message::DividerPress(DragState {
+            tab_id,
+            first_pane,
+            direction,
+            divider_screen_pos: 0.0,
+            usable_size: 0.0,
+            start_ratio: ratio,
+        });
+
+        mouse_area(divider)
+            .on_press(drag_msg)
+            .into()
+    }
+
     pub fn subscription(&self) -> Subscription<Message> {
         let keyboard_sub = iced::keyboard::listen().map(Message::Keyboard);
         let wakeup_sub = time::every(Duration::from_millis(16)).map(|_| Message::TerminalWakeup);
 
+        // 注意：event::listen_with 要求 fn 指针（无捕获），所以全局鼠标事件
+        // 不在闭包里过滤主窗口。GlobalCursorMoved / GlobalMouseRelease
+        // 处理器内部会检查 drag_state 是否属于当前活跃 tab。
         let resize_sub = event::listen_with(|event, _status, win_id| {
             match event {
                 Event::Window(window::Event::Resized(size)) => {
@@ -1582,6 +2248,14 @@ impl PureTermApp {
                     ..
                 }) if modifiers.command() && c.as_str() == "," => {
                     Some(Message::OpenSettings)
+                }
+                // 全局鼠标移动：用于分割线拖动（即使鼠标离开分割线窄区域）
+                Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+                    Some(Message::GlobalCursorMoved(position))
+                }
+                // 全局鼠标左键释放：用于结束分割线拖动
+                Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                    Some(Message::GlobalMouseRelease)
                 }
                 _ => None,
             }
