@@ -692,7 +692,6 @@ impl WgpuGlyphAtlas {
             self.cache.remove(key);
             self.stored_glyphs.remove(key);
         }
-        drop(evicted);
 
         // Reset both atlas bitmaps and skylines.
         self.atlas_data.fill(0);

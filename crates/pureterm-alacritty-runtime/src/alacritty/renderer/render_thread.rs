@@ -5,9 +5,8 @@
 //! vertex data through messages, updates GPU buffers, and executes the
 //! multi-pass rendering pipeline.
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{self as cc, Receiver, Sender, select};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -111,10 +110,11 @@ const MAILBOX_CAPACITY: usize = 64;
 pub struct RenderThreadHandle {
     sender: Sender<RenderMessage>,
     stats: RenderStatsHandle,
-    /// PureTerm B2: separate `sync_channel` for shape requests so the
+    /// PureTerm B2: separate `crossbeam_channel` for shape requests so the
     /// main thread can dispatch shaping work and block until the
-    /// render thread's shaper responds.
-    shape_tx: mpsc::SyncSender<ShapeRequest>,
+    /// render thread's shaper responds. Uses crossbeam (not std::mpsc)
+    /// so the render thread can `select!` on both channels simultaneously.
+    shape_tx: cc::Sender<ShapeRequest>,
 }
 
 impl RenderThreadHandle {
@@ -130,8 +130,8 @@ impl RenderThreadHandle {
         config: wgpu::SurfaceConfiguration,
         passes: RenderPasses,
     ) -> Self {
-        let (sender, receiver) = crossbeam_channel::bounded(MAILBOX_CAPACITY);
-        let (shape_tx, shape_rx) = mpsc::sync_channel::<ShapeRequest>(1);
+        let (sender, receiver) = cc::bounded(MAILBOX_CAPACITY);
+        let (shape_tx, shape_rx) = cc::bounded::<ShapeRequest>(1);
         let stats = RenderStatsHandle::default();
 
         let stats_clone = stats.clone();
@@ -162,8 +162,8 @@ impl RenderThreadHandle {
     pub fn request_shape(
         &self,
         runs: Vec<ShapeRunInput>,
-    ) -> Result<ShapeResponse, mpsc::RecvError> {
-        let (tx, rx) = mpsc::sync_channel::<ShapeResponse>(1);
+    ) -> Result<ShapeResponse, cc::RecvError> {
+        let (tx, rx) = cc::bounded::<ShapeResponse>(1);
         self.shape_tx
             .send(ShapeRequest { runs, response: tx })
             .expect("render thread shape channel closed");
@@ -305,7 +305,7 @@ struct RenderThread {
     // PureTerm B2: shaper lives on the render thread so complex-script
     // shaping doesn't block the main thread's event loop.
     harfbuzz_shaper: HarfBuzzShaper,
-    shape_rx: mpsc::Receiver<ShapeRequest>,
+    shape_rx: cc::Receiver<ShapeRequest>,
 
     // The 8 render passes.
     passes: RenderPasses,
@@ -338,7 +338,7 @@ impl RenderThread {
         config: wgpu::SurfaceConfiguration,
         passes: RenderPasses,
         stats: RenderStatsHandle,
-        shape_rx: mpsc::Receiver<ShapeRequest>,
+        shape_rx: cc::Receiver<ShapeRequest>,
     ) -> Self {
         Self {
             receiver,
@@ -399,97 +399,40 @@ impl RenderThread {
         log::info!("Render thread started (PureTerm B2 shaper lives here, B3 persistent atlas texture)");
 
         while self.running {
-            // Block until a message arrives.
-            let msg = match self.receiver.recv() {
-                Ok(msg) => msg,
-                Err(_) => {
-                    self.running = false;
-                    break;
+            // Use `select!` to wait on BOTH channels simultaneously.
+            // This fixes the deadlock: the main thread sends a shape
+            // request before the Frame message, so the render thread
+            // must be able to receive shape requests while waiting for
+            // frame data.
+            select! {
+                recv(self.receiver) -> msg => {
+                    match msg {
+                        Ok(render_msg) => {
+                            self.handle_render_message(render_msg);
+                        }
+                        Err(_) => {
+                            self.running = false;
+                            break;
+                        }
+                    }
                 }
-            };
-
-            let mut latest_frame = match msg {
-                RenderMessage::Shutdown => {
-                    self.running = false;
+                recv(self.shape_rx) -> req => {
+                    if let Ok(req) = req {
+                        log::debug!(
+                            "PureTerm B2: render thread processing shape request with {} runs",
+                            req.runs.len()
+                        );
+                        self.process_shape_request(req);
+                    }
+                    // After handling a shape request, continue the loop
+                    // (don't fall through to draw). The main thread will
+                    // send the Frame message next.
                     continue;
                 }
-                RenderMessage::Resize { width, height } => {
-                    self.handle_resize(width, height);
-                    None
-                }
-                RenderMessage::Frame { data } => Some(data),
-                RenderMessage::SetBackgroundImage { data, width, height, opacity, fit, position } => {
-                    self.handle_set_background_image(data, width, height, opacity, fit, position);
-                    None
-                }
-                RenderMessage::ClearBackground => {
-                    self.handle_clear_background();
-                    None
-                }
-            };
-
-            // Drain remaining messages, coalescing frames.
-            while let Ok(msg) = self.receiver.try_recv() {
-                match msg {
-                    RenderMessage::Shutdown => {
-                        self.running = false;
-                        return;
-                    }
-                    RenderMessage::Resize { width, height } => {
-                        self.handle_resize(width, height);
-                    }
-                    RenderMessage::Frame { mut data } => {
-                        // PureTerm B3.2: atlas data is `Arc<Vec<u8>>`, so the
-                        // carry-over is a cheap pointer clone instead of a
-                        // 4MB/16MB heap copy.
-                        if data.atlas_data.is_none() {
-                            if let Some(ref prev) = latest_frame {
-                                if let Some(ref prev_atlas) = prev.atlas_data {
-                                    data.atlas_data = Some(prev_atlas.clone());
-                                    data.atlas_width = prev.atlas_width;
-                                    data.atlas_height = prev.atlas_height;
-                                    data.atlas_dirty = true;
-                                    // Carry over the regions from the previous
-                                    // frame so the partial upload still works.
-                                    data.atlas_regions
-                                        .clone_from(&prev.atlas_regions);
-                                }
-                            }
-                        }
-                        if data.color_atlas_data.is_none() {
-                            if let Some(ref prev) = latest_frame {
-                                if let Some(ref prev_color) = prev.color_atlas_data {
-                                    data.color_atlas_data = Some(prev_color.clone());
-                                    data.color_atlas_width = prev.color_atlas_width;
-                                    data.color_atlas_height = prev.color_atlas_height;
-                                    data.color_atlas_dirty = true;
-                                    data.color_atlas_regions
-                                        .clone_from(&prev.color_atlas_regions);
-                                }
-                            }
-                        }
-                        latest_frame = Some(data);
-                    }
-                    RenderMessage::SetBackgroundImage { data, width, height, opacity, fit, position } => {
-                        self.handle_set_background_image(data, width, height, opacity, fit, position);
-                    }
-                    RenderMessage::ClearBackground => {
-                        self.handle_clear_background();
-                    }
-                }
             }
 
-            self.update_blink();
-
-            if let Some(frame_data) = latest_frame {
-                self.draw_frame(&frame_data);
-            }
-
-            // PureTerm B2: after the GPU is idle (or after each frame
-            // draw), drain pending shape requests. The main thread
-            // blocks on `request_shape`, so we must respond even when
-            // no new frame arrives. Non-blocking: if no request is
-            // queued, fall through to the outer `recv()`.
+            // After handling a RenderMessage, drain any pending shape
+            // requests before drawing.
             while let Ok(req) = self.shape_rx.try_recv() {
                 log::debug!(
                     "PureTerm B2: render thread processing shape request with {} runs",
@@ -502,6 +445,87 @@ impl RenderThread {
         }
 
         log::info!("Render thread shutting down");
+    }
+
+    /// Process a single `RenderMessage`: handle control messages or
+    /// accumulate frame data for drawing. Returns the latest frame to draw.
+    fn handle_render_message(&mut self, msg: RenderMessage) {
+        let mut latest_frame = match msg {
+            RenderMessage::Shutdown => {
+                self.running = false;
+                return;
+            }
+            RenderMessage::Resize { width, height } => {
+                self.handle_resize(width, height);
+                None
+            }
+            RenderMessage::Frame { data } => Some(data),
+            RenderMessage::SetBackgroundImage { data, width, height, opacity, fit, position } => {
+                self.handle_set_background_image(data, width, height, opacity, fit, position);
+                None
+            }
+            RenderMessage::ClearBackground => {
+                self.handle_clear_background();
+                None
+            }
+        };
+
+        // Drain remaining messages, coalescing frames.
+        while let Ok(msg) = self.receiver.try_recv() {
+            match msg {
+                RenderMessage::Shutdown => {
+                    self.running = false;
+                    return;
+                }
+                RenderMessage::Resize { width, height } => {
+                    self.handle_resize(width, height);
+                }
+                RenderMessage::Frame { mut data } => {
+                    // PureTerm B3.2: atlas data is `Arc<Vec<u8>>`, so the
+                    // carry-over is a cheap pointer clone instead of a
+                    // 4MB/16MB heap copy.
+                    if data.atlas_data.is_none() {
+                        if let Some(ref prev) = latest_frame {
+                            if let Some(ref prev_atlas) = prev.atlas_data {
+                                data.atlas_data = Some(prev_atlas.clone());
+                                data.atlas_width = prev.atlas_width;
+                                data.atlas_height = prev.atlas_height;
+                                data.atlas_dirty = true;
+                                // Carry over the regions from the previous
+                                // frame so the partial upload still works.
+                                data.atlas_regions
+                                    .clone_from(&prev.atlas_regions);
+                            }
+                        }
+                    }
+                    if data.color_atlas_data.is_none() {
+                        if let Some(ref prev) = latest_frame {
+                            if let Some(ref prev_color) = prev.color_atlas_data {
+                                data.color_atlas_data = Some(prev_color.clone());
+                                data.color_atlas_width = prev.color_atlas_width;
+                                data.color_atlas_height = prev.color_atlas_height;
+                                data.color_atlas_dirty = true;
+                                data.color_atlas_regions
+                                    .clone_from(&prev.color_atlas_regions);
+                            }
+                        }
+                    }
+                    latest_frame = Some(data);
+                }
+                RenderMessage::SetBackgroundImage { data, width, height, opacity, fit, position } => {
+                    self.handle_set_background_image(data, width, height, opacity, fit, position);
+                }
+                RenderMessage::ClearBackground => {
+                    self.handle_clear_background();
+                }
+            }
+        }
+
+        self.update_blink();
+
+        if let Some(frame_data) = latest_frame {
+            self.draw_frame(&frame_data);
+        }
     }
 
     // ── Message handlers ─────────────────────────────────────────────────────

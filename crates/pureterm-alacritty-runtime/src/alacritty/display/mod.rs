@@ -42,7 +42,7 @@ use crate::display::window::Window;
 use crate::event::{Event, EventType, Mouse, SearchState};
 use crate::message_bar::MessageBuffer;
 use crate::renderer::glyph_atlas::WgpuGlyphAtlas;
-use crate::renderer::harfbuzz_shaper::{HarfBuzzShaper, ShapedGlyphCache};
+use crate::renderer::harfbuzz_shaper::ShapedGlyphCache;
 use crate::renderer::render_thread::{FrameData, RenderThreadHandle};
 use crate::renderer::vertex_builders::FrameBuilder;
 use crate::renderer::font_fallback::FontFallbackRegistry;

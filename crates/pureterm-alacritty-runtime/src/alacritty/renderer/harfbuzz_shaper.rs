@@ -18,46 +18,22 @@ use alacritty_terminal::index::Point;
 use fontdb::Database;
 
 use harfbuzz_sys::{
-    hb_blob_create, hb_blob_destroy, hb_blob_get_empty,
-    hb_blob_make_immutable, hb_blob_reference, hb_blob_set_user_data, hb_blob_get_user_data,
-    hb_blob_copy_writable_or_fail, hb_blob_create_sub_blob, hb_blob_get_data, hb_blob_get_length,
+    hb_blob_create, hb_blob_destroy,
 };
 use harfbuzz_sys::{
-    hb_face_count, hb_face_create, hb_face_create_for_tables, hb_face_destroy, hb_face_get_empty,
-    hb_face_get_index, hb_face_get_upem, hb_face_is_immutable, hb_face_make_immutable,
-    hb_face_reference, hb_face_reference_blob, hb_face_reference_table, hb_face_set_index,
-    hb_face_set_upem, hb_face_set_user_data, hb_face_get_user_data, hb_font_create,
-    hb_font_create_sub_font, hb_font_destroy, hb_font_get_empty, hb_font_get_face,
-    hb_font_get_parent, hb_font_get_scale, hb_font_get_user_data, hb_font_is_immutable,
-    hb_font_reference, hb_font_set_face, hb_font_set_parent, hb_font_set_scale,
-    hb_font_set_user_data,
+    hb_face_create, hb_face_destroy, hb_font_create, hb_font_destroy, hb_font_set_scale,
 };
 use harfbuzz_sys::{
-    hb_buffer_reset, hb_buffer_create, hb_buffer_get_empty, hb_buffer_reference,
-    hb_buffer_destroy, hb_buffer_set_user_data, hb_buffer_get_user_data, hb_buffer_set_content_type,
-    hb_buffer_get_content_type, hb_buffer_set_unicode_funcs, hb_buffer_get_unicode_funcs,
-    hb_buffer_set_direction, hb_buffer_get_direction, hb_buffer_set_script, hb_buffer_get_script,
-    hb_buffer_set_language, hb_buffer_get_language, hb_buffer_guess_segment_properties,
-    hb_buffer_add_utf8, hb_buffer_add_utf16, hb_buffer_add_utf32, hb_buffer_add_latin1,
-    hb_buffer_add_codepoints, hb_buffer_get_length, hb_buffer_get_glyph_infos,
-    hb_buffer_get_glyph_positions, hb_buffer_clear_contents, hb_buffer_pre_allocate,
-    hb_buffer_allocation_successful, hb_buffer_reverse, hb_buffer_reverse_clusters,
-    hb_buffer_set_cluster_level, hb_buffer_get_cluster_level, hb_buffer_set_invisible_glyph,
-    hb_buffer_get_invisible_glyph, hb_buffer_set_replacement_codepoint,
-    hb_buffer_get_replacement_codepoint,
+    hb_buffer_create, hb_buffer_destroy, hb_buffer_reset,
+    hb_buffer_guess_segment_properties, hb_buffer_add_utf8,
+    hb_buffer_get_length, hb_buffer_get_glyph_infos, hb_buffer_get_glyph_positions,
+};
+use harfbuzz_sys::{hb_shape};
+use harfbuzz_sys::{
+    hb_glyph_info_t, hb_glyph_position_t, hb_var_int_t,
 };
 use harfbuzz_sys::{
-    hb_shape, hb_shape_full, hb_shape_plan_create, hb_shape_plan_create_cached,
-    hb_shape_plan_create_cached2, hb_shape_plan_destroy, hb_shape_plan_execute,
-    hb_shape_plan_get_shaper, hb_shape_plan_get_empty,
-};
-use harfbuzz_sys::{
-    hb_glyph_info_t, hb_glyph_position_t, hb_codepoint_t, hb_position_t, hb_mask_t, hb_bool_t,
-    hb_tag_t, hb_var_int_t, hb_direction_t, hb_script_t, hb_language_t, hb_buffer_content_type_t,
-    hb_buffer_flags_t, hb_buffer_cluster_level_t, hb_memory_mode_t,
-};
-use harfbuzz_sys::{
-    HB_MEMORY_MODE_READONLY, HB_DIRECTION_LTR, HB_SCRIPT_LATIN,
+    HB_MEMORY_MODE_READONLY,
 };
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -492,8 +468,10 @@ impl HarfBuzzShaper {
     ///
     /// Call this when font configuration changes.
     pub fn clear_cache(&mut self) {
-        self.face_data.clear();
+        // Drop Face entries FIRST (they borrow bytes from face_data via
+        // transmuted 'static lifetime) before freeing the owned font data.
         self.parsed_faces.clear();
+        self.face_data.clear();
     }
 }
 
