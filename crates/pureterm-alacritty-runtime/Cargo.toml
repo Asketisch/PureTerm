@@ -2,96 +2,9 @@
 name = "pureterm-alacritty-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "PureTerm - A fast, cross-platform, GPU-accelerated terminal emulator"
+description = "PureTerm - GPU glyph atlas runtime (slimmed: Display path archived)"
 
 [dependencies]
-alacritty_terminal = { path = "../alacritty_terminal", version = "0.26.1-dev" }
-alacritty_config = { path = "../alacritty_config", version = "0.2.4-dev" }
-alacritty_config_derive = { path = "../alacritty_config_derive", version = "0.2.6-dev" }
-
-ahash = { version = "0.8.6", features = ["no-rng"] }
-argon2 = "0.5"
-aes-gcm = "0.10"
-base64 = "0.22"
-bitflags = "2.2.1"
-bytemuck = { version = "1", features = ["derive"] }
-clap = { version = "4.2.7", features = ["derive", "env"] }
-copypasta = { version = "0.10.1", default-features = false }
-crossbeam-channel = "0.5"
+# glyph_atlas 实际需要的依赖
 crossfont = "0.8.1"
-dirs = "6.0.0"
-fontdb = "0.21"
-ttf-parser = "0.24"
-harfbuzz-sys = { version = "0.6", features = ["bundled"] }
 indexmap = { version = "2", features = ["std"] }
-home = "0.5.5"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-libc = "0.2"
-log = { version = "0.4", features = ["std", "serde"] }
-notify = "8.0.0"
-parking_lot = "0.12.0"
-polling = "3.11.0"
-pollster = "0.4"
-rand = "0.8"
-regex = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-serde_yaml = "0.9.25"
-signal-hook = { version = "0.4.3", default-features = false }
-smallvec = { version = "1", features = ["union"] }
-tempfile = "3.12.0"
-toml = "0.9.11"
-toml_edit = "0.24.0"
-unicode-width = "0.2.0"
-wgpu = "27"
-winit = { version = "0.30.9", default-features = false, features = ["rwh_06", "serde"] }
-
-[target.'cfg(not(windows))'.dependencies]
-xdg = "3.0.0"
-
-[target.'cfg(not(target_os = "macos"))'.dependencies]
-png = { version = "0.17.5", default-features = false, optional = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6.1"
-objc2-foundation = { version = "0.3.1", default-features = false, features = [
-    "std",
-    "NSString",
-    "NSLocale",
-    "NSUserDefaults",
-] }
-objc2-app-kit = { version = "0.3.1", default-features = false, features = [
-    "std",
-    "NSColorSpace",
-    "NSGraphics",
-    "NSResponder",
-    "NSView",
-    "NSWindow",
-    "NSVisualEffectView",
-] }
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
-    "Win32_UI_WindowsAndMessaging",
-    "Win32_System_Threading",
-    "Win32_System_Console",
-    "Win32_Foundation",
-] }
-
-[target.'cfg(windows)'.build-dependencies]
-embed-resource = "3.0.2"
-
-[features]
-default = []
-x11 = [
-    "copypasta/x11",
-    "winit/x11",
-    "png",
-]
-wayland = [
-    "copypasta/wayland",
-    "winit/wayland",
-    "winit/wayland-dlopen",
-    "winit/wayland-csd-adwaita-crossfont",
-]
-nightly = []

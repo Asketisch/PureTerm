@@ -14,8 +14,8 @@ cargo build --release
 ## 架构
 
 6 个 crate 的工作区：
-- `pureterm` — 二进制入口（薄封装）
-- `pureterm-alacritty-runtime` — Alacritty 运行时（GUI、事件循环、渲染）
+- `pureterm` — 二进制入口（薄封装，基于 Iced 0.14 daemon）
+- `pureterm-alacritty-runtime` — Alacritty 内核 + GPU 字体图集（精简版，2026-06-08 起仅含 `renderer::glyph_atlas`）
 - `pureterm-settings` — Iced 0.14 设置 UI（独立进程，Cmd+, 打开）
 - `alacritty_terminal` — 终端内核、PTY、Grid（vendored 上游源码）
 - `alacritty_config` — 配置反序列化抽象（vendored 上游源码）
@@ -30,8 +30,19 @@ cargo build --release
 ## 维护规则
 
 - vendored Alacritty 源码不做无关格式化或重构，便于同步上游
-- 新功能应在 `pureterm-alacritty-runtime` 中以最小 patch 方式集成
+- 新功能应在主路径（`crates/pureterm/src/`）实现；`pureterm-alacritty-runtime` 已精简为只承载 `glyph_atlas`，不再扩展
 - 修改 alacritty 源码时在修改处添加注释说明原因
+
+## 已归档模块（2026-06-08）
+
+`pureterm-alacritty-runtime` 的 Alacritty Display 渲染管线（8-pass wgpu + 独立 render thread + HarfBuzz shaper + 全套配置 + IPC + SSH 后端）已整体归档至 [`archive/pureterm-display-path/`](archive/pureterm-display-path/AGENTS.md)。详见 [`docs/removed-legacy-features.md`](docs/removed-legacy-features.md)。
+
+- 触发原因：`docs/performance-issues-todo.md` Phase B (B1–B8) 误把 Display 路径当主路径 GPU 优化目标，改完用户感知为 0
+- 主路径 GPU 优化已重规划为 P-B' 4 项，只针对 `crates/pureterm/src/terminal_shader.rs`：
+  - P-B1' 持久 atlas texture + 局部上传
+  - P-B5' 颜色 atlas Nearest 采样 + 双 pipeline
+  - P-B7' Widget 边界内 damage rect
+  - P-B8' 复用 scratch buffer
 
 ## Settings UI
 
