@@ -120,7 +120,7 @@ impl Logger {
         let mut message = Message::new(message, message_type);
         message.set_target(record.target().to_owned());
 
-        let _ = event_proxy.send_event(Event::new(EventType::Message(message), None));
+        let _ = event_proxy.send_event(Event::new(EventType::Message(std::sync::Arc::new(message)), None));
     }
 }
 

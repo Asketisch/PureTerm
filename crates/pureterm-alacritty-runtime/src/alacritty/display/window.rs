@@ -539,10 +539,18 @@ impl Window {
         };
 
         // Look for an existing effect view by downcasting subviews to NSVisualEffectView.
-        let existing: Option<Retained<NSVisualEffectView>> = content_view
-            .subviews()
-            .iter()
-            .find_map(|subview| Retained::downcast::<NSVisualEffectView>(subview).ok());
+        // NOTE: we don't use the IntoIterator impl on `&NSArray<T>` because it requires
+        // the `NSEnumerator` feature on `objc2-foundation`; manual indexing avoids that.
+        let subviews = content_view.subviews();
+        let mut existing: Option<Retained<NSVisualEffectView>> = None;
+        for i in 0..subviews.count() {
+            if let Ok(view) =
+                Retained::downcast::<NSVisualEffectView>(subviews.objectAtIndex(i))
+            {
+                existing = Some(view);
+                break;
+            }
+        }
 
         let effect_view = match existing {
             Some(ev) => ev,
@@ -594,9 +602,9 @@ impl Window {
         };
 
         let subviews = content_view.subviews();
-        for subview in &subviews {
-            if Retained::downcast::<NSVisualEffectView>(subview.clone()).is_ok() {
-                subview.removeFromSuperview();
+        for i in 0..subviews.count() {
+            if let Ok(view) = Retained::downcast::<NSVisualEffectView>(subviews.objectAtIndex(i)) {
+                view.removeFromSuperview();
                 return;
             }
         }

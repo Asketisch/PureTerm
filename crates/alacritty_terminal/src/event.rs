@@ -63,7 +63,12 @@ pub enum Event {
     ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
 
     /// Write some text to the PTY.
-    PtyWrite(String),
+    ///
+    /// Wrapped in `Arc` so multi-window fan-out clones a pointer instead of
+    /// duplicating the heap allocation. Hot path: DSR/CPR responses, device
+    /// attribute queries, and similar PTY-output escape sequences that may
+    /// be sent to every terminal window.
+    PtyWrite(Arc<String>),
 
     /// Request to write the text area size.
     TextAreaSizeRequest(Arc<dyn Fn(WindowSize) -> String + Sync + Send + 'static>),

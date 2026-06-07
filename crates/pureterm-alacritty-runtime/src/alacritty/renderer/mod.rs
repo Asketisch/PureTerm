@@ -9,4 +9,5 @@ pub mod glyph_atlas;
 pub mod harfbuzz_shaper;
 pub mod render_pass;
 pub mod render_thread;
+pub mod shape_request;
 pub mod vertex_builders;

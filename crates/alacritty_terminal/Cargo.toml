@@ -26,6 +26,7 @@ polling = "3.8.0"
 regex = "1"
 regex-automata = "0.4.3"
 unicode-width = "0.2.0"
+smallvec = "1"
 vte = { version = "0.15.0", default-features = false, features = ["std", "ansi"] }
 serde = { version = "1", features = ["derive", "rc"], optional = true }
 

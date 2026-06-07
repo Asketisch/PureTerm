@@ -369,7 +369,22 @@ pub struct Display {
     font_key: FontKey,
     font_descent: f32,
     font_fallback: FontFallbackRegistry,
-    harfbuzz_shaper: crate::renderer::harfbuzz_shaper::HarfBuzzShaper,
+    // PureTerm B2: `HarfBuzzShaper` no longer lives on Display — it
+    // moved to the render thread so complex-script shaping doesn't
+    // block the main thread's event loop. See `request_shape` on
+    // `RenderThreadHandle`.
+
+    // PureTerm B8: per-frame scratch fallback map. Cleared at the top
+    // of `draw()` so the underlying HashMap capacity is reused across
+    // frames instead of dropping and re-allocating per frame.
+    //
+    // The runs Vec (`Vec<(usize, Vec<&RenderableCell>)>`) is left
+    // stack-local because its inner `&RenderableCell` borrow lifetime
+    // is tied to the `Term` passed to `draw()`. Hoisting that to a
+    // field would require a `'a` lifetime parameter on `Display` for
+    // a single-allocation-per-frame savings that is dwarfed by the
+    // HashMap cost we avoid here.
+    scratch_fallback_map: HashMap<char, usize>,
 
     meter: Meter,
 }
@@ -461,7 +476,6 @@ impl Display {
         let glyph_atlas = WgpuGlyphAtlas::new();
         let frame_builder = FrameBuilder::new();
         let font_fallback = FontFallbackRegistry::new(config.font.fallback_families.clone());
-        let harfbuzz_shaper = crate::renderer::harfbuzz_shaper::HarfBuzzShaper::new();
 
         Ok(Self {
             render_thread,
@@ -471,7 +485,6 @@ impl Display {
             font_key,
             font_descent,
             font_fallback,
-            harfbuzz_shaper,
             visual_bell: VisualBell::from(&config.bell),
             colors: List::from(&config.colors),
             frame_timer: FrameTimer::new(),
@@ -491,6 +504,9 @@ impl Display {
             cursor_hidden: Default::default(),
             meter: Default::default(),
             ime: Default::default(),
+            // PureTerm B8: per-frame scratch map. Pre-size so the first
+            // frame doesn't trigger a rehash.
+            scratch_fallback_map: HashMap::with_capacity(128),
         })
     }
 
@@ -712,7 +728,10 @@ impl Display {
             self.highlighted_hint.is_some() || self.vi_highlighted_hint.is_some();
 
         // Phase 1.5: Prime glyph atlas and compute HarfBuzz shaping.
-        let mut fallback_map: HashMap<char, usize> = HashMap::new();
+        // PureTerm B8: reuse the per-Display scratch map across frames
+        // instead of dropping and re-allocating a fresh HashMap.
+        self.scratch_fallback_map.clear();
+        let fallback_map = &mut self.scratch_fallback_map;
         let mut shaped_cache = ShapedGlyphCache::new();
         shaped_cache.set_columns(size_info.columns());
 
@@ -798,6 +817,11 @@ impl Display {
 
         // Phase 1.5b: HarfBuzz text shaping for complex scripts.
         // Group cells by font and compute shaping offsets.
+        //
+        // PureTerm B2: the shaper lives on the render thread. We pack
+        // each run into an owned `Vec<(Point, char)>` (no lifetime
+        // into `Term`), dispatch the request, and apply the response
+        // offsets back into `shaped_cache` keyed by the same `Point`.
         {
             // Collect text runs grouped by font index.
             let mut runs: Vec<(usize, Vec<&RenderableCell>)> = Vec::new();
@@ -816,33 +840,39 @@ impl Display {
                 }
             }
 
-            // Shape each run and store offsets.
-            for (font_idx, run_cells) in runs {
-                // Build text string from cells.
-                let text: String = run_cells.iter().map(|c| c.character).collect();
-
-                // Get font family names for this font index.
-                let families: Vec<&str> = if font_idx == 0 {
-                    // Primary font - use config font family.
-                    vec![]
-                } else {
-                    // Fallback font - would need to look up family name.
-                    vec![]
-                };
-
-                // Shape the text.
-                let shaped = self.harfbuzz_shaper.shape(&text, font_idx, &families);
-
-                // Apply offsets to cells based on cluster mapping.
-                for (i, cell) in run_cells.iter().enumerate() {
-                    if i < shaped.glyphs.len() {
-                        let glyph = &shaped.glyphs[i];
-                        shaped_cache.set_offset_for_point(
-                            &cell.point,
-                            glyph.x_offset,
-                            glyph.y_offset,
-                        );
+            // Pack runs into the cross-thread request format. Each
+            // run becomes `Vec<(Point, char)>` so the render thread's
+            // shaper can iterate without borrowing `Display`.
+            let request_runs: Vec<crate::renderer::shape_request::ShapeRunInput> = runs
+                .iter()
+                .map(|(font_idx, run_cells)| {
+                    let cells = run_cells
+                        .iter()
+                        .map(|c| (c.point, c.character))
+                        .collect();
+                    crate::renderer::shape_request::ShapeRunInput {
+                        font_idx: *font_idx,
+                        cells,
                     }
+                })
+                .collect();
+
+            // Dispatch to the render thread and block on the response.
+            // The main thread is freed of the actual HarfBuzz work;
+            // only the response channel wait remains.
+            let shape_response = self
+                .render_thread
+                .request_shape(request_runs)
+                .expect("render thread shape channel closed");
+
+            // Apply offsets back to `shaped_cache`. `cells` and the
+            // shape response are aligned run-by-run.
+            for (run, shaped_run) in runs.iter().zip(shape_response.runs.iter()) {
+                let _font_idx = run.0;
+                for (cell, (_resp_point, (x_offset, y_offset))) in
+                    run.1.iter().zip(shaped_run.offsets.iter())
+                {
+                    shaped_cache.set_offset_for_point(&cell.point, *x_offset, *y_offset);
                 }
             }
         }
@@ -896,19 +926,26 @@ impl Display {
         self.window.pre_present_notify();
 
         // Prepare atlas data for upload.
+        // PureTerm B3.2: use the per-region API and hold an `Arc<Vec<u8>>`
+        // across the frame boundary so the render thread can take the
+        // buffer without a 20MB clone.
         let atlas_dirty = self.glyph_atlas.is_dirty();
-        let (atlas_data, atlas_width, atlas_height) = self
+        let (atlas_data, atlas_regions, atlas_width, atlas_height) = match self
             .glyph_atlas
-            .take_dirty_data()
-            .map(|(data, w, h)| (Some(data), w, h))
-            .unwrap_or_else(|| (None, 0, 0));
+            .take_dirty_regions()
+        {
+            Some(d) => (Some(d.data), d.regions, d.width, d.height),
+            None => (None, Vec::new(), 0, 0),
+        };
 
         let color_atlas_dirty = self.glyph_atlas.is_color_dirty();
-        let (color_atlas_data, color_atlas_width, color_atlas_height) = self
+        let (color_atlas_data, color_atlas_regions, color_atlas_width, color_atlas_height) = match self
             .glyph_atlas
-            .take_color_dirty_data()
-            .map(|(data, w, h)| (Some(data), w, h))
-            .unwrap_or_else(|| (None, 0, 0));
+            .take_color_dirty_regions()
+        {
+            Some(d) => (Some(d.data), d.regions, d.width, d.height),
+            None => (None, Vec::new(), 0, 0),
+        };
 
         // Package vertex data into FrameData and send to render thread.
         let frame_data = Box::new(FrameData {
@@ -927,9 +964,11 @@ impl Display {
             full_redraw,
             atlas_dirty,
             atlas_data,
+            atlas_regions,
             atlas_width,
             atlas_height,
             color_atlas_data,
+            color_atlas_regions,
             color_atlas_width,
             color_atlas_height,
             color_atlas_dirty,

@@ -15,7 +15,6 @@ use std::os::unix::io::RawFd;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::rc::Rc;
-#[cfg(unix)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{env, f32, mem};
@@ -570,7 +569,9 @@ impl From<Event> for WinitEvent<Event> {
 pub enum EventType {
     Terminal(TerminalEvent),
     ConfigReload(PathBuf),
-    Message(Message),
+    /// `Message` is wrapped in `Arc` so fan-out across N windows clones a pointer
+    /// instead of the inner String/target heap allocations.
+    Message(Arc<Message>),
     Scroll(Scroll),
     CreateWindow(WindowOptions),
     #[cfg(unix)]
@@ -583,7 +584,8 @@ pub enum EventType {
     #[cfg(unix)]
     Shutdown,
     Frame,
-    Ssh(String),
+    /// SSH host wrapped in `Arc` — clone is a pointer copy.
+    Ssh(Arc<String>),
     /// Open SSH settings UI.
     SshSettings,
     /// List SSH profiles.
@@ -1916,12 +1918,13 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                     *self.ctx.dirty = true;
                 },
                 // Add message only if it's not already queued.
-                EventType::Message(message) if !self.ctx.message_buffer.is_queued(&message) => {
-                    self.ctx.message_buffer.push(message);
+                EventType::Message(message) if !self.ctx.message_buffer.is_queued(&*message) => {
+                    // Arc<Message>: clone only the inner when we actually push.
+                    self.ctx.message_buffer.push(Arc::unwrap_or_clone(message));
                     self.ctx.display.pending_update.dirty = true;
                 },
                 EventType::Ssh(host) => {
-                    if let Err(err) = self.ctx.new_ssh_tab(&host) {
+                    if let Err(err) = self.ctx.new_ssh_tab(host.as_str()) {
                         error!("Failed to create SSH tab: {}", err);
                     }
                 },
@@ -1994,7 +1997,13 @@ impl input::Processor<EventProxy, ActionContext<'_, Notifier, EventProxy>> {
                         let text = format(self.ctx.size_info().into());
                         self.ctx.write_to_pty(text.into_bytes());
                     },
-                    TerminalEvent::PtyWrite(text) => self.ctx.write_to_pty(text.into_bytes()),
+                    TerminalEvent::PtyWrite(text) => {
+                        // `text` is `Arc<String>`; deref to `&str` then copy
+                        // bytes. The fan-out `Arc` clone is the win we wanted;
+                        // the final `Vec<u8>` copy is unavoidable for the
+                        // PTY write.
+                        self.ctx.write_to_pty(text.as_bytes().to_vec())
+                    },
                     TerminalEvent::MouseCursorDirty => self.reset_mouse_cursor(),
                     TerminalEvent::CursorBlinkingChange => self.ctx.update_cursor_blinking(),
                     TerminalEvent::Exit | TerminalEvent::ChildExit(_) | TerminalEvent::Wakeup => (),

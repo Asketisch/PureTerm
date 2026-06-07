@@ -108,7 +108,7 @@ impl ColorsState {
                 self.bright[i] = v.clone();
                 crate::config_io::set_string(doc, &["colors", "bright"], keys[i], &v);
             }
-            ColorsMsg::OpenColorPicker(target) => {
+            ColorsMsg::OpenColorPicker(_) => {
                 // Handled by app, not directly here
             }
             ColorsMsg::HueSatChanged(target, hue, sat) => {

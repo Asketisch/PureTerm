@@ -164,6 +164,10 @@ pub struct CellTextPass {
     bind_group: wgpu::BindGroup,
     atlas_bind_group: Option<wgpu::BindGroup>,
     atlas_bgl: wgpu::BindGroupLayout,
+    /// PureTerm B3.4: track whether the atlas bind group is stale and
+    /// needs a rebuild. Without this flag, every dirty frame would call
+    /// `device.create_bind_group` (expensive).
+    atlas_bind_group_dirty: bool,
     sampler: wgpu::Sampler,
     /// 灰度图集纹理视图（在 render thread 中设置）。
     grayscale_atlas_view: Option<wgpu::TextureView>,
@@ -247,6 +251,7 @@ impl CellTextPass {
             bind_group: uniform_bg,
             atlas_bind_group: None,
             atlas_bgl,
+            atlas_bind_group_dirty: true, // PureTerm B3.4: rebuild on first frame.
             sampler,
             grayscale_atlas_view: None,
             color_atlas_view: None,
@@ -277,18 +282,31 @@ impl CellTextPass {
 
     /// 仅更新灰度图集视图（保留彩色图集不变）。
     pub fn update_grayscale_atlas(&mut self, device: &Device, gray_view: &wgpu::TextureView) {
+        // PureTerm B3.4: only mark dirty if the view actually changed.
+        let changed = self.grayscale_atlas_view.as_ref() != Some(gray_view);
         self.grayscale_atlas_view = Some(gray_view.clone());
-        self.rebuild_atlas_bind_group(device);
+        if changed {
+            self.atlas_bind_group_dirty = true;
+        }
     }
 
     /// 仅更新彩色图集视图（保留灰度图集不变）。
     pub fn update_color_atlas(&mut self, device: &Device, color_view: &wgpu::TextureView) {
+        let changed = self.color_atlas_view.as_ref() != Some(color_view);
         self.color_atlas_view = Some(color_view.clone());
-        self.rebuild_atlas_bind_group(device);
+        if changed {
+            self.atlas_bind_group_dirty = true;
+        }
     }
 
     /// 重建图集绑定组。
     fn rebuild_atlas_bind_group(&mut self, device: &Device) {
+        // PureTerm B3.4: skip the expensive `create_bind_group` when the
+        // underlying texture views haven't changed.
+        if !self.atlas_bind_group_dirty && self.atlas_bind_group.is_some() {
+            return;
+        }
+        self.atlas_bind_group_dirty = false;
         // 如果没有彩色图集视图，使用占位纹理。
         let color_view = match &self.color_atlas_view {
             Some(v) => v,

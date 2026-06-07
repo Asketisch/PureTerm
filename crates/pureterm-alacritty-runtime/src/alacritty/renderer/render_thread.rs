@@ -7,8 +7,12 @@
 
 use crossbeam_channel::{Receiver, Sender};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use super::glyph_atlas::DirtyRect;
+use super::harfbuzz_shaper::HarfBuzzShaper;
 use super::render_pass::{
     bg_color::BgColorPass,
     bg_image::BgImagePass,
@@ -27,6 +31,7 @@ use super::render_pass::{
     decorations::DecoVertex,
     ScreenUniforms,
 };
+use super::shape_request::{ShapeRequest, ShapeResponse, ShapeRunInput, ShapeRunOutput};
 
 // ── Messages ─────────────────────────────────────────────────────────────────
 
@@ -81,12 +86,17 @@ pub struct FrameData {
     pub full_redraw: bool,
     // Whether the glyph atlas was updated this frame.
     pub atlas_dirty: bool,
-    // Updated glyph atlas pixels (R8 grayscale), if changed.
-    pub atlas_data: Option<Vec<u8>>,
+    // Updated glyph atlas pixels (R8 grayscale), if changed. Wrapped in
+    // `Arc` so the render thread can keep the buffer alive across the
+    // `latest_frame` carry-over without a 4MB clone (B3.2).
+    pub atlas_data: Option<Arc<Vec<u8>>>,
+    // Per-glyph dirty regions (B3.1). Empty when atlas is clean.
+    pub atlas_regions: Vec<DirtyRect>,
     pub atlas_width: u32,
     pub atlas_height: u32,
     // Updated color atlas pixels (RGBA), if changed.
-    pub color_atlas_data: Option<Vec<u8>>,
+    pub color_atlas_data: Option<Arc<Vec<u8>>>,
+    pub color_atlas_regions: Vec<DirtyRect>,
     pub color_atlas_width: u32,
     pub color_atlas_height: u32,
     pub color_atlas_dirty: bool,
@@ -101,6 +111,10 @@ const MAILBOX_CAPACITY: usize = 64;
 pub struct RenderThreadHandle {
     sender: Sender<RenderMessage>,
     stats: RenderStatsHandle,
+    /// PureTerm B2: separate `sync_channel` for shape requests so the
+    /// main thread can dispatch shaping work and block until the
+    /// render thread's shaper responds.
+    shape_tx: mpsc::SyncSender<ShapeRequest>,
 }
 
 impl RenderThreadHandle {
@@ -117,18 +131,43 @@ impl RenderThreadHandle {
         passes: RenderPasses,
     ) -> Self {
         let (sender, receiver) = crossbeam_channel::bounded(MAILBOX_CAPACITY);
+        let (shape_tx, shape_rx) = mpsc::sync_channel::<ShapeRequest>(1);
         let stats = RenderStatsHandle::default();
 
         let stats_clone = stats.clone();
         std::thread::Builder::new()
             .name("pureterm-render".into())
             .spawn(move || {
-                RenderThread::new(receiver, surface, device, queue, config, passes, stats_clone)
-                    .run();
+                RenderThread::new(
+                    receiver,
+                    surface,
+                    device,
+                    queue,
+                    config,
+                    passes,
+                    stats_clone,
+                    shape_rx,
+                )
+                .run();
             })
             .expect("failed to spawn render thread");
 
-        Self { sender, stats }
+        Self { sender, stats, shape_tx }
+    }
+
+    /// PureTerm B2: dispatch a shape request to the render thread and
+    /// block until the response arrives. The render thread's shaper is
+    /// called on a worker thread, freeing the main thread for event
+    /// handling during complex-script shaping.
+    pub fn request_shape(
+        &self,
+        runs: Vec<ShapeRunInput>,
+    ) -> Result<ShapeResponse, mpsc::RecvError> {
+        let (tx, rx) = mpsc::sync_channel::<ShapeResponse>(1);
+        self.shape_tx
+            .send(ShapeRequest { runs, response: tx })
+            .expect("render thread shape channel closed");
+        rx.recv()
     }
 
     /// Send a raw message. Returns `false` if the channel is closed.
@@ -257,6 +296,17 @@ struct RenderThread {
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
 
+    // PureTerm B3.3: persistent atlas textures. `None` until the first
+    // dirty frame triggers a `create_texture`; subsequent frames write
+    // to the same texture via per-region `queue.write_texture`.
+    grayscale_atlas_texture: Option<wgpu::Texture>,
+    color_atlas_texture: Option<wgpu::Texture>,
+
+    // PureTerm B2: shaper lives on the render thread so complex-script
+    // shaping doesn't block the main thread's event loop.
+    harfbuzz_shaper: HarfBuzzShaper,
+    shape_rx: mpsc::Receiver<ShapeRequest>,
+
     // The 8 render passes.
     passes: RenderPasses,
 
@@ -288,6 +338,7 @@ impl RenderThread {
         config: wgpu::SurfaceConfiguration,
         passes: RenderPasses,
         stats: RenderStatsHandle,
+        shape_rx: mpsc::Receiver<ShapeRequest>,
     ) -> Self {
         Self {
             receiver,
@@ -295,6 +346,11 @@ impl RenderThread {
             device,
             queue,
             config,
+            grayscale_atlas_texture: None,
+            color_atlas_texture: None,
+            // PureTerm B2: shaper lives here on the render thread.
+            harfbuzz_shaper: HarfBuzzShaper::new(),
+            shape_rx,
             passes,
             running: true,
             cursor_blink_visible: true,
@@ -306,10 +362,41 @@ impl RenderThread {
         }
     }
 
+    /// PureTerm B2: handle a single shape request synchronously on the
+    /// render thread. Called when the GPU is idle (no pending frames).
+    fn process_shape_request(&mut self, req: ShapeRequest) {
+        let ShapeRequest { runs, response } = req;
+        let mut out = Vec::with_capacity(runs.len());
+        for run in runs {
+            let ShapeRunInput { font_idx, cells } = run;
+            // PureTerm: pre-allocate the shaping text so the shaper's
+            // Cow::Borrowed branch is exercised (no owned String clone
+            // inside `shape`).
+            let mut text = String::with_capacity(cells.len());
+            for (_, c) in &cells {
+                text.push(*c);
+            }
+            let shaped = self.harfbuzz_shaper.shape(&text, font_idx, &[]);
+            let offsets: Vec<(alacritty_terminal::index::Point<usize>, (f32, f32))> = cells
+                .iter()
+                .enumerate()
+                .map(|(i, (point, _))| {
+                    if i < shaped.glyphs.len() {
+                        (*point, (shaped.glyphs[i].x_offset, shaped.glyphs[i].y_offset))
+                    } else {
+                        (*point, (0.0, 0.0))
+                    }
+                })
+                .collect();
+            out.push(ShapeRunOutput { font_idx, offsets });
+        }
+        let _ = response.send(ShapeResponse { runs: out });
+    }
+
     // ── Main loop ────────────────────────────────────────────────────────────
 
     fn run(&mut self) {
-        log::info!("Render thread started");
+        log::info!("Render thread started (PureTerm B2 shaper lives here, B3 persistent atlas texture)");
 
         while self.running {
             // Block until a message arrives.
@@ -352,24 +439,32 @@ impl RenderThread {
                         self.handle_resize(width, height);
                     }
                     RenderMessage::Frame { mut data } => {
-                        // Preserve atlas data from the frame being replaced.
+                        // PureTerm B3.2: atlas data is `Arc<Vec<u8>>`, so the
+                        // carry-over is a cheap pointer clone instead of a
+                        // 4MB/16MB heap copy.
                         if data.atlas_data.is_none() {
                             if let Some(ref prev) = latest_frame {
-                                if prev.atlas_data.is_some() {
-                                    data.atlas_data = prev.atlas_data.clone();
+                                if let Some(ref prev_atlas) = prev.atlas_data {
+                                    data.atlas_data = Some(prev_atlas.clone());
                                     data.atlas_width = prev.atlas_width;
                                     data.atlas_height = prev.atlas_height;
                                     data.atlas_dirty = true;
+                                    // Carry over the regions from the previous
+                                    // frame so the partial upload still works.
+                                    data.atlas_regions
+                                        .clone_from(&prev.atlas_regions);
                                 }
                             }
                         }
                         if data.color_atlas_data.is_none() {
                             if let Some(ref prev) = latest_frame {
-                                if prev.color_atlas_data.is_some() {
-                                    data.color_atlas_data = prev.color_atlas_data.clone();
+                                if let Some(ref prev_color) = prev.color_atlas_data {
+                                    data.color_atlas_data = Some(prev_color.clone());
                                     data.color_atlas_width = prev.color_atlas_width;
                                     data.color_atlas_height = prev.color_atlas_height;
                                     data.color_atlas_dirty = true;
+                                    data.color_atlas_regions
+                                        .clone_from(&prev.color_atlas_regions);
                                 }
                             }
                         }
@@ -388,6 +483,19 @@ impl RenderThread {
 
             if let Some(frame_data) = latest_frame {
                 self.draw_frame(&frame_data);
+            }
+
+            // PureTerm B2: after the GPU is idle (or after each frame
+            // draw), drain pending shape requests. The main thread
+            // blocks on `request_shape`, so we must respond even when
+            // no new frame arrives. Non-blocking: if no request is
+            // queued, fall through to the outer `recv()`.
+            while let Ok(req) = self.shape_rx.try_recv() {
+                log::debug!(
+                    "PureTerm B2: render thread processing shape request with {} runs",
+                    req.runs.len()
+                );
+                self.process_shape_request(req);
             }
 
             self.update_fps();
@@ -470,9 +578,16 @@ impl RenderThread {
     // ── Frame rendering ──────────────────────────────────────────────────────
 
     fn draw_frame(&mut self, frame: &FrameData) {
-        // Upload grayscale glyph atlas if dirty.
+        // Upload grayscale glyph atlas if dirty (B3.1 regions + B3.3
+        // persistent texture).
         if let Some(ref atlas_bytes) = frame.atlas_data {
-            self.upload_atlas(atlas_bytes, frame.atlas_width, frame.atlas_height, false);
+            self.upload_atlas(
+                atlas_bytes,
+                frame.atlas_width,
+                frame.atlas_height,
+                &frame.atlas_regions,
+                false,
+            );
         }
 
         // Upload color glyph atlas if dirty.
@@ -481,6 +596,7 @@ impl RenderThread {
                 color_bytes,
                 frame.color_atlas_width,
                 frame.color_atlas_height,
+                &frame.color_atlas_regions,
                 true,
             );
         }
@@ -620,17 +736,31 @@ impl RenderThread {
         self.frame_count += 1;
     }
 
-    fn upload_atlas(&mut self, data: &[u8], width: u32, height: u32, is_color: bool) {
+    /// PureTerm B3.3: persistent atlas texture + per-region upload.
+    ///
+    /// `regions` is the per-glyph dirty-rect list (B3.1). If empty, the
+    /// full atlas is written. Otherwise each region is uploaded with a
+    /// non-zero origin and a sub-slice of `data` (the source buffer is
+    /// the full atlas; the row stride stays at `width * bpp`).
+    fn upload_atlas(
+        &mut self,
+        data: &[u8],
+        width: u32,
+        height: u32,
+        regions: &[DirtyRect],
+        is_color: bool,
+    ) {
         let format = if is_color {
             wgpu::TextureFormat::Rgba8UnormSrgb
         } else {
             wgpu::TextureFormat::R8Unorm
         };
         let bytes_per_row = if is_color { width * 4 } else { width };
+        let bpp = if is_color { 4u32 } else { 1u32 };
         let label = if is_color {
-            "Color Glyph Atlas Upload"
+            "Color Glyph Atlas Texture"
         } else {
-            "Glyph Atlas Upload"
+            "Glyph Atlas Texture"
         };
 
         let size = wgpu::Extent3d {
@@ -638,43 +768,128 @@ impl RenderThread {
             height,
             depth_or_array_layers: 1,
         };
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        self.queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bytes_per_row),
-                rows_per_image: Some(height),
-            },
-            size,
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // Ensure color placeholder exists on first grayscale upload.
-        if !is_color {
-            self.passes.cell_text.ensure_color_placeholder(&self.device, &self.queue);
-        }
-
-        if is_color {
-            self.passes.cell_text.update_color_atlas(&self.device, &view);
+        // Lazy texture creation: first call creates + does a full upload;
+        // subsequent calls reuse the texture.
+        let texture_slot = if is_color {
+            &mut self.color_atlas_texture
         } else {
-            self.passes.cell_text.update_grayscale_atlas(&self.device, &view);
+            &mut self.grayscale_atlas_texture
+        };
+        let first_upload = texture_slot.is_none();
+        let texture = if first_upload {
+            let t = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            *texture_slot = Some(t);
+            texture_slot.as_ref().unwrap()
+        } else {
+            texture_slot.as_ref().unwrap()
+        };
+
+        if first_upload {
+            // First call: full upload, then install the bind-group view.
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+                size,
+            );
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            if !is_color {
+                self.passes
+                    .cell_text
+                    .ensure_color_placeholder(&self.device, &self.queue);
+            }
+            if is_color {
+                self.passes.cell_text.update_color_atlas(&self.device, &view);
+            } else {
+                self.passes.cell_text.update_grayscale_atlas(&self.device, &view);
+            }
+            return;
         }
+
+        // Subsequent calls: per-region upload only.
+        if regions.is_empty() {
+            // Caller passed `dirty=false` but the upload was requested — fall
+            // back to a full write for safety.
+            log::debug!("PureTerm B3: full-atlas fallback upload (regions empty)");
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                data,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+                size,
+            );
+            return;
+        }
+
+        log::debug!(
+            "PureTerm B3: per-region upload, {} regions, {} bytes total",
+            regions.len(),
+            regions
+                .iter()
+                .map(|r| (r.w as usize) * (r.h as usize) * (bpp as usize))
+                .sum::<usize>()
+        );
+        for r in regions {
+            let extent = wgpu::Extent3d {
+                width: r.w,
+                height: r.h,
+                depth_or_array_layers: 1,
+            };
+            // Byte offset into the full atlas buffer for the region's
+            // top-left pixel. The source row stride stays at `bytes_per_row`
+            // because we slice from the same contiguous buffer.
+            let byte_offset = ((r.y as usize) * (bytes_per_row as usize))
+                + (r.x as usize) * (bpp as usize);
+            self.queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: r.x,
+                        y: r.y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &data[byte_offset..],
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(bytes_per_row),
+                    rows_per_image: Some(r.h),
+                },
+                extent,
+            );
+        }
+        // No `update_*_atlas` call: the texture view (and therefore the
+        // bind group) is unchanged. B3.4 keeps the bind group stable.
     }
 
     // ── Cursor blink ─────────────────────────────────────────────────────────

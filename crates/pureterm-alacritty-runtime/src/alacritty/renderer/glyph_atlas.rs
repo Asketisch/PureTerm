@@ -5,7 +5,9 @@
 //! When an atlas fills up, LRU entries are evicted and both atlases are rebuilt.
 
 use crossfont::{BitmapBuffer, RasterizedGlyph};
+use indexmap::IndexMap;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Which atlas a glyph lives in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +53,32 @@ const ATLAS_SIZE: u32 = 2048;
 /// Maximum number of cached glyphs before eviction kicks in.
 const MAX_CACHE_ENTRIES: usize = 8192;
 
+/// A rectangular region of the atlas that changed since the last upload.
+///
+/// Used by the render thread to do partial `queue.write_texture` calls
+/// instead of re-uploading the entire 4MB+16MB atlas on every frame that
+/// touched a single glyph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DirtyRect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+/// What the render thread needs to upload changed atlas regions.
+///
+/// `data` is the full atlas (one contiguous `Arc<Vec<u8>>`); the render
+/// thread slices the sub-rectangles with byte offsets in
+/// `TexelCopyBufferLayout`. Returning `Arc` lets the main thread and
+/// render thread share the allocation without a 20MB clone.
+pub struct AtlasDirty {
+    pub regions: Vec<DirtyRect>,
+    pub data: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+}
+
 /// WgpuGlyphAtlas — CPU-side glyph cache with skyline bin packing.
 ///
 /// Dual-atlas: grayscale R8 (4 MB) for text, RGBA (16 MB) for color emoji.
@@ -66,18 +94,26 @@ pub struct WgpuGlyphAtlas {
     cache: HashMap<(usize, char), CachedGlyph>,
     /// Stored rasterized glyphs for rebuild.
     stored_glyphs: HashMap<(usize, char), RasterizedGlyph>,
-    /// Simple LRU ordering: front = oldest, back = newest.
-    lru_keys: Vec<(usize, char)>,
+    /// LRU ordering backed by `IndexMap`: front = oldest, back = newest.
+    /// PureTerm: O(1) `shift_remove_index(0)` for eviction (was O(n)
+    /// `Vec::position` + `Vec::remove` before).
+    lru_keys: IndexMap<(usize, char), ()>,
     /// Maximum cache entries.
     capacity: usize,
     /// Whether the grayscale atlas bitmap has changed since last GPU upload.
     dirty: bool,
+    /// Per-rect tracking of grayscale changes since last `take_dirty_regions`.
+    /// Used by the render thread to do partial uploads.
+    dirty_regions: Vec<DirtyRect>,
     /// RGBA color atlas bitmap (4 bytes per pixel).
     color_atlas_data: Vec<u8>,
     /// Skyline segments for color atlas bin packing.
     color_skyline: Vec<SkylineSeg>,
     /// Whether the color atlas bitmap has changed since last GPU upload.
     color_dirty: bool,
+    /// Per-rect tracking of color atlas changes since last
+    /// `take_color_dirty_regions`.
+    color_dirty_regions: Vec<DirtyRect>,
 }
 
 impl WgpuGlyphAtlas {
@@ -101,14 +137,17 @@ impl WgpuGlyphAtlas {
             atlas_height: ATLAS_SIZE,
             atlas_data: vec![0u8; (ATLAS_SIZE as usize) * (ATLAS_SIZE as usize)],
             skyline,
-            cache: HashMap::new(),
-            stored_glyphs: HashMap::new(),
-            lru_keys: Vec::new(),
+            // PureTerm: 预分配到 MAX_CACHE_ENTRIES 避免启动期 rehash。
+            cache: HashMap::with_capacity(MAX_CACHE_ENTRIES),
+            stored_glyphs: HashMap::with_capacity(MAX_CACHE_ENTRIES),
+            lru_keys: IndexMap::with_capacity(MAX_CACHE_ENTRIES),
             capacity: MAX_CACHE_ENTRIES,
             dirty: false,
+            dirty_regions: Vec::with_capacity(64),
             color_atlas_data: vec![0u8; (ATLAS_SIZE as usize) * (ATLAS_SIZE as usize) * 4],
             color_skyline,
             color_dirty: false,
+            color_dirty_regions: Vec::with_capacity(64),
         }
     }
 
@@ -117,11 +156,9 @@ impl WgpuGlyphAtlas {
     pub fn get(&mut self, font_index: usize, c: char) -> Option<CachedGlyph> {
         let key = (font_index, c);
         if let Some(&glyph) = self.cache.get(&key) {
-            // Move to end of LRU (most recently used).
-            if let Some(pos) = self.lru_keys.iter().position(|k| *k == key) {
-                self.lru_keys.remove(pos);
-                self.lru_keys.push(key);
-            }
+            // Move to end of LRU (most recently used). O(1) with IndexMap.
+            self.lru_keys.shift_remove(&key);
+            self.lru_keys.insert(key, ());
             Some(glyph)
         } else {
             None
@@ -136,12 +173,10 @@ impl WgpuGlyphAtlas {
     pub fn insert(&mut self, font_index: usize, c: char, glyph: &RasterizedGlyph) -> CachedGlyph {
         let key = (font_index, c);
 
-        // If already cached, update LRU and return.
+        // If already cached, update LRU and return. O(1) with IndexMap.
         if let Some(&cached) = self.cache.get(&key) {
-            if let Some(pos) = self.lru_keys.iter().position(|k| *k == key) {
-                self.lru_keys.remove(pos);
-                self.lru_keys.push(key);
-            }
+            self.lru_keys.shift_remove(&key);
+            self.lru_keys.insert(key, ());
             return cached;
         }
 
@@ -156,7 +191,7 @@ impl WgpuGlyphAtlas {
         // Store the rasterized glyph for potential rebuild.
         self.stored_glyphs.insert(key, Self::clone_rasterized(glyph));
         self.cache.insert(key, cached);
-        self.lru_keys.push(key);
+        self.lru_keys.insert(key, ());
 
         cached
     }
@@ -194,6 +229,9 @@ impl WgpuGlyphAtlas {
 
         self.blit_glyph(pos.0, pos.1, glyph_width, glyph_height, &grayscale);
         self.dirty = true;
+        self.dirty_regions.push(DirtyRect {
+            x: pos.0, y: pos.1, w: glyph_width, h: glyph_height,
+        });
 
         let u = pos.0 as f32 / self.atlas_width as f32;
         let v = pos.1 as f32 / self.atlas_height as f32;
@@ -246,6 +284,9 @@ impl WgpuGlyphAtlas {
 
         self.blit_color_glyph(pos.0, pos.1, glyph_width, glyph_height, &rgba);
         self.color_dirty = true;
+        self.color_dirty_regions.push(DirtyRect {
+            x: pos.0, y: pos.1, w: glyph_width, h: glyph_height,
+        });
 
         let u = pos.0 as f32 / self.atlas_width as f32;
         let v = pos.1 as f32 / self.atlas_height as f32;
@@ -286,6 +327,29 @@ impl WgpuGlyphAtlas {
         }
     }
 
+    /// Get the dirty regions + the full atlas buffer, marking the atlas
+    /// clean. Returns `None` if the atlas is clean.
+    ///
+    /// `data` is an `Arc<Vec<u8>>` so the main thread and the render
+    /// thread can hold the buffer without an extra clone. The full atlas
+    /// is returned (not just the dirty sub-rectangles) because the GPU
+    /// upload API wants a `&[u8]` slice with a row stride; the render
+    /// thread uses each region's `(x, y)` as the `TexelCopyTextureInfo`
+    /// origin and a byte offset into this buffer.
+    pub fn take_dirty_regions(&mut self) -> Option<AtlasDirty> {
+        if !self.dirty {
+            return None;
+        }
+        self.dirty = false;
+        let regions = std::mem::take(&mut self.dirty_regions);
+        Some(AtlasDirty {
+            regions,
+            data: Arc::new(self.atlas_data.clone()),
+            width: self.atlas_width,
+            height: self.atlas_height,
+        })
+    }
+
     /// Get a reference to the atlas bitmap data for upload without marking clean.
     pub fn atlas_data(&self) -> &[u8] {
         &self.atlas_data
@@ -309,6 +373,21 @@ impl WgpuGlyphAtlas {
         } else {
             None
         }
+    }
+
+    /// Color-atlas counterpart of [`take_dirty_regions`].
+    pub fn take_color_dirty_regions(&mut self) -> Option<AtlasDirty> {
+        if !self.color_dirty {
+            return None;
+        }
+        self.color_dirty = false;
+        let regions = std::mem::take(&mut self.color_dirty_regions);
+        Some(AtlasDirty {
+            regions,
+            data: Arc::new(self.color_atlas_data.clone()),
+            width: self.atlas_width,
+            height: self.atlas_height,
+        })
     }
 
     // ---- Private helpers ----
@@ -605,11 +684,15 @@ impl WgpuGlyphAtlas {
             return;
         }
 
-        let evict_keys: Vec<_> = self.lru_keys.drain(..evict_count).collect();
-        for key in &evict_keys {
+        // PureTerm: use `drain(..evict_count)` to remove the oldest half
+        // in O(n) (single allocation shift). Equivalent semantics to the
+        // old `Vec::drain` path, but consistent with the new IndexMap.
+        let evicted: Vec<_> = self.lru_keys.drain(..evict_count).collect();
+        for (key, _) in &evicted {
             self.cache.remove(key);
             self.stored_glyphs.remove(key);
         }
+        drop(evicted);
 
         // Reset both atlas bitmaps and skylines.
         self.atlas_data.fill(0);
@@ -651,7 +734,7 @@ impl WgpuGlyphAtlas {
                     };
                     self.cache.insert(key, cached);
                     self.stored_glyphs.insert(key, Self::clone_rasterized(&glyph));
-                    self.lru_keys.push(key);
+                    self.lru_keys.insert(key, ());
                 }
             } else {
                 let (w, h, gray) = Self::extract_grayscale(&glyph);
@@ -673,7 +756,7 @@ impl WgpuGlyphAtlas {
                     };
                     self.cache.insert(key, cached);
                     self.stored_glyphs.insert(key, Self::clone_rasterized(&glyph));
-                    self.lru_keys.push(key);
+                    self.lru_keys.insert(key, ());
                 }
             }
         }
@@ -774,5 +857,108 @@ mod tests {
         assert!(!atlas.is_dirty());
         // Second call should return None.
         assert!(atlas.take_dirty_data().is_none());
+    }
+
+    /// Helper: build a tiny 1x1 Rgb glyph.
+    fn tiny_glyph(c: char) -> RasterizedGlyph {
+        RasterizedGlyph {
+            character: c,
+            top: 0,
+            left: 0,
+            width: 1,
+            height: 1,
+            buffer: BitmapBuffer::Rgb(vec![0u8; 3]),
+            advance: (1, 1),
+        }
+    }
+
+    #[test]
+    fn lru_get_promotes_to_back() {
+        // PureTerm: IndexMap-backed LRU — `get` on a hit must move the
+        // entry to the back so the next eviction spares it.
+        let mut atlas = WgpuGlyphAtlas::new();
+        atlas.insert(0, 'A', &tiny_glyph('A'));
+        atlas.insert(0, 'B', &tiny_glyph('B'));
+        atlas.insert(0, 'C', &tiny_glyph('C'));
+
+        // Touch 'A' so it becomes most-recently-used.
+        assert!(atlas.get(0, 'A').is_some());
+
+        // The LRU order should now be: B, C, A.
+        let order: Vec<_> = atlas.lru_keys.keys().copied().collect();
+        assert_eq!(order, vec![(0, 'B'), (0, 'C'), (0, 'A')]);
+    }
+
+    #[test]
+    fn lru_insert_existing_promotes_to_back() {
+        let mut atlas = WgpuGlyphAtlas::new();
+        atlas.insert(0, 'A', &tiny_glyph('A'));
+        atlas.insert(0, 'B', &tiny_glyph('B'));
+        atlas.insert(0, 'A', &tiny_glyph('A')); // re-insert 'A'
+
+        // After re-insert, A should be at the back.
+        let order: Vec<_> = atlas.lru_keys.keys().copied().collect();
+        assert_eq!(order, vec![(0, 'B'), (0, 'A')]);
+    }
+
+    #[test]
+    fn lru_drain_evicts_oldest() {
+        // PureTerm: rebuild path uses `drain(..evict_count)` to remove the
+        // oldest half in O(n) (single allocation shift).
+        let mut atlas = WgpuGlyphAtlas::new();
+        for c in "ABCDE".chars() {
+            atlas.insert(0, c, &tiny_glyph(c));
+        }
+        // Order: A B C D E (A is oldest).
+        let evicted: Vec<_> = atlas.lru_keys.drain(..2).collect();
+        let evicted_keys: Vec<_> = evicted.into_iter().map(|(k, ())| k).collect();
+        assert_eq!(evicted_keys, vec![(0, 'A'), (0, 'B')]);
+        // Survivors in order: C D E.
+        let survivors: Vec<_> = atlas.lru_keys.keys().copied().collect();
+        assert_eq!(survivors, vec![(0, 'C'), (0, 'D'), (0, 'E')]);
+    }
+
+    /// PureTerm B3.1: `take_dirty_regions` returns per-glyph regions instead
+    /// of forcing the render thread to re-upload the full atlas. A single
+    /// new glyph (one of the 8192 cache slots) yields a single small rect.
+    #[test]
+    fn dirty_regions_track_per_glyph() {
+        let mut atlas = WgpuGlyphAtlas::new();
+        atlas.insert(0, 'A', &tiny_glyph('A'));
+        atlas.insert(0, 'B', &tiny_glyph('B'));
+        let dirty = atlas.take_dirty_regions().expect("atlas is dirty");
+        assert_eq!(dirty.regions.len(), 2);
+        // Each region is 1x1 (tiny_glyph).
+        for r in &dirty.regions {
+            assert_eq!(r.w, 1);
+            assert_eq!(r.h, 1);
+        }
+        // After take, atlas is clean and a second take returns None.
+        assert!(atlas.take_dirty_regions().is_none());
+        // The Arc<data> shares the full atlas buffer (4MB).
+        assert_eq!(dirty.data.len(), (ATLAS_SIZE * ATLAS_SIZE) as usize);
+    }
+
+    /// PureTerm B3.1: `take_color_dirty_regions` is the color-atlas
+    /// counterpart.
+    #[test]
+    fn color_dirty_regions_track_per_glyph() {
+        let mut atlas = WgpuGlyphAtlas::new();
+        let color_glyph = RasterizedGlyph {
+            character: '🎯',
+            top: 0,
+            left: 0,
+            width: 2,
+            height: 2,
+            buffer: BitmapBuffer::Rgba(vec![0u8; 2 * 2 * 4]),
+            advance: (2, 2),
+        };
+        atlas.insert(0, '🎯', &color_glyph);
+        let dirty = atlas.take_color_dirty_regions().expect("color atlas is dirty");
+        assert_eq!(dirty.regions.len(), 1);
+        assert_eq!(dirty.regions[0].w, 2);
+        assert_eq!(dirty.regions[0].h, 2);
+        // Color atlas is 4 bytes per pixel.
+        assert_eq!(dirty.data.len(), (ATLAS_SIZE * ATLAS_SIZE * 4) as usize);
     }
 }

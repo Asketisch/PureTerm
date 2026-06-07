@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use iced::widget::{
-    button, column, container, image, row, rule, scrollable, space, stack, text, Stack,
+    button, column, container, image, row, rule, scrollable, space, stack, text,
 };
 use iced::{window, ContentFit, Element, Length, Padding, Task};
 

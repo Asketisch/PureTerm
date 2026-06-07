@@ -10,7 +10,9 @@
 //! - Uses crossfont for rasterization (separate from shaping)
 //! - HarfBuzz is only for computing glyph positions and substitutions
 
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use alacritty_terminal::index::Point;
 use fontdb::Database;
@@ -78,10 +80,13 @@ pub struct ShapedGlyph {
 }
 
 /// A shaped text run.
+///
+/// `text` carries the original codepoints. PureTerm uses `Cow<'a, str>` instead
+/// of `String` so the common borrowed-input path skips a heap allocation per run.
 #[derive(Clone, Debug)]
-pub struct ShapedRun {
+pub struct ShapedRun<'a> {
     /// The codepoints that were shaped.
-    pub text: String,
+    pub text: Cow<'a, str>,
     /// Shaped glyphs in visual order.
     pub glyphs: Vec<ShapedGlyph>,
     /// Font index in the atlas.
@@ -136,8 +141,21 @@ impl ShapedGlyphCache {
 /// Shapes text runs using HarfBuzz, returning glyph positions for correct
 /// rendering of complex scripts and ligatures.
 pub struct HarfBuzzShaper {
-    /// Cached font face data per fontdb face ID.
-    face_data: HashMap<fontdb::ID, Vec<u8>>,
+    /// Cached font face data per fontdb face ID, wrapped in `Arc` so the
+    /// bytes can outlive a single `shape()` call when handed to HarfBuzz
+    /// (`HB_MEMORY_MODE_READONLY` borrows the pointer, no copy).
+    face_data: HashMap<fontdb::ID, Arc<Vec<u8>>>,
+    /// Parsed `ttf_parser::Face` per fontdb face ID. Skips the parse step
+    /// in `face_has_codepoint` on cache hit (the hot path during font
+    /// fallback resolution).
+    ///
+    /// SAFETY invariant: each `Face<'static>` here borrows from the
+    /// corresponding `Arc<Vec<u8>>` in `face_data`. The lifetime is
+    /// extended to `'static` via `mem::transmute`; the invariant is
+    /// upheld because (a) `face_data` is never cleared partially (only
+    /// via `clear_cache` which clears both maps), and (b) `Arc` keeps
+    /// the bytes alive as long as any `Face` exists in this map.
+    parsed_faces: HashMap<fontdb::ID, ttf_parser::Face<'static>>,
     /// fontdb for font file lookups.
     fontdb: Database,
 }
@@ -149,12 +167,14 @@ impl HarfBuzzShaper {
         fontdb.load_system_fonts();
         Self {
             face_data: HashMap::new(),
+            parsed_faces: HashMap::new(),
             fontdb,
         }
     }
 
-    /// Load font file data for a fontdb face.
-    fn load_face_data(&mut self, face_id: fontdb::ID) -> Option<Vec<u8>> {
+    /// Load font file data for a fontdb face. Returns `Arc<Vec<u8>>` so the
+    /// caller can hand the bytes to HarfBuzz without copying.
+    fn load_face_data(&mut self, face_id: fontdb::ID) -> Option<Arc<Vec<u8>>> {
         if let Some(data) = self.face_data.get(&face_id) {
             return Some(data.clone());
         }
@@ -170,33 +190,51 @@ impl HarfBuzzShaper {
             fontdb::Source::SharedFile(ref path, _) => std::fs::read(path).ok()?,
         };
 
-        ttf_parser::Face::parse(&data, index).ok()?;
-        self.face_data.insert(face_id, data.clone());
-        Some(data)
+        let arc = Arc::new(data);
+
+        // Parse the ttf_parser face while the Arc is local. We then store
+        // both: `arc` in `face_data`, the `Face` borrowing from it in
+        // `parsed_faces`. The `Face` lifetime is extended to `'static` via
+        // `mem::transmute`; this is sound because the Arc keeps the bytes
+        // alive as long as the Face is reachable through this map.
+        let parsed: ttf_parser::Face<'_> = ttf_parser::Face::parse(&arc, index).ok()?;
+        // SAFETY: see the field-level doc comment on `parsed_faces`.
+        let parsed_static: ttf_parser::Face<'static> = unsafe { std::mem::transmute(parsed) };
+
+        self.face_data.insert(face_id, arc.clone());
+        self.parsed_faces.insert(face_id, parsed_static);
+        Some(arc)
     }
 
     /// Find the fontdb face ID for a given codepoint.
-    fn find_face_for_codepoint(&self, cp: u32, families: &[&str]) -> Option<fontdb::ID> {
+    fn find_face_for_codepoint(&mut self, cp: u32, families: &[&str]) -> Option<fontdb::ID> {
         // Convert codepoint to char for lookup.
         let c = char::from_u32(cp).unwrap_or('\u{FFFD}');
 
-        // Try specified families first.
+        // Collect face IDs matching the requested families first to avoid
+        // borrowing `self.fontdb` while also calling `face_has_codepoint`
+        // (which needs `&mut self`).
+        let mut family_match_ids: Vec<fontdb::ID> = Vec::new();
         for family in families {
             for face_info in self.fontdb.faces() {
                 for (fam, _) in &face_info.families {
                     if fam == *family {
-                        if self.face_has_codepoint(face_info.id, c) {
-                            return Some(face_info.id);
-                        }
+                        family_match_ids.push(face_info.id);
                     }
                 }
             }
         }
+        for id in &family_match_ids {
+            if self.face_has_codepoint(*id, c) {
+                return Some(*id);
+            }
+        }
 
         // Generic fallback - any face that has this codepoint.
-        for face_info in self.fontdb.faces() {
-            if self.face_has_codepoint(face_info.id, c) {
-                return Some(face_info.id);
+        let all_ids: Vec<fontdb::ID> = self.fontdb.faces().map(|f| f.id).collect();
+        for id in &all_ids {
+            if self.face_has_codepoint(*id, c) {
+                return Some(*id);
             }
         }
 
@@ -204,28 +242,19 @@ impl HarfBuzzShaper {
     }
 
     /// Check if a fontdb face supports a codepoint.
-    fn face_has_codepoint(&self, face_id: fontdb::ID, c: char) -> bool {
-        let (source, index) = match self.fontdb.face_source(face_id) {
-            Some(s) => s,
-            None => return false,
-        };
-
-        let data: Option<Vec<u8>> = match source {
-            fontdb::Source::File(ref path) => std::fs::read(path).ok(),
-            fontdb::Source::Binary(ref bytes) => {
-                let bytes_ref: &dyn AsRef<[u8]> = bytes.as_ref();
-                Some(bytes_ref.as_ref().to_vec())
-            },
-            fontdb::Source::SharedFile(ref path, _) => std::fs::read(path).ok(),
-        };
-
-        let data = match data {
-            Some(d) => d,
-            None => return false,
-        };
-
-        ttf_parser::Face::parse(&data, index)
-            .ok()
+    fn face_has_codepoint(&mut self, face_id: fontdb::ID, c: char) -> bool {
+        // PureTerm: use the cached `parsed_faces` to avoid re-parsing the
+        // font file on every codepoint lookup (called hundreds of times
+        // per `shape()` while resolving font fallback).
+        if let Some(face) = self.parsed_faces.get(&face_id) {
+            return face.glyph_index(c).is_some();
+        }
+        // Cache miss: populate via `load_face_data` which parses + caches.
+        if self.load_face_data(face_id).is_none() {
+            return false;
+        }
+        self.parsed_faces
+            .get(&face_id)
             .and_then(|face| face.glyph_index(c))
             .is_some()
     }
@@ -237,7 +266,12 @@ impl HarfBuzzShaper {
     ///
     /// The `families` slice provides font family names to try, in order.
     /// On macOS, the first match wins (e.g. "PingFang SC" for CJK).
-    pub fn shape(&mut self, text: &str, font_index: usize, families: &[&str]) -> ShapedRun {
+    pub fn shape<'a>(
+        &mut self,
+        text: &'a str,
+        font_index: usize,
+        families: &[&str],
+    ) -> ShapedRun<'a> {
         // Find a suitable face for this text.
         let face_id = text.chars().next().and_then(|c| {
             self.find_face_for_codepoint(c as u32, families)
@@ -245,20 +279,18 @@ impl HarfBuzzShaper {
 
         let Some(face_id) = face_id else {
             // No suitable font found - fallback to no shaping.
-            let glyphs = text
-                .chars()
-                .enumerate()
-                .map(|(i, c)| ShapedGlyph {
-                    glyph_index: c as u32,
-                    x_offset: 0.0,
-                    y_offset: 0.0,
-                    x_advance: 0.0,
-                    cluster: i as u32,
-                    is_cluster_end: true,
-                })
-                .collect();
+            // PureTerm: 预分配 text.len()（UTF-8 字节上界即 char 上界）。
+            let mut glyphs: Vec<ShapedGlyph> = Vec::with_capacity(text.len());
+            glyphs.extend(text.chars().enumerate().map(|(i, c)| ShapedGlyph {
+                glyph_index: c as u32,
+                x_offset: 0.0,
+                y_offset: 0.0,
+                x_advance: 0.0,
+                cluster: i as u32,
+                is_cluster_end: true,
+            }));
             return ShapedRun {
-                text: text.to_string(),
+                text: Cow::Borrowed(text),
                 glyphs,
                 font_index,
             };
@@ -267,13 +299,14 @@ impl HarfBuzzShaper {
         // Load font data and create HarfBuzz objects.
         let Some(font_data) = self.load_face_data(face_id) else {
             return ShapedRun {
-                text: text.to_string(),
+                text: Cow::Borrowed(text),
                 glyphs: Vec::new(),
                 font_index,
             };
         };
 
-        // Create blob.
+        // Create blob. `font_data` is `Arc<Vec<u8>>` — the bytes stay alive
+        // for the lifetime of `blob` because we hold the Arc locally.
         let blob = unsafe {
             hb_blob_create(
                 font_data.as_ptr() as *const std::ffi::c_char,
@@ -286,7 +319,7 @@ impl HarfBuzzShaper {
 
         if blob.is_null() {
             return ShapedRun {
-                text: text.to_string(),
+                text: Cow::Borrowed(text),
                 glyphs: Vec::new(),
                 font_index,
             };
@@ -298,7 +331,7 @@ impl HarfBuzzShaper {
         if face.is_null() {
             unsafe { hb_blob_destroy(blob); }
             return ShapedRun {
-                text: text.to_string(),
+                text: Cow::Borrowed(text),
                 glyphs: Vec::new(),
                 font_index,
             };
@@ -313,7 +346,7 @@ impl HarfBuzzShaper {
                 hb_blob_destroy(blob);
             }
             return ShapedRun {
-                text: text.to_string(),
+                text: Cow::Borrowed(text),
                 glyphs: Vec::new(),
                 font_index,
             };
@@ -336,7 +369,7 @@ impl HarfBuzzShaper {
                 hb_blob_destroy(blob);
             }
             return ShapedRun {
-                text: text.to_string(),
+                text: Cow::Borrowed(text),
                 glyphs: Vec::new(),
                 font_index,
             };
@@ -375,7 +408,7 @@ impl HarfBuzzShaper {
                 hb_blob_destroy(blob);
             }
             return ShapedRun {
-                text: text.to_string(),
+                text: Cow::Borrowed(text),
                 glyphs: Vec::new(),
                 font_index,
             };
@@ -399,7 +432,7 @@ impl HarfBuzzShaper {
                 hb_blob_destroy(blob);
             }
             return ShapedRun {
-                text: text.to_string(),
+                text: Cow::Borrowed(text),
                 glyphs: Vec::new(),
                 font_index,
             };
@@ -407,38 +440,38 @@ impl HarfBuzzShaper {
 
         // Build ShapedGlyph list from HarfBuzz output.
         let glyph_count = glyph_count as usize;
-        let glyphs: Vec<ShapedGlyph> = (0..glyph_count)
-            .map(|i| {
-                let info = unsafe { &*glyph_infos_ptr.add(i) };
-                let pos = if glyph_positions_ptr.is_null() {
-            &hb_glyph_position_t {
-                        x_advance: 0,
-                        y_advance: 0,
-                        x_offset: 0,
-                        y_offset: 0,
-                        var: hb_var_int_t { u32: 0 },
-                    }
-                } else {
-                    unsafe { &*glyph_positions_ptr.add(i) }
-                };
-
-                let is_cluster_end = if i + 1 < glyph_count {
-                    let next_info = unsafe { &*glyph_infos_ptr.add(i + 1) };
-                    next_info.cluster != info.cluster
-                } else {
-                    true
-                };
-
-                ShapedGlyph {
-                    glyph_index: info.codepoint,
-                    x_offset: pos.x_offset as f32 / 64.0,
-                    y_offset: pos.y_offset as f32 / 64.0,
-                    x_advance: pos.x_advance as f32 / 64.0,
-                    cluster: info.cluster,
-                    is_cluster_end,
+        // PureTerm: 预分配 glyph_count 容量，避免 Vec 在 collect 中扩容。
+        let mut glyphs: Vec<ShapedGlyph> = Vec::with_capacity(glyph_count);
+        glyphs.extend((0..glyph_count).map(|i| {
+            let info = unsafe { &*glyph_infos_ptr.add(i) };
+            let pos = if glyph_positions_ptr.is_null() {
+        &hb_glyph_position_t {
+                    x_advance: 0,
+                    y_advance: 0,
+                    x_offset: 0,
+                    y_offset: 0,
+                    var: hb_var_int_t { u32: 0 },
                 }
-            })
-            .collect();
+            } else {
+                unsafe { &*glyph_positions_ptr.add(i) }
+            };
+
+            let is_cluster_end = if i + 1 < glyph_count {
+                let next_info = unsafe { &*glyph_infos_ptr.add(i + 1) };
+                next_info.cluster != info.cluster
+            } else {
+                true
+            };
+
+            ShapedGlyph {
+                glyph_index: info.codepoint,
+                x_offset: pos.x_offset as f32 / 64.0,
+                y_offset: pos.y_offset as f32 / 64.0,
+                x_advance: pos.x_advance as f32 / 64.0,
+                cluster: info.cluster,
+                is_cluster_end,
+            }
+        }));
 
         // Cleanup.
         unsafe {
@@ -449,7 +482,7 @@ impl HarfBuzzShaper {
         }
 
         ShapedRun {
-            text: text.to_string(),
+            text: Cow::Borrowed(text),
             glyphs,
             font_index,
         }
@@ -460,6 +493,7 @@ impl HarfBuzzShaper {
     /// Call this when font configuration changes.
     pub fn clear_cache(&mut self) {
         self.face_data.clear();
+        self.parsed_faces.clear();
     }
 }
 

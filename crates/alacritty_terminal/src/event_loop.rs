@@ -13,6 +13,7 @@ use std::time::Instant;
 
 use log::error;
 use polling::{Event as PollingEvent, Events, PollMode, Poller};
+use smallvec::SmallVec;
 
 use crate::event::{self, Event, EventListener, ShellMark, ShellMarkKind, WindowSize};
 use crate::sync::FairMutex;
@@ -514,8 +515,11 @@ struct RawMark {
 }
 
 /// Scan raw bytes for OSC 133 sequences: `\x1b]133;X[;params]\x07` or `\x1b]133;X[;params]\x1b\\`.
-fn scan_osc133(buf: &[u8]) -> Vec<RawMark> {
-    let mut marks = Vec::new();
+///
+/// PureTerm: returns `SmallVec<[_; 4]>` because most PTY reads contain zero or one
+/// shell-integration mark; the inline buffer keeps the no-mark case on the stack.
+fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
+    let mut marks: SmallVec<[RawMark; 4]> = SmallVec::new();
     let prefix = b"\x1b]133;";
     let mut i = 0;
     while i + prefix.len() < buf.len() {
@@ -644,5 +648,40 @@ mod tests_osc133 {
         let buf = b"\x1b]133;D;exit=127\x07";
         let marks = scan_osc133(buf);
         assert_eq!(marks[0].exit_code, Some(127));
+    }
+}
+
+#[cfg(test)]
+mod tests_pty_write_arc {
+    //! Verify that `Event::PtyWrite` payloads are wrapped in `Arc<String>` so
+    //! multi-window fan-out clones a pointer (atomic increment) instead of
+    //! duplicating the heap allocation.
+
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn pty_write_clone_shares_allocation() {
+        let event = Event::PtyWrite(Arc::new("\x1b[?6c".to_string()));
+
+        // Clone the event 100 times — this simulates a 100-window fan-out.
+        let clones: Vec<_> = (0..100).map(|_| event.clone()).collect();
+
+        // Every clone holds the same underlying `String` via `Arc`.
+        // The original + 100 clones = 101 strong references.
+        if let Event::PtyWrite(text) = &event {
+            assert_eq!(Arc::strong_count(text), 101, "fan-out must share Arc");
+        } else {
+            panic!("unexpected variant");
+        }
+
+        // All clones deref to the same bytes — no per-clone heap copy.
+        for clone in &clones {
+            if let Event::PtyWrite(text) = clone {
+                assert_eq!(text.as_str(), "\x1b[?6c");
+            } else {
+                panic!("unexpected variant");
+            }
+        }
     }
 }

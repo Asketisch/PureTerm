@@ -447,7 +447,7 @@ impl<T: EventListener> Execute<T> for Action {
             Action::Ssh(SshAction::Connect) => {
                 // Dispatch SSH connection dialog via event system.
                 let event = crate::event::Event::new(
-                    crate::event::EventType::Ssh(String::new()),
+                    crate::event::EventType::Ssh(std::sync::Arc::new(String::new())),
                     Some(ctx.window().id()),
                 );
                 let timer_id = TimerId::new(Topic::Frame, ctx.window().id());

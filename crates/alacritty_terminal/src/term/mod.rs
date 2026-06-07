@@ -1,5 +1,6 @@
 //! Exports the `Term` type which is a high-level API for the Grid.
 
+use std::fmt::Write as _;
 use std::ops::{Index, IndexMut, Range};
 use std::sync::Arc;
 use std::{cmp, mem, ptr, slice, str};
@@ -1264,13 +1265,16 @@ impl<T: EventListener> Handler for Term<T> {
             None => {
                 trace!("Reporting primary device attributes");
                 let text = String::from("\x1b[?6c");
-                self.event_proxy.send_event(Event::PtyWrite(text));
+                self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
             },
             Some('>') => {
                 trace!("Reporting secondary device attributes");
                 let version = version_number(env!("CARGO_PKG_VERSION"));
-                let text = format!("\x1b[>0;{version};1c");
-                self.event_proxy.send_event(Event::PtyWrite(text));
+                // PureTerm: avoid an extra format machinery allocation; the response
+                // never exceeds 32 bytes.
+                let mut text = String::with_capacity(32);
+                let _ = write!(text, "\x1b[>0;{version};1c");
+                self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
             },
             _ => debug!("Unsupported device attributes intermediate"),
         }
@@ -1285,8 +1289,9 @@ impl<T: EventListener> Handler for Term<T> {
         trace!("Reporting active keyboard mode");
         let current_mode =
             self.keyboard_mode_stack.last().unwrap_or(&KeyboardModes::NO_MODE).bits();
-        let text = format!("\x1b[?{current_mode}u");
-        self.event_proxy.send_event(Event::PtyWrite(text));
+        let mut text = String::with_capacity(16);
+        let _ = write!(text, "\x1b[?{current_mode}u");
+        self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
     }
 
     #[inline]
@@ -1339,12 +1344,13 @@ impl<T: EventListener> Handler for Term<T> {
         match arg {
             5 => {
                 let text = String::from("\x1b[0n");
-                self.event_proxy.send_event(Event::PtyWrite(text));
+                self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
             },
             6 => {
                 let pos = self.grid.cursor.point;
-                let text = format!("\x1b[{};{}R", pos.line + 1, pos.column + 1);
-                self.event_proxy.send_event(Event::PtyWrite(text));
+                let mut text = String::with_capacity(32);
+                let _ = write!(text, "\x1b[{};{}R", pos.line + 1, pos.column + 1);
+                self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
             },
             _ => debug!("unknown device status query: {arg}"),
         };
@@ -1684,10 +1690,13 @@ impl<T: EventListener> Handler for Term<T> {
         self.event_proxy.send_event(Event::ColorRequest(
             index,
             Arc::new(move |color| {
-                format!(
+                let mut s = String::with_capacity(40);
+                let _ = write!(
+                    s,
                     "\x1b]{};rgb:{1:02x}{1:02x}/{2:02x}{2:02x}/{3:02x}{3:02x}{4}",
                     prefix, color.r, color.g, color.b, terminator
-                )
+                );
+                s
             }),
         ));
     }
@@ -1746,7 +1755,9 @@ impl<T: EventListener> Handler for Term<T> {
             clipboard_type,
             Arc::new(move |text| {
                 let base64 = Base64.encode(text);
-                format!("\x1b]52;{};{}{}", clipboard as char, base64, terminator)
+                let mut s = String::with_capacity(base64.len() + 16 + terminator.len());
+                let _ = write!(s, "\x1b]52;{};{}{}", clipboard as char, base64, terminator);
+                s
             }),
         ));
     }
@@ -2092,11 +2103,9 @@ impl<T: EventListener> Handler for Term<T> {
             PrivateMode::Unknown(_) => ModeState::NotSupported,
         };
 
-        self.event_proxy.send_event(Event::PtyWrite(format!(
-            "\x1b[?{};{}$y",
-            mode.raw(),
-            state as u8,
-        )));
+        let mut text = String::with_capacity(24);
+        let _ = write!(text, "\x1b[?{};{}$y", mode.raw(), state as u8);
+        self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
     }
 
     #[inline]
@@ -2149,11 +2158,9 @@ impl<T: EventListener> Handler for Term<T> {
             ansi::Mode::Unknown(_) => ModeState::NotSupported,
         };
 
-        self.event_proxy.send_event(Event::PtyWrite(format!(
-            "\x1b[{};{}$y",
-            mode.raw(),
-            state as u8,
-        )));
+        let mut text = String::with_capacity(24);
+        let _ = write!(text, "\x1b[{};{}$y", mode.raw(), state as u8);
+        self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
     }
 
     #[inline]
@@ -2265,14 +2272,17 @@ impl<T: EventListener> Handler for Term<T> {
         self.event_proxy.send_event(Event::TextAreaSizeRequest(Arc::new(move |window_size| {
             let height = window_size.num_lines * window_size.cell_height;
             let width = window_size.num_cols * window_size.cell_width;
-            format!("\x1b[4;{height};{width}t")
+            let mut s = String::with_capacity(32);
+            let _ = write!(s, "\x1b[4;{height};{width}t");
+            s
         })));
     }
 
     #[inline]
     fn text_area_size_chars(&mut self) {
-        let text = format!("\x1b[8;{};{}t", self.screen_lines(), self.columns());
-        self.event_proxy.send_event(Event::PtyWrite(text));
+        let mut text = String::with_capacity(32);
+        let _ = write!(text, "\x1b[8;{};{}t", self.screen_lines(), self.columns());
+        self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
     }
 }
 
