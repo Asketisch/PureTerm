@@ -152,8 +152,8 @@ const TAB_BAR_HEIGHT: f32 = 32.0;
 pub struct DragState {
     /// 拖拽的分割线所属的 tab。
     pub tab_id: TabId,
-    /// 拖拽的分割线左边/上边的 pane。
-    pub first_pane: PaneId,
+    /// 被拖拽的 Split 节点 ID（用于精确定位）。
+    pub split_id: u64,
     /// 分割线方向。
     pub direction: SplitDirection,
     /// 分割线在屏幕上的坐标（Horizontal 取 x，Vertical 取 y）。
@@ -476,25 +476,14 @@ impl PureTermApp {
                 }
                 self.last_resize_time = Some(Instant::now());
 
-                let gs = self.glyph_state.borrow();
-                let cw = gs.cell_width as u16;
-                let ch = gs.cell_height as u16;
-                drop(gs);
-
+                // 取出 self 数据后，再 mut 借用 tabs
+                let cw: u16 = self.glyph_state.borrow().cell_width as u16;
+                let ch: u16 = self.glyph_state.borrow().cell_height as u16;
                 let terminal_height = (size.height - TAB_BAR_HEIGHT).max(0.0);
 
                 // Resize all panes in all tabs based on their layout
                 for tab in &mut self.tabs {
-                    let layout = tab.split_tree.compute_layout(
-                        0.0, 0.0, size.width, terminal_height,
-                    );
-                    for (pane_id, rect) in &layout {
-                        if let Some(pane) = tab.panes.get(pane_id) {
-                            let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
-                            let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                            pane.terminal_ctx.resize(cols, rows, cw, ch);
-                        }
-                    }
+                    Self::resize_panes_in_tab(tab, size.width, terminal_height, cw, ch);
                 }
             }
             Message::WindowClosed(win_id) => {
@@ -537,19 +526,14 @@ impl PureTermApp {
                     let ch = gs.cell_height as u16;
                     drop(gs);
 
+                    // 取出 self 数据后，再 mut 借用 tabs
+                    let terminal_height =
+                        (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                    let viewport_w = self.viewport_size.width;
+
                     // Resize all panes in all tabs with new cell dimensions
-                    let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
                     for tab in &mut self.tabs {
-                        let layout = tab.split_tree.compute_layout(
-                            0.0, 0.0, self.viewport_size.width, terminal_height,
-                        );
-                        for (pane_id, rect) in &layout {
-                            if let Some(pane) = tab.panes.get(pane_id) {
-                                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
-                                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                                pane.terminal_ctx.resize(cols, rows, cw, ch);
-                            }
-                        }
+                        Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
                     }
                 }
             }
@@ -922,11 +906,11 @@ impl PureTermApp {
                 }
             }
             Message::DividerPress(mut drag) => {
-                // 在按下时计算分割线屏幕位置和可用大小
+                // 在按下时通过 split_id 找到分割线屏幕位置和可用大小
                 if let Some(tab) = self.tabs.iter().find(|t| t.id == drag.tab_id) {
                     let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
-                    if let Some(divider) = tab.split_tree.compute_divider_for_pane(
-                        drag.first_pane,
+                    if let Some(divider) = tab.split_tree.compute_divider_by_split_id(
+                        drag.split_id,
                         0.0, 0.0,
                         self.viewport_size.width, terminal_height,
                     ) {
@@ -959,8 +943,17 @@ impl PureTermApp {
                     let new_ratio = (drag.start_ratio + delta_ratio)
                         .clamp(MIN_RATIO, MAX_RATIO);
 
+                    // 必须在 mut borrow 之前先取出 self 数据，避免借用冲突
+                    let cw: u16 = self.glyph_state.borrow().cell_width as u16;
+                    let ch: u16 = self.glyph_state.borrow().cell_height as u16;
+                    let viewport_w = self.viewport_size.width;
+                    let terminal_height =
+                        (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == drag.tab_id) {
-                        Self::update_ratio_for_pane(&mut tab.split_tree, drag.first_pane, new_ratio);
+                        tab.split_tree.update_split_ratio_by_id(drag.split_id, new_ratio);
+                        // 同步 resize PTY，让 term 网格与视觉 bounds 同步，避免拖动时字体变形
+                        Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
                     }
                 } else {
                     // 没有拖拽时只更新 last_cursor_pos
@@ -1358,6 +1351,32 @@ impl PureTermApp {
 
     // ── Split pane helpers ──────────────────────────────────────────
 
+    /// 根据当前 split_tree 布局，重新 resize tab 中所有 pane 的 PTY。
+    /// 在拖动分割线、窗口 resize、分屏/关闭 pane 等情况后调用，
+    /// 让 term 网格的 cols/rows 与视觉 bounds 保持一致。
+    ///
+    /// `cw`/`ch` 是当前 cell 尺寸（像素）。`viewport_w` 是窗口宽度，
+    /// `terminal_height` 是 tab bar 以下的可用高度。
+    /// 接收显式参数以避免借用冲突（调用方在 mut 借用之前取出 self 数据）。
+    fn resize_panes_in_tab(
+        tab: &mut Tab,
+        viewport_w: f32,
+        terminal_height: f32,
+        cw: u16,
+        ch: u16,
+    ) {
+        let layout = tab.split_tree.compute_layout(
+            0.0, 0.0, viewport_w, terminal_height,
+        );
+        for (pane_id, rect) in &layout {
+            if let Some(pane) = tab.panes.get(pane_id) {
+                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                pane.terminal_ctx.resize(cols, rows, cw, ch);
+            }
+        }
+    }
+
     /// Split the active pane in the given direction.
     fn split_pane(&mut self, direction: SplitDirection) {
         let active_tab_id = self.active_tab;
@@ -1487,26 +1506,6 @@ impl PureTermApp {
                 let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
                 let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
                 pane.terminal_ctx.resize(cols, rows, cw, ch);
-            }
-        }
-    }
-
-    /// Update the ratio of the Split node that directly parents the given pane.
-    fn update_ratio_for_pane(node: &mut SplitNode, first_pane: PaneId, new_ratio: f32) {
-        match node {
-            SplitNode::Leaf(_) => {}
-            SplitNode::Split { ratio, first, second, .. } => {
-                if let SplitNode::Leaf(id) = first.as_ref() {
-                    if *id == first_pane {
-                        *ratio = new_ratio;
-                        return;
-                    }
-                }
-                if first.contains(first_pane) {
-                    Self::update_ratio_for_pane(first, first_pane, new_ratio);
-                } else {
-                    Self::update_ratio_for_pane(second, first_pane, new_ratio);
-                }
             }
         }
     }
@@ -2089,40 +2088,63 @@ impl PureTermApp {
 
     /// Render the split tree for a tab.
     fn view_split_tree(&self, tab: &Tab) -> Element<'_, Message, Theme, iced::Renderer> {
-        self.view_node(&tab.split_tree, tab.active_pane, tab.id)
+        let terminal_h = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        self.view_node(&tab.split_tree, tab.active_pane, tab.id, self.viewport_size.width, terminal_h)
     }
 
     /// Recursively render a split node.
+    /// `avail_w`/`avail_h` 是当前节点可用的像素宽高，与 `compute_layout` 使用相同公式，
+    /// 确保 Iced 视图布局与 PTY 网格尺寸完全一致，消除拖拽抖动。
     fn view_node(
         &self,
         node: &SplitNode,
         active_pane: PaneId,
         tab_id: TabId,
+        avail_w: f32,
+        avail_h: f32,
     ) -> Element<'_, Message, Theme, iced::Renderer> {
         match node {
             SplitNode::Leaf(pane_id) => {
                 self.view_pane(*pane_id, active_pane == *pane_id)
             }
-            SplitNode::Split { direction, ratio, first, second } => {
-                let first_el = self.view_node(first, active_pane, tab_id);
-                let second_el = self.view_node(second, active_pane, tab_id);
-
-                // Create divider
-                let first_pane_id = first.first_pane();
-                let divider_el = self.view_divider(*direction, *ratio, tab_id, first_pane_id);
-
+            SplitNode::Split { split_id, direction, ratio, first, second } => {
                 match direction {
                     SplitDirection::Horizontal => {
-                        row!(first_el, divider_el, second_el)
-                            .width(Length::Fill)
-                            .height(Length::Fill)
-                            .into()
+                        // 与 layout_recursive 完全相同的像素计算
+                        let usable = avail_w - DIVIDER_HIT_WIDTH;
+                        let w1 = usable * ratio;
+                        let w2 = usable - w1;
+
+                        let first_el = self.view_node(first, active_pane, tab_id, w1, avail_h);
+                        let second_el = self.view_node(second, active_pane, tab_id, w2, avail_h);
+                        let divider_el = self.view_divider(*split_id, *direction, *ratio, tab_id);
+
+                        row!(
+                            container(first_el).width(Length::Fixed(w1)),
+                            divider_el,
+                            container(second_el).width(Length::Fixed(w2)),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into()
                     }
                     SplitDirection::Vertical => {
-                        column!(first_el, divider_el, second_el)
-                            .width(Length::Fill)
-                            .height(Length::Fill)
-                            .into()
+                        let usable = avail_h - DIVIDER_HIT_WIDTH;
+                        let h1 = usable * ratio;
+                        let h2 = usable - h1;
+
+                        let first_el = self.view_node(first, active_pane, tab_id, avail_w, h1);
+                        let second_el = self.view_node(second, active_pane, tab_id, avail_w, h2);
+                        let divider_el = self.view_divider(*split_id, *direction, *ratio, tab_id);
+
+                        column!(
+                            container(first_el).height(Length::Fixed(h1)),
+                            divider_el,
+                            container(second_el).height(Length::Fixed(h2)),
+                        )
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .into()
                     }
                 }
             }
@@ -2186,44 +2208,82 @@ impl PureTermApp {
     /// Render a draggable divider between panes.
     /// 拖动由全局事件（GlobalCursorMoved/GlobalMouseRelease）处理，
     /// 这里只需要响应 on_press 启动拖动。
+    ///
+    /// 结构：可见的 6px 分割线居中放在 10px 宽的命中区域内（左右各 2px 透明扩展），
+    /// 并设置鼠标光标为"可调整大小"图标。
     fn view_divider(
         &self,
+        split_id: u64,
         direction: SplitDirection,
         ratio: f32,
         tab_id: TabId,
-        first_pane: PaneId,
     ) -> Element<'_, Message, Theme, iced::Renderer> {
-        let divider_color = Color::from_rgba(0.4, 0.4, 0.45, 1.0);
-        let _hover_color = Color::from_rgba(0.3, 0.6, 1.0, 0.8);
+        let visual_color = Color::from_rgba(0.45, 0.45, 0.50, 1.0);
 
-        let (w, h) = match direction {
+        // 设置鼠标光标为"可调整大小"
+        let interaction = match direction {
+            SplitDirection::Horizontal => iced::mouse::Interaction::ResizingHorizontally,
+            SplitDirection::Vertical => iced::mouse::Interaction::ResizingVertically,
+        };
+
+        // 命中区域方向（10px 宽/高，扩展用于 hit-test）
+        let (hit_w, hit_h) = match direction {
+            SplitDirection::Horizontal => (Length::Fixed(DIVIDER_HIT_WIDTH), Length::Fill),
+            SplitDirection::Vertical => (Length::Fill, Length::Fixed(DIVIDER_HIT_WIDTH)),
+        };
+
+        // 可见分割线（6px 居中）
+        let (vis_w, vis_h) = match direction {
             SplitDirection::Horizontal => (Length::Fixed(DIVIDER_WIDTH), Length::Fill),
             SplitDirection::Vertical => (Length::Fill, Length::Fixed(DIVIDER_WIDTH)),
         };
 
-        let divider = container(space())
-            .width(w)
-            .height(h)
+        let visual = container(space())
+            .width(vis_w)
+            .height(vis_h)
             .style(move |_theme: &Theme| container::Style {
-                background: Some(Background::Color(divider_color)),
+                background: Some(Background::Color(visual_color)),
                 text_color: None,
                 snap: false,
                 border: Border::default(),
                 shadow: Shadow::default(),
             });
 
+        // 把 6px 视觉条放在 10px hit area 居中
+        // 通过 Row/Column 在两侧填充等量的 space() 实现居中
+        let padding = (DIVIDER_HIT_WIDTH - DIVIDER_WIDTH) / 2.0;  // = 2.0
+        let hit_content: Element<'_, Message, Theme, iced::Renderer> = match direction {
+            SplitDirection::Horizontal => row![
+                space().width(Length::Fixed(padding)),
+                visual,
+                space().width(Length::Fixed(padding)),
+            ]
+            .width(hit_w)
+            .height(hit_h)
+            .into(),
+            SplitDirection::Vertical => column![
+                space().height(Length::Fixed(padding)),
+                visual,
+                space().height(Length::Fixed(padding)),
+            ]
+            .width(hit_w)
+            .height(hit_h)
+            .into(),
+        };
+
         // Pre-build the DragState. 屏幕位置和可用大小在 DividerPress 处理器中填充。
         let drag_msg = Message::DividerPress(DragState {
             tab_id,
-            first_pane,
+            split_id,
             direction,
             divider_screen_pos: 0.0,
             usable_size: 0.0,
             start_ratio: ratio,
         });
 
-        mouse_area(divider)
+        mouse_area(hit_content)
             .on_press(drag_msg)
+            .interaction(interaction)
             .into()
     }
 

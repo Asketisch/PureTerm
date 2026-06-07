@@ -5,6 +5,7 @@ use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{self, Pipeline, Primitive};
 use wgpu::util::DeviceExt;
 use std::cell::RefCell;
+use std::sync::Mutex;
 use std::fmt;
 use std::sync::Arc;
 
@@ -88,26 +89,61 @@ pub struct ScreenUniforms {
 // --- TerminalPipeline ---
 
 pub struct TerminalPipeline {
-    // BgColor pass
+    // Shared render pipelines (immutable after creation)
     bg_color_pipeline: wgpu::RenderPipeline,
+    text_pipeline: wgpu::RenderPipeline,
+
+    // Shared bind group layouts
     uniform_bgl: wgpu::BindGroupLayout,
+    text_atlas_bgl: wgpu::BindGroupLayout,
+    text_uniform_bgl: wgpu::BindGroupLayout,
+
+    // Shared sampler
+    nearest_sampler: wgpu::Sampler,
+
+    // Shared atlas textures (GlyphState is shared across all panes;
+    // first pane to call prepare() uploads dirty atlas data)
+    grayscale_atlas_view: Option<wgpu::TextureView>,
+    color_atlas_view: Option<wgpu::TextureView>,
+    text_atlas_bind_group: Option<wgpu::BindGroup>,
+}
+
+/// Per-frame GPU resources owned by each `TerminalPrimitive` instance.
+/// Stored via `Mutex` because `Primitive::prepare()` receives `&self` and must be `Sync`.
+struct GpuResources {
     bg_vertex_buffer: Option<wgpu::Buffer>,
     bg_index_buffer: Option<wgpu::Buffer>,
     bg_bind_group: Option<wgpu::BindGroup>,
     bg_index_count: u32,
 
-    // CellText pass
-    text_pipeline: wgpu::RenderPipeline,
-    text_atlas_bgl: wgpu::BindGroupLayout,
-    text_uniform_bgl: wgpu::BindGroupLayout,
-    nearest_sampler: wgpu::Sampler,
-    grayscale_atlas_view: Option<wgpu::TextureView>,
-    color_atlas_view: Option<wgpu::TextureView>,
     text_vertex_buffer: Option<wgpu::Buffer>,
     text_index_buffer: Option<wgpu::Buffer>,
-    text_atlas_bind_group: Option<wgpu::BindGroup>,
     text_uniform_bind_group: Option<wgpu::BindGroup>,
     text_index_count: u32,
+}
+
+impl fmt::Debug for GpuResources {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GpuResources")
+            .field("bg_count", &self.bg_index_count)
+            .field("text_count", &self.text_index_count)
+            .finish()
+    }
+}
+
+impl Default for GpuResources {
+    fn default() -> Self {
+        Self {
+            bg_vertex_buffer: None,
+            bg_index_buffer: None,
+            bg_bind_group: None,
+            bg_index_count: 0,
+            text_vertex_buffer: None,
+            text_index_buffer: None,
+            text_uniform_bind_group: None,
+            text_index_count: 0,
+        }
+    }
 }
 
 impl Pipeline for TerminalPipeline {
@@ -225,21 +261,13 @@ impl Pipeline for TerminalPipeline {
         Self {
             bg_color_pipeline,
             uniform_bgl,
-            bg_vertex_buffer: None,
-            bg_index_buffer: None,
-            bg_bind_group: None,
-            bg_index_count: 0,
             text_pipeline,
             text_atlas_bgl,
             text_uniform_bgl,
             nearest_sampler,
             grayscale_atlas_view: None,
             color_atlas_view: None,
-            text_vertex_buffer: None,
-            text_index_buffer: None,
             text_atlas_bind_group: None,
-            text_uniform_bind_group: None,
-            text_index_count: 0,
         }
     }
 }
@@ -292,6 +320,9 @@ pub struct TerminalPrimitive {
     text_indices: Vec<u32>,
     grayscale_atlas: Option<(Vec<u8>, u32, u32)>,
     color_atlas: Option<(Vec<u8>, u32, u32)>,
+    /// Per-frame GPU buffers – each Primitive instance owns its own,
+    /// avoiding the shared-Pipeline overwrite bug in split-screen.
+    gpu: Mutex<GpuResources>,
 }
 
 impl fmt::Debug for TerminalPrimitive {
@@ -299,6 +330,7 @@ impl fmt::Debug for TerminalPrimitive {
         f.debug_struct("TerminalPrimitive")
             .field("bg_verts", &self.bg_vertices.len())
             .field("text_verts", &self.text_vertices.len())
+            .field("gpu", &*self.gpu.lock().unwrap())
             .finish()
     }
 }
@@ -321,6 +353,8 @@ impl Primitive for TerminalPrimitive {
             _padding: 0.0,
         };
 
+        let mut gpu = self.gpu.lock().unwrap();
+
         // --- BgColor pass ---
         if !self.bg_vertices.is_empty() {
             let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -336,12 +370,12 @@ impl Primitive for TerminalPrimitive {
                 label: Some("BG Bind"), layout: &pipeline.uniform_bgl,
                 entries: &[wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() }],
             });
-            pipeline.bg_vertex_buffer = Some(vb);
-            pipeline.bg_index_buffer = Some(ib);
-            pipeline.bg_bind_group = Some(bg);
-            pipeline.bg_index_count = self.bg_indices.len() as u32;
+            gpu.bg_vertex_buffer = Some(vb);
+            gpu.bg_index_buffer = Some(ib);
+            gpu.bg_bind_group = Some(bg);
+            gpu.bg_index_count = self.bg_indices.len() as u32;
         } else {
-            pipeline.bg_index_count = 0;
+            gpu.bg_index_count = 0;
         }
 
         // --- Atlas textures ---
@@ -416,16 +450,18 @@ impl Primitive for TerminalPrimitive {
             let ub = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Text UB"), contents: bytemuck::cast_slice(&[uniforms]), usage: wgpu::BufferUsages::UNIFORM,
             });
-            pipeline.text_uniform_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            gpu.text_uniform_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Text Uniform BG"), layout: &pipeline.text_uniform_bgl,
                 entries: &[wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() }],
             }));
-            pipeline.text_vertex_buffer = Some(vb);
-            pipeline.text_index_buffer = Some(ib);
-            pipeline.text_index_count = self.text_indices.len() as u32;
+            gpu.text_vertex_buffer = Some(vb);
+            gpu.text_index_buffer = Some(ib);
+            gpu.text_index_count = self.text_indices.len() as u32;
         } else {
-            pipeline.text_index_count = 0;
+            gpu.text_index_count = 0;
         }
+
+        drop(gpu); // release lock before any potential future use of self
     }
 
     fn draw(
@@ -433,29 +469,31 @@ impl Primitive for TerminalPrimitive {
         pipeline: &Self::Pipeline,
         render_pass: &mut wgpu::RenderPass<'_>,
     ) -> bool {
+        let gpu = self.gpu.lock().unwrap();
+
         // Draw bg_color pass
-        if pipeline.bg_index_count > 0 {
-            if let (Some(vb), Some(ib), Some(bg)) = (&pipeline.bg_vertex_buffer, &pipeline.bg_index_buffer, &pipeline.bg_bind_group) {
+        if gpu.bg_index_count > 0 {
+            if let (Some(vb), Some(ib), Some(bg)) = (&gpu.bg_vertex_buffer, &gpu.bg_index_buffer, &gpu.bg_bind_group) {
                 render_pass.set_pipeline(&pipeline.bg_color_pipeline);
                 render_pass.set_bind_group(0, bg, &[]);
                 render_pass.set_vertex_buffer(0, vb.slice(..));
                 render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..pipeline.bg_index_count, 0, 0..1);
+                render_pass.draw_indexed(0..gpu.bg_index_count, 0, 0..1);
             }
         }
 
         // Draw cell_text pass
-        if pipeline.text_index_count > 0 {
+        if gpu.text_index_count > 0 {
             if let (Some(vb), Some(ib), Some(atlas_bg), Some(uniform_bg)) = (
-                &pipeline.text_vertex_buffer, &pipeline.text_index_buffer,
-                &pipeline.text_atlas_bind_group, &pipeline.text_uniform_bind_group,
+                &gpu.text_vertex_buffer, &gpu.text_index_buffer,
+                &pipeline.text_atlas_bind_group, &gpu.text_uniform_bind_group,
             ) {
                 render_pass.set_pipeline(&pipeline.text_pipeline);
                 render_pass.set_bind_group(0, atlas_bg, &[]);
                 render_pass.set_bind_group(1, uniform_bg, &[]);
                 render_pass.set_vertex_buffer(0, vb.slice(..));
                 render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..pipeline.text_index_count, 0, 0..1);
+                render_pass.draw_indexed(0..gpu.text_index_count, 0, 0..1);
             }
         }
 
@@ -686,6 +724,7 @@ impl<M> shader::Program<M> for TerminalProgram {
             text_indices,
             grayscale_atlas,
             color_atlas,
+            gpu: Mutex::new(GpuResources::default()),
         }
     }
 }

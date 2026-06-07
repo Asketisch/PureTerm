@@ -18,7 +18,7 @@ pub struct PaneRect {
 }
 
 /// 可见分割线宽度(像素)。
-pub const DIVIDER_WIDTH: f32 = 4.0;
+pub const DIVIDER_WIDTH: f32 = 6.0;
 /// 分割线拖拽的命中测试区域宽度(更大以便于抓取)。
 pub const DIVIDER_HIT_WIDTH: f32 = 8.0;
 /// 比例最小值。
@@ -71,12 +71,21 @@ pub enum SplitNode {
     Leaf(PaneId),
     /// 内部分割节点。
     Split {
+        /// Split 节点唯一标识符。
+        split_id: u64,
         direction: SplitDirection,
         /// first 占比 [MIN_RATIO, MAX_RATIO]。
         ratio: f32,
         first: Box<SplitNode>,
         second: Box<SplitNode>,
     },
+}
+
+/// 全局自增的 SplitId 计数器。
+fn next_split_id() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(1);
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 impl SplitNode {
@@ -97,6 +106,7 @@ impl SplitNode {
             SplitNode::Leaf(id) if *id == target => {
                 let old = *id;
                 *self = SplitNode::Split {
+                    split_id: next_split_id(),
                     direction,
                     ratio: 0.5,
                     first: Box::new(SplitNode::Leaf(old)),
@@ -150,6 +160,7 @@ impl SplitNode {
                 }
             }
             SplitNode::Split {
+                split_id: _,
                 direction,
                 ratio,
                 first,
@@ -184,6 +195,106 @@ impl SplitNode {
                 } else {
                     first.resize_ratio(pane_id, delta);
                     second.resize_ratio(pane_id, delta);
+                }
+            }
+        }
+    }
+
+    /// 通过 split_id 找到并更新对应 Split 节点的 ratio。
+    /// 返回 true 表示成功找到并更新。
+    pub fn update_split_ratio_by_id(&mut self, split_id: u64, new_ratio: f32) -> bool {
+        match self {
+            SplitNode::Leaf(_) => false,
+            SplitNode::Split { split_id: id, ratio, first, second, .. } => {
+                if *id == split_id {
+                    *ratio = new_ratio.clamp(MIN_RATIO, MAX_RATIO);
+                    true
+                } else {
+                    first.update_split_ratio_by_id(split_id, new_ratio)
+                        || second.update_split_ratio_by_id(split_id, new_ratio)
+                }
+            }
+        }
+    }
+
+    /// 通过 split_id 找到对应 Split 节点的分割线位置。
+    pub fn compute_divider_by_split_id(
+        &self,
+        target_split_id: u64,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    ) -> Option<DividerRect> {
+        self.divider_by_split_id_recursive(target_split_id, x, y, w, h)
+    }
+
+    fn divider_by_split_id_recursive(
+        &self,
+        target_split_id: u64,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+    ) -> Option<DividerRect> {
+        match self {
+            SplitNode::Leaf(_) => None,
+            SplitNode::Split { split_id, direction, ratio, first, second, .. } => {
+                if *split_id == target_split_id {
+                    // 找到目标，返回此 Split 的分割线位置
+                    match direction {
+                        SplitDirection::Horizontal => {
+                            let usable_w = w - DIVIDER_HIT_WIDTH;
+                            let w1 = usable_w * ratio;
+                            let div_x = x + w1;
+                            Some(DividerRect {
+                                rect: PaneRect {
+                                    x: div_x,
+                                    y,
+                                    w: DIVIDER_HIT_WIDTH,
+                                    h,
+                                },
+                                direction: *direction,
+                                usable_size: usable_w,
+                            })
+                        }
+                        SplitDirection::Vertical => {
+                            let usable_h = h - DIVIDER_HIT_WIDTH;
+                            let h1 = usable_h * ratio;
+                            let div_y = y + h1;
+                            Some(DividerRect {
+                                rect: PaneRect {
+                                    x,
+                                    y: div_y,
+                                    w,
+                                    h: DIVIDER_HIT_WIDTH,
+                                },
+                                direction: *direction,
+                                usable_size: usable_h,
+                            })
+                        }
+                    }
+                } else {
+                    // 递归到子树
+                    first.divider_by_split_id_recursive(target_split_id, x, y, w, h)
+                        .or_else(|| {
+                            // 计算 second 子树的 bounds
+                            let (sub_x, sub_y, sub_w, sub_h) = match direction {
+                                SplitDirection::Horizontal => {
+                                    let usable_w = w - DIVIDER_HIT_WIDTH;
+                                    let w1 = usable_w * ratio;
+                                    (x + w1 + DIVIDER_HIT_WIDTH, y, usable_w - w1, h)
+                                }
+                                SplitDirection::Vertical => {
+                                    let usable_h = h - DIVIDER_HIT_WIDTH;
+                                    let h1 = usable_h * ratio;
+                                    (x, y + h1 + DIVIDER_HIT_WIDTH, w, usable_h - h1)
+                                }
+                            };
+                            second.divider_by_split_id_recursive(
+                                target_split_id, sub_x, sub_y, sub_w, sub_h,
+                            )
+                        })
                 }
             }
         }
@@ -296,6 +407,7 @@ impl SplitNode {
                 out.insert(*id, PaneRect { x, y, w, h });
             }
             SplitNode::Split {
+                split_id: _,
                 direction,
                 ratio,
                 first,
@@ -304,12 +416,13 @@ impl SplitNode {
                 match direction {
                     SplitDirection::Horizontal => {
                         // 左右分割：分割线竖直，消耗宽度
-                        let usable_w = w - DIVIDER_WIDTH;
+                        // 使用 DIVIDER_HIT_WIDTH 以匹配 Iced view 中 divider widget 的实际占用宽度
+                        let usable_w = w - DIVIDER_HIT_WIDTH;
                         let w1 = usable_w * ratio;
                         let w2 = usable_w - w1;
                         first.layout_recursive(x, y, w1, h, out);
                         second.layout_recursive(
-                            x + w1 + DIVIDER_WIDTH,
+                            x + w1 + DIVIDER_HIT_WIDTH,
                             y,
                             w2,
                             h,
@@ -318,13 +431,13 @@ impl SplitNode {
                     }
                     SplitDirection::Vertical => {
                         // 上下分割：分割线水平，消耗高度
-                        let usable_h = h - DIVIDER_WIDTH;
+                        let usable_h = h - DIVIDER_HIT_WIDTH;
                         let h1 = usable_h * ratio;
                         let h2 = usable_h - h1;
                         first.layout_recursive(x, y, w, h1, out);
                         second.layout_recursive(
                             x,
-                            y + h1 + DIVIDER_WIDTH,
+                            y + h1 + DIVIDER_HIT_WIDTH,
                             w,
                             h2,
                             out,
@@ -373,6 +486,7 @@ impl SplitNode {
         match self {
             SplitNode::Leaf(_) => None,
             SplitNode::Split {
+                split_id: _,
                 direction,
                 ratio,
                 first,
@@ -383,14 +497,14 @@ impl SplitNode {
                     // 计算此 Split 的分割线位置
                     match direction {
                         SplitDirection::Horizontal => {
-                            let usable_w = w - DIVIDER_WIDTH;
+                            let usable_w = w - DIVIDER_HIT_WIDTH;
                             let w1 = usable_w * ratio;
                             let div_x = x + w1;
                             Some(DividerRect {
                                 rect: PaneRect {
                                     x: div_x,
                                     y,
-                                    w: DIVIDER_WIDTH,
+                                    w: DIVIDER_HIT_WIDTH,
                                     h,
                                 },
                                 direction: *direction,
@@ -398,7 +512,7 @@ impl SplitNode {
                             })
                         }
                         SplitDirection::Vertical => {
-                            let usable_h = h - DIVIDER_WIDTH;
+                            let usable_h = h - DIVIDER_HIT_WIDTH;
                             let h1 = usable_h * ratio;
                             let div_y = y + h1;
                             Some(DividerRect {
@@ -406,7 +520,7 @@ impl SplitNode {
                                     x,
                                     y: div_y,
                                     w,
-                                    h: DIVIDER_WIDTH,
+                                    h: DIVIDER_HIT_WIDTH,
                                 },
                                 direction: *direction,
                                 usable_size: usable_h,
@@ -417,14 +531,14 @@ impl SplitNode {
                     // target_pane 在 second 子树中，递归
                     let (sub_x, sub_y, sub_w, sub_h) = match direction {
                         SplitDirection::Horizontal => {
-                            let usable_w = w - DIVIDER_WIDTH;
+                            let usable_w = w - DIVIDER_HIT_WIDTH;
                             let w1 = usable_w * ratio;
-                            (x + w1 + DIVIDER_WIDTH, y, usable_w - w1, h)
+                            (x + w1 + DIVIDER_HIT_WIDTH, y, usable_w - w1, h)
                         }
                         SplitDirection::Vertical => {
-                            let usable_h = h - DIVIDER_WIDTH;
+                            let usable_h = h - DIVIDER_HIT_WIDTH;
                             let h1 = usable_h * ratio;
-                            (x, y + h1 + DIVIDER_WIDTH, w, usable_h - h1)
+                            (x, y + h1 + DIVIDER_HIT_WIDTH, w, usable_h - h1)
                         }
                     };
                     second.divider_for_pane_recursive(target_pane, sub_x, sub_y, sub_w, sub_h)
@@ -446,6 +560,7 @@ impl SplitNode {
         match self {
             SplitNode::Leaf(_) => {}
             SplitNode::Split {
+                split_id: _,
                 direction,
                 ratio,
                 first,
@@ -453,14 +568,14 @@ impl SplitNode {
             } => {
                 match direction {
                     SplitDirection::Horizontal => {
-                        let usable_w = w - DIVIDER_WIDTH;
+                        let usable_w = w - DIVIDER_HIT_WIDTH;
                         let w1 = usable_w * ratio;
                         let div_x = x + w1;
                         out.push(DividerRect {
                             rect: PaneRect {
                                 x: div_x,
                                 y,
-                                w: DIVIDER_WIDTH,
+                                w: DIVIDER_HIT_WIDTH,
                                 h,
                             },
                             direction: *direction,
@@ -468,7 +583,7 @@ impl SplitNode {
                         });
                         first.dividers_recursive(x, y, w1, h, out);
                         second.dividers_recursive(
-                            div_x + DIVIDER_WIDTH,
+                            div_x + DIVIDER_HIT_WIDTH,
                             y,
                             usable_w - w1,
                             h,
@@ -476,7 +591,7 @@ impl SplitNode {
                         );
                     }
                     SplitDirection::Vertical => {
-                        let usable_h = h - DIVIDER_WIDTH;
+                        let usable_h = h - DIVIDER_HIT_WIDTH;
                         let h1 = usable_h * ratio;
                         let div_y = y + h1;
                         out.push(DividerRect {
@@ -484,7 +599,7 @@ impl SplitNode {
                                 x,
                                 y: div_y,
                                 w,
-                                h: DIVIDER_WIDTH,
+                                h: DIVIDER_HIT_WIDTH,
                             },
                             direction: *direction,
                             usable_size: usable_h,
@@ -492,7 +607,7 @@ impl SplitNode {
                         first.dividers_recursive(x, y, w, h1, out);
                         second.dividers_recursive(
                             x,
-                            div_y + DIVIDER_WIDTH,
+                            div_y + DIVIDER_HIT_WIDTH,
                             w,
                             usable_h - h1,
                             out,
@@ -515,24 +630,16 @@ impl SplitNode {
     ) -> Option<DividerRect> {
         // 先检查本层分割线
         let dividers = self.compute_dividers(x, y, w, h);
-        let half_hit = (DIVIDER_HIT_WIDTH - DIVIDER_WIDTH) / 2.0;
         for div in &dividers {
-            let hit_x = div.rect.x - half_hit;
-            let hit_y = div.rect.y - half_hit;
-            let hit_w = DIVIDER_HIT_WIDTH;
-            let hit_h = if div.direction == SplitDirection::Horizontal {
-                div.rect.h + half_hit * 2.0
-            } else {
-                DIVIDER_HIT_WIDTH
-            };
-            // 对于垂直分割线（Horizontal），检查 px 范围
-            // 对于水平分割线（Vertical），检查 py 范围
+            // div.rect 现在使用 DIVIDER_HIT_WIDTH 作为宽度/高度，即完整的命中区域
             let hit = match div.direction {
                 SplitDirection::Horizontal => {
-                    px >= hit_x && px < hit_x + hit_w && py >= div.rect.y && py < div.rect.y + div.rect.h
+                    px >= div.rect.x && px < div.rect.x + div.rect.w
+                        && py >= div.rect.y && py < div.rect.y + div.rect.h
                 }
                 SplitDirection::Vertical => {
-                    py >= hit_y && py < hit_y + hit_w && px >= div.rect.x && px < div.rect.x + div.rect.w
+                    py >= div.rect.y && py < div.rect.y + div.rect.h
+                        && px >= div.rect.x && px < div.rect.x + div.rect.w
                 }
             };
             if hit {
