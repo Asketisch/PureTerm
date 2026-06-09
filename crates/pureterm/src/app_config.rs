@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 
 use pureterm_settings::config_io;
 
+use crate::ssh::config::SshProfile;
+
 #[derive(Clone, Debug)]
 pub struct AppConfig {
     pub font_family: String,
@@ -77,6 +79,64 @@ impl AppConfig {
                 .unwrap_or_default()
                 .join(".config/pureterm/pureterm.toml")
         })
+    }
+
+    /// Load the user's `[[ssh.profiles]]` array from the toml config.
+    ///
+    /// The config is structured as:
+    /// ```toml
+    /// [[ssh.profiles]]
+    /// name = "loopback"
+    /// host = "127.0.0.1"
+    /// user = "admin"
+    /// port = 22
+    /// key_path = "~/.ssh/id_ed25519"
+    /// ```
+    ///
+    /// This is a separate pass from `AppConfig::load` because the
+    /// `ssh` table is optional and we want to keep this function
+    /// failure-tolerant: a missing or malformed `[[ssh.profiles]]`
+    /// block returns an empty Vec, never propagates an error up.
+    pub fn load_ssh_profiles(path: &Path) -> Vec<SshProfile> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::debug!("load_ssh_profiles: cannot read {:?}: {}", path, e);
+                return Vec::new();
+            },
+        };
+        // Parse the whole file as a generic toml::Value first so we
+        // can pick out the optional `[ssh]` table and its `profiles`
+        // array. Using `toml::Value` (not toml_edit) is fine here:
+        // we're not modifying the document, just reading.
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("load_ssh_profiles: parse {:?} failed: {}", path, e);
+                return Vec::new();
+            },
+        };
+        // Walk ssh.profiles. If the table is missing, that's normal
+        // (user hasn't added any profiles yet).
+        let Some(profiles_value) = value
+            .get("ssh")
+            .and_then(|s| s.get("profiles"))
+        else {
+            return Vec::new();
+        };
+        match profiles_value.clone().try_into::<Vec<SshProfile>>() {
+            Ok(profiles) => {
+                log::info!("load_ssh_profiles: loaded {} profiles", profiles.len());
+                profiles
+            },
+            Err(e) => {
+                log::warn!(
+                    "load_ssh_profiles: failed to deserialize [[ssh.profiles]]: {}",
+                    e,
+                );
+                Vec::new()
+            },
+        }
     }
 }
 

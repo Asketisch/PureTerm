@@ -616,7 +616,7 @@ impl<M> shader::Program<M> for TerminalProgram {
         }
 
         let (cells, display_offset, cursor_row, cursor_col, colors) = {
-            let term = self.ctx.terminal.lock_unfair();
+            let term = self.ctx.terminal().lock_unfair();
             let display_offset = term.grid().display_offset();
             let cursor = &term.grid().cursor;
             let cursor_row = (cursor.point.line.0 + display_offset as i32) as usize;

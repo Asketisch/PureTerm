@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use iced::widget::{
     button, column, container, image, row, rule, scrollable, space, stack, text,
@@ -52,6 +53,12 @@ pub struct SettingsState {
 pub enum Message {
     NavigateTo(Page),
     Save,
+    /// Emitted by `Message::Save` after a successful write through
+    /// `config_io::mutate_config`. Carries the new file mtime so the
+    /// embedding application (PureTermApp) can record a "self just
+    /// wrote at T" window and suppress the notify-watcher self-reload
+    /// triggered by its own save. Standalone settings binary ignores it.
+    SavedAt(SystemTime),
     Revert,
     General(GeneralMsg),
     Appearance(AppearanceMsg),
@@ -116,17 +123,64 @@ impl SettingsState {
                 Task::none()
             }
             Message::Save => {
-                match config_io::save_document(&self.config_path, &self.document) {
-                    Ok(()) => {
+                // Section-scoped save: reload the latest on-disk document
+                // under an advisory file lock, then ask each page state
+                // to replay its in-memory values onto that fresh doc.
+                // This prevents the historical "open settings → main
+                // process writes ssh.profiles → close settings → save
+                // → just-added profile gets rolled back" scenario, and
+                // also prevents the SSH-field-loss bug (sync_to_doc now
+                // merges rather than replaces — see ssh_profiles.rs).
+                let path = self.config_path.clone();
+                let general = self.general.clone();
+                let appearance = self.appearance.clone();
+                let colors = self.colors.clone();
+                let terminal = self.terminal.clone();
+                let ssh = self.ssh.clone();
+                let keybindings = self.keybindings.clone();
+                let locale = self.i18n.current_locale().to_string();
+
+                let result = config_io::mutate_config(&path, |doc| {
+                    // The locale lives in [pureterm] and is normally
+                    // written by the LocaleChanged handler in this file.
+                    // Re-apply here so a stale on-disk locale doesn't
+                    // shadow the in-effect one.
+                    config_io::set_string(doc, &["pureterm"], "locale", &locale);
+                    general.apply(doc);
+                    appearance.apply(doc);
+                    colors.apply(doc);
+                    terminal.apply(doc);
+                    ssh.apply(doc);
+                    keybindings.apply(doc);
+                    Ok(())
+                });
+
+                match result {
+                    Ok(mtime) => {
                         self.dirty = false;
                         self.status_msg = Some(StatusMessage::Saved);
-                        log::info!("Config saved to {}", self.config_path.display());
+                        // Refresh in-memory doc snapshot so a later
+                        // Revert (which reads `self.document` indirectly
+                        // by re-reading disk) and any UI inspection sees
+                        // the same bytes we just wrote.
+                        if let Ok(fresh) = config_io::load_document(&path) {
+                            self.document = fresh;
+                        }
+                        log::info!("Config saved to {}", path.display());
+                        Task::done(Message::SavedAt(mtime))
                     }
                     Err(e) => {
                         self.status_msg = Some(StatusMessage::SaveFailed(e.to_string()));
                         log::error!("Failed to save config: {e}");
+                        Task::none()
                     }
                 }
+            }
+            Message::SavedAt(_) => {
+                // No-op for the standalone settings daemon. The embedded
+                // settings window (PureTermApp) intercepts this BEFORE
+                // routing into SettingsState::update so it can record
+                // `last_self_write` for the notify-watcher debounce.
                 Task::none()
             }
             Message::Revert => {
@@ -153,6 +207,10 @@ impl SettingsState {
                     if let Some(code) = self.i18n.locale_code_for_display(display).map(|s| s.to_string()) {
                         self.i18n.set_locale(&code);
                         config_io::set_string(&mut self.document, &["pureterm"], "locale", &code);
+                        // Mirror the new locale into the General page state so
+                        // `GeneralState::apply` writes the in-effect locale
+                        // back, not the one loaded when settings opened.
+                        self.general.locale = code;
                     }
                 }
                 self.general.update(msg, &mut self.document);

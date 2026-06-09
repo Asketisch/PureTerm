@@ -6,6 +6,8 @@ mod split_tree;
 mod macos_menu;
 #[cfg(target_os = "macos")]
 mod macos_reopen;
+#[cfg(unix)]
+mod ssh;
 mod terminal_context;
 mod terminal_shader;
 

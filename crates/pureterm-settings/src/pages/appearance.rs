@@ -243,6 +243,71 @@ impl AppearanceState {
             }
         }
     }
+
+    /// Replay this page's in-memory state onto `doc`. Used at Save time
+    /// via `mutate_config` to patch the latest on-disk document.
+    ///
+    /// For text-input fields whose string fails to parse (e.g. user typed
+    /// non-numeric in font size), we skip writing that one field rather
+    /// than clobbering a valid on-disk value with a parse failure.
+    pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
+        // Font
+        if !self.font_family.is_empty() {
+            set_font_family(doc, &self.font_family);
+        }
+        if let Ok(size) = self.font_size.parse::<f64>() {
+            crate::config_io::set_float(doc, &["font"], "size", size);
+        }
+
+        // Window opacity / blur
+        crate::config_io::set_float(doc, &["window"], "opacity", self.opacity as f64);
+        crate::config_io::set_bool(doc, &["window"], "blur", self.blur);
+        crate::config_io::set_string(doc, &["window"], "blur_style", &self.blur_style);
+        crate::config_io::set_bool(
+            doc,
+            &["pureterm", "window"],
+            "blur",
+            self.settings_window_blur,
+        );
+
+        // Padding
+        if let Ok(px) = self.padding_x.parse::<i64>() {
+            set_padding(doc, "x", px);
+        }
+        if let Ok(py) = self.padding_y.parse::<i64>() {
+            set_padding(doc, "y", py);
+        }
+
+        crate::config_io::set_string(doc, &["window"], "decorations", &self.decorations);
+
+        // Cursor
+        set_cursor_shape(doc, &self.cursor_shape);
+        set_cursor_blinking(doc, self.cursor_blinking);
+        crate::config_io::set_float(
+            doc,
+            &["cursor"],
+            "thickness",
+            self.cursor_thickness as f64,
+        );
+        crate::config_io::set_bool(doc, &["cursor"], "unfocused_hollow", self.unfocused_hollow);
+
+        // Background image
+        match &self.background_image {
+            Some(p) => {
+                let s = p.to_string_lossy().into_owned();
+                crate::config_io::set_string(doc, &["pureterm", "background"], "image", &s);
+            }
+            None => {
+                crate::config_io::remove_key(doc, &["pureterm", "background"], "image");
+            }
+        }
+        crate::config_io::set_float(
+            doc,
+            &["pureterm", "background"],
+            "opacity",
+            self.background_image_opacity as f64,
+        );
+    }
 }
 
 pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {

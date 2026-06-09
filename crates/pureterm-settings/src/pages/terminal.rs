@@ -102,6 +102,30 @@ impl TerminalState {
             }
         }
     }
+
+    /// Replay this page's in-memory state onto `doc`. Used at Save time
+    /// via `mutate_config`. Integer text fields that fail to parse are
+    /// skipped rather than wiped.
+    pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
+        if let Ok(n) = self.history.parse::<i64>() {
+            crate::config_io::set_integer(doc, &["scrolling"], "history", n);
+        }
+        if let Ok(n) = self.multiplier.parse::<i64>() {
+            crate::config_io::set_integer(doc, &["scrolling"], "multiplier", n);
+        }
+        crate::config_io::set_string(
+            doc,
+            &["selection"],
+            "semantic_escape_chars",
+            &self.semantic_chars,
+        );
+        crate::config_io::set_bool(doc, &["selection"], "save_to_clipboard", self.save_to_clipboard);
+        crate::config_io::set_bool(doc, &["mouse"], "hide_when_typing", self.hide_when_typing);
+        if let Ok(n) = self.bell_duration.parse::<i64>() {
+            crate::config_io::set_integer(doc, &["bell"], "duration", n);
+        }
+        crate::config_io::set_string(doc, &["bell"], "color", &self.bell_color);
+    }
 }
 
 pub fn view(state: &TerminalState, i18n: &I18n) -> Element<'static, Message> {

@@ -22,6 +22,13 @@ impl I18n {
         }
     }
 
+    /// Current locale code (e.g. "en", "zh"). Used by page `apply()` to
+    /// write back the locale that's actually in effect, not the one
+    /// the page was loaded with.
+    pub fn current_locale(&self) -> &str {
+        &self.locale
+    }
+
     pub fn t(&self, key: &str) -> String {
         self.translations
             .get(&self.locale)
@@ -32,6 +39,21 @@ impl I18n {
                     .and_then(|m| m.get(key).cloned())
             })
             .unwrap_or_else(|| key.to_string())
+    }
+
+    /// Localize a key with `{name}` placeholders substituted by `args`.
+    /// Unknown placeholders are left in place. Missing args leave the
+    /// placeholder in place (so the resulting text is still readable
+    /// during incremental translations).
+    ///
+    /// PureTerm: SSH dialog / settings panel / command palette use
+    /// this to interpolate profile names, error messages, etc.
+    pub fn t_fmt(&self, key: &str, args: &[(&str, &str)]) -> String {
+        let mut s = self.t(key);
+        for (k, v) in args {
+            s = s.replace(&format!("{{{}}}", k), v);
+        }
+        s
     }
 
     pub fn available_locales(&self) -> Vec<(&str, &str)> {
@@ -245,6 +267,97 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("tab.search_placeholder".into(), "Search tabs...".into());
     m.insert("tab.no_match".into(), "No matching tabs".into());
 
+    // PureTerm: SSH connection dialog (main UI, not settings page)
+    m.insert("ssh.dialog.title".into(), "New SSH Connection".into());
+    m.insert("ssh.dialog.empty".into(), "No SSH profiles configured.".into());
+    m.insert("ssh.dialog.empty_hint".into(), "Edit ~/.config/pureterm/pureterm.toml — add an [[ssh.profiles]] section.".into());
+    m.insert("ssh.dialog.error.no_profiles".into(), "No SSH profiles configured. Click 'Open SSH Settings' below to add one, or edit ~/.config/pureterm/pureterm.toml and add an [[ssh.profiles]] entry.".into());
+    m.insert("ssh.dialog.button.connect".into(), "Connect".into());
+    m.insert("ssh.dialog.button.cancel".into(), "Cancel".into());
+    m.insert("ssh.dialog.button.open_settings".into(), "Open SSH Settings".into());
+
+    // PureTerm: SSH settings side panel (right-side editor)
+    m.insert("ssh.panel.title".into(), "SSH Profiles".into());
+    m.insert("ssh.panel.add".into(), "+ New".into());
+    m.insert("ssh.panel.editing".into(), "Editing #{idx}".into());
+    m.insert("ssh.panel.label.name".into(), "Name".into());
+    m.insert("ssh.panel.label.host".into(), "Host".into());
+    m.insert("ssh.panel.label.user".into(), "User (optional)".into());
+    m.insert("ssh.panel.label.port".into(), "Port (optional)".into());
+    m.insert("ssh.panel.label.key_path".into(), "Key Path (optional)".into());
+    m.insert("ssh.panel.label.password".into(), "Password (optional)".into());
+    m.insert("ssh.panel.button.save".into(), "Save".into());
+    m.insert("ssh.panel.button.delete".into(), "Delete".into());
+    m.insert("ssh.panel.placeholder.empty".into(), "Select a profile to edit, or click + New".into());
+    m.insert("ssh.panel.profile_not_found".into(), "Profile not found".into());
+    m.insert("ssh.new_profile".into(), "New Profile {n}".into());
+
+    // PureTerm: Master password section
+    m.insert("ssh.master.title".into(), "Master Password".into());
+    m.insert("ssh.master.placeholder".into(), "Enter master password".into());
+    m.insert("ssh.master.unlocked".into(), "Credential store unlocked".into());
+    m.insert("ssh.master.locked".into(), "Locked — set a master password to encrypt credentials".into());
+    m.insert("ssh.master.unlock_fail".into(), "Unlock failed: {error}".into());
+    m.insert("ssh.master.set".into(), "Master password set. Click Unlock to use it.".into());
+    m.insert("ssh.master.setup_fail".into(), "Setup failed: {error}".into());
+    m.insert("ssh.master.unlock".into(), "Unlock / Setup".into());
+    m.insert("ssh.master.reunlock".into(), "Re-unlock".into());
+
+    // PureTerm: Command palette
+    m.insert("palette.title".into(), "Command Palette (⌘⇧P)".into());
+    m.insert("palette.title.profiles".into(), "Pick SSH Profile".into());
+    m.insert("palette.placeholder".into(), "Type to search…".into());
+    m.insert("palette.empty".into(), "No matches".into());
+    m.insert("palette.empty.profiles".into(), "No SSH profiles configured".into());
+    m.insert("palette.hint.actions".into(), "↑↓ to move · Enter to run · Esc to close".into());
+    m.insert("palette.hint.profiles".into(), "Enter to connect · Esc to back out".into());
+
+    // PureTerm: Command palette — builtin action labels/hints/search
+    m.insert("palette.action.new_tab.label".into(), "New Tab".into());
+    m.insert("palette.action.new_tab.hint".into(), "Open a fresh local tab".into());
+    m.insert("palette.action.new_tab.search".into(), "new tab open local".into());
+    m.insert("palette.action.close_tab.label".into(), "Close Tab".into());
+    m.insert("palette.action.close_tab.hint".into(), "Close the active tab".into());
+    m.insert("palette.action.close_tab.search".into(), "close tab".into());
+    m.insert("palette.action.next_tab.label".into(), "Next Tab".into());
+    m.insert("palette.action.next_tab.hint".into(), "Switch to the next tab".into());
+    m.insert("palette.action.next_tab.search".into(), "next tab cycle".into());
+    m.insert("palette.action.prev_tab.label".into(), "Previous Tab".into());
+    m.insert("palette.action.prev_tab.hint".into(), "Switch to the previous tab".into());
+    m.insert("palette.action.prev_tab.search".into(), "previous tab cycle".into());
+    m.insert("palette.action.split_h.label".into(), "Split Horizontal".into());
+    m.insert("palette.action.split_h.hint".into(), "Split the active pane horizontally".into());
+    m.insert("palette.action.split_h.search".into(), "split horizontal pane".into());
+    m.insert("palette.action.split_v.label".into(), "Split Vertical".into());
+    m.insert("palette.action.split_v.hint".into(), "Split the active pane vertically".into());
+    m.insert("palette.action.split_v.search".into(), "split vertical pane".into());
+    m.insert("palette.action.settings.label".into(), "Open Settings".into());
+    m.insert("palette.action.settings.hint".into(), "Open the independent settings window".into());
+    m.insert("palette.action.settings.search".into(), "settings preferences".into());
+    m.insert("palette.action.ssh_connect.label".into(), "SSH: Connect to a server".into());
+    m.insert("palette.action.ssh_connect.hint".into(), "Pick a profile and connect".into());
+    m.insert("palette.action.ssh_connect.search".into(), "ssh connect new connection".into());
+    m.insert("palette.action.ssh_settings.label".into(), "SSH: Open settings panel".into());
+    m.insert("palette.action.ssh_settings.hint".into(), "Open the SSH profiles side panel".into());
+    m.insert("palette.action.ssh_settings.search".into(), "ssh settings profiles editor".into());
+    m.insert("palette.action.ssh_list.label".into(), "SSH: List profiles (jump to profile)".into());
+    m.insert("palette.action.ssh_list.hint".into(), "Browse SSH profiles".into());
+    m.insert("palette.action.ssh_list.search".into(), "ssh list profiles show".into());
+
+    // PureTerm: Context menu (main UI)
+    m.insert("context_menu.new_ssh_tab".into(), "New SSH Tab…".into());
+
+    // PureTerm: SSH errors
+    m.insert("ssh.error.invalid_profile".into(), "Invalid profile index: {idx}".into());
+    m.insert("ssh.error.manager_not_init".into(), "SSH manager not initialized".into());
+    m.insert("ssh.error.start_session".into(), "Failed to start SSH session: {err}".into());
+    m.insert("ssh.error.spawn_failed".into(), "ssh spawn failed: {err}".into());
+
+    // PureTerm: Tab title templates
+    m.insert("tab.title.format".into(), "Tab {n}".into());
+    m.insert("tab.title.ssh".into(), "SSH: {name}".into());
+    m.insert("tab.title.ssh_locked".into(), "🔒 SSH: {name}".into());
+
     m
 }
 
@@ -402,6 +515,97 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("tab.clear_color".into(), "清除".into());
     m.insert("tab.search_placeholder".into(), "搜索标签页...".into());
     m.insert("tab.no_match".into(), "无匹配标签页".into());
+
+    // PureTerm: SSH 连接对话框（主 UI，非设置页）
+    m.insert("ssh.dialog.title".into(), "新建 SSH 连接".into());
+    m.insert("ssh.dialog.empty".into(), "暂无 SSH 配置。".into());
+    m.insert("ssh.dialog.empty_hint".into(), "编辑 ~/.config/pureterm/pureterm.toml 并添加 [[ssh.profiles]] 配置段。".into());
+    m.insert("ssh.dialog.error.no_profiles".into(), "暂无 SSH 配置。点击下方「打开 SSH 设置」添加，或编辑 ~/.config/pureterm/pureterm.toml 并添加 [[ssh.profiles]] 配置段。".into());
+    m.insert("ssh.dialog.button.connect".into(), "连接".into());
+    m.insert("ssh.dialog.button.cancel".into(), "取消".into());
+    m.insert("ssh.dialog.button.open_settings".into(), "打开 SSH 设置".into());
+
+    // PureTerm: SSH 设置侧栏（右侧编辑器）
+    m.insert("ssh.panel.title".into(), "SSH 配置".into());
+    m.insert("ssh.panel.add".into(), "+ 新建".into());
+    m.insert("ssh.panel.editing".into(), "正在编辑 #{idx}".into());
+    m.insert("ssh.panel.label.name".into(), "名称".into());
+    m.insert("ssh.panel.label.host".into(), "主机".into());
+    m.insert("ssh.panel.label.user".into(), "用户（可选）".into());
+    m.insert("ssh.panel.label.port".into(), "端口（可选）".into());
+    m.insert("ssh.panel.label.key_path".into(), "密钥路径（可选）".into());
+    m.insert("ssh.panel.label.password".into(), "密码（可选）".into());
+    m.insert("ssh.panel.button.save".into(), "保存".into());
+    m.insert("ssh.panel.button.delete".into(), "删除".into());
+    m.insert("ssh.panel.placeholder.empty".into(), "选择一个配置进行编辑，或点击「+ 新建」".into());
+    m.insert("ssh.panel.profile_not_found".into(), "未找到配置".into());
+    m.insert("ssh.new_profile".into(), "新配置 {n}".into());
+
+    // PureTerm: 主密码区
+    m.insert("ssh.master.title".into(), "主密码".into());
+    m.insert("ssh.master.placeholder".into(), "请输入主密码".into());
+    m.insert("ssh.master.unlocked".into(), "凭据存储已解锁".into());
+    m.insert("ssh.master.locked".into(), "已锁定 — 请设置主密码以加密凭据".into());
+    m.insert("ssh.master.unlock_fail".into(), "解锁失败：{error}".into());
+    m.insert("ssh.master.set".into(), "主密码已设置。点击「解锁」以使用。".into());
+    m.insert("ssh.master.setup_fail".into(), "设置失败：{error}".into());
+    m.insert("ssh.master.unlock".into(), "解锁 / 设置".into());
+    m.insert("ssh.master.reunlock".into(), "重新解锁".into());
+
+    // PureTerm: 命令面板
+    m.insert("palette.title".into(), "命令面板 (⌘⇧P)".into());
+    m.insert("palette.title.profiles".into(), "选择 SSH 配置".into());
+    m.insert("palette.placeholder".into(), "输入以搜索…".into());
+    m.insert("palette.empty".into(), "无匹配项".into());
+    m.insert("palette.empty.profiles".into(), "暂无 SSH 配置".into());
+    m.insert("palette.hint.actions".into(), "↑↓ 移动 · Enter 执行 · Esc 关闭".into());
+    m.insert("palette.hint.profiles".into(), "Enter 连接 · Esc 返回".into());
+
+    // PureTerm: 命令面板 — 内置 action 标签/提示/搜索关键字
+    m.insert("palette.action.new_tab.label".into(), "新建标签页".into());
+    m.insert("palette.action.new_tab.hint".into(), "打开新的本地标签页".into());
+    m.insert("palette.action.new_tab.search".into(), "新建 标签页 打开".into());
+    m.insert("palette.action.close_tab.label".into(), "关闭标签页".into());
+    m.insert("palette.action.close_tab.hint".into(), "关闭当前标签页".into());
+    m.insert("palette.action.close_tab.search".into(), "关闭 标签页".into());
+    m.insert("palette.action.next_tab.label".into(), "下一个标签页".into());
+    m.insert("palette.action.next_tab.hint".into(), "切换到下一个标签页".into());
+    m.insert("palette.action.next_tab.search".into(), "下一个 标签页 切换".into());
+    m.insert("palette.action.prev_tab.label".into(), "上一个标签页".into());
+    m.insert("palette.action.prev_tab.hint".into(), "切换到上一个标签页".into());
+    m.insert("palette.action.prev_tab.search".into(), "上一个 标签页 切换".into());
+    m.insert("palette.action.split_h.label".into(), "水平分屏".into());
+    m.insert("palette.action.split_h.hint".into(), "将当前面板水平分屏".into());
+    m.insert("palette.action.split_h.search".into(), "分屏 水平".into());
+    m.insert("palette.action.split_v.label".into(), "垂直分屏".into());
+    m.insert("palette.action.split_v.hint".into(), "将当前面板垂直分屏".into());
+    m.insert("palette.action.split_v.search".into(), "分屏 垂直".into());
+    m.insert("palette.action.settings.label".into(), "打开设置".into());
+    m.insert("palette.action.settings.hint".into(), "打开独立设置窗口".into());
+    m.insert("palette.action.settings.search".into(), "设置 偏好".into());
+    m.insert("palette.action.ssh_connect.label".into(), "SSH：连接服务器".into());
+    m.insert("palette.action.ssh_connect.hint".into(), "选择配置并连接".into());
+    m.insert("palette.action.ssh_connect.search".into(), "ssh 连接 新建 远程".into());
+    m.insert("palette.action.ssh_settings.label".into(), "SSH：打开设置面板".into());
+    m.insert("palette.action.ssh_settings.hint".into(), "打开 SSH 配置侧栏".into());
+    m.insert("palette.action.ssh_settings.search".into(), "ssh 设置 配置 编辑".into());
+    m.insert("palette.action.ssh_list.label".into(), "SSH：列出配置（跳转）".into());
+    m.insert("palette.action.ssh_list.hint".into(), "浏览 SSH 配置".into());
+    m.insert("palette.action.ssh_list.search".into(), "ssh 列表 配置 显示".into());
+
+    // PureTerm: 右键菜单（主 UI）
+    m.insert("context_menu.new_ssh_tab".into(), "新建 SSH Tab…".into());
+
+    // PureTerm: SSH 错误
+    m.insert("ssh.error.invalid_profile".into(), "无效的配置索引：{idx}".into());
+    m.insert("ssh.error.manager_not_init".into(), "SSH 管理器未初始化".into());
+    m.insert("ssh.error.start_session".into(), "启动 SSH 会话失败：{err}".into());
+    m.insert("ssh.error.spawn_failed".into(), "ssh 启动失败：{err}".into());
+
+    // PureTerm: Tab 标题模板
+    m.insert("tab.title.format".into(), "标签页 {n}".into());
+    m.insert("tab.title.ssh".into(), "SSH：{name}".into());
+    m.insert("tab.title.ssh_locked".into(), "🔒 SSH：{name}".into());
 
     m
 }

@@ -100,9 +100,15 @@ action = { Ssh = "ListProfiles" }
 - `Ssh = "ListProfiles"` — 列出所有 SSH Profile
 
 ### 待实现
-- SSH Tab UI（实际标签页创建）
-- SSH 设置 UI 界面
-- 命令面板集成
+- GAP-5.1 持久 PTY 守护进程(`puretermd` 后台进程)
+- GAP-5.6 完整 reconnect/disconnect 状态机
+- SSH agent forwarding(GAP-5.4)
+- pureterm:// URL scheme(GAP-5.5)
+
+### 已实现(2026-06-08 闭环)
+- ✅ SSH Tab UI(GAP-5.7):`crates/pureterm/src/ssh/` + iced UI 串通;`⌘⇧S` 弹 SSH 对话框;异步 ssh spawn;PtyEventLoop 集成;`🔒 SSH: <name>` 标题;Tab 关闭时 `graceful_close` 发 `exit\r` + 500ms 等待 + SIGHUP 兜底
+- ✅ SSH 主 UI 设置 UI(GAP-5.8):右侧栏 `SshSettingsPanelState`;Profile 列表 + 编辑 + 保存到 toml;`CredentialStore` 主密码解锁/设置端到端(AES-256-GCM + Argon2id,Zeroizing 包裹 master_key)
+- ✅ 命令面板(GAP-5.9):`⌘⇧P` 触发;`nucleo-matcher` 模糊搜索;`Mode::Actions` ↔ `Mode::Profiles` 切换,SSH Profile 一跳到底
 
 ## graphify
 

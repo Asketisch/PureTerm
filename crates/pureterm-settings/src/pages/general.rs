@@ -95,6 +95,34 @@ impl GeneralState {
             }
         }
     }
+
+    /// Replay this page's in-memory state onto `doc`. Used at Save time to
+    /// patch the latest on-disk document under the `mutate_config` lock,
+    /// instead of writing back the (potentially stale) document we loaded
+    /// when settings opened. See plan §改动 4.
+    pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
+        if self.shell.is_empty() {
+            crate::config_io::remove_key(doc, &["terminal"], "shell");
+        } else {
+            crate::config_io::set_string(doc, &["terminal"], "shell", &self.shell);
+        }
+
+        if self.working_dir.is_empty() {
+            crate::config_io::remove_key(doc, &["general"], "working_directory");
+        } else {
+            crate::config_io::set_string(
+                doc,
+                &["general"],
+                "working_directory",
+                &self.working_dir,
+            );
+        }
+
+        crate::config_io::set_bool(doc, &["general"], "live_config_reload", self.live_reload);
+        crate::config_io::set_bool(doc, &["general"], "ipc_socket", self.ipc_socket);
+        crate::config_io::set_string(doc, &["terminal"], "osc52", &self.osc52);
+        crate::config_io::set_string(doc, &["pureterm"], "locale", &self.locale);
+    }
 }
 
 pub fn view(state: &GeneralState, i18n: &I18n) -> Element<'static, Message> {

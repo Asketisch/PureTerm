@@ -51,6 +51,16 @@ impl KeybindingsState {
         }
         Self { bindings }
     }
+
+    /// Replay this page's state onto `doc`. Currently a no-op because the
+    /// keybindings page is read-only — bindings are added/removed in the
+    /// user's TOML by hand. If we ever expose an editor here, this needs
+    /// to merge `self.bindings` into `keyboard.bindings` the same way
+    /// `SshState::sync_to_doc` does for ssh.profiles (preserve unknown
+    /// fields by `(key, mods)` identity).
+    pub fn apply(&self, _doc: &mut toml_edit::DocumentMut) {
+        // Intentionally empty.
+    }
 }
 
 pub fn view(state: &KeybindingsState, i18n: &I18n) -> Element<'static, Message> {

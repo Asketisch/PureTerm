@@ -133,27 +133,99 @@ impl SshState {
         }
     }
 
+    /// Sync the in-memory profile list back to `doc["ssh"]["profiles"]`.
+    ///
+    /// **Merge mode (intentional)**: settings UI only exposes 5 fields
+    /// (`name/host/user/port/key_path`) but the on-disk schema has 7
+    /// (adds `password` — encrypted credential — and `shortcut`). A naive
+    /// `doc["ssh"]["profiles"] = ArrayOfTables::new()` would silently drop
+    /// the two UI-invisible fields every time the user touches the SSH
+    /// page. We instead match each UI profile against existing on-disk
+    /// tables by `name` and copy unknown keys forward.
+    ///
+    /// Match semantics:
+    /// - Same `name`: preserve the original table's items, overwrite the
+    ///   5 known fields with UI values, drop optional fields the UI
+    ///   cleared (empty `user`/`key_path`, default port 22).
+    /// - UI has a name the doc doesn't: append a fresh 5-field table.
+    /// - Doc has a name the UI doesn't: drop it (user deleted in UI).
     fn sync_to_doc(&self, doc: &mut toml_edit::DocumentMut) {
-        let mut arr = toml_edit::ArrayOfTables::new();
-        for p in &self.profiles {
-            let mut table = toml_edit::Table::new();
-            table.insert("name", toml_edit::Item::Value(p.name.clone().into()));
-            table.insert("host", toml_edit::Item::Value(p.host.clone().into()));
-            if !p.user.is_empty() {
-                table.insert("user", toml_edit::Item::Value(p.user.clone().into()));
-            }
-            if let Ok(port) = p.port.parse::<i64>() {
-                if port != 22 {
-                    table.insert("port", toml_edit::Item::Value(port.into()));
+        // Snapshot existing on-disk profile tables keyed by name so we can
+        // recover any UI-unknown fields (password / shortcut / future
+        // additions). We clone tables here so the borrow on `doc` ends
+        // before we re-borrow it for the write below.
+        let mut existing_by_name: std::collections::HashMap<String, toml_edit::Table> =
+            std::collections::HashMap::new();
+        if let Some(arr) = doc
+            .get("ssh")
+            .and_then(|i| i.as_table())
+            .and_then(|t| t.get("profiles"))
+            .and_then(|i| i.as_array_of_tables())
+        {
+            for table in arr.iter() {
+                if let Some(name) = table.get("name").and_then(|v| v.as_str()) {
+                    existing_by_name.insert(name.to_string(), table.clone());
                 }
             }
-            if !p.key_path.is_empty() {
-                table.insert("key_path", toml_edit::Item::Value(p.key_path.clone().into()));
+        }
+
+        let mut arr = toml_edit::ArrayOfTables::new();
+        for p in &self.profiles {
+            // Start from the existing on-disk table (if any) so unknown
+            // fields like `password` and `shortcut` survive the round-trip.
+            let mut table = existing_by_name
+                .remove(&p.name)
+                .unwrap_or_else(toml_edit::Table::new);
+
+            // Always overwrite UI-known fields with the in-memory value.
+            table.insert("name", toml_edit::Item::Value(p.name.clone().into()));
+            table.insert("host", toml_edit::Item::Value(p.host.clone().into()));
+
+            if p.user.is_empty() {
+                table.remove("user");
+            } else {
+                table.insert("user", toml_edit::Item::Value(p.user.clone().into()));
             }
+
+            match p.port.parse::<i64>() {
+                Ok(port) if port != 22 => {
+                    table.insert("port", toml_edit::Item::Value(port.into()));
+                }
+                Ok(_) => {
+                    // Port is 22 (default) — drop the explicit key so the
+                    // table stays minimal, matching the original load
+                    // semantics that treat missing port as 22.
+                    table.remove("port");
+                }
+                Err(_) => {
+                    // Leave whatever's there (likely user typing in the
+                    // text input); next valid keystroke will overwrite.
+                }
+            }
+
+            if p.key_path.is_empty() {
+                table.remove("key_path");
+            } else {
+                table.insert(
+                    "key_path",
+                    toml_edit::Item::Value(p.key_path.clone().into()),
+                );
+            }
+
             arr.push(table);
         }
         crate::config_io::ensure_table(doc, &["ssh"]);
         doc["ssh"]["profiles"] = toml_edit::Item::ArrayOfTables(arr);
+    }
+
+    /// Apply this page's in-memory state to the given document. Used by
+    /// `SettingsState::apply_dirty_sections` so a Save reloads the
+    /// latest on-disk doc and replays only this page's intent.
+    ///
+    /// Implemented in terms of `sync_to_doc` (which already does
+    /// section-scoped merge).
+    pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
+        self.sync_to_doc(doc);
     }
 }
 

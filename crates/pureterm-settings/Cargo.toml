@@ -17,6 +17,10 @@ serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 toml_edit = "0.22"
 tempfile = "3"
+# PureTerm: advisory file lock for `config_io::mutate_config` — 在 settings 进程
+# 与主进程并发改 ~/.config/pureterm/pureterm.toml 时确保串行,避免 last-writer-wins
+# 风格的覆盖丢失(详见 section-scoped 重构 plan)。
+fs2 = "0.4"
 dirs = "6"
 log = "0.4"
 env_logger = "0.11"

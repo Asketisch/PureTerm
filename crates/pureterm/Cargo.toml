@@ -22,6 +22,34 @@ log = "0.4"
 parking_lot = "0.12"
 arboard = "3"
 
+# SSH backend dependencies (Unix-only child side; AES/Argon2/serde cross-platform)
+alacritty_config_derive = { path = "../alacritty_config_derive" }
+alacritty_config = { path = "../alacritty_config" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+# PureTerm: format-preserving TOML writer; the main process now reuses
+# `pureterm_settings::config_io::mutate_config` to persist SSH profiles
+# through `toml_edit` instead of a string state machine. Direct
+# `toml_edit::{Item, Table, ArrayOfTables}` references in iced_app.rs
+# need this dep listed here, not transitively.
+toml_edit = "0.22"
+nucleo-matcher = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+polling = "3"
+signal-hook = "0.3"
+aes-gcm = "0.10"
+argon2 = "0.5"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+rand = "0.8"
+rustix-openpty = "0.2"
+tempfile = "3"
+
+[dev-dependencies]
+tempfile = "3"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.1"
 objc2-foundation = { version = "0.3.1", default-features = false, features = ["std", "NSArray"] }

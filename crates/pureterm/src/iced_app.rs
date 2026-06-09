@@ -6,8 +6,15 @@ use std::time::{Duration, Instant};
 
 use iced::widget::{
     button, column, container, mouse_area, opaque, pin, row, scrollable, space, stack, text,
-    text_input, Shader,
+    text_input, Id, Shader,
 };
+// `iced::advanced::widget` re-exports the operation system and the
+// `Task::widget` free function (as `operate`). Used to programmatically
+// snap the Command Palette scrollable to the selected entry.
+use iced::advanced::widget::operation::scrollable::{
+    snap_to as scroll_snap_to, RelativeOffset as ScrollRelativeOffset,
+};
+use iced::advanced::widget::operate as task_widget;
 use iced::{
     event, time, window, Background, Border, Color, Element, Event, Length, Point, Shadow, Size,
     Subscription, Task, Theme, Vector,
@@ -25,6 +32,12 @@ use crate::split_tree::{
 };
 use crate::terminal_context::{TerminalContext, TerminalEvent};
 use crate::terminal_shader::{GlyphState, TerminalProgram};
+#[cfg(unix)]
+use crate::ssh::config::{SshProfile, SshProfileRegistry};
+#[cfg(unix)]
+use crate::ssh::pty::SshPty;
+#[cfg(unix)]
+use crate::ssh::session::SshSessionManager;
 use pureterm_settings::app::{Message as SettingsMessage, SettingsState};
 use pureterm_settings::i18n::I18n;
 
@@ -38,6 +51,8 @@ pub struct Tab {
     split_tree: SplitNode,
     active_pane: PaneId,
     tab_color: Option<Color>,
+    /// Creation timestamp — used for SSH grace period detection.
+    created_at: Instant,
 }
 
 pub struct PureTermApp {
@@ -68,10 +83,90 @@ pub struct PureTermApp {
     color_picker_tab: Option<TabId>,
     // Tab list (command palette)
     tab_list: Option<TabListState>,
+    // SSH dialog (P3 GAP-5.7)
+    #[cfg(unix)]
+    ssh_dialog: Option<SshDialogState>,
+    #[cfg(unix)]
+    ssh_profiles: Vec<SshProfile>,
+    #[cfg(unix)]
+    ssh_manager: Option<Arc<SshSessionManager>>,
+    // SSH settings panel (P4 GAP-5.8)
+    #[cfg(unix)]
+    ssh_settings: Option<SshSettingsPanelState>,
+    #[cfg(unix)]
+    ssh_credential_store: Option<crate::ssh::credential::CredentialStore>,
+    // Command palette (P5 GAP-5.9)
+    command_palette: Option<CommandPaletteState>,
     // Detached windows
     detached_windows: Vec<DetachedWindow>,
     // Split pane drag state
     drag_state: Option<DragState>,
+    /// Most recent mtime this process wrote to `config_path` (via
+    /// `persist_ssh_profiles` or via the embedded settings window's Save).
+    /// The notify-based `config_watcher` always fires after our own writes,
+    /// and reloading then would either be wasted work or actively wrong
+    /// (overwriting our just-applied in-memory state with the disk values
+    /// we just produced). `Message::ConfigReloaded` checks the on-disk
+    /// mtime against this; if they match within ~200ms the reload is
+    /// suppressed. See section-scoped config plan §改动 5.
+    last_self_write: Option<std::time::SystemTime>,
+}
+
+/// P3 of GAP-5.7: state for the SSH connection dialog shown by ⌘⇧S or
+/// the tab-bar "New SSH Tab" menu item.
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+struct SshDialogState {
+    selected: usize,
+    error: Option<String>,
+}
+
+/// P4 of GAP-5.8: state for the right-side SSH settings panel. The
+/// panel is opened via `Message::ToggleSshSettingsPanel` and is
+/// independent of the per-Pane SSH connection dialog.
+#[cfg(unix)]
+struct SshSettingsPanelState {
+    /// Editable drafts. Index 0..N maps to the current profile list.
+    drafts: Vec<SshProfile>,
+    /// Currently-edited profile (index into `drafts`).
+    editing: Option<usize>,
+    /// Whether the credential store is currently unlocked.
+    master_unlocked: bool,
+    /// Status of the master-password section. PureTerm GAP-5.8: was a
+    /// `String` matched on with `starts_with("Unlock failed")` — that
+    /// broke under i18n. Now an enum rendered via `I18n` on demand.
+    master_status: MasterStatus,
+    /// Draft text for the master password input. Held in state (not
+    /// thread_local) so the input field survives re-renders. The
+    /// `Unlock`/`Setup` button reads this and clears it on submit.
+    master_pw_draft: String,
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone)]
+enum MasterStatus {
+    Locked,
+    Unlocked,
+    SetAwaitingUnlock,
+    UnlockFailed(String),
+    SetupFailed(String),
+}
+
+#[cfg(unix)]
+impl MasterStatus {
+    fn render(&self, i18n: &I18n) -> String {
+        match self {
+            MasterStatus::Locked => i18n.t("ssh.master.locked"),
+            MasterStatus::Unlocked => i18n.t("ssh.master.unlocked"),
+            MasterStatus::SetAwaitingUnlock => i18n.t("ssh.master.set"),
+            MasterStatus::UnlockFailed(e) => {
+                i18n.t_fmt("ssh.master.unlock_fail", &[("error", e.as_str())])
+            },
+            MasterStatus::SetupFailed(e) => {
+                i18n.t_fmt("ssh.master.setup_fail", &[("error", e.as_str())])
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +190,9 @@ pub enum ContextMenuItem {
     SplitHorizontal,
     SplitVertical,
     ClosePane,
+    // SSH (P3 GAP-5.7)
+    #[cfg(unix)]
+    NewSshTab,
 }
 
 impl ContextMenuItem {
@@ -112,6 +210,21 @@ impl ContextMenuItem {
         ContextMenuItem::ClosePane,
     ];
 
+    /// All entries including cfg-gated ones; used by label() and the
+    /// context-menu renderer. On non-unix targets the SSH entry is
+    /// absent.
+    #[cfg(unix)]
+    const ALL_PLUS_SSH: [ContextMenuItem; 12] = {
+        let mut out = [ContextMenuItem::ClosePane; 12];
+        let mut i = 0;
+        while i < 11 {
+            out[i] = Self::ALL[i];
+            i += 1;
+        }
+        out[11] = ContextMenuItem::NewSshTab;
+        out
+    };
+
     fn label(self, i18n: &I18n) -> String {
         match self {
             ContextMenuItem::CloseTab => i18n.t("context_menu.close_tab"),
@@ -125,6 +238,8 @@ impl ContextMenuItem {
             ContextMenuItem::SplitHorizontal => "分屏 (左右)".to_string(),
             ContextMenuItem::SplitVertical => "分屏 (上下)".to_string(),
             ContextMenuItem::ClosePane => "关闭面板".to_string(),
+            #[cfg(unix)]
+            ContextMenuItem::NewSshTab => i18n.t("context_menu.new_ssh_tab"),
         }
     }
 }
@@ -190,6 +305,13 @@ pub enum Message {
     DismissContextMenu,
     ContextMenuAction(ContextMenuItem),
     ContextMenuHovered(Option<ContextMenuItem>),
+    /// P3+ (Bug #2 fix): close the context menu only if the click was
+    /// outside the menu's rect. Without this, the full-screen
+    /// `opaque(mouse_area.on_press(DismissContextMenu))` overlay in
+    /// `view()` swallows clicks on inner items (e.g. "新建 SSH Tab…")
+    /// because the dismiss `on_press` fires for every viewport click
+    /// and clears the menu before the inner `on_press` can run.
+    DismissContextMenuIfOutside(Point),
     // Rename
     RenameInputChanged(String),
     RenameConfirmed,
@@ -219,12 +341,117 @@ pub enum Message {
     // Global mouse events for drag tracking
     GlobalCursorMoved(Point),
     GlobalMouseRelease,
+    // SSH (P3 GAP-5.7)
+    #[cfg(unix)]
+    OpenSshDialog,
+    #[cfg(unix)]
+    CloseSshDialog,
+    #[cfg(unix)]
+    SshDialogSelect(usize),
+    #[cfg(unix)]
+    SshConnect(usize),
+    // SSH settings panel (P4 GAP-5.8)
+    #[cfg(unix)]
+    ToggleSshSettingsPanel,
+    #[cfg(unix)]
+    SshSettingsEditProfile(usize),
+    #[cfg(unix)]
+    SshSettingsUpdateField { idx: usize, field: SshField, value: String },
+    #[cfg(unix)]
+    SshSettingsSaveProfile(usize),
+    #[cfg(unix)]
+    SshSettingsDeleteProfile(usize),
+    #[cfg(unix)]
+    SshSettingsAddProfile,
+    /// P3+ (Bug #3 顺带 fix): close the SSH dialog AND open the
+    /// settings panel in one message. The previous "Open SSH Settings"
+    /// button used two `.on_press()` calls, but iced's builder pattern
+    /// makes the second call REPLACE the first, so `CloseSshDialog`
+    /// was silently dropped and the dialog stayed open.
+    #[cfg(unix)]
+    SshSettingsRequested,
+    #[cfg(unix)]
+    SshSettingsMasterPwChanged(String),
+    #[cfg(unix)]
+    SshSettingsUnlockMaster(String),
+    #[cfg(unix)]
+    SshSettingsSetupMaster(String),
+    /// P3+: Close SSH dialog only if the click was outside the dialog's
+    /// pinned rect. Without this, the full-screen `dismiss_overlay` in
+    /// `view_ssh_dialog` intercepts clicks on inner widgets (e.g. the
+    /// Connect button) and the dialog silently closes before the inner
+    /// `on_press` fires.
+    #[cfg(unix)]
+    CloseSshDialogIfOutside(Point),
+    // Command palette (P5 GAP-5.9)
+    OpenCommandPalette,
+    CloseCommandPalette,
+    /// P5+: close command palette only if the click was outside the
+    /// palette's pinned rect. Same rationale as `CloseSshDialogIfOutside`.
+    CloseCommandPaletteIfOutside(Point),
+    CommandPaletteQuery(String),
+    CommandPaletteSelect(usize),
+    CommandPaletteEnter,
+    CommandPaletteUp,
+    CommandPaletteDown,
+}
+
+/// P4: which `SshProfile` field is being edited in the panel.
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy)]
+enum SshField {
+    Name,
+    Host,
+    User,
+    Port,
+    KeyPath,
+    Password,
+}
+
+/// P5 GAP-5.9: the command palette replaces the tab-list-only "tab
+/// switcher" with a fuzzy-search palette that can route to any
+/// registered action (open SSH dialog, toggle settings, jump to
+/// profile, etc.). The `Mode` field picks between the action list
+/// (default) and a profile list (when the user picked an SSH action
+/// that needs a target).
+struct CommandPaletteState {
+    query: String,
+    mode: PaletteMode,
+    selected: usize,
+    /// All registered actions, fuzzy-filtered on every keystroke.
+    visible_actions: Vec<CommandEntry>,
+    /// Snapshot of SSH profiles; populated on first open and on
+    /// `Message::SshSettingsAddProfile` / `Delete`.
+    #[cfg(unix)]
+    profiles: Vec<SshProfile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PaletteMode {
+    Actions,
+    #[cfg(unix)]
+    Profiles,
+}
+
+#[derive(Debug, Clone)]
+enum CommandEntry {
+    Builtin { id: String, label: String, hint: String },
+    #[cfg(unix)]
+    SshConnect,
+    #[cfg(unix)]
+    SshOpenSettings,
+    #[cfg(unix)]
+    SshListProfiles,
 }
 
 impl PureTermApp {
     pub fn new() -> (Self, Task<Message>) {
         let config_path = AppConfig::config_path();
         let config = AppConfig::load(&config_path);
+        // Load SSH profiles from `[[ssh.profiles]]` BEFORE we move
+        // `config_path` into `self` (the PathBuf isn't Copy).
+        #[cfg(unix)]
+        let ssh_profiles = AppConfig::load_ssh_profiles(&config_path);
 
         let settings = window::Settings {
             size: Size::new(1024.0, 768.0),
@@ -262,6 +489,16 @@ impl PureTermApp {
             #[cfg(target_os = "macos")]
             delegate_installed: false,
             i18n,
+            #[cfg(unix)]
+            ssh_dialog: None,
+            #[cfg(unix)]
+            ssh_profiles,
+            #[cfg(unix)]
+            ssh_manager: None,
+            #[cfg(unix)]
+            ssh_settings: None,
+            #[cfg(unix)]
+            ssh_credential_store: None,
             context_menu: None,
             last_cursor_pos: Point::default(),
             viewport_size: Size::new(1024.0, 768.0),
@@ -270,6 +507,8 @@ impl PureTermApp {
             tab_list: None,
             detached_windows: Vec::new(),
             drag_state: None,
+            command_palette: None,
+            last_self_write: None,
         };
 
         let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
@@ -284,7 +523,7 @@ impl PureTermApp {
 
         let pane_id = PaneId::next();
         let terminal_ctx = Arc::new(
-            TerminalContext::new().expect("Failed to create terminal context"),
+            TerminalContext::new_local().expect("Failed to create terminal context"),
         );
 
         let terminal_height = (viewport_height - TAB_BAR_HEIGHT).max(0.0);
@@ -302,17 +541,18 @@ impl PureTermApp {
             Pane {
                 id: pane_id,
                 terminal_ctx,
-                title: format!("Tab {}", tab_num),
+                title: self.i18n.t_fmt("tab.title.format", &[("n", &tab_num.to_string())]),
             },
         );
 
         self.tabs.push(Tab {
             id,
-            title: format!("Tab {}", tab_num),
+            title: self.i18n.t_fmt("tab.title.format", &[("n", &tab_num.to_string())]),
             panes,
             split_tree: SplitNode::single(pane_id),
             active_pane: pane_id,
             tab_color: None,
+            created_at: Instant::now(),
         });
         id
     }
@@ -325,6 +565,508 @@ impl PureTermApp {
         self.active_tab_ref()
             .and_then(|tab| tab.panes.get(&tab.active_pane))
             .map(|pane| pane.terminal_ctx.clone())
+    }
+
+    /// P3 GAP-5.7: synchronously spawn an SSH PTY and create a new Tab
+    /// for it. Synchronous (not async) for the P3 milestone — the
+    /// ssh_manager handles ControlMaster pooling so the wall-clock cost
+    /// is bounded; a real async path will arrive with the persistent
+    /// PTY daemon (GAP-5.1).
+    ///
+    /// On any error path, if `self.ssh_dialog` is `None` (e.g. the
+    /// user reached `SshConnect` via the command palette without ever
+    /// opening the dialog), we open the dialog with the error so the
+    /// user has feedback. This prevents the "connect failed, UI
+    /// disappeared silently" UX bug.
+    #[cfg(unix)]
+    fn connect_ssh_tab(&mut self, profile_idx: usize) {
+        let Some(profile) = self.ssh_profiles.get(profile_idx).cloned() else {
+            self.show_ssh_error(self.i18n.t_fmt(
+                "ssh.error.invalid_profile",
+                &[("idx", &profile_idx.to_string())],
+            ));
+            return;
+        };
+
+        let Some(manager) = self.ssh_manager.clone() else {
+            self.show_ssh_error(self.i18n.t("ssh.error.manager_not_init"));
+            return;
+        };
+
+        let host = profile.host.clone();
+        let user = profile.user.clone();
+        let port = profile.port;
+        let key_path = profile.key_path.clone();
+        let profile_name = profile.name.clone();
+
+        // Retrieve password for auto-fill.
+        // Priority: CredentialStore (encrypted) > TOML plaintext password.
+        let password = self
+            .ssh_credential_store
+            .as_ref()
+            .filter(|s| s.is_unlocked())
+            .and_then(|store| {
+                let key = format!(
+                    "{}@{}:{}",
+                    user.as_deref().unwrap_or(""),
+                    &host,
+                    port.unwrap_or(22)
+                );
+                store.retrieve(&key).ok()
+            })
+            .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            .or(profile.password.clone());
+
+        // P3: do the spawn on the calling thread. This is OK for the
+        // first connection (cheap). P5 will move this to a worker thread
+        // and pipe results back via a crossbeam channel.
+        let spawn_result = manager.spawn_pty(
+            &host,
+            user.as_deref(),
+            port,
+            key_path.as_deref(),
+            Some((80, 24)),
+            password.as_deref(),
+        );
+
+        match spawn_result {
+            Ok((ssh_pty, socket_path, stderr)) => {
+                // socket_path already obtained from spawn_pty's internal
+                // get_or_create — no need to call it again.
+                match TerminalContext::new_ssh(&profile, ssh_pty, socket_path, None, stderr) {
+                    Ok(ctx) => {
+                        let id = self.push_ssh_tab(profile_name.clone(), ctx);
+                        self.ssh_dialog = None;
+                        self.active_tab = id;
+                    },
+                    Err(e) => {
+                        self.show_ssh_error(self.i18n.t_fmt(
+                            "ssh.error.start_session",
+                            &[("err", &e.to_string())],
+                        ));
+                    },
+                }
+            },
+            Err(e) => {
+                self.show_ssh_error(self.i18n.t_fmt(
+                    "ssh.error.spawn_failed",
+                    &[("err", &e.to_string())],
+                ));
+            },
+        }
+    }
+
+    /// Helper: surface an SSH error to the user. If the dialog is
+    /// already open, set the error in-place. Otherwise open the
+    /// dialog so the user sees the failure. Either way, the user
+    /// always gets feedback.
+    #[cfg(unix)]
+    fn show_ssh_error(&mut self, message: String) {
+        if let Some(ref mut dialog) = self.ssh_dialog {
+            dialog.error = Some(message);
+        } else {
+            self.ssh_dialog = Some(SshDialogState {
+                selected: 0,
+                error: Some(message),
+            });
+        }
+    }
+
+    /// P3: create a new Tab wrapping an already-constructed SSH context.
+    #[cfg(unix)]
+    fn push_ssh_tab(&mut self, profile_name: String, ctx: TerminalContext) -> TabId {
+        let id = TabId(self.next_tab_id);
+        self.next_tab_id += 1;
+        let pane_id = PaneId::next();
+        let terminal_ctx = Arc::new(ctx);
+
+        // Apply initial size
+        let gs = self.glyph_state.borrow();
+        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let cols = (self.viewport_size.width / gs.cell_width).floor().max(1.0) as usize;
+        let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
+        terminal_ctx.resize(cols, rows, gs.cell_width as u16, gs.cell_height as u16);
+        drop(gs);
+
+        let mut panes = HashMap::new();
+        panes.insert(
+            pane_id,
+            Pane {
+                id: pane_id,
+                terminal_ctx,
+                title: self.i18n.t_fmt("tab.title.ssh", &[("name", &profile_name)]),
+            },
+        );
+
+        self.tabs.push(Tab {
+            id,
+            title: self.i18n.t_fmt("tab.title.ssh_locked", &[("name", &profile_name)]),
+            panes,
+            split_tree: SplitNode::single(pane_id),
+            active_pane: pane_id,
+            tab_color: None,
+            created_at: Instant::now(),
+        });
+        id
+    }
+
+    /// P4: persist the current `ssh_profiles` to the user's toml config.
+    ///
+    /// Goes through `pureterm_settings::config_io::mutate_config`, which:
+    ///   1. Acquires an exclusive advisory lock on the config file so a
+    ///      concurrent settings save (embedded window OR external
+    ///      pureterm-settings binary) blocks until we're done.
+    ///   2. Re-loads the latest on-disk document inside the lock —
+    ///      anything settings just wrote (font/colors/window/...) stays.
+    ///   3. Replaces only `doc["ssh"]["profiles"]` with the full 7-field
+    ///      view of `self.ssh_profiles`. Main process is the source of
+    ///      truth for the SSH schema (name/host/user/port/password/
+    ///      key_path/shortcut) so a clean replace here is intentional and
+    ///      lossless — note `password` is the ENCRYPTED blob, the
+    ///      plaintext only lives inside `CredentialStore` while unlocked
+    ///      and never touches any persistence path.
+    ///   4. Atomically replaces the file via `NamedTempFile::persist`.
+    ///   5. Returns the new mtime so we can drop it into
+    ///      `last_self_write` and skip the notify-watcher self-reload
+    ///      this write triggers.
+    ///
+    /// Replaces the prior hand-rolled line-by-line state machine that
+    /// did `std::fs::write` non-atomically and depended on a hardcoded
+    /// `profile_field_prefixes` whitelist (which would silently truncate
+    /// a profile the moment we added an unknown field).
+    #[cfg(unix)]
+    fn persist_ssh_profiles(&mut self) {
+        use pureterm_settings::config_io;
+        use toml_edit::Item;
+
+        let path = self.config_path.clone();
+        let profiles = self.ssh_profiles.clone();
+
+        let result = config_io::mutate_config(&path, |doc| {
+            let mut arr = toml_edit::ArrayOfTables::new();
+            for p in &profiles {
+                let mut t = toml_edit::Table::new();
+                t.insert("name", Item::Value(p.name.clone().into()));
+                t.insert("host", Item::Value(p.host.clone().into()));
+                if let Some(u) = &p.user {
+                    if !u.is_empty() {
+                        t.insert("user", Item::Value(u.clone().into()));
+                    }
+                }
+                if let Some(port) = p.port {
+                    if port != 22 {
+                        t.insert("port", Item::Value((port as i64).into()));
+                    }
+                }
+                if let Some(k) = &p.key_path {
+                    if !k.is_empty() {
+                        t.insert("key_path", Item::Value(k.clone().into()));
+                    }
+                }
+                if let Some(pw) = &p.password {
+                    if !pw.is_empty() {
+                        // NOTE: This is the encrypted blob from CredentialStore,
+                        // never the plaintext password. See crates/pureterm/src/
+                        // ssh/credential.rs for the AES-256-GCM + Argon2id flow.
+                        t.insert("password", Item::Value(pw.clone().into()));
+                    }
+                }
+                if let Some(sc) = &p.shortcut {
+                    if !sc.is_empty() {
+                        t.insert("shortcut", Item::Value(sc.clone().into()));
+                    }
+                }
+                arr.push(t);
+            }
+            config_io::ensure_table(doc, &["ssh"]);
+            doc["ssh"]["profiles"] = Item::ArrayOfTables(arr);
+            Ok(())
+        });
+
+        match result {
+            Ok(mtime) => {
+                self.last_self_write = Some(mtime);
+                log::info!(
+                    "persist_ssh_profiles: wrote {} profiles via mutate_config",
+                    profiles.len()
+                );
+            }
+            Err(e) => {
+                log::warn!("persist_ssh_profiles: mutate_config failed: {e}");
+            }
+        }
+    }
+
+    /// P4: try to unlock the credential store; if no store exists yet,
+    /// create one with the supplied master password.
+    #[cfg(unix)]
+    fn try_unlock_or_setup_master(&mut self, master: &str) {
+        let creds_dir = dirs::config_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("pureterm");
+        let _ = std::fs::create_dir_all(&creds_dir);
+        let creds_path = creds_dir.join("credentials.json");
+
+        if self.ssh_credential_store.is_none() {
+            self.ssh_credential_store =
+                Some(crate::ssh::credential::CredentialStore::new(creds_path.clone()));
+        }
+        let store = self.ssh_credential_store.as_mut().unwrap();
+
+        if store.exists() {
+            match store.unlock(master) {
+                Ok(()) => {
+                    if let Some(ref mut s) = self.ssh_settings {
+                        s.master_unlocked = true;
+                        s.master_status = MasterStatus::Unlocked;
+                        s.master_pw_draft.clear();
+                    }
+                },
+                Err(e) => {
+                    if let Some(ref mut s) = self.ssh_settings {
+                        s.master_status = MasterStatus::UnlockFailed(e.to_string());
+                    }
+                },
+            }
+        } else {
+            match store.setup_master(master) {
+                Ok(()) => {
+                    // setup_master doesn't keep the key in memory; user
+                    // must unlock again to use the store. We pretend
+                    // success by asking them to unlock on next attempt.
+                    if let Some(ref mut s) = self.ssh_settings {
+                        s.master_status = MasterStatus::SetAwaitingUnlock;
+                        s.master_pw_draft.clear();
+                    }
+                },
+                Err(e) => {
+                    if let Some(ref mut s) = self.ssh_settings {
+                        s.master_status = MasterStatus::SetupFailed(e.to_string());
+                    }
+                },
+            }
+        }
+    }
+
+    /// P4: convenience wrapper to set up master password.
+    #[cfg(unix)]
+    fn setup_master_password(&mut self, master: &str) {
+        self.try_unlock_or_setup_master(master);
+    }
+
+    /// P5: open the command palette and seed it with the full action list.
+    fn open_command_palette(&mut self) {
+        let mut state = CommandPaletteState {
+            query: String::new(),
+            mode: PaletteMode::Actions,
+            selected: 0,
+            visible_actions: Vec::new(),
+            #[cfg(unix)]
+            profiles: self.ssh_profiles.clone(),
+        };
+        Self::refresh_palette_matches_inner(&mut state, &self.i18n);
+        self.command_palette = Some(state);
+    }
+
+    /// P5: re-evaluate the fuzzy match against the current query and
+    /// update `visible_actions`. Cheap enough to run on every keystroke
+    /// given the small action set.
+    fn refresh_palette_matches(&mut self) {
+        let Some(state) = self.command_palette.as_mut() else { return };
+        Self::refresh_palette_matches_inner(state, &self.i18n);
+    }
+
+    /// PureTerm GAP-5.9 follow-up: snap the Command Palette's
+    /// `Scrollable` so the currently selected entry stays inside the
+    /// 220px viewport. Returns `Task::none()` when there's nothing to
+    /// scroll. Called from any handler that mutates `state.selected`
+    /// (Up/Down/Query/Select/RunEntry on mode change).
+    fn scroll_palette_to_selected(state: &CommandPaletteState) -> Task<Message> {
+        let len = match state.mode {
+            PaletteMode::Actions => state.visible_actions.len(),
+            #[cfg(unix)]
+            PaletteMode::Profiles => state.profiles.len(),
+        };
+        if len == 0 {
+            return Task::none();
+        }
+        // 0.0 = top, 1.0 = bottom. `snap_to` clamps internally; passing
+        // a fraction rather than absolute pixels means we don't need to
+        // know the row height (which depends on theme / font size).
+        let frac = if len <= 1 {
+            0.0
+        } else {
+            (state.selected as f32 / (len as f32 - 1.0)).clamp(0.0, 1.0)
+        };
+        task_widget(scroll_snap_to(
+            Id::new("command_palette.list"),
+            ScrollRelativeOffset { x: None, y: Some(frac) },
+        ))
+    }
+
+    fn refresh_palette_matches_inner(state: &mut CommandPaletteState, i18n: &I18n) {
+        use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
+        use nucleo_matcher::{Config, Matcher, Utf32Str};
+
+        let mut all_entries: Vec<(CommandEntry, String)> = Vec::new();
+        // Builtins — `id` is the dispatch key (kept English for
+        // `run_palette_entry` matching); `label`/`hint`/`search` go
+        // through `I18n` so the user sees their language and the
+        // fuzzy match targets localized keywords (e.g. "新建 标签页"
+        // for Chinese users).
+        let push_builtin = |id: &str, label_key: &str, hint_key: &str, search_key: &str,
+                            all_entries: &mut Vec<(CommandEntry, String)>| {
+            all_entries.push((
+                CommandEntry::Builtin {
+                    id: id.into(),
+                    label: i18n.t(label_key),
+                    hint: i18n.t(hint_key),
+                },
+                i18n.t(search_key),
+            ));
+        };
+        push_builtin("new_tab", "palette.action.new_tab.label", "palette.action.new_tab.hint", "palette.action.new_tab.search", &mut all_entries);
+        push_builtin("close_tab", "palette.action.close_tab.label", "palette.action.close_tab.hint", "palette.action.close_tab.search", &mut all_entries);
+        push_builtin("next_tab", "palette.action.next_tab.label", "palette.action.next_tab.hint", "palette.action.next_tab.search", &mut all_entries);
+        push_builtin("prev_tab", "palette.action.prev_tab.label", "palette.action.prev_tab.hint", "palette.action.prev_tab.search", &mut all_entries);
+        push_builtin("split_h", "palette.action.split_h.label", "palette.action.split_h.hint", "palette.action.split_h.search", &mut all_entries);
+        push_builtin("split_v", "palette.action.split_v.label", "palette.action.split_v.hint", "palette.action.split_v.search", &mut all_entries);
+        push_builtin("settings", "palette.action.settings.label", "palette.action.settings.hint", "palette.action.settings.search", &mut all_entries);
+        #[cfg(unix)]
+        {
+            all_entries.push((
+                CommandEntry::SshConnect,
+                i18n.t("palette.action.ssh_connect.search"),
+            ));
+            all_entries.push((
+                CommandEntry::SshOpenSettings,
+                i18n.t("palette.action.ssh_settings.search"),
+            ));
+            all_entries.push((
+                CommandEntry::SshListProfiles,
+                i18n.t("palette.action.ssh_list.search"),
+            ));
+        }
+
+        let query = state.query.trim();
+        if query.is_empty() {
+            state.visible_actions = all_entries.into_iter().map(|(e, _)| e).collect();
+            state.selected = state.selected.min(state.visible_actions.len().saturating_sub(1));
+            return;
+        }
+
+        let mut matcher = Matcher::new(Config::DEFAULT);
+        let pat = Pattern::new(
+            query,
+            CaseMatching::Ignore,
+            Normalization::Smart,
+            AtomKind::Fuzzy,
+        );
+        let mut haystack_buf: Vec<char> = Vec::new();
+        let mut scored: Vec<(CommandEntry, u32)> = all_entries
+            .into_iter()
+            .filter_map(|(entry, text)| {
+                haystack_buf.clear();
+                let utf32 = Utf32Str::new(text.as_str(), &mut haystack_buf);
+                pat.score(utf32, &mut matcher).map(|s| (entry, s))
+            })
+            .collect();
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        state.visible_actions = scored.into_iter().map(|(e, _)| e).collect();
+        state.selected = state.selected.min(state.visible_actions.len().saturating_sub(1));
+    }
+
+    /// P5: dispatch the highlighted command entry.
+    /// Run the action the user picked from the command palette.
+    /// Called by Enter (`Message::CommandPaletteEnter`) and by
+    /// clicking an action item (`Message::CommandPaletteSelect` in
+    /// Action mode).
+    fn run_palette_selected(&mut self) -> Task<Message> {
+        let action = {
+            let Some(state) = self.command_palette.as_ref() else { return Task::none() };
+            if state.visible_actions.is_empty() {
+                return Task::none();
+            }
+            let idx = state.selected.min(state.visible_actions.len() - 1);
+            state.visible_actions[idx].clone()
+        };
+        self.run_palette_entry(action)
+    }
+
+    /// Dispatch a single command-palette entry. Used by both
+    /// `run_palette_selected` (Enter key) and the click handler
+    /// (`Message::CommandPaletteSelect`) so the two paths share
+    /// exactly the same behavior.
+    fn run_palette_entry(&mut self, action: CommandEntry) -> Task<Message> {
+        match action {
+            CommandEntry::Builtin { id, .. } => {
+                self.command_palette = None;
+                match id.as_str() {
+                    "new_tab" => {
+                        let id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                        self.active_tab = id;
+                    },
+                    "close_tab" => {
+                        self.close_active_tab();
+                    },
+                    "next_tab" => self.activate_next_tab(),
+                    "prev_tab" => self.activate_prev_tab(),
+                    "split_h" => self.split_pane(SplitDirection::Horizontal),
+                    "split_v" => self.split_pane(SplitDirection::Vertical),
+                    "settings" => {
+                        return self.update(Message::OpenSettings);
+                    },
+                    _ => {},
+                }
+                Task::none()
+            },
+            #[cfg(unix)]
+            CommandEntry::SshConnect | CommandEntry::SshListProfiles => {
+                // Switch to Profile list mode — user picks a profile to connect.
+                if let Some(ref mut state) = self.command_palette {
+                    state.mode = PaletteMode::Profiles;
+                    state.query.clear();
+                    state.selected = 0;
+                    state.profiles = self.ssh_profiles.clone();
+                    return Self::scroll_palette_to_selected(state);
+                }
+                Task::none()
+            },
+            #[cfg(unix)]
+            CommandEntry::SshOpenSettings => {
+                self.command_palette = None;
+                self.update(Message::ToggleSshSettingsPanel)
+            },
+        }
+    }
+
+    fn activate_next_tab(&mut self) {
+        if self.tabs.is_empty() {
+            return;
+        }
+        let pos = self.tabs.iter().position(|t| t.id == self.active_tab).unwrap_or(0);
+        let next = (pos + 1) % self.tabs.len();
+        self.active_tab = self.tabs[next].id;
+    }
+
+    fn activate_prev_tab(&mut self) {
+        if self.tabs.is_empty() {
+            return;
+        }
+        let pos = self.tabs.iter().position(|t| t.id == self.active_tab).unwrap_or(0);
+        let prev = if pos == 0 { self.tabs.len() - 1 } else { pos - 1 };
+        self.active_tab = self.tabs[prev].id;
+    }
+
+    fn close_active_tab(&mut self) {
+        let active = self.active_tab;
+        if let Some(pos) = self.tabs.iter().position(|t| t.id == active) {
+            self.tabs.remove(pos);
+            if !self.tabs.is_empty() {
+                let new_idx = pos.min(self.tabs.len() - 1);
+                self.active_tab = self.tabs[new_idx].id;
+            }
+        }
     }
 
     /// 获取活跃 tab 中活跃 pane 的可变引用。
@@ -416,26 +1158,79 @@ impl PureTermApp {
                 let mut exited_panes = Vec::new();
                 for tab in &self.tabs {
                     for (pane_id, pane) in &tab.panes {
-                        while let Ok(event) = pane.terminal_ctx.event_rx.try_recv() {
+                        while let Ok(event) = pane.terminal_ctx.event_rx().try_recv() {
                             match event {
                                 TerminalEvent::Wakeup => { /* PTY 有新数据，重绘已在进行 */ }
                                 TerminalEvent::Exit => {
-                                    exited_panes.push((tab.id, *pane_id));
+                                    exited_panes.push((tab.id, *pane_id, tab.created_at, tab.panes.len()));
                                 }
                             }
                         }
                     }
                 }
                 // 处理退出事件：关闭已退出的 pane（如果只有一个 pane 则关闭整个 tab）
-                if let Some((tab_id, pane_id)) = exited_panes.first() {
-                    let tab = self.tabs.iter().find(|t| t.id == *tab_id);
+                if let Some((tab_id, pane_id, created_at, pane_count)) = exited_panes.first() {
+                    let tab_id = *tab_id;
+                    let pane_id = *pane_id;
+                    let created_at = *created_at;
+                    let pane_count = *pane_count;
+                    let tab = self.tabs.iter().find(|t| t.id == tab_id);
                     if let Some(tab) = tab {
-                        if tab.panes.len() <= 1 {
-                            // 最后一个 pane 退出，关闭整个 tab
-                            return Task::done(Message::CloseTab(*tab_id));
+                        if pane_count <= 1 {
+                            // SSH grace period: if an SSH tab exits within 5 seconds
+                            // of creation, the connection almost certainly failed.
+                            // Instead of silently closing, remove the tab and show the
+                            // SSH dialog with the error from stderr.
+                            let is_ssh_quick_exit = {
+                                let pane = tab.panes.get(&pane_id);
+                                pane.map_or(false, |p| {
+                                    p.terminal_ctx.is_ssh()
+                                        && created_at.elapsed() < Duration::from_secs(5)
+                                })
+                            };
+
+                            if is_ssh_quick_exit {
+                                // Read stderr for the error reason.
+                                let pane = tab.panes.get(&pane_id).unwrap();
+                                let stderr_msg = pane.terminal_ctx.read_stderr()
+                                    .filter(|s| !s.is_empty());
+                                let error_msg = match stderr_msg {
+                                    Some(err) => format!(
+                                        "SSH connection failed: {}",
+                                        err.trim()
+                                    ),
+                                    None => "SSH connection failed. \
+                                             Check host, port, and credentials."
+                                        .to_string(),
+                                };
+
+                                // Release SSH connection pool entry.
+                                let release_key = pane.terminal_ctx.ssh_release_key();
+                                if let Some((host, user, port)) = release_key {
+                                    if let Some(ref manager) = self.ssh_manager {
+                                        manager.release(host, user, port);
+                                    }
+                                }
+
+                                // Remove the failed tab.
+                                self.tabs.retain(|t| t.id != tab_id);
+                                if self.active_tab == tab_id {
+                                    self.active_tab = self.tabs
+                                        .first()
+                                        .map(|t| t.id)
+                                        .unwrap_or(tab_id);
+                                }
+
+                                // Show the error in the SSH dialog.
+                                self.show_ssh_error(error_msg);
+                                return Task::none();
+                            } else {
+                                // 最后一个 pane 退出，关闭整个 tab
+                                return Task::done(Message::CloseTab(tab_id));
+                            }
                         } else {
                             // 关闭特定 pane
-                            return Task::done(Message::PtyExitedPane(*tab_id, *pane_id));
+                            return Task::done(Message::PtyExitedPane(tab_id, pane_id));
                         }
                     }
                 }
@@ -511,6 +1306,32 @@ impl PureTermApp {
                 }
             }
             Message::ConfigReloaded => {
+                // Suppress notify-watcher self-feedback: if the file's
+                // current mtime is within ~200ms of `last_self_write`,
+                // this event was almost certainly triggered by our own
+                // recent write (persist_ssh_profiles or settings Save).
+                // Reloading would either be a no-op or — worse, in the
+                // race where notify queued the event before we updated
+                // in-memory state — clobber that fresh state.
+                if let Some(self_t) = self.last_self_write {
+                    if let Ok(disk_t) = std::fs::metadata(&self.config_path)
+                        .and_then(|m| m.modified())
+                    {
+                        let within_window = match disk_t.duration_since(self_t) {
+                            Ok(d) => d < std::time::Duration::from_millis(200),
+                            // disk_t < self_t (clock skew or unchanged
+                            // mtime): treat as own write too.
+                            Err(_) => true,
+                        };
+                        if within_window {
+                            log::debug!(
+                                "ConfigReloaded: ignoring self-triggered notify event"
+                            );
+                            return Task::none();
+                        }
+                    }
+                }
+
                 let new_config = AppConfig::load(&self.config_path);
                 let font_changed = new_config.font_family != self.config.font_family
                     || new_config.font_size != self.config.font_size;
@@ -518,6 +1339,23 @@ impl PureTermApp {
                     self.i18n.set_locale(&new_config.locale);
                 }
                 self.config = new_config;
+
+                // Reload SSH profiles. If the user has the settings
+                // panel open and is mid-edit, prefer the panel's
+                // drafts (which are local edits) over the file's
+                // contents — but only when drafts are non-empty.
+                #[cfg(unix)]
+                {
+                    let loaded = AppConfig::load_ssh_profiles(&self.config_path);
+                    let has_unsaved_edits = self
+                        .ssh_settings
+                        .as_ref()
+                        .map(|s| !s.drafts.is_empty())
+                        .unwrap_or(false);
+                    if !has_unsaved_edits {
+                        self.ssh_profiles = loaded;
+                    }
+                }
 
                 if font_changed {
                     let mut gs = self.glyph_state.borrow_mut();
@@ -562,6 +1400,14 @@ impl PureTermApp {
                 }
             }
             Message::Settings(msg) => {
+                // Intercept SavedAt before forwarding so we can record the
+                // mtime for the notify-watcher debounce. The settings
+                // window doesn't do anything with this message itself —
+                // we forward it for symmetry / future use, but the side
+                // effect lives here.
+                if let SettingsMessage::SavedAt(mtime) = &msg {
+                    self.last_self_write = Some(*mtime);
+                }
                 if let Some(ref mut state) = self.settings_state {
                     let task = state.update(msg);
                     return task.map(Message::Settings);
@@ -577,6 +1423,18 @@ impl PureTermApp {
                         return window::close(win_id);
                     }
                 } else {
+                    // SSH cleanup: release pool entries for all panes in the tab
+                    #[cfg(unix)]
+                    if let Some(manager) = self.ssh_manager.as_ref() {
+                        if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
+                            for pane in tab.panes.values() {
+                                if let Some((host, user, port)) = pane.terminal_ctx.ssh_release_key() {
+                                    manager.release(host, user, port);
+                                }
+                            }
+                        }
+                    }
+
                     let idx = self.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0);
                     self.tabs.retain(|t| t.id != tab_id);
                     if self.active_tab == tab_id {
@@ -610,7 +1468,7 @@ impl PureTermApp {
             Message::ClipboardPaste(text) => {
                 if let Some(ctx) = self.active_terminal_ctx() {
                     let payload = {
-                        let term = ctx.terminal.lock();
+                        let term = ctx.terminal().lock();
                         if term.mode().contains(TermMode::BRACKETED_PASTE) {
                             let filtered = text.replace(['\x1b', '\x03'], "");
                             let mut bytes = b"\x1b[200~".to_vec();
@@ -627,7 +1485,7 @@ impl PureTermApp {
             Message::ClipboardCopy => {
                 if let Some(ctx) = self.active_terminal_ctx() {
                     let text = {
-                        let term = ctx.terminal.lock();
+                        let term = ctx.terminal().lock();
                         term.selection_to_string()
                     };
                     if let Some(text) = text {
@@ -642,7 +1500,7 @@ impl PureTermApp {
             }
             Message::SelectAll => {
                 if let Some(ctx) = self.active_terminal_ctx() {
-                    let mut term = ctx.terminal.lock();
+                    let mut term = ctx.terminal().lock();
                     let start = alacritty_terminal::index::Point::new(
                         term.topmost_line(),
                         Column(0),
@@ -692,6 +1550,43 @@ impl PureTermApp {
                 self.color_picker_tab = None;
                 self.tab_list = None;
             }
+            Message::DismissContextMenuIfOutside(point) => {
+                // Bug #2 fix: only dismiss if the click is OUTSIDE the
+                // active context menu's rect. The context menu is
+                // `pin`-positioned at `menu.position` with fixed
+                // 200px width and 30px * item_count height. The item
+                // count matches `ContextMenuItem::ALL_PLUS_SSH` (unix)
+                // or `ALL` (other platforms).
+                if let Some(menu) = &self.context_menu {
+                    #[cfg(unix)]
+                    let item_count = ContextMenuItem::ALL_PLUS_SSH.len();
+                    #[cfg(not(unix))]
+                    let item_count = ContextMenuItem::ALL.len();
+                    let menu_w = 200.0f32;
+                    let menu_h = (item_count as f32) * 30.0;
+                    let x = menu
+                        .position
+                        .x
+                        .min(self.viewport_size.width - menu_w)
+                        .max(0.0);
+                    let y = menu
+                        .position
+                        .y
+                        .min(self.viewport_size.height - menu_h)
+                        .max(0.0);
+                    if point.x >= x
+                        && point.x <= x + menu_w
+                        && point.y >= y
+                        && point.y <= y + menu_h
+                    {
+                        return Task::none();
+                    }
+                }
+                self.context_menu = None;
+                self.renaming_tab = None;
+                self.color_picker_tab = None;
+                self.tab_list = None;
+            }
             Message::ContextMenuAction(item) => {
                 let menu = match self.context_menu.take() {
                     Some(m) => m,
@@ -734,7 +1629,9 @@ impl PureTermApp {
                             // 会从 Tab 2 开始。原窗口中剩余 tab 保留各自编号。
                             self.next_tab_id = 0;
                             tab.id = TabId(0);
-                            tab.title = "Tab 1".to_string();
+                            tab.title = self
+                                .i18n
+                                .t_fmt("tab.title.format", &[("n", &"1".to_string())]);
                             let settings = window::Settings {
                                 size: Size::new(1024.0, 768.0),
                                 decorations: true,
@@ -805,6 +1702,10 @@ impl PureTermApp {
                     ContextMenuItem::ClosePane => {
                         self.active_tab = menu.tab_id;
                         self.close_active_pane();
+                    }
+                    #[cfg(unix)]
+                    ContextMenuItem::NewSshTab => {
+                        return Task::done(Message::OpenSshDialog);
                     }
                 }
             }
@@ -905,6 +1806,373 @@ impl PureTermApp {
                     self.tab_list = None;
                 }
             }
+            #[cfg(unix)]
+            Message::OpenSshDialog => {
+                if self.ssh_manager.is_none() {
+                    // Initialize the manager on first use, using a default
+                    // socket directory under the user's runtime dir.
+                    let socket_dir = std::env::temp_dir().join("pureterm-ssh");
+                    let _ = std::fs::create_dir_all(&socket_dir);
+                    self.ssh_manager = Some(Arc::new(SshSessionManager::new(socket_dir, 30)));
+                }
+                if self.ssh_profiles.is_empty() {
+                    self.ssh_dialog = Some(SshDialogState {
+                        selected: 0,
+                        error: Some(self.i18n.t("ssh.dialog.error.no_profiles")),
+                    });
+                } else {
+                    self.ssh_dialog = Some(SshDialogState {
+                        selected: 0,
+                        error: None,
+                    });
+                }
+            }
+            #[cfg(unix)]
+            Message::CloseSshDialog => {
+                self.ssh_dialog = None;
+            }
+            #[cfg(unix)]
+            Message::CloseSshDialogIfOutside(point) => {
+                // Bug #3 fix: only dismiss if the click is OUTSIDE the
+                // SSH dialog's pinned center rect. The dialog is 420
+                // wide x 360 tall, centered on the viewport.
+                if self.ssh_dialog.is_some() {
+                    const DIALOG_W: f32 = 420.0;
+                    const DIALOG_H: f32 = 360.0;
+                    let x = (self.viewport_size.width - DIALOG_W).max(0.0) / 2.0;
+                    let y = (self.viewport_size.height - DIALOG_H).max(0.0) / 2.0;
+                    if point.x >= x
+                        && point.x <= x + DIALOG_W
+                        && point.y >= y
+                        && point.y <= y + DIALOG_H
+                    {
+                        return Task::none();
+                    }
+                }
+                self.ssh_dialog = None;
+            }
+            #[cfg(unix)]
+            Message::SshDialogSelect(idx) => {
+                if let Some(ref mut dialog) = self.ssh_dialog {
+                    if idx < self.ssh_profiles.len() {
+                        dialog.selected = idx;
+                        dialog.error = None;
+                    }
+                }
+            }
+            #[cfg(unix)]
+            Message::SshConnect(idx) => {
+                // Defensive: ensure the ssh_manager is initialized
+                // (mirrors Message::OpenSshDialog's lazy init). Without
+                // this, if the user reaches SshConnect without first
+                // triggering OpenSshDialog (e.g. via a future shortcut
+                // or restored session), the manager would be None and
+                // connect_ssh_tab would silently bail with a dialog
+                // error.
+                if self.ssh_manager.is_none() {
+                    let socket_dir = std::env::temp_dir().join("pureterm-ssh");
+                    let _ = std::fs::create_dir_all(&socket_dir);
+                    self.ssh_manager =
+                        Some(Arc::new(SshSessionManager::new(socket_dir, 30)));
+                }
+                self.connect_ssh_tab(idx);
+            }
+            #[cfg(unix)]
+            Message::ToggleSshSettingsPanel => {
+                if self.ssh_settings.is_some() {
+                    self.ssh_settings = None;
+                } else {
+                    let drafts = self.ssh_profiles.clone();
+                    let unlocked = self
+                        .ssh_credential_store
+                        .as_ref()
+                        .map(|s| s.is_unlocked())
+                        .unwrap_or(false);
+                    self.ssh_settings = Some(SshSettingsPanelState {
+                        drafts,
+                        editing: None,
+                        master_unlocked: unlocked,
+                        master_status: if unlocked {
+                            MasterStatus::Unlocked
+                        } else {
+                            MasterStatus::Locked
+                        },
+                        master_pw_draft: String::new(),
+                    });
+                }
+            }
+            #[cfg(unix)]
+            Message::SshSettingsEditProfile(idx) => {
+                if let Some(ref mut s) = self.ssh_settings {
+                    if idx < s.drafts.len() {
+                        s.editing = Some(idx);
+                    }
+                }
+            }
+            #[cfg(unix)]
+            Message::SshSettingsUpdateField { idx, field, value } => {
+                if let Some(ref mut s) = self.ssh_settings {
+                    if let Some(p) = s.drafts.get_mut(idx) {
+                        match field {
+                            SshField::Name => p.name = value,
+                            SshField::Host => p.host = value,
+                            SshField::User => p.user = if value.is_empty() { None } else { Some(value) },
+                            SshField::Port => p.port = value.parse().ok(),
+                            SshField::KeyPath => p.key_path = if value.is_empty() { None } else { Some(value) },
+                            SshField::Password => p.password = if value.is_empty() { None } else { Some(value) },
+                        }
+                    }
+                }
+            }
+            #[cfg(unix)]
+            Message::SshSettingsSaveProfile(idx) => {
+                if let Some(ref mut s) = self.ssh_settings {
+                    if idx < s.drafts.len() {
+                        let profile = s.drafts[idx].clone();
+
+                        // Store password in CredentialStore if present and store is unlocked.
+                        if let (Some(ref mut store), Some(ref pw)) =
+                            (&mut self.ssh_credential_store, &profile.password)
+                        {
+                            if store.is_unlocked() && !pw.is_empty() {
+                                let key = format!(
+                                    "{}@{}:{}",
+                                    profile.user.as_deref().unwrap_or(""),
+                                    &profile.host,
+                                    profile.port.unwrap_or(22)
+                                );
+                                if let Err(e) = store.store(&key, pw.as_bytes()) {
+                                    log::warn!("Failed to store SSH password: {}", e);
+                                }
+                            }
+                        }
+
+                        if idx < self.ssh_profiles.len() {
+                            self.ssh_profiles[idx] = profile;
+                        } else {
+                            self.ssh_profiles.push(profile);
+                        }
+                        s.editing = None;
+                        // Persist to disk
+                        self.persist_ssh_profiles();
+                    }
+                }
+            }
+            #[cfg(unix)]
+            Message::SshSettingsDeleteProfile(idx) => {
+                if let Some(ref mut s) = self.ssh_settings {
+                    if idx < s.drafts.len() {
+                        s.drafts.remove(idx);
+                        if idx < self.ssh_profiles.len() {
+                            self.ssh_profiles.remove(idx);
+                        }
+                        s.editing = None;
+                        self.persist_ssh_profiles();
+                    }
+                }
+            }
+            #[cfg(unix)]
+            Message::SshSettingsRequested => {
+                // Close the SSH dialog if it's open.
+                self.ssh_dialog = None;
+                // Open the settings panel (mirrors ToggleSshSettingsPanel
+                // when it was None, but we also clear the dialog state
+                // above to avoid leaving it set).
+                if self.ssh_settings.is_none() {
+                    let drafts = self.ssh_profiles.clone();
+                    let unlocked = self
+                        .ssh_credential_store
+                        .as_ref()
+                        .map(|s| s.is_unlocked())
+                        .unwrap_or(false);
+                    self.ssh_settings = Some(SshSettingsPanelState {
+                        drafts,
+                        editing: None,
+                        master_unlocked: unlocked,
+                        master_status: if unlocked {
+                            MasterStatus::Unlocked
+                        } else {
+                            MasterStatus::Locked
+                        },
+                        master_pw_draft: String::new(),
+                    });
+                }
+            }
+            #[cfg(unix)]
+            Message::SshSettingsAddProfile => {
+                let next_n = self.ssh_profiles.len() + 1;
+                let new_profile = SshProfile {
+                    name: self
+                        .i18n
+                        .t_fmt("ssh.new_profile", &[("n", &next_n.to_string())]),
+                    host: String::new(),
+                    user: None,
+                    // Pre-fill 22 (standard SSH port) so the Port
+                    // input isn't blank on first edit. Matches the
+                    // `pureterm-settings` SSH Profiles page behavior.
+                    port: Some(22),
+                    password: None,
+                    key_path: None,
+                    shortcut: None,
+                };
+                self.ssh_profiles.push(new_profile.clone());
+                if let Some(ref mut s) = self.ssh_settings {
+                    s.drafts.push(new_profile);
+                    s.editing = Some(s.drafts.len().saturating_sub(1));
+                }
+            }
+            #[cfg(unix)]
+            Message::SshSettingsMasterPwChanged(pw) => {
+                if let Some(ref mut s) = self.ssh_settings {
+                    s.master_pw_draft = pw;
+                    // PureTerm: once the user starts typing, clear the
+                    // previous failure / awaiting-unlock hint so the
+                    // status row resets to the stable Locked/Unlocked
+                    // indicator. Enum match replaces the old
+                    // `starts_with("Unlock failed")` / `starts_with(
+                    // "Master password set")` string check, which broke
+                    // when status text became localized.
+                    match s.master_status {
+                        MasterStatus::UnlockFailed(_)
+                        | MasterStatus::SetAwaitingUnlock => {
+                            s.master_status = if s.master_unlocked {
+                                MasterStatus::Unlocked
+                            } else {
+                                MasterStatus::Locked
+                            };
+                        },
+                        _ => {},
+                    }
+                }
+            }
+            #[cfg(unix)]
+            Message::SshSettingsUnlockMaster(pw) => {
+                self.try_unlock_or_setup_master(&pw);
+            }
+            #[cfg(unix)]
+            Message::SshSettingsSetupMaster(pw) => {
+                self.setup_master_password(&pw);
+            }
+            Message::OpenCommandPalette => {
+                self.open_command_palette();
+            }
+            Message::CloseCommandPalette => {
+                self.command_palette = None;
+            }
+            Message::CloseCommandPaletteIfOutside(point) => {
+                // Bug #3 (command palette) fix: only dismiss if the
+                // click is OUTSIDE the palette's pinned center rect.
+                // The palette is 520 wide x 360 tall, centered.
+                if self.command_palette.is_some() {
+                    const PALETTE_W: f32 = 520.0;
+                    const PALETTE_H: f32 = 360.0;
+                    let x = (self.viewport_size.width - PALETTE_W).max(0.0) / 2.0;
+                    let y = (self.viewport_size.height - PALETTE_H).max(0.0) / 2.0;
+                    if point.x >= x
+                        && point.x <= x + PALETTE_W
+                        && point.y >= y
+                        && point.y <= y + PALETTE_H
+                    {
+                        return Task::none();
+                    }
+                }
+                self.command_palette = None;
+            }
+            Message::CommandPaletteQuery(q) => {
+                if let Some(ref mut state) = self.command_palette {
+                    state.query = q;
+                }
+                // Refresh the visible entries, then re-borrow the
+                // state to emit a scroll-to-selected task. We can't
+                // hold a `&mut self.command_palette` borrow across the
+                // `refresh_palette_matches` call (it re-borrows `self`).
+                if self.command_palette.is_some() {
+                    self.refresh_palette_matches();
+                    let task = Self::scroll_palette_to_selected(
+                        self.command_palette.as_ref().unwrap(),
+                    );
+                    return task;
+                }
+            }
+            Message::CommandPaletteSelect(idx) => {
+                // Bug C fix: in Action mode, clicking an item now
+                // EXECUTES the action (just like pressing Enter). The
+                // previous behavior — only updating `state.selected`
+                // and waiting for Enter — was inconsistent with Profile
+                // mode (where click directly connects) and unintuitive
+                // (users expected a click to "run the highlighted
+                // action").
+                //
+                // We still update `state.selected` first so keyboard
+                // navigation remains in sync if the user later arrows
+                // away.
+                let mode = self.command_palette.as_ref().map(|s| s.mode);
+                match mode {
+                    Some(PaletteMode::Profiles) => {
+                        #[cfg(unix)]
+                        {
+                            self.command_palette = None;
+                            return self.update(Message::SshConnect(idx));
+                        }
+                        #[cfg(not(unix))]
+                        {
+                            let _ = idx;
+                            return Task::none();
+                        }
+                    },
+                    Some(PaletteMode::Actions) | None => {
+                        // Snapshot the entry to dispatch (we need to
+                        // release the borrow on `self.command_palette`
+                        // before calling `run_palette_entry`, which
+                        // mutably borrows self).
+                        let entry = {
+                            let Some(state) = self.command_palette.as_ref() else {
+                                return Task::none();
+                            };
+                            if idx >= state.visible_actions.len() {
+                                return Task::none();
+                            }
+                            state.visible_actions[idx].clone()
+                        };
+                        // Also keep `selected` in sync so an
+                        // immediately-following Enter hits the same
+                        // entry.
+                        if let Some(ref mut state) = self.command_palette {
+                            state.selected = idx;
+                        }
+                        return self.run_palette_entry(entry);
+                    },
+                }
+            }
+            Message::CommandPaletteEnter => {
+                return self.run_palette_selected();
+            }
+            Message::CommandPaletteUp => {
+                if let Some(ref mut state) = self.command_palette {
+                    if state.selected > 0 {
+                        state.selected -= 1;
+                    }
+                    return Self::scroll_palette_to_selected(state);
+                }
+            }
+            Message::CommandPaletteDown => {
+                if let Some(ref mut state) = self.command_palette {
+                    // Bug fix: the previous bound only checked
+                    // `visible_actions.len()`, which is empty in
+                    // `Profiles` mode — Down would silently no-op.
+                    // Use the mode-aware length so both modes can
+                    // navigate.
+                    let len = match state.mode {
+                        PaletteMode::Actions => state.visible_actions.len(),
+                        #[cfg(unix)]
+                        PaletteMode::Profiles => state.profiles.len(),
+                    };
+                    if state.selected + 1 < len {
+                        state.selected += 1;
+                    }
+                    return Self::scroll_palette_to_selected(state);
+                }
+            }
             Message::DividerPress(mut drag) => {
                 // 在按下时通过 split_id 找到分割线屏幕位置和可用大小
                 if let Some(tab) = self.tabs.iter().find(|t| t.id == drag.tab_id) {
@@ -1003,6 +2271,15 @@ impl PureTermApp {
                 };
                 if let Some(new_active) = new_active {
                     let tab = self.tabs.iter_mut().find(|t| t.id == tab_id).unwrap();
+                    // SSH cleanup: release pool entry for this pane
+                    #[cfg(unix)]
+                    if let Some(manager) = self.ssh_manager.as_ref() {
+                        if let Some(pane) = tab.panes.get(&pane_id) {
+                            if let Some((host, user, port)) = pane.terminal_ctx.ssh_release_key() {
+                                manager.release(host, user, port);
+                            }
+                        }
+                    }
                     tab.panes.remove(&pane_id);
                     tab.active_pane = new_active;
                     // Resize remaining panes
@@ -1038,11 +2315,20 @@ impl PureTermApp {
                     || self.renaming_tab.is_some()
                     || self.color_picker_tab.is_some()
                     || self.tab_list.is_some()
+                    || self.ssh_dialog.is_some()
+                    || self.ssh_settings.is_some()
+                    || self.command_palette.is_some()
                 {
                     self.context_menu = None;
                     self.renaming_tab = None;
                     self.color_picker_tab = None;
                     self.tab_list = None;
+                    #[cfg(unix)]
+                    {
+                        self.ssh_dialog = None;
+                        self.ssh_settings = None;
+                    }
+                    self.command_palette = None;
                     return Task::none();
                 }
                 // Fall through to send Escape to PTY
@@ -1050,17 +2336,55 @@ impl PureTermApp {
                     ctx.write_to_pty(b"\x1b");
                 }
             }
+            // Command palette arrow navigation
+            KEvent::KeyPressed { key: Key::Named(Named::ArrowDown), .. }
+                if self.command_palette.is_some() =>
+            {
+                return Task::done(Message::CommandPaletteDown);
+            }
+            KEvent::KeyPressed { key: Key::Named(Named::ArrowUp), .. }
+                if self.command_palette.is_some() =>
+            {
+                return Task::done(Message::CommandPaletteUp);
+            }
+            // SSH dialog arrow navigation
+            #[cfg(unix)]
+            KEvent::KeyPressed { key: Key::Named(Named::ArrowDown), .. }
+                if self.ssh_dialog.is_some() =>
+            {
+                if let Some(ref mut dialog) = self.ssh_dialog {
+                    if dialog.selected + 1 < self.ssh_profiles.len() {
+                        dialog.selected += 1;
+                    }
+                }
+                return Task::none();
+            }
+            #[cfg(unix)]
+            KEvent::KeyPressed { key: Key::Named(Named::ArrowUp), .. }
+                if self.ssh_dialog.is_some() =>
+            {
+                if let Some(ref mut dialog) = self.ssh_dialog {
+                    if dialog.selected > 0 {
+                        dialog.selected -= 1;
+                    }
+                }
+                return Task::none();
+            }
             KEvent::KeyPressed { key: Key::Named(Named::ArrowDown), .. }
                 if self.context_menu.is_some() =>
             {
                 if let Some(ref mut menu) = self.context_menu {
+                    #[cfg(unix)]
+                    let items: &[ContextMenuItem] = &ContextMenuItem::ALL_PLUS_SSH;
+                    #[cfg(not(unix))]
+                    let items: &[ContextMenuItem] = &ContextMenuItem::ALL;
                     let current = menu
                         .hovered_item
-                        .and_then(|h| ContextMenuItem::ALL.iter().position(|i| *i == h))
+                        .and_then(|h| items.iter().position(|i| *i == h))
                         .map(|p| p + 1)
                         .unwrap_or(0)
-                        .min(ContextMenuItem::ALL.len() - 1);
-                    menu.hovered_item = Some(ContextMenuItem::ALL[current]);
+                        .min(items.len() - 1);
+                    menu.hovered_item = Some(items[current]);
                 }
                 return Task::none();
             }
@@ -1068,12 +2392,16 @@ impl PureTermApp {
                 if self.context_menu.is_some() =>
             {
                 if let Some(ref mut menu) = self.context_menu {
+                    #[cfg(unix)]
+                    let items: &[ContextMenuItem] = &ContextMenuItem::ALL_PLUS_SSH;
+                    #[cfg(not(unix))]
+                    let items: &[ContextMenuItem] = &ContextMenuItem::ALL;
                     let current = menu
                         .hovered_item
-                        .and_then(|h| ContextMenuItem::ALL.iter().position(|i| *i == h))
-                        .unwrap_or(ContextMenuItem::ALL.len());
+                        .and_then(|h| items.iter().position(|i| *i == h))
+                        .unwrap_or(items.len());
                     let prev = current.saturating_sub(1);
-                    menu.hovered_item = Some(ContextMenuItem::ALL[prev]);
+                    menu.hovered_item = Some(items[prev]);
                 }
                 return Task::none();
             }
@@ -1086,12 +2414,36 @@ impl PureTermApp {
                 if self.renaming_tab.is_some() {
                     return Task::done(Message::RenameConfirmed);
                 }
+                // Command palette Enter
+                if self.command_palette.is_some() {
+                    return Task::done(Message::CommandPaletteEnter);
+                }
+                // SSH dialog Enter — connect to selected profile
+                #[cfg(unix)]
+                if let Some(ref dialog) = self.ssh_dialog {
+                    let selected = dialog.selected;
+                    return Task::done(Message::SshConnect(selected));
+                }
                 // Fall through to send Enter to PTY
                 if let Some(ctx) = self.active_terminal_ctx() {
                     ctx.write_to_pty(b"\r");
                 }
             }
             KEvent::KeyPressed { key, text, modifiers, .. } => {
+                // Prevent keystrokes from reaching PTY when overlays are active.
+                // Cmd+shortcuts are still processed below so the user can
+                // toggle overlays with ⌘⇧S / ⌘⇧P even when another overlay is open.
+                if !modifiers.command()
+                    && (self.ssh_dialog.is_some()
+                        || self.ssh_settings.is_some()
+                        || self.command_palette.is_some()
+                        || self.context_menu.is_some()
+                        || self.renaming_tab.is_some()
+                        || self.tab_list.is_some())
+                {
+                    return Task::none();
+                }
+
                 if modifiers.command() {
                     if let Key::Character(ref c) = key {
                         match c.as_str() {
@@ -1132,6 +2484,22 @@ impl PureTermApp {
                             "a" => return Task::done(Message::SelectAll),
                             "}" => return Task::done(Message::NextTab),
                             "{" => return Task::done(Message::PrevTab),
+                            #[cfg(unix)]
+                            // Match on the resulting character, not the
+                            // shift modifier. On macOS, ⌘⇧S can be
+                            // reported as Key::Character("S") with the
+                            // SHIFT flag *not* set in modifiers (the
+                            // shift is encoded in the upper-case). Match
+                            // both "S" and "s" so we catch either form.
+                            // We have no ⌘s binding, so widening to "s"
+                            // is safe.
+                            s if s.eq_ignore_ascii_case("s") => {
+                                return Task::done(Message::OpenSshDialog);
+                            },
+                            #[cfg(unix)]
+                            s if s.eq_ignore_ascii_case("p") => {
+                                return Task::done(Message::OpenCommandPalette);
+                            },
                             s if s.len() == 1 => {
                                 if let Some(digit) = s.chars().next().and_then(|ch| ch.to_digit(10)) {
                                     if digit >= 1 && digit <= 9 {
@@ -1273,7 +2641,7 @@ impl PureTermApp {
 
         // Snapshot the current mode. Lock with `lock_unfair` to avoid blocking the
         // PTY reader thread; release before writing to the PTY to prevent reentry.
-        let mode = *ctx.terminal.lock_unfair().mode();
+        let mode = *ctx.terminal().lock_unfair().mode();
 
         if mode.intersects(TermMode::MOUSE_MODE) {
             // Path 1: forward as mouse report. last_cursor_pos is widget-relative
@@ -1319,7 +2687,7 @@ impl PureTermApp {
         } else if lines != 0 {
             // Path 3: scroll the display offset (history) on the primary screen.
             let delta = if is_scroll_up { lines as i32 } else { -(lines as i32) };
-            let mut term = ctx.terminal.lock_unfair();
+            let mut term = ctx.terminal().lock_unfair();
             term.grid_mut().scroll_display(Scroll::Delta(delta));
         }
     }
@@ -1387,7 +2755,7 @@ impl PureTermApp {
         let new_pane_id = PaneId::next();
 
         let terminal_ctx = Arc::new(
-            TerminalContext::new().expect("Failed to create terminal context"),
+            TerminalContext::new_local().expect("Failed to create terminal context"),
         );
 
         // Find the tab and perform the split
@@ -1468,6 +2836,15 @@ impl PureTermApp {
 
         if let Some(new_active) = new_active {
             let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id).unwrap();
+            // SSH cleanup: release pool entry for this pane
+            #[cfg(unix)]
+            if let Some(manager) = self.ssh_manager.as_ref() {
+                if let Some(pane) = tab.panes.get(&active_pane_id) {
+                    if let Some((host, user, port)) = pane.terminal_ctx.ssh_release_key() {
+                        manager.release(host, user, port);
+                    }
+                }
+            }
             tab.panes.remove(&active_pane_id);
             tab.active_pane = new_active;
             // Resize remaining panes
@@ -1540,7 +2917,7 @@ impl PureTermApp {
         let is_scroll_up = delta_y_px > 0.0;
         let is_scroll_left = delta_x_px > 0.0;
 
-        let mode = *ctx.terminal.lock_unfair().mode();
+        let mode = *ctx.terminal().lock_unfair().mode();
 
         if mode.intersects(TermMode::MOUSE_MODE) {
             let pos = self.last_cursor_pos;
@@ -1580,7 +2957,7 @@ impl PureTermApp {
             ctx.write_to_pty(&content);
         } else if lines != 0 {
             let delta = if is_scroll_up { lines as i32 } else { -(lines as i32) };
-            let mut term = ctx.terminal.lock_unfair();
+            let mut term = ctx.terminal().lock_unfair();
             term.grid_mut().scroll_display(Scroll::Delta(delta));
         }
     }
@@ -1707,7 +3084,12 @@ impl PureTermApp {
     fn view_context_menu(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         let menu = self.context_menu.as_ref()?;
 
-        let items: Vec<Element<'_, Message, Theme, iced::Renderer>> = ContextMenuItem::ALL
+        #[cfg(unix)]
+        let items_all: &[ContextMenuItem] = &ContextMenuItem::ALL_PLUS_SSH;
+        #[cfg(not(unix))]
+        let items_all: &[ContextMenuItem] = &ContextMenuItem::ALL;
+
+        let items: Vec<Element<'_, Message, Theme, iced::Renderer>> = items_all
             .iter()
             .map(|&item| {
                 let is_hovered = self
@@ -1761,7 +3143,7 @@ impl PureTermApp {
 
         // Clamp position to stay within viewport
         let menu_width = 200.0f32;
-        let menu_height = (ContextMenuItem::ALL.len() as f32) * 30.0;
+        let menu_height = (items_all.len() as f32) * 30.0;
         let x = menu.position.x.min(self.viewport_size.width - menu_width).max(0.0);
         let y = menu
             .position
@@ -1897,6 +3279,396 @@ impl PureTermApp {
             .max(TAB_BAR_HEIGHT);
 
         Some(pin(picker_container).x(x).y(y).into())
+    }
+
+    /// P3 GAP-5.7: render the SSH connection dialog as a modal overlay.
+    /// Lists configured profiles; the user picks one and we kick off the
+    /// ssh spawn via `Message::SshConnect`.
+    #[cfg(unix)]
+    fn view_ssh_dialog(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, mouse_area, scrollable, space, text, text_input};
+        use iced::{Alignment, Length};
+
+        let dialog = self.ssh_dialog.as_ref()?;
+
+        let mut profile_list = column![].spacing(2).padding(8);
+        if self.ssh_profiles.is_empty() {
+            profile_list = profile_list.push(
+                text(self.i18n.t("ssh.dialog.empty")).size(14),
+            );
+            profile_list = profile_list.push(
+                text(self.i18n.t("ssh.dialog.empty_hint")).size(12),
+            );
+        } else {
+            for (idx, profile) in self.ssh_profiles.iter().enumerate() {
+                let is_selected = idx == dialog.selected;
+                let label = format!(
+                    "{}{}",
+                    if is_selected { "▶ " } else { "  " },
+                    profile.name
+                );
+                let row_btn = button(text(label).size(14))
+                    .on_press(Message::SshDialogSelect(idx))
+                    .width(Length::Fill)
+                    .style(if is_selected {
+                        button::primary
+                    } else {
+                        button::secondary
+                    });
+                profile_list = profile_list.push(row_btn);
+            }
+        }
+
+        let title = text(self.i18n.t("ssh.dialog.title")).size(18);
+        let mut content = column![title].spacing(12).padding(16);
+        content = content.push(scrollable(profile_list).height(Length::Fixed(200.0)));
+
+        if let Some(err) = &dialog.error {
+            // Bug E fix: surface connection errors prominently. The
+            // previous white-on-dark text was easy to miss and made it
+            // look like "the dialog disappeared". We use a soft red
+            // background, a brighter red text color, and wrap in a
+            // container so the user can't miss it.
+            let err_box = container(
+                text(err)
+                    .size(13)
+                    .color(Color::from_rgb(1.0, 0.55, 0.55)),
+            )
+            .padding(8)
+            .width(Length::Fill)
+            .style(|_| container::Style {
+                background: Some(Background::Color(
+                    Color::from_rgba(0.4, 0.12, 0.12, 0.55),
+                )),
+                text_color: None,
+                snap: false,
+                border: Border {
+                    color: Color::from_rgba(0.8, 0.3, 0.3, 0.7),
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                shadow: Shadow::default(),
+            });
+            content = content.push(err_box);
+        }
+
+        let connect_btn = if self.ssh_profiles.is_empty() {
+            button(text(self.i18n.t("ssh.dialog.button.connect"))).style(button::secondary)
+        } else {
+            button(text(self.i18n.t("ssh.dialog.button.connect")))
+                .on_press(Message::SshConnect(dialog.selected))
+        };
+        let cancel_btn = button(text(self.i18n.t("ssh.dialog.button.cancel")))
+            .on_press(Message::CloseSshDialog);
+
+        // Bug #1 fix: when there are no profiles, give the user a direct
+        // path to the SSH Settings panel (right-side editor) instead of
+        // leaving them stuck on the error message. The user can then
+        // click + New to add their first profile.
+        //
+        // Bug #3 顺带 fix: a single message handles both closing the
+        // dialog and opening the settings panel. (Calling `.on_press`
+        // twice replaces the first message with the second, so the
+        // dialog used to stay open.)
+        let settings_btn = button(text(self.i18n.t("ssh.dialog.button.open_settings")))
+            .on_press(Message::SshSettingsRequested);
+
+        let actions = column![
+            row![connect_btn, settings_btn, cancel_btn].spacing(8),
+        ]
+        .spacing(8);
+
+        content = content.push(actions);
+
+        let dialog_container = container(content)
+            .width(Length::Fixed(420.0))
+            .style(container::bordered_box);
+
+        // Center the dialog on the viewport.
+        let cx = (self.viewport_size.width - 420.0).max(0.0) / 2.0;
+        let cy = (self.viewport_size.height - 360.0).max(0.0) / 2.0;
+
+        // Bug #3 fix (round 2): REMOVED the full-screen dismiss_overlay.
+        // iced 0.14's mouse_area calls `shell.capture_event()` on
+        // `on_press`, which swallows clicks on inner widgets (e.g. the
+        // Connect button). Even with position-aware checks the inner
+        // button's on_press was unreliable. We close the dialog via
+        // (a) the Cancel / Open SSH Settings buttons, (b) Esc in
+        // `handle_keyboard`, (c) the SshConnect handler clearing
+        // `ssh_dialog = None` on success.
+        Some(
+            iced::widget::pin(dialog_container).x(cx).y(cy).into(),
+        )
+    }
+
+    /// P4 GAP-5.8: render the right-side SSH settings panel. Shows the
+    /// profile list, an edit form for the selected profile, and a
+    /// master-password unlock section.
+    #[cfg(unix)]
+    fn view_ssh_settings_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
+        use iced::Length;
+
+        let s = self.ssh_settings.as_ref()?;
+
+        // Header row: title on the left, × Close on the right.
+        // The × button reuses `Message::ToggleSshSettingsPanel` (the
+        // same toggle that opened the panel) so behavior stays
+        // symmetric: × / Esc / command palette all do the same thing.
+        let header = row![
+            text(self.i18n.t("ssh.panel.title")).size(16),
+            space().width(Length::Fill),
+            button(text("×").size(16))
+                .on_press(Message::ToggleSshSettingsPanel)
+                .padding([2, 8])
+                .style(button::secondary),
+        ]
+        .spacing(4);
+
+        // Profile list (header is the first row of this column)
+        let mut list_col = column![header]
+            .spacing(4)
+            .padding(8);
+        list_col = list_col.push(
+            button(text(self.i18n.t("ssh.panel.add")))
+                .on_press(Message::SshSettingsAddProfile),
+        );
+        for (idx, profile) in s.drafts.iter().enumerate() {
+            let label = if Some(idx) == s.editing {
+                format!("▶ {}. {}", idx + 1, profile.name)
+            } else {
+                format!("  {}. {}", idx + 1, profile.name)
+            };
+            list_col = list_col.push(
+                button(text(label).size(13))
+                    .on_press(Message::SshSettingsEditProfile(idx))
+                    .width(Length::Fill)
+                    .style(if Some(idx) == s.editing {
+                        button::primary
+                    } else {
+                        button::secondary
+                    }),
+            );
+        }
+
+        // Edit form (or placeholder)
+        let form: Element<'_, Message, Theme, iced::Renderer> =
+            if let Some(idx) = s.editing {
+                if let Some(p) = s.drafts.get(idx) {
+                    let port_str = p.port.map(|n| n.to_string()).unwrap_or_default();
+                    let user_str = p.user.clone().unwrap_or_default();
+                    let key_str = p.key_path.clone().unwrap_or_default();
+                    let pw_str = p.password.clone().unwrap_or_default();
+                    let mut form_col = column![
+                        text(self.i18n.t_fmt(
+                            "ssh.panel.editing",
+                            &[("idx", &(idx + 1).to_string())],
+                        )).size(15),
+                        text(self.i18n.t("ssh.panel.label.name")).size(12),
+                        text_input("", &p.name).on_input(move |v| Message::SshSettingsUpdateField {
+                            idx,
+                            field: SshField::Name,
+                            value: v,
+                        }),
+                        text(self.i18n.t("ssh.panel.label.host")).size(12),
+                        text_input("", &p.host).on_input(move |v| Message::SshSettingsUpdateField {
+                            idx,
+                            field: SshField::Host,
+                            value: v,
+                        }),
+                        text(self.i18n.t("ssh.panel.label.user")).size(12),
+                        text_input("", &user_str).on_input(move |v| Message::SshSettingsUpdateField {
+                            idx,
+                            field: SshField::User,
+                            value: v,
+                        }),
+                        text(self.i18n.t("ssh.panel.label.port")).size(12),
+                        text_input("22", &port_str).on_input(move |v| Message::SshSettingsUpdateField {
+                            idx,
+                            field: SshField::Port,
+                            value: v,
+                        }),
+                        text(self.i18n.t("ssh.panel.label.key_path")).size(12),
+                        text_input("", &key_str).on_input(move |v| Message::SshSettingsUpdateField {
+                            idx,
+                            field: SshField::KeyPath,
+                            value: v,
+                        }),
+                        text(self.i18n.t("ssh.panel.label.password")).size(12),
+                        text_input("", &pw_str).secure(true).on_input(move |v| Message::SshSettingsUpdateField {
+                            idx,
+                            field: SshField::Password,
+                            value: v,
+                        }),
+                    ]
+                    .spacing(4)
+                    .padding(8);
+                    form_col = form_col.push(row![
+                        button(text(self.i18n.t("ssh.panel.button.save")))
+                            .on_press(Message::SshSettingsSaveProfile(idx)),
+                        button(text(self.i18n.t("ssh.panel.button.delete")))
+                            .on_press(Message::SshSettingsDeleteProfile(idx)),
+                    ].spacing(8));
+                    scrollable(form_col).into()
+                } else {
+                    text(self.i18n.t("ssh.panel.profile_not_found")).into()
+                }
+            } else {
+                text(self.i18n.t("ssh.panel.placeholder.empty")).size(13).into()
+            };
+
+        // Master password section
+        let master_section = column![
+            text(self.i18n.t("ssh.master.title")).size(15),
+            text(s.master_status.render(&self.i18n)).size(12),
+            text_input(&self.i18n.t("ssh.master.placeholder"), &s.master_pw_draft)
+                .on_input(Message::SshSettingsMasterPwChanged)
+                .secure(true),
+            row![
+                button(text(if s.master_unlocked {
+                    self.i18n.t("ssh.master.reunlock")
+                } else {
+                    self.i18n.t("ssh.master.unlock")
+                }))
+                    .on_press(Message::SshSettingsUnlockMaster(s.master_pw_draft.clone())),
+            ].spacing(8),
+        ]
+        .spacing(4)
+        .padding(8);
+
+        let body = column![
+            scrollable(list_col).height(Length::Fixed(180.0)),
+            form,
+            master_section,
+        ]
+        .spacing(8);
+
+        let panel = container(body)
+            .width(Length::Fixed(360.0))
+            .height(Length::Fill)
+            .style(container::bordered_box);
+
+        // Pin to the right edge of the viewport.
+        let x = (self.viewport_size.width - 360.0).max(0.0);
+        Some(iced::widget::pin(panel).x(x).y(0.0).into())
+    }
+
+    /// P5 GAP-5.9: render the command palette as a centered overlay.
+    /// Two modes:
+    /// - `Mode::Actions` — fuzzy-searchable list of registered actions.
+    /// - `Mode::Profiles` — direct list of configured SSH profiles.
+    fn view_command_palette(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, mouse_area, row, scrollable, space, text, text_input};
+        use iced::Length;
+
+        let s = self.command_palette.as_ref()?;
+
+        let title = match s.mode {
+            PaletteMode::Actions => text(self.i18n.t("palette.title")).size(16),
+            #[cfg(unix)]
+            PaletteMode::Profiles => text(self.i18n.t("palette.title.profiles")).size(16),
+        };
+
+        let mut body = column![title].spacing(8).padding(12);
+
+        // Query input
+        let query_input = text_input(&self.i18n.t("palette.placeholder"), &s.query)
+            .on_input(Message::CommandPaletteQuery)
+            .width(Length::Fill);
+        body = body.push(query_input);
+
+        // Visible items
+        let list: Element<'_, Message, Theme, iced::Renderer> = match s.mode {
+            PaletteMode::Actions => {
+                let mut col = column![].spacing(2);
+                if s.visible_actions.is_empty() {
+                    col = col.push(text(self.i18n.t("palette.empty")).size(13));
+                } else {
+                    for (idx, entry) in s.visible_actions.iter().enumerate() {
+                        let label = match entry {
+                            CommandEntry::Builtin { label, hint, .. } => {
+                                format!("{} — {}", label, hint)
+                            },
+                            #[cfg(unix)]
+                            CommandEntry::SshConnect => {
+                                self.i18n.t("palette.action.ssh_connect.label")
+                            },
+                            #[cfg(unix)]
+                            CommandEntry::SshOpenSettings => {
+                                self.i18n.t("palette.action.ssh_settings.label")
+                            },
+                            #[cfg(unix)]
+                            CommandEntry::SshListProfiles => {
+                                self.i18n.t("palette.action.ssh_list.label")
+                            },
+                        };
+                        let is_sel = idx == s.selected;
+                        let btn = button(text(label).size(13))
+                            .on_press(Message::CommandPaletteSelect(idx))
+                            .width(Length::Fill)
+                            .style(if is_sel { button::primary } else { button::secondary });
+                        col = col.push(btn);
+                    }
+                }
+                scrollable(col)
+                    .height(Length::Fixed(220.0))
+                    .id("command_palette.list")
+                    .into()
+            },
+            #[cfg(unix)]
+            PaletteMode::Profiles => {
+                let mut col = column![].spacing(2);
+                if s.profiles.is_empty() {
+                    col = col.push(text(self.i18n.t("palette.empty.profiles")).size(13));
+                } else {
+                    for (idx, p) in s.profiles.iter().enumerate() {
+                        let is_sel = idx == s.selected;
+                        let label = format!(
+                            "{}{} ({})",
+                            if is_sel { "▶ " } else { "  " },
+                            p.name,
+                            p.host
+                        );
+                        col = col.push(
+                            button(text(label).size(13))
+                                .on_press(Message::CommandPaletteSelect(idx))
+                                .width(Length::Fill)
+                                .style(if is_sel { button::primary } else { button::secondary }),
+                        );
+                    }
+                }
+                scrollable(col)
+                    .height(Length::Fixed(220.0))
+                    .id("command_palette.list")
+                    .into()
+            },
+        };
+        body = body.push(list);
+
+        // Bottom hint row
+        let hint = match s.mode {
+            PaletteMode::Actions => self.i18n.t("palette.hint.actions"),
+            #[cfg(unix)]
+            PaletteMode::Profiles => self.i18n.t("palette.hint.profiles"),
+        };
+        body = body.push(text(hint).size(11));
+
+        let dialog = container(body)
+            .width(Length::Fixed(520.0))
+            .style(container::bordered_box);
+
+        let cx = (self.viewport_size.width - 520.0).max(0.0) / 2.0;
+        let cy = (self.viewport_size.height - 360.0).max(0.0) / 2.0;
+
+        // Bug #3 fix (command palette): removed the full-screen
+        // dismiss overlay for the same reason as the SSH dialog (see
+        // view_ssh_dialog comment). The palette is closed by:
+        //  - selecting a profile / running an action (handler clears
+        //    `command_palette = None`),
+        //  - the explicit close button / Esc key in `handle_keyboard`.
+        Some(
+            iced::widget::pin(dialog).x(cx).y(cy).into(),
+        )
     }
 
     fn view_tab_list(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
@@ -2053,16 +3825,41 @@ impl PureTermApp {
         let has_overlay = self.context_menu.is_some()
             || self.renaming_tab.is_some()
             || self.color_picker_tab.is_some()
-            || self.tab_list.is_some();
+            || self.tab_list.is_some()
+            // Bug #1 + #2 + #3 actual root cause: the SSH dialog,
+            // SSH settings panel, and command palette are all opened
+            // INDEPENDENTLY of the context menu. When the user triggers
+            // them via shortcut / palette → action, no other overlay
+            // is active, so `has_overlay` would be false and the
+            // dialog/panel would never be pushed into the `layers`
+            // stack. Include all overlay states here.
+            || self.ssh_dialog.is_some()
+            || self.ssh_settings.is_some()
+            || self.command_palette.is_some();
 
         if has_overlay {
-            let dismiss: Element<'_, Message, Theme, iced::Renderer> = opaque(
-                mouse_area(container(space().width(Length::Fill).height(Length::Fill)))
-                    .on_press(Message::DismissContextMenu),
-            );
-
+            // No full-screen `dismiss` overlay here. The previous design
+            // used `opaque(mouse_area.on_press(Dismiss))` to catch
+            // outside-clicks, but iced 0.14's `MouseArea` calls
+            // `shell.capture_event()` whenever `on_press` fires, which
+            // ALSO swallows clicks on inner widgets (e.g. menu items,
+            // dialog buttons). See `iced_widget/mouse_area.rs`:
+            //
+            //     shell.publish(message.clone());
+            //     shell.capture_event();   // <-- prevents inner widgets
+            //
+            // Click-outside-to-dismiss is now handled by:
+            // 1. The action handlers themselves (ContextMenuAction,
+            //    SshConnect, CommandPaletteSelect, …) clear their own
+            //    overlay state in addition to dispatching the action.
+            // 2. The Esc key in `handle_keyboard` for all overlays.
+            // 3. The explicit Cancel / × buttons in each dialog.
+            //
+            // We keep the `has_overlay` check so the base is *not* drawn
+            // when an overlay is shown — the overlay widgets themselves
+            // fill the viewport.
             let mut layers: Vec<Element<'_, Message, Theme, iced::Renderer>> =
-                vec![base, dismiss];
+                vec![base];
 
             if let Some(menu_el) = self.view_context_menu() {
                 layers.push(menu_el);
@@ -2075,6 +3872,17 @@ impl PureTermApp {
             }
             if let Some(list_el) = self.view_tab_list() {
                 layers.push(list_el);
+            }
+            #[cfg(unix)]
+            if let Some(ssh_el) = self.view_ssh_dialog() {
+                layers.push(ssh_el);
+            }
+            #[cfg(unix)]
+            if let Some(ssh_settings_el) = self.view_ssh_settings_panel() {
+                layers.push(ssh_settings_el);
+            }
+            if let Some(palette_el) = self.view_command_palette() {
+                layers.push(palette_el);
             }
 
             stack(layers)
@@ -2309,6 +4117,13 @@ impl PureTermApp {
                 }) if modifiers.command() && c.as_str() == "," => {
                     Some(Message::OpenSettings)
                 }
+                // NOTE: ⌘⇧S / ⌘⇧P are handled exclusively by
+                // `handle_keyboard` (the `keyboard::listen()` path). The
+                // `Event::Keyboard` arm in this closure was a duplicate
+                // that produced a second `Message::OpenSshDialog` /
+                // `Message::OpenCommandPalette` for the same physical key
+                // press, which caused iced to double-process the event
+                // and the dialog to never appear.
                 // 全局鼠标移动：用于分割线拖动（即使鼠标离开分割线窄区域）
                 Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::GlobalCursorMoved(position))

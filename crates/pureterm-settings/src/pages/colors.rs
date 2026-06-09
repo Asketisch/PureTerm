@@ -161,6 +161,18 @@ impl ColorsState {
             }
         }
     }
+
+    /// Replay this page's in-memory color state onto `doc`. Used at Save
+    /// time via `mutate_config`.
+    pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
+        let keys = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
+        crate::config_io::set_string(doc, &["colors", "primary"], "foreground", &self.foreground);
+        crate::config_io::set_string(doc, &["colors", "primary"], "background", &self.background);
+        for (i, key) in keys.iter().enumerate() {
+            crate::config_io::set_string(doc, &["colors", "normal"], key, &self.normal[i]);
+            crate::config_io::set_string(doc, &["colors", "bright"], key, &self.bright[i]);
+        }
+    }
 }
 
 pub fn main_view(state: &ColorsState, i18n: &I18n) -> Element<'static, Message> {
