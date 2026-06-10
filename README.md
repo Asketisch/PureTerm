@@ -1,68 +1,271 @@
 # PureTerm
 
-纯 Rust 编写的 GPU 加速终端模拟器。
+> 基于 Alacritty 内核 + Iced 0.14 daemon 的 GPU 加速终端模拟器,纯 Rust 编写,跨平台(macOS / Linux / Windows)。
+> 主分支:`iced-cover`。归档历史详见 [`archive/`](archive/) 与 [`docs/removed-legacy-features.md`](docs/removed-legacy-features.md)。
 
-## 功能特性
+---
 
-- **多标签终端** 支持嵌套分屏，Ghostty 风格 GPU 渲染标签栏（28pt 高度，DPI 感知，等分布局，左侧悬浮关闭按钮，"+" 新建按钮）
-- **多种会话类型**：本地 Shell、SSH、串口、Telnet
-- **GPU 加速渲染** 基于 wgpu，8 pass 管线（背景色→装饰→文字→光标→图片→后处理→调试覆盖）
-- **跨平台**：macOS、Linux、Windows
-- **主题支持** 自定义配色方案（28 种内置主题）
-- **可配置快捷键**
-- **插件系统** 支持扩展
+## 目录
+
+- [核心特性](#核心特性)
+- [快速开始](#快速开始)
+- [架构](#架构)
+- [已实现特性](#已实现特性)
+- [使用示例](#使用示例)
+- [配置](#配置)
+- [快捷键速查](#快捷键速查)
+- [已归档特性(2026-06-08 起)](#已归档特性2026-06-08-起)
+- [路线图](#路线图)
+- [贡献与协议](#贡献与协议)
+
+---
+
+## 核心特性
+
+- **GPU 加速渲染** — Iced 0.14 + 自定义 wgpu shader,跨平台 Metal / Vulkan / DX12 后端
+- **多标签嵌套分屏** — 水平/垂直递归分屏,拖拽调整比例
+- **SSH 一等公民** — 完整后端 + Profile + 加密凭证 + 主 UI 设置 + 命令面板一跳到底(2026-06-08 GAP-5.7/5.8/5.9 闭环)
+- **独立设置 UI 进程** — Iced 0.14 daemon,`Cmd+,` 启动,6 个分类页面
+- **命令面板** — `⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,Actions / Profiles 双模式
+- **配置热重载** — 改 `alacritty.toml` 自动应用,无需重启
+- **跨平台** — macOS / Linux / Windows 三平台持续维护
+
+---
 
 ## 快速开始
 
 ```bash
+git clone <repo> && cd PureTerm
 cargo build --release
 ./target/release/pureterm
 ```
 
-## 架构设计
+**配置文件路径**:
+- 默认:`~/.config/pureterm/alacritty.toml`
+- 回退:`~/.config/alacritty/alacritty.toml`(完全兼容标准 Alacritty TOML schema)
 
-PureTerm 由 7 个 crate 组成的工作区：
+**关键快捷键**:
+- 打开设置:`Cmd+,`(macOS)
+- 命令面板:`⌘⇧P`
+- SSH 连接:`⌘⇧S`
 
-| Crate | 说明 |
-|-------|------|
-| `pureterm` | 二进制入口，默认路由到 Alacritty runtime，保留 legacy UI |
-| `pureterm-alacritty-runtime` | Alacritty 单窗口终端运行时 |
-| `pureterm-core` | 配置、主题、快捷键、插件 |
-| `pureterm-terminal` | VTE 解析器、屏幕网格（reflow + VecDeque） |
-| `pureterm-session` | Session trait + Local/SSH/Serial/Telnet 实现 |
-| `pureterm-ui` | Surface、标签页、分屏面板、终端面板 |
-| `pureterm-gui` | wgpu 多 pass 渲染、字形图集、Sprite 光栅化 |
+完整快捷键见 [快捷键速查](#快捷键速查)。
 
+---
+
+## 架构
+
+PureTerm 由 6 个 crate 组成的工作区:
+
+| Crate | 用途 |
+|---|---|
+| `pureterm` | 主二进制入口,Iced 0.14 daemon — 主路径分屏 / Tab / SSH / 命令面板均在此 |
+| `pureterm-alacritty-runtime` | 已精简,仅承载 GPU 字体图集 `glyph_atlas`(2026-06-08 起从 75+ 源文件减到 3 个) |
+| `pureterm-settings` | 独立设置 UI 进程(Iced 0.14 daemon),`Cmd+,` 启动 |
+| `alacritty_terminal` | vendored 上游 — 终端内核 / PTY / Grid / Selection |
+| `alacritty_config` | vendored 上游 — 配置反序列化抽象 |
+| `alacritty_config_derive` | vendored 上游 — 配置 derive 宏 |
+
+**维护规则**:
+- vendored Alacritty 源码不做无关格式化或重构,便于上游同步
+- 新功能在主路径 `crates/pureterm/src/` 实现,`pureterm-alacritty-runtime` 不再扩展
+- 修改 vendored alacritty 源码时,在修改处加注释说明原因
+
+依赖关系:`pureterm` → `pureterm-alacritty-runtime` → 3 个 vendored alacritty crate。详见 [`crates/AGENTS.md`](crates/AGENTS.md)。
+
+---
+
+## 已实现特性
+
+### 渲染
+- Iced 0.14 + 自定义 wgpu shader(`crates/pureterm/src/terminal_shader.rs`,30.9 KB)
+- 文字模糊处理(commit `b1320de`,改善低分屏阅读体验)
+- 字体图集 LRU + dirty region(`pureterm-alacritty-runtime/src/renderer/glyph_atlas.rs`)
+- 跨平台 wgpu 后端:Metal / Vulkan / DX12 自动选择
+
+### 标签与分屏
+- 多标签 + 嵌套水平/垂直分屏(`crates/pureterm/src/split_tree.rs`,23.5 KB)
+- 拖拽调整分屏比例(`MIN_RATIO=0.1`,`MAX_RATIO=0.9`)
+- 标签关闭策略:本地 Tab 直接关;SSH Tab 走 `graceful_close`(发送 `exit\r` → 等 500ms → SIGHUP 兜底)
+- macOS 原生菜单 + Dock reopen 集成
+
+### SSH 一等公民(2026-06-08 GAP-5.7/5.8/5.9 闭环)
+- **SSH 后端** 在主路径 `crates/pureterm/src/ssh/`(7 个文件):
+  - ControlMaster socket 复用,多标签共享同一 SSH 连接
+  - `~/.ssh/config` 集成,直接用 Host 别名
+  - SSH Profile 可在 `alacritty.toml` 中声明
+- **加密凭证存储**:AES-256-GCM + Argon2id,`Zeroizing` 包裹 master_key
+- **主 UI SSH 设置面板**:右侧栏 `SshSettingsPanelState`,Profile 列表 + 实时编辑 + 保存到 toml
+- **SSH Tab UI**:`⌘⇧S` 弹对话框 → 异步 spawn → `PtyEventLoop` 集成 → 标题显示 `🔒 SSH: <name>`
+- **命令面板集成**:`⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,`Mode::Actions` ↔ `Mode::Profiles` 切换,选 Profile 一跳到底连接
+
+### Settings UI(独立进程)
+- 独立二进制 `pureterm-settings`,通过 `Cmd+,` 启动
+- 主题:Halloy 风格暖色调暗色(Ferra 配色方向)
+- 6 个分类页面:**General / Appearance / Colors / Terminal / SSH Profiles / Keyboard Shortcuts**
+- 配置 I/O:`toml_edit::DocumentMut` 格式保留读写,`NamedTempFile::persist()` 原子写入
+- 与主进程通信:写文件 → 主进程 `ConfigMonitor` 自动热重载
+
+### 配置与热重载
+- 配置文件:`~/.config/pureterm/alacritty.toml`(回退 `~/.config/alacritty/alacritty.toml`)
+- 标准 Alacritty TOML schema 完整兼容
+- 热重载:`crates/pureterm/src/config_watcher.rs` 监听文件改动,自动应用
+
+### 终端交互
+- 完整 VTE 解析:CSI / ESC / OSC / DCS / APC / PM
+- 智能选择 9 规则:URL / SSH URL / 邮箱 / 引号字符串 / 文件路径 / C++ namespace / dotted include / Git SHA / IPv4(`crates/alacritty_terminal/src/smart_selection.rs`)
+- Alacritty 原生 Vi 模式
+- 键盘绑定:50+ Action 枚举,完整 TOML 自定义
+- IME 输入法候选
+
+### 跨平台
+- macOS / Linux / Windows
+- 持续 CI 验证三平台
+
+---
+
+## 使用示例
+
+### SSH Profile 配置(alacritty.toml)
+
+```toml
+[[ssh.profiles]]
+name = "生产服务器"
+host = "192.168.1.100"
+user = "admin"
+port = 22
+
+[[ssh.profiles]]
+name = "跳板机"
+host = "bastion"
+key_path = "~/.ssh/bastion_key"
 ```
-默认：用户输入/PTY 输出 → Alacritty Processor/Term → Display damage → OpenGL renderer
-Legacy：TerminalPane::handle_key → Session::write → VteParser/Grid → ScreenSnapshot → wgpu
+
+### SSH Action 键盘绑定
+
+```toml
+[[keyboard.bindings]]
+key = "F5"
+mods = "Control|Shift"
+action = { Ssh = "OpenSettings" }
+
+[[keyboard.bindings]]
+key = "F6"
+mods = "Control|Shift"
+action = { Ssh = "ListProfiles" }
 ```
 
-## 技术栈
+可用 SSH Action:
+- `Ssh = "Connect"` — 打开 SSH 连接对话框
+- `Ssh = "OpenSettings"` — 打开 SSH 设置界面
+- `Ssh = "ListProfiles"` — 列出所有 SSH Profile
 
-- **渲染**：默认 Alacritty OpenGL display；legacy 路径为 wgpu 29（8 pass GPU 管线）+ egui 0.34
-- **终端解析**：完整 VTE（CSI/ESC/OSC/DCS/APC/PM）
-- **窗口/事件**：winit
-- **字体**：fontdue + rustybuzz（HarfBuzz）+ fontdb（5 步回退链）
-- **SSH**：russh
-- **异步运行时**：tokio
+### 命令面板使用
 
-## 项目结构
+按 `⌘⇧P` 打开命令面板:
+- 输入 `ssh` → 切到 Profiles 模式,选 Profile 直接连接
+- 输入 `set` → 跳到 Settings UI 打开 action
+- 输入任意 action ID 模糊搜索 → 直接触发
 
-```
-pureterm/
-├── crates/
-│   ├── pureterm/           # 二进制入口
-│   ├── pureterm-core/      # 配置、主题、快捷键
-│   ├── pureterm-terminal/  # 终端模拟
-│   ├── pureterm-session/   # 会话管理
-│   ├── pureterm-ui/        # UI 组件
-│   └── pureterm-gui/      # GPU 渲染
-├── build.sh
-├── Cargo.toml
-└── README.md
-```
+### Settings UI
 
-## 开源协议
+按 `Cmd+,` 启动独立设置进程:
+- 修改任意配置项 → 写入 `alacritty.toml`(原子写入,保留格式)
+- 主进程 `ConfigMonitor` 检测到改动 → 自动热重载,无需重启
 
-MIT
+---
+
+## 配置
+
+完整 TOML schema 详见 [Alacritty 官方文档](https://github.com/alacritty/alacritty/blob/master/extra/man/alacritty.5.scd)(PureTerm 完全兼容)。
+
+PureTerm 扩展段:
+- `[ssh.profiles]` — SSH Profile 列表
+- SSH Action 在 `[keyboard.bindings]` 中可用
+
+加载顺序:
+1. `~/.config/pureterm/alacritty.toml`(PureTerm 专属,优先)
+2. `~/.config/alacritty/alacritty.toml`(回退到 Alacritty 标准位置)
+
+---
+
+## 快捷键速查
+
+| 动作 | macOS | 说明 |
+|---|---|---|
+| 新建标签 | `⌘T` | 当前工作目录 |
+| 关闭标签 | `⌘W` | SSH Tab 走 graceful_close(exit + SIGHUP 兜底) |
+| 切换上一/下一标签 | `⌘⇧[` / `⌘⇧]` | |
+| 跳到第 N 标签 | `⌘1` … `⌘9` | |
+| 水平分屏 | `⌘D` | |
+| 垂直分屏 | `⌘⇧D` | |
+| 关闭当前 Pane | `⌘W` | |
+| 命令面板 | `⌘⇧P` | nucleo-matcher 模糊搜索 |
+| SSH 连接 | `⌘⇧S` | 弹 SSH Profile 选择 |
+| SSH 设置 | `Ctrl+Shift+F5`(默认) | 可在 `[keyboard.bindings]` 自定义 |
+| 设置 | `⌘,` | 启动独立 Settings UI 进程 |
+| Vi 模式 | `⌥+Space` | Alacritty 原生 |
+| 搜索向前 | `⌘F` | |
+| 搜索向后 | `⌘⇧F` | |
+
+完整键盘映射可在 Settings UI → Keyboard Shortcuts 页查看与编辑。
+
+---
+
+## 已归档特性(2026-06-08 起)
+
+**重要**:以下能力曾在 `pureterm-alacritty-runtime` 中实现,因 2026-06-08 Display 8-pass 渲染管线整体归档而连带失效。完整说明见 [`docs/removed-legacy-features.md`](docs/removed-legacy-features.md)。
+
+| 已归档特性 | 原文件位置 | 当前主路径替代 |
+|---|---|---|
+| 8 pass wgpu 渲染管线 | `archive/pureterm-display-path/.../renderer/render_pass/` | 主路径单 pass Iced widget shader(`terminal_shader.rs`),性能与复杂度已够 |
+| 触发器系统(11 动作) | `archive/pureterm-display-path/.../trigger.rs` + `trigger_dispatch.rs` | 暂未回归;设计 spec 仍保留在 [`docs/superpowers/specs/2026-05-15-triggers-system-design.md`](docs/superpowers/specs/2026-05-15-triggers-system-design.md) |
+| OSC 133 Shell 集成 | `archive/pureterm-display-path/.../shell_block.rs` + `shell_integration.rs` | 暂未回归,等需求驱动 |
+| HarfBuzz 文本整形 | `archive/pureterm-display-path/.../renderer/harfbuzz_shaper.rs` | iced 路径走默认字体堆叠 |
+| 字体回退链(5 步 fontdb) | `archive/pureterm-display-path/.../renderer/font_fallback.rs` | iced 路径使用系统字体 fallback |
+| 背景图像渲染 | `archive/pureterm-display-path/.../renderer/bg_image_loader.rs` | 暂未回归 |
+| `alacritty-runtime` 内 SSH 后端 | `archive/pureterm-display-path/.../ssh/`(7 文件) | 主路径 `crates/pureterm/src/ssh/` 独立完整实现(更全 + 加密凭证) |
+| 实验 crate(5 个) | `archive/pureterm-{core,terminal,session,ui,gui}/` | 各归档目录的 `AGENTS.md` 给出替代方案 |
+
+**触发原因**(摘自 [`CLAUDE.md`](CLAUDE.md)):`docs/performance-issues-todo.md` Phase B 误把 Display 路径当主路径 GPU 优化目标,改完用户感知为 0,故整体归档。主路径 GPU 优化已重规划为 P-B' 4 项,只针对 `terminal_shader.rs`。
+
+**回滚方式**:`git checkout HEAD~N -- archive/<path>`(每个归档目录的 `AGENTS.md` 含详细步骤)。
+
+---
+
+## 路线图
+
+**本季度焦点**(2026 Q2-Q3):
+- **GAP-2.2** 嵌套分屏补齐(等分 `Cmd+Shift+E` / 交换 / 缩放 / 焦点切换)
+- **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
+- **GAP-5.6** SSH reconnect/disconnect 完整状态机(网络中断自动重连)
+- **GAP-3.7** 快捷键 6 套预设模板(tmux / Vim / iTerm / agent-triage / vscode / custom)
+- **GAP-2.3** Socket API v2 协议设计(method 分类骨架)
+
+**重点未实现领域**(详见路线图):
+- 持久 PTY 守护进程 + Socket API v2(架构升级)
+- AI Agent 集成(hooks 框架 + Claude Code adapter + Feed 审批面板)
+- Browser 面板(WebView + SOCKS5 隧道)
+- 双侧边栏 + 状态栏 + Workspace 抽象层
+
+**完整路线图**:见 [`docs/TODOLIST.md`](docs/TODOLIST.md)(按 7 大类别 × P0-P3 优先级排序,49 项)。
+
+---
+
+## 贡献与协议
+
+**协议**:MIT(沿用 Alacritty 上游协议)。
+
+**Agent 指引**:
+- 项目根导航:[`AGENTS.md`](AGENTS.md)
+- 项目级 Agent 指令:[`CLAUDE.md`](CLAUDE.md)
+- 工作区总览:[`crates/AGENTS.md`](crates/AGENTS.md)
+- 各 crate 详细说明:`crates/<crate>/AGENTS.md`
+
+**知识图谱**:`graphify-out/` 目录提供代码库知识图谱,用 `graphify query "<问题>"` 检索(详见 [`CLAUDE.md`](CLAUDE.md) graphify 段)。
+
+**维护规则**:
+- vendored Alacritty 不做无关改动,便于上游 rebase
+- 新功能在 `crates/pureterm/src/` 实现,不再扩展 `pureterm-alacritty-runtime`
+- 修改 vendored 源码时,在修改处加注释说明原因
+- 归档操作用 `git mv` 保留历史,在 [`docs/removed-legacy-features.md`](docs/removed-legacy-features.md) 中索引

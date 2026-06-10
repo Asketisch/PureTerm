@@ -1,515 +1,748 @@
-# PureTerm 功能差异 Todo 列表
+# PureTerm 路线图与待办清单
 
-> 基于 Alacritty v0.26.1-dev 运行时，对比 4 个开源终端项目：Alacritty、Ghostty、iTerm2、Warp
+> 单一来源的 PureTerm 功能补齐路线图。按 **能力类别 × 优先级二级** 排序。
+> 本文件 2026-06-10 由旧 `docs/CMUX-GAP-TODO.md` + 旧 `docs/TODOLIST.md` 合并而成,前两者已删除,git history 可追溯。
+> 已归档特性(触发器系统 / OSC 133 / HarfBuzz / 字体回退 / 背景图像 / 8 pass 渲染管线)不在本文件追踪,改在 [`README.md` §已归档特性](../README.md#已归档特性2026-06-08-起) 中说明。
 
-## 开源参考仓库
+## 0. 元信息
 
-| 仓库 | 路径 | 关键特性 |
-|------|------|----------|
-| Alacritty | `/Users/admin/Code/Github/alacritty-master/` | GPU 渲染、PTY 处理、配置系统 |
-| Ghostty | `/Users/admin/Code/Github/ghostty-main/` | 8 通道渲染、独立渲染线程、Shell 集成、字体系统 |
-| iTerm2 | `/Users/admin/Code/Github/iTerm2-master/` | 30+ 触发器、智能选择、语义历史、Toolbelt、密码管理、DVR |
-| Warp | `/Users/admin/Code/Github/warp-master/` | AI 助手、Rust 终端、WarpUI |
+| 字段 | 值 |
+|---|---|
+| 文档版本 | v1.0(2026-06-10 合并版) |
+| 维护者 | @pureterm-core |
+| 对标项目 | [cmux-main](https://github.com/manaflow-ai/cmux)(v0.64.x)、Ghostty、iTerm2、Alacritty |
+| 主线 | branch `iced-cover` |
+| 关联文档 | [README.md](../README.md) / [CLAUDE.md](../CLAUDE.md) / [removed-legacy-features.md](removed-legacy-features.md) |
+| 更新约定 | 完成 P0/P1 → 同步 §1 仪表板 + §11 看板;季度末 → 同步 P0 焦点 |
 
----
+**状态图例**
 
-## 类别 1：终端仿真
+| 图例 | 含义 |
+|---|---|
+| ✅ | 已实现并验证 |
+| 🚧 | 部分实现,关键子能力缺失 |
+| ❌ | 未实现 |
+| ⛔ | 明确不做 |
 
-### 1.1 OSC 133 Shell 集成
-- **优先级**: P0
-- **状态**: ✅ 已实现（MVP）— OSC 133 解析 + BlockManager + Shell 脚本注入
-- **描述**: 命令块检测、提示标记、输出边界、防止睡眠追踪
-- **实现文件**:
-  - `crates/alacritty_terminal/src/event.rs` — ShellMarkKind/ShellMark 事件类型
-  - `crates/alacritty_terminal/src/event_loop.rs` — scan_osc133() 预扫描器 + 7 个单元测试
-  - `crates/pureterm-alacritty-runtime/src/alacritty/shell_block.rs` — BlockManager/CommandBlock/导航方法 + 3 个单元测试
-  - `crates/pureterm-alacritty-runtime/src/alacritty/shell_integration.rs` — Shell 检测/ShellEnv/Zsh+Bash+Fish 脚本 + 3 个单元测试
-- **已实现**: OSC 133 A/B/C/D 标记解析、exit_code + duration 参数、BlockManager 命令块追踪、Shell 自动检测与脚本注入、PTY 环境变量注入
-- **待完善**: 提示符导航快捷键、滚动补偿、Visual prompt markers、Nushell/Elvish 脚本
+**优先级图例**
 
-### 1.2 DECSCL 设备控制
-- **优先级**: P2
-- **状态**: 未实现
-- **参考**: Ghostty `src/terminal/modes.zig`
+| 等级 | 定义 | 决策点 |
+|---|---|---|
+| **P0** 关键 | 缺失导致核心场景不可用;CLAUDE.md 显式列为"待实现" | 本季度闭环 |
+| **P1** 高 | 影响日常使用舒适度;主流终端用户期待 | 下季度排期 |
+| **P2** 中 | 锦上添花;cmux 独占但非主流 | 评估后做 |
+| **P3** 低 | 平台战略 / 商业 / 特定用户群 | 未来评估 |
 
-### 1.3 标题栈 (CSI 22/23t)
-- **优先级**: P2
-- **状态**: 未实现
-- **参考**: Ghostty `src/terminal/Terminal.zig` - 22t 处理
+**能力类别**
 
-### 1.4 BiDi 双向文本
-- **优先级**: P2
-- **状态**: 未实现（已知差距）
-- **参考**:
-  - Ghostty: `src/unicode/` 目录
-  - Archive: `archive/pureterm-terminal/src/screen/` 曾有 BiDi 支持
-
----
-
-## 类别 2：渲染与图形
-
-### 2.1 多通道渲染管线
-- **优先级**: P0
-- **状态**: ✅ 已实现 — wgpu 8 通道渲染管线 + 独立渲染线程 (feature flag: `wgpu-renderer`)
-- **描述**: 替换 Alacritty OpenGL 单通道渲染器为 wgpu 8 通道管线，支持 Metal/Vulkan/DX12 跨平台
-- **实现文件**:
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_pass/` — 8 个渲染通道 (bg_color, bg_image, cell_text, decorations, cursor, kitty_image, debug_overlay, post_process)
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_thread.rs` — 独立渲染线程 + crossbeam_channel 消息传递
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/glyph_atlas.rs` — WgpuGlyphAtlas: crossfont → wgpu R8Unorm Skyline 装箱
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/vertex_builders.rs` — FrameBuilder: 可复用 Vec 避免 per-frame 分配
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/` — 8 个 WGSL 着色器
-- **已实现**: 8 通道按序渲染、独立渲染线程 (mailbox 模式)、crossfont → wgpu 字形桥接、动态 GPU 缓冲增长、光标闪烁、FPS 统计
-- **待完善**: 删除 OpenGL 旧代码、彩色 Emoji BGRA 图集、Kitty 图片渲染、ShaderToy 自定义着色器
-- **参考**:
-  - Ghostty: `src/renderer/generic.zig` (8 个渲染通道)
-  - Ghostty: `src/renderer/Thread.zig` (独立渲染线程，mailbox 模式)
-
-### 2.2 彩色 Emoji / BGRA 字体图集
-- **优先级**: P1
-- **状态**: ✅ 已实现 — 双图集架构（灰度 R8 + 彩色 RGBA），per-vertex atlas_selector，WGSL 条件采样
-- **描述**: Emoji 通过独立的 Rgba8UnormSrgb 图集渲染全彩色，文本仍走灰度 R8 图集
-- **实现文件**:
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/glyph_atlas.rs` — AtlasKind 枚举、双图集（灰度+彩色）、Skyline 装箱、LRU 淘汰
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_pass/cell_text.rs` — TextVertex.atlas_selector、双纹理 bind group layout
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/cell_text.wgsl` — 双纹理声明、条件采样片段着色器
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/vertex_builders.rs` — 彩色字形白色顶点颜色 + atlas_selector 设置
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_thread.rs` — FrameData 彩色图集字段、双格式 upload_atlas
-  - `crates/pureterm-alacritty-runtime/src/alacritty/display/mod.rs` — 彩色图集数据流提取
-- **已实现**: 双图集路由（BitmapBuffer::Rgba → 彩色图集，Rgb → 灰度图集）、独立 Skyline 装箱、WGSL if-else 条件采样、1x1 透明占位纹理
-- **参考**:
-  - Ghostty: `font/Atlas.zig` - `format: .bgra` 彩色 emoji
-  - Ghostty: `font/face/coretext.zig` / `font/face/freetype.zig` - 彩色字形光栅化
-  - Ghostty: `src/renderer/cell.zig` - `CellText.atlas: enum { grayscale, color }`
-
-### 2.3 HarfBuzz 文本整形
-- **优先级**: P1
-- **状态**: ✅ 已完成 — HarfBuzzShaper + ShapedGlyphCache + TextVertex 偏移量 + WGSL 支持
-- **描述**: 使用 harfbuzz-sys 绑定进行复杂脚本（阿拉伯文、梵文、缅甸文等）整形，支持连字和组合字符定位
-- **实现文件**:
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/harfbuzz_shaper.rs` — HarfBuzzShaper + ShapedGlyph + ShapedRun + ShapedGlyphCache
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_pass/cell_text.rs` — TextVertex 新增 x_offset/y_offset 字段
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/cell_text.wgsl` — 顶点着色器接收 x_offset/y_offset
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/vertex_builders.rs` — push_text_glyph 支持 shaping 偏移量
-  - `crates/pureterm-alacritty-runtime/src/alacritty/display/mod.rs` — glyph_prime_loop 集成文本 run 分组和整形
-- **已实现**: harfbuzz-sys bundled 绑定、fontdb 字体查找、text run 按 font_index 分组、cluster 映射回 Point、x/y 偏移量应用到顶点
-- **待完善**: 字体 family 名称查找（当前为空）、BiDi 重排序（后续 P2）
-- **参考**:
-  - Ghostty: `font/shaper/harfbuzz.zig` (~400 行)
-  - Ghostty: `font/shaper/Cache.zig` - 整形结果缓存
-
-### 2.4 背景图像 GPU 渲染
-- **优先级**: P1
-- **状态**: ✅ 已实现 — PNG/JPEG 加载 + wgpu 纹理上传 + WGSL fit/position/opacity shader + TOML 配置 + 实时重载
-- **描述**: 支持 PNG/JPEG 背景图片，4 种 fit 模式（Cover/Contain/Stretch/None），9 宫格位置，可调透明度
-- **实现文件**:
-  - `crates/pureterm-alacritty-runtime/src/alacritty/config/window.rs` — BackgroundImageConfig + BackgroundImageFit + BackgroundImagePosition 枚举
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/bg_image_loader.rs` — image crate PNG/JPEG → RGBA8 加载
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/bg_image.wgsl` — BgImageUniforms + Cover/Contain/Stretch/None UV 计算 + 9 宫格位置 + opacity + corner radius
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_pass/bg_image.rs` — BgImageUniforms 结构体 + set_params + GPU 纹理管理
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/render_thread.rs` — SetBackgroundImage 消息 + GPU 纹理上传 + clear_background
-  - `crates/pureterm-alacritty-runtime/src/alacritty/display/mod.rs` — update_background_image() 配置→渲染线程桥接
-  - `crates/pureterm-alacritty-runtime/src/alacritty/window_context.rs` — 启动加载 + 配置重载钩子
-- **已实现**: PNG/JPEG 解码、wgpu Rgba8UnormSrgb 纹理上传、Cover/Contain/Stretch/None 缩放、9 宫格位置、opacity 透明度、圆角裁剪、配置实时重载
-- **待完善**: 图片缩放优化（大图浪费 VRAM）、图片缓存（避免重复加载）、Tiling 平铺模式
-
-### 2.5 自定义着色器 (ShaderToy)
-- **优先级**: P1
-- **状态**: 未实现
-- **参考**:
-  - Ghostty: `renderer/shadertoy.zig` (~400 行)
-  - GLSL → SPIR-V → MSL/GLSL 编译
-- **关键文件**:
-  - Ghostty: `src/renderer/shadertoy.zig` - 自定义着色器链与 ping-pong 纹理
-
-### 2.6 Sixel 图形渲染
-- **优先级**: P2
-- **状态**: Alacritty 有部分解析但未完整 GPU 渲染
-- **参考**:
-  - iTerm2: `sources/VT100/VT100SixelParser.m`
-  - Ghostty: `src/terminal/kitty/graphics.zig` (Kitty 协议，非 Sixel)
-- **关键文件**:
-  - iTerm2: `sources/VT100/VT100SixelParser.m`
-
-### 2.7 字体图集矩形装箱
-- **优先级**: P1
-- **状态**: ✅ 已实现 — WgpuGlyphAtlas 使用 Skyline 算法，2048x2048 固定 R8 图集，LRU 淘汰
-- **实现文件**: `crates/pureterm-alacritty-runtime/src/alacritty/renderer/glyph_atlas.rs`
-- **参考**: Ghostty `font/Atlas.zig` 使用 Jukka Jylanki Skyline 算法
-
-### 2.8 字体回退链
-- **优先级**: P1
-- **状态**: ✅ 已实现 — fontdb 系统字体发现 + 5 步回退链 + per-character atlas index
-- **描述**: 主字体不支持 CJK/Emoji/特殊 Unicode 时自动查找系统字体
-- **实现文件**:
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/font_fallback.rs` — FontFallbackRegistry 5 步回退链 + is_emoji/is_cjk + 平台字体列表
-  - `crates/pureterm-alacritty-runtime/src/alacritty/display/mod.rs` — glyph priming loop 集成回退逻辑 + fallback_map
-  - `crates/pureterm-alacritty-runtime/src/alacritty/renderer/vertex_builders.rs` — build_from_cells 使用 per-character font_index
-  - `crates/pureterm-alacritty-runtime/src/alacritty/config/font.rs` — fallback_families TOML 配置
-- **已实现**: fontdb 系统字体扫描、5 步回退（缓存→用户配置→Emoji→CJK→通用）、ttf-parser 码点覆盖验证、crossfont FontKey 桥接、per-character atlas font_index 路由
-- **待完善**: font-codepoint-map 用户自定义码点范围映射、字体 size-adjust（ic_width 对齐）、sprite 回退
-- **参考**:
-  - Ghostty: `font/CodepointResolver.zig` (~300 行，7 步回退链)
-  - Ghostty: `font/CodepointMap.zig` (~200 行)
-  - Archive: `archive/pureterm-gui/src/font_fallback.rs` (5 步 CJK/emoji 链)
+| ID | 类别 |
+|---|---|
+| A | 核心架构(抽象层 / 分屏 / IPC / 守护进程) |
+| B | UI/UX(侧边栏 / 命令面板 / 状态栏 / 快捷键 / 搜索) |
+| C | 终端交互(复制模式 / hover / 搜索 / 协议) |
+| D | SSH(持久会话 / 代理 / URL / 状态机) |
+| E | 集成与可编程(Socket API / CLI / 自定义命令 / 事件流) |
+| F | AI Agent(hooks / adapter / hibernation / 审批) |
+| G | 平台(自动更新 / 移动端 / 云) |
 
 ---
 
-## 类别 3：窗口与标签页管理
+## 1. 总览仪表板
 
-### 3.1 多标签支持
-- **优先级**: P0
-- **状态**: ✅ 已实现（Phase 1 MVP）— macOS 原生标签 + CloseTab action + SSH 标签创建
-- **描述**: macOS 原生 NSTabGroup 标签系统，每标签独立 Terminal/PTY，键盘快捷键完整支持
-- **实现文件**:
-  - `crates/pureterm-alacritty-runtime/src/alacritty/config/bindings.rs` — `CloseTab` action 枚举 + Cmd+W 绑定
-  - `crates/pureterm-alacritty-runtime/src/alacritty/input/mod.rs` — `CloseTab` 处理逻辑
-  - `crates/pureterm-alacritty-runtime/src/alacritty/event.rs` — `new_ssh_tab()` SSH 标签创建
-  - `crates/pureterm-alacritty-runtime/src/alacritty/cli.rs` — `TerminalOptions.command` 公开化
-- **已实现**: Cmd+T 创建标签、Cmd+W 关闭标签、Cmd+Shift+]/[ 切换标签、Cmd+1-9 选择标签、SSH 标签创建、标签标题 OSC 同步
-- **限制**: 仅 macOS（依赖 NSTabGroup 原生标签），Linux/Windows 跨平台标签未实现，计划后续通过自定义 GPU 标签栏实现
-- **待完善**: 自定义 GPU 标签栏（Phase 2）、标签拖拽排序、标签颜色/图标
+### 1.1 数字摘要(不计已归档项)
 
-### 3.2 分割窗格
-- **优先级**: P1
-- **状态**: Alacritty 运行时未实现
-- **参考**:
-  - iTerm2: 多窗格支持
-  - Ghostty: `datastruct/split_tree.zig` 分割树
-  - Archive: `archive/pureterm-ui/src/split/`
-- **关键文件**:
-  - Ghostty: `src/datastruct/split_tree.zig`
-  - Archive: `archive/pureterm-ui/src/split/`
+| 类别 | ✅ | 🚧 | ❌ | ⛔ | 小计 |
+|---|---|---|---|---|---|
+| A. 核心架构 | 0 | 2 | 3 | 0 | 5 |
+| B. UI/UX | 1 | 0 | 6 | 0 | 7 |
+| C. 终端交互 | 0 | 0 | 7 | 0 | 7 |
+| D. SSH | 3 | 0 | 6 | 0 | 9 |
+| E. 集成与可编程 | 0 | 0 | 8 | 0 | 8 |
+| F. AI Agent | 0 | 0 | 8 | 0 | 8 |
+| G. 平台 | 1 | 0 | 1 | 3 | 5 |
+| **总计** | **5** | **2** | **39** | **3** | **49** |
 
-### 3.3 GPU 标签栏渲染
-- **优先级**: P1
-- **状态**: 未实现
-- **参考**:
-  - Ghostty: GPU 原生标签栏样式
-  - Archive: `archive/pureterm-ui/src/tab_bar.rs` - Ghostty 风格 GPU 标签栏
-- **关键文件**:
-  - Archive: `archive/pureterm-ui/src/tab_bar.rs`
+整体进度:✅ 5/49 ≈ 10%(含 🚧 折半计为 12%)
 
-### 3.4 状态栏
-- **优先级**: P2
-- **状态**: 未实现（只有标签栏）
-- **参考**:
-  - iTerm2: `sources/StatusBar/` - git 分支轮询、cwd、hostname
-  - Warp: `app/src/` 状态栏
-  - Archive: `archive/pureterm-ui/src/status_bar.rs`
-- **关键文件**:
-  - iTerm2: `sources/StatusBar/iTermGitPoller.m` - git 分支/提交显示
-  - iTerm2: `sources/StatusBar/Components/` - 状态栏组件
+### 1.2 本季度焦点(P0 优先)
+
+1. **GAP-2.2** 嵌套分屏补齐(等分 / 交换 / 缩放 / 焦点切换)
+2. **GAP-2.3** Socket API v2 协议设计(method 分类骨架)
+3. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
+4. **GAP-5.6** SSH reconnect/disconnect 状态机
+5. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode)
 
 ---
 
-## 类别 4：会话管理
+## 2. 已实现(✅)
 
-### 4.1 SSH 会话后端
+详细说明见 [`README.md` §已实现特性](../README.md#已实现特性)。本节仅列闭环条目作完成参考:
+
+| GAP | 标题 | 类别 | 闭环日期 | 实现位置 |
+|---|---|---|---|---|
+| GAP-3.3 | 命令面板 ⌘⇧P | B | 2026-06-08 | `crates/pureterm/src/iced_app.rs`(nucleo-matcher + Actions/Profiles 双模式) |
+| GAP-5.7 | SSH Tab UI 串通 | D | 2026-06-08 | `crates/pureterm/src/ssh/` + iced UI 串通(`⌘⇧S`、异步 spawn、graceful_close) |
+| GAP-5.8 | SSH 主 UI 设置 UI | D | 2026-06-08 | 右侧栏 `SshSettingsPanelState` + `CredentialStore` 主密码端到端 |
+| GAP-5.9 | SSH 命令面板集成 | D | 2026-06-08 | `Mode::Profiles` 一跳到底 |
+| GAP-8.5 | 跨平台优势(反向能力) | G | — | macOS / Linux / Windows 三平台持续维护 |
+
+---
+
+## 3. 类别 A:核心架构
+
+### A.P0
+
+#### GAP-2.2 嵌套水平+垂直分屏(bonsplit) {#gap-2-2}
+- **状态**: 🚧
 - **优先级**: P0
-- **状态**: ✅ 已实现（MVP）— ControlMaster socket 复用、AES-256-GCM 加密凭证、SSH Profile 配置、SshAction 键盘绑定
-- **描述**: 支持 ~/.ssh/config Host 别名连接和 PureTerm SSH Profile 两种方式
-- **实现文件**:
-  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/mod.rs` — SSH 模块入口
-  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/session.rs` — SshSessionManager 连接池
-  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/pty.rs` — SshPty EventedPty 实现
-  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/credential.rs` — 加密凭证存储
-  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/config.rs` — SshProfile 配置
-  - `crates/pureterm-alacritty-runtime/src/alacritty/ssh/command.rs` — SSH 命令构建器
-  - `crates/pureterm-alacritty-runtime/src/alacritty/config/ssh.rs` — SshConfig TOML 解析
-- **已实现**: ControlMaster socket 复用、~/.ssh/config 集成、AES-256-GCM + Argon2id 加密、SshAction (Connect/OpenSettings/ListProfiles)
-- **待完善**: SSH Tab UI（实际标签页创建）、SSH 设置界面、命令面板集成
-- **参考**:
-  - Warp: `crates/warp_terminal/` SSH
-  - Archive: `archive/pureterm-session/src/ssh/`
+- **PureTerm 现状**: `crates/pureterm/src/split_tree.rs`(23.5 KB)实现 `SplitNode { Leaf | Split { direction, ratio, first, second } }`,水平/垂直递归嵌套 + 拖拽,`MIN_RATIO=0.1 / MAX_RATIO=0.9`
+- **目标**:
+  - Equalize Splits(`Cmd+Shift+E` 一键等分)
+  - Swap Panes(拖拽交换)
+  - Zoom Pane(`Cmd+Shift+Enter` 临时最大化)
+  - Focus Next/Prev Pane(`Cmd+Alt+方向键`)
+  - Move Pane to New Tab/Window
+- **依赖**: GAP-2.1(Workspace 抽象)— 可并行
+- **风险点**: 焦点切换算法在深嵌套层级的性能
+- **DoD**: 嵌套 3 层分屏,`Cmd+Shift+E` 等分,`Cmd+Alt+方向键` 焦点移动到正确 Pane
+- **对标**: cmux `vendor/bonsplit`
 
-### 4.2 Serial 会话后端
+#### GAP-2.3 Socket API 协议 + 端口模型 {#gap-2-3}
+- **状态**: 🚧
+- **优先级**: P0
+- **PureTerm 现状**: `pureterm msg` 子命令已实现 Unix socket,仅 3 个 method(`CreateWindow / Config / GetConfig`),`IoListener::spawn` 暴露
+- **目标**: Socket API v2 协议层,method 命名空间:`window.* / workspace.* / pane.* / surface.* / notification.* / feed.* / system.* / debug.*`,首版 30+ method;JSON-RPC 2.0 风格;`tokio::net::UnixListener` + `SocketRouter` HashMap
+- **依赖**: GAP-2.1(抽象层) — 可并行启动协议骨架
+- **风险点**: 协议稳定性的向后兼容设计
+- **DoD**: 至少 30 个 method 在 `pureterm-cli` 中可调用,与 GUI 行为一致
+- **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
+
+#### GAP-2.5 多 UI 路径统一治理 {#gap-2-5}
+- **状态**: 🚧(实际已基本完成,仅角色定位需明确)
+- **优先级**: P0
+- **PureTerm 现状**: 默认二进制 `pureterm/src/main.rs` 走 Iced 0.14;`pureterm-alacritty-runtime` 已 2026-06-08 精简为只承载 `glyph_atlas`,不再扩展
+- **目标**: 在 README / AGENTS.md 中明确"主路径 = Iced,alacritty-runtime = 字体图集库"。决策点:是否归档整个 `pureterm-alacritty-runtime` crate,将 `glyph_atlas` 直接合入 `pureterm`
+- **依赖**: 无
+- **风险点**: 归档剩余模块会破坏 vendored Alacritty 引用链
+- **DoD**: AGENTS.md 与 CLAUDE.md 描述一致,新贡献者无歧义
+- **对标**: cmux 单一 AppKit/SwiftUI 路径,无此问题
+
+### A.P1
+
+#### GAP-2.1 Surface/Pane/Workspace/Window 抽象层 {#gap-2-1}
+- **状态**: ❌
 - **优先级**: P1
-- **状态**: 未实现
-- **参考**: Archive: `archive/pureterm-session/src/serial_session.rs`
-- **关键文件**:
-  - Archive: `archive/pureterm-session/src/serial_session.rs`
+- **PureTerm 现状**: iced 路径有 `Tab { id, title, panes, split_tree, active_pane }`,仅 Pane + Tab 两层
+- **目标**: 引入 4 层抽象 — Surface(单 PTY 实例) / Pane(容器) / Workspace(命名工作区) / Window(顶级窗口);持久化 `workspaces.json` 到 `dirs::config_dir() / pureterm / workspaces.json`
+- **依赖**: 无
+- **风险点**: 现有事件循环重写风险高,需渐进式迁移
+- **DoD**: 用户可创建 2 个 Workspace,各含 1 个 Tab,每个 Tab 1 个 Pane;Workspace 切换不丢 Surface 状态
+- **对标**: cmux `Sources/TerminalController.swift`(21540 行)
 
-### 4.3 Telnet 会话后端
+#### GAP-2.4 远程守护进程 `puretermd` 等价物 {#gap-2-4}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 无独立守护进程;SSH PTY 由 `crates/pureterm/src/ssh/pty.rs` 在主进程内管理,会话绑死在窗口
+- **目标**: 独立 `puretermd` Rust binary(`tokio::main()`),持久 PTY 会话(本地 + SSH),Session Manager 集中管理;接受 Socket API v2 调用;启动方式 `launchd`(macOS) / `systemd --user`(Linux) / 服务(Windows)
+- **依赖**: GAP-2.3(Socket API)
+- **风险点**: 启动顺序、崩溃恢复、版本兼容
+- **DoD**: 启动 `puretermd`,GUI 关闭后再启动,之前的 session 可恢复
+- **对标**: cmux `daemon/remote/cmuxd-remote`
+
+### A.P3
+
+#### GAP-2.6 iOS 伴侣 + Cloud VM {#gap-2-6}
+- **状态**: ❌ → 见 §10 不做(平台战略外)
+
+---
+
+## 4. 类别 B:UI/UX
+
+### B.P0
+
+#### GAP-3.7 完整快捷键自定义 + 模板 {#gap-3-7}
+- **状态**: 🚧
+- **优先级**: P0
+- **PureTerm 现状**: `bindings.rs::enum Action`(50+ 变体)支持完整自定义 TOML 配置;**无预设模板**,有 6 处 `unimplemented!()`(`input/mod.rs` L1268-1309)
+- **目标**:
+  - 6 套预设模板 — `resources/presets/{tmux,vim,iterm,agent-triage,vscode,custom}.toml`
+  - 单键 + chord 完整支持(扩展 `Binding { key, mods, action, mode }` 加 `chord: Option<BindingKey>`)
+  - live reload(`Cmd+Shift+R` 或 `config_watcher.rs` 扩展 `KeymapChanged`)
+  - CLI 子命令:`pureterm shortcuts list/preset/set/reset`
+- **依赖**: 无
+- **风险点**: chord 解析复杂度
+- **DoD**: `pureterm shortcuts preset vim` 切换后,`j` `k` `h` `l` 在 normal mode 可移动光标
+- **对标**: cmux `Sources/CmuxConfig.swift::shortcuts.bindings`
+
+### B.P1
+
+#### GAP-3.1 双侧边栏 {#gap-3-1}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 无主 UI 侧边栏;`pureterm-settings/src/widgets/sidebar.rs` 是设置 UI 的内部导航,不通用
+- **目标**: 可隐藏双侧边栏 — 左侧 Workspace + Git 分支(`git2` crate 30s 轮询);右侧多 mode(files / find / sessions / feed);宽度可拖拽(默认 240px,范围 120-480)
+- **依赖**: GAP-2.1(Workspace 抽象)
+- **风险点**: 拖拽宽度的 layout reflow 性能
+- **DoD**: `Cmd+B` 显示左侧栏,显示工作目录 git 状态 + Workspace 列表
+- **对标**: cmux `Sources/Sidebar/`
+
+#### GAP-3.4 状态栏 {#gap-3-4}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 只有标签栏,无状态栏
+- **目标**:
+  - 顶部 title bar shortcut hint pills(当前 mode 快捷键提示)
+  - 侧边栏 footer update pill
+  - 菜单栏 extra badge(macOS `NSStatusItem` via `objc2`)
+  - 底部状态栏(`Container::new().height(Length::Fixed(24.0))`):命令 / Git 分支 / CPU 内存 / SSH 状态
+- **依赖**: 无
+- **风险点**: 高度计算(挤压终端空间)
+- **DoD**: 底部状态栏显示命令提示 + Git 分支;macOS 显示菜单栏图标
+- **对标**: cmux `Sources/StatusBar/` + `Sources/TitleBar/`
+
+#### GAP-3.5 内置 Browser 面板(WebView) {#gap-3-5}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 无 WebView 集成
+- **目标**: Pane 中可嵌入 WebView — `⌘⇧L` split 打开 / `⌘L` 聚焦地址栏 / `⌘[ ]` 导航;支持 SOCKS5/HTTP CONNECT proxy(绑定 GAP-5.2);跨平台用 `wry` crate(`tao` 生态)
+- **依赖**: GAP-2.2(分屏)
+- **风险点**: 跨平台差异、内存占用
+- **DoD**: Pane 中打开 `https://example.com`,可渲染和滚动
+- **对标**: cmux `Sources/BrowserWindowPortal.swift`(173 KB)
+
+#### GAP-3.8 搜索体系 {#gap-3-8}
+- **状态**: 🚧
+- **优先级**: P1
+- **PureTerm 现状**: `Action::SearchForward / SearchBackward` 实现基础正则搜索,**无目录搜索、无全局搜索**
+- **目标**:
+  - `⌘F` 当前 surface 内搜索(已有,补 iced 浮层 UI)
+  - `⌘⇧F` 在工作目录内(`ripgrep` 子进程 `tokio::process::Command`)
+  - 全局搜索(menubar):遍历所有 active surface
+  - 正则 / case sensitive / whole word / 结果高亮跳转
+- **依赖**: 无
+- **风险点**: 大文件/大目录搜索性能
+- **DoD**: `⌘F` 高亮匹配;`⌘⇧F` 工作目录搜文本,结果显示在侧边栏
+- **对标**: cmux `Sources/Search/` + iTerm2 ⌘F/⌘⇧F
+
+### B.P2
+
+#### GAP-3.2 可编程 Sidebars(DSL 解释器) {#gap-3-2}
+- **状态**: ❌
 - **优先级**: P2
-- **状态**: 未实现
-- **参考**: Archive: `archive/pureterm-session/src/telnet_session.rs`
+- **PureTerm 现状**: 无任何"用户可编程 UI"机制
+- **目标**: 用 `rhai` crate(中等投入)或 `wasmtime`(灵活,投入大);sidebar 文件声明 触发器 + 渲染回调,DSL 注册到事件总线;沙箱(资源限制 + 权限隔离)
+- **依赖**: GAP-3.1(侧边栏框架) + GAP-6.7(事件流)
+- **风险点**: DSL 沙箱安全
+- **DoD**: 写一个 `~/.config/pureterm/sidebars/show-git.rhai`,实时显示当前 git 状态
+- **对标**: cmux `Sources/Sidebar/Interpreter/`(Swift 解释器,vibe-coded)
 
-### 4.4 Tmux 控制模式
-- **优先级**: P2
-- **状态**: 未实现
-- **参考**:
-  - Ghostty: `terminal/tmux/*.zig`
-  - Archive: `archive/pureterm-terminal/src/tmux/`
-- **关键文件**:
-  - Ghostty: `src/terminal/tmux/tmux.zig`
-  - Ghostty: `src/terminal/tmux/` (4 文件)
+### B.P3
 
-### 4.5 Workgroups（保存/恢复会话）
-- **优先级**: P2
-- **状态**: 只有基础标签恢复，无完整 workgroup
-- **参考**:
-  - iTerm2: `sources/Workgroups/` - 窗口布局序列化
-  - iTerm2: `sources/Workgroups/iTermWorkgroupInstance.swift`
-- **关键文件**:
-  - iTerm2: `sources/Workgroups/iTermWorkgroupInstance.swift` - 保存状态
-  - iTerm2: `sources/Workgroups/iTermWorkgroupModel.swift` - 模型
-
-### 4.6 会话录制 (DVR)
+#### GAP-3.6 macOS Glass 效果 {#gap-3-6}
+- **状态**: ❌
 - **优先级**: P3
-- **状态**: 只有会话日志，无回放
-- **参考**:
-  - iTerm2: `sources/DVR/` - 即时回放
-  - iTerm2: `sources/DVR/DVRBuffer.m`、`DVREncoder.m`、`DVRDecoder.m`
-- **关键文件**:
-  - iTerm2: `sources/DVR/DVR.h`、`sources/DVR/DVR.m`
+- **PureTerm 现状**: `objc2-app-kit` 启用 `NSVisualEffectView` 依赖,**无调用代码**
+- **目标**: macOS 26 用 `NSGlassEffectView`,macOS 13-15 回退 `NSVisualEffectView`;窗口 `setOpaque(false)` + 主背景 alpha=0
+- **依赖**: 无
+- **风险点**: 仅 macOS
+- **DoD**: macOS 26 启用 Glass,窗口显示半透明玻璃效果
+- **对标**: cmux `Sources/GlassEffectView.swift`
 
 ---
 
-## 类别 5：文本选择与搜索
+## 5. 类别 C:终端交互
 
-### 5.1 智能选择（基于精度）
+### C.P1
+
+#### GAP-4.1 Vim 复制模式 {#gap-4-1}
+- **状态**: ❌
 - **优先级**: P1
-- **状态**: ✅ 已实现 — Precision 5 级正则规则 + 双击触发 + TOML 配置
-- **描述**: 双击时先尝试 smart selection（URL/邮箱/路径/Git SHA 等），无匹配 fallback 到词边界
-- **实现文件**:
-  - `crates/alacritty_terminal/src/smart_selection.rs` — SmartSelectionService/Precision/SmartRule/SmartMatch + 9 条默认规则 + 10 个测试
-  - `crates/alacritty_terminal/src/selection.rs` — range_semantic 集成 smart selection + range_smart/byte_offset_to_point
-  - `crates/alacritty_terminal/src/term/search.rs` — smart_selection_line_text() 行文本提取
-  - `crates/pureterm-alacritty-runtime/src/alacritty/config/smart_selection.rs` — TOML 配置
-  - `crates/pureterm-alacritty-runtime/src/alacritty/window_context.rs` — 运行时配置注入
-- **已实现**: 9 条默认规则（URL/SSH URL/邮箱/引号字符串/文件路径/C++ namespace/dotted include/Git SHA/IPv4）、5 级精度排序、TOML `[[smart_selection.rules]]` 自定义规则、双击触发 + 词边界 fallback
-- **待完善**: 右键上下文菜单集成（actions 触发）、evaluate_all 用于悬停高亮、规则热重载
+- **PureTerm 现状**: Alacritty 有 `Vi` 模式 + `Action::Vi(ViAction)`,但**不是完整 copy mode**(不能从光标开始选区)
+- **目标**: 独立 Copy Mode — `Enter / Alt+Enter` 触发,`jkhl` 移动,`v` visual,`V` line,`Ctrl+v` block,`y` 复制,`/` 搜索,`Esc` 退出;复用 Alacritty `vi_mode` 模块(已 vendored);新增 `CopyMode { mode, anchor, cursor }` 状态机
+- **依赖**: 无
+- **风险点**: 与现有 Vi 模式共存
+- **DoD**: `Enter` 进入 copy mode,`jk` 移动,`v` 选词,`y` 复制,`Esc` 退出
+- **对标**: cmux `Sources/CopyMode/` + iTerm2 `iTermCopyModeHandler.m`(24KB)
 
-### 5.2 语义历史（悬停预览）
+#### GAP-4.2 智能选择 hover preview {#gap-4-2}
+- **状态**: 🚧
 - **优先级**: P1
-- **状态**: 只有 OSC 8 超链接，无悬停预览
-- **参考**:
-  - iTerm2: `sources/SemanticHistory/iTermSemanticHistoryController.m`
-  - iTerm2: `sources/SemanticHistory/iTermPathFinder.m` - 文件路径检测
-  - iTerm2: Quick Look 集成
-- **关键文件**:
-  - iTerm2: `sources/SemanticHistory/iTermSemanticHistoryController.m` (45KB)
-  - iTerm2: `sources/SemanticHistory/iTermURLActionFactory.m`
+- **PureTerm 现状**: `alacritty_terminal/src/smart_selection.rs` 9 规则智能选择已实现(URL / SSH URL / 邮箱 / 引号 / 路径 / C++ namespace / dotted include / Git SHA / IPv4),**无 hover preview**
+- **目标**: 鼠标悬停 URL/路径 显示 tooltip — 200ms 延迟,iced `Tooltip` widget;URL preview(`reqwest` 抓 HTML title + favicon),路径 preview(`std::fs::metadata` + `ignore` crate 列目录);右键选择后弹出动作菜单(打开 / 复制 / 编辑器打开)
+- **依赖**: GAP-3.1(侧边栏渲染基础)
+- **风险点**: hover 性能(高频触发)
+- **DoD**: 鼠标悬停 URL 1 秒,显示 tooltip 含页面标题
+- **对标**: cmux `Sources/SemanticHistory.swift` + iTerm2 `iTermSemanticHistoryController.m`(45KB)
 
-### 5.3 Tail-Find（自动滚动搜索）
-- **优先级**: P2
-- **状态**: 基础搜索，无 tail-find
-- **参考**:
-  - iTerm2: `sources/SearchingFiltering/TailFindController.swift`
-  - iTerm2: `sources/SearchingFiltering/iTermDropDownFindViewController.m`
-- **关键文件**:
-  - iTerm2: `sources/SearchingFiltering/TailFindController.swift`
-  - iTerm2: `sources/SearchingFiltering/iTermFindDriver.m`
+#### GAP-4.3 Tail-Find 自动滚动搜索 {#gap-4-3}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 基础搜索已有,无 tail-find
+- **目标**: 搜索匹配高亮 + 自动跟随;手动滚到底 → 取消跟随;`Ctrl+Shift+F` 进入 / `F3` 下一个;Alacritty `search` 模块加 `SearchState::follow_tail: bool` 字段
+- **依赖**: 无
+- **风险点**: 输出速率高时 CPU 占用
+- **DoD**: `grep error` tail-find,持续输出含 "error" 时光标跟随;手动滚到底 `F3` 恢复
+- **对标**: cmux `Sources/Search/TailFind.swift` + iTerm2 `TailFindController.swift`
 
-### 5.4 复制模式（Vim 风格）
+### C.P2
+
+#### GAP-1.2 DECSCL 设备控制 {#gap-1-2}
+- **状态**: ❌
 - **优先级**: P2
-- **状态**: 基础鼠标选择，无 vi 模式
-- **参考**:
-  - iTerm2: `sources/CopyMode/iTermCopyModeHandler.m`
-  - Alacritty: `alacritty_terminal/src/vi_mode.rs` (部分 vi 模式存在)
-- **关键文件**:
-  - iTerm2: `sources/CopyMode/iTermCopyModeHandler.m` (24KB)
-  - Alacritty: `alacritty_terminal/src/vi_mode.rs`
+- **PureTerm 现状**: Alacritty 上游未实现
+- **目标**: 实现 DECSCL(Set Conformance Level)CSI 序列处理
+- **DoD**: VT100/VT200/VT300/VT400 conformance level 切换正常
+- **对标**: Ghostty `src/terminal/modes.zig`
+
+#### GAP-1.3 标题栈(CSI 22/23t) {#gap-1-3}
+- **状态**: ❌
+- **优先级**: P2
+- **目标**: 实现 CSI 22t(push title)/ 23t(pop title)
+- **DoD**: `echo -e "\e[22;0t" && echo -e "\e[23;0t"` 标题栈正常 push/pop
+- **对标**: Ghostty `src/terminal/Terminal.zig` 22t handler
+
+#### GAP-1.4 BiDi 双向文本 {#gap-1-4}
+- **状态**: ❌
+- **优先级**: P2
+- **PureTerm 现状**: 已知差距;archive 中曾有 BiDi 支持(`archive/pureterm-terminal/src/screen/`)
+- **目标**: 阿拉伯文/希伯来文 RTL 渲染;`unicode-bidi` crate;BiDi 重排序与 HarfBuzz 整形(如未来回归)联动
+- **依赖**: 无强依赖,但与字体回退一同设计更好
+- **风险点**: 与 Vi mode 列计算冲突
+- **DoD**: 输入 RTL 字符串显示正确
+- **对标**: Ghostty `src/unicode/`
+
+### C.P3
+
+#### GAP-4.6 Touch Bar / VoiceOver {#gap-4-6}
+- **状态**: ❌
+- **优先级**: P3
+- **PureTerm 现状**: VoiceOver 不完整,无 Touch Bar
+- **目标**: VoiceOver 所有 UI 元素可读(iced `accessibility` + `widget::accessible()`);Touch Bar(macOS `NSTouchBar` via `objc2`,Apple 已弱化优先级)
+- **依赖**: 无
+- **风险点**: VoiceOver 测试难
+- **DoD**: VoiceOver 开启后,Tab 切换、命令面板弹出都有语音提示
+- **对标**: Ghostty `Surface.zig` 完全 VoiceOver,iTerm2 `Accessibility/`
 
 ---
 
-## 类别 6：自动化与脚本
+## 6. 类别 D:SSH
 
-### 6.1 触发器系统
+### D.P0
+
+#### GAP-5.1 持久 PTY 守护进程 {#gap-5-1}
+- **状态**: ❌
 - **优先级**: P0
-- **状态**: ✅ 已实现（MVP）— 11 种动作已接入事件循环，3 个内置默认规则，TOML 配置支持
-- **实现文件**:
-  - `crates/pureterm-alacritty-runtime/src/alacritty/trigger.rs` — TriggerService / TriggerAction / LineTracker / 模板展开 / 12 个单元测试
-  - `crates/pureterm-alacritty-runtime/src/alacritty/trigger_dispatch.rs` — 11 种动作分发（Highlight/Bell/Notify/SendText/CaptureToFile/Hyperlink 等）
-  - `crates/pureterm-alacritty-runtime/src/alacritty/config/trigger.rs` — TOML 配置解析
-- **已实现动作**: Bell、Highlight（Cell bg）、Notify（macOS 通知）、CopyMatch、RunCommand、SendText（PTY 写回）、CaptureToFile（文件轮转）、Hyperlink、DirectoryTrack、PasswordMask、PlaySound
-- **待完善**: Hyperlink/PasswordMask 单元格操作、TOML 热重载、Settings UI 编辑界面
+- **PureTerm 现状**: SSH PTY 由 `crates/pureterm/src/ssh/pty.rs` 在主进程内管理,**关 GUI 会话即死**
+- **目标**: 引入 `puretermd-ssh` 子进程(可与 GAP-2.4 合并),接收 SSH 连接 + 分配 slot 目录(`~/.local/share/pureterm/daemon/<slot>/`);持久 PTY 写入 slot;Socket API v2 `ssh.attach/detach/input/output`;考虑迁移到 `russh` crate(替换当前 `ssh` 子进程方案)
+- **依赖**: GAP-2.4(daemon)、GAP-2.3(Socket API)
+- **风险点**: SSH 私钥管理、reconnect 状态、`russh` 与 ControlMaster 共存策略
+- **DoD**: `pureterm ssh connect user@host`,关 GUI 重启,session 仍可 attach
+- **对标**: cmux `daemon/remote/cmuxd-remote`
 
-### 6.2 协同处理（外部脚本集成）
+#### GAP-5.6 完整 reconnect/disconnect 状态机 {#gap-5-6}
+- **状态**: ❌
+- **优先级**: P0
+- **PureTerm 现状**: `SshPty` 单次 connect/disconnect,无重连
+- **目标**: 显式状态机 `enum SshState { Disconnected, Connecting, Authenticating, Connected(SessionId), Reconnecting { attempt, next_retry } }`;tokio interval + 指数退避(最大 60s);Socket API event `SshStateChanged { profile, state }`;UI 显示当前状态
+- **依赖**: GAP-5.1
+- **风险点**: 状态转换的边界情况(用户手动 disconnect 取消重连)
+- **DoD**: SSH 中拔网线 5s,网络恢复后自动重连,UI 显示重连过程
+- **对标**: cmux 完整事件流状态机
+
+### D.P1
+
+#### GAP-5.2 SOCKS5/HTTP CONNECT Browser Tunnel {#gap-5-2}
+- **状态**: ❌
 - **优先级**: P1
-- **状态**: 只有 MiddlewareStack（login script / zmodem）
-- **参考**:
-  - iTerm2: `sources/Tasks/Coprocess.m` - 外部脚本运行与终端 I/O
-- **关键文件**:
-  - iTerm2: `sources/Tasks/Coprocess.m`
-  - Archive: `archive/pureterm-session/src/coprocess.rs`
+- **PureTerm 现状**: 无任何 SSH 隧道能力
+- **目标**: SSH 创建本地 SOCKS5/HTTP CONNECT 代理;绑定 GAP-3.5 Browser 面板;CLI `pureterm ssh tunnel user@host --local-port 1080 --socks5`;`tokio` 写 `Socks5Server`,转发到 `russh::Channel`
+- **依赖**: GAP-5.1
+- **风险点**: 多路复用、TCP 性能
+- **DoD**: `curl --socks5 localhost:1080 example.com` 经 SSH 代理成功
+- **对标**: cmux `Sources/SSH/Tunnel.swift`
 
-### 6.3 代码片段系统
+#### GAP-5.4 SSH agent forwarding {#gap-5-4}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 无 agent forwarding
+- **目标**: 自动检测 `$SSH_AUTH_SOCK`;`-o ForwardAgent=yes`;`russh::Agent` 协议;转发到 SSH channel
+- **依赖**: GAP-5.1
+- **风险点**: 平台差异(macOS Keychain agent vs Linux gpg-agent)
+- **DoD**: `ssh-add` 后远程 `git push` 不需输密码
+- **对标**: cmux 标准 ForwardAgent
+
+#### GAP-5.5 `pureterm://` URL scheme {#gap-5-5}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 无 URL scheme
+- **目标**: 注册 `pureterm://` 到 OS:
+  - `pureterm://ssh/user@host:port?profile=production`
+  - `pureterm://workspace/<name>`
+  - `pureterm://open?path=/some/file`
+  - macOS `Info.plist` + `LSSetDefaultHandlerForURLScheme`(`objc2`)
+  - Linux `.desktop` 文件 + `MimeType=x-scheme-handler/pureterm`
+  - Windows 注册表
+- **依赖**: 无
+- **风险点**: 跨平台实现差异
+- **DoD**: 浏览器点 `pureterm://ssh/test@127.0.0.1:22` 唤起 PureTerm 并打开 SSH Tab
+- **对标**: cmux `cmux://`
+
+### D.P2
+
+#### GAP-5.3 smallest-screen-wins PTY resize {#gap-5-3}
+- **状态**: ❌
 - **优先级**: P2
-- **状态**: 未实现
-- **参考**:
-  - iTerm2: `sources/Snippets/` - 文本片段系统
-  - iTerm2: `sources/Toolbelt/iTermToolSnippets.m` - toolbelt 片段视图
-- **关键文件**:
-  - iTerm2: `sources/Snippets/iTermSnippetsModel.m`
-  - iTerm2: `sources/Toolbelt/iTermToolSnippets.m`
+- **PureTerm 现状**: 每个 Surface 独立 PTY,无共享
+- **目标**: 多 Pane attach 同一 SSH session 时,PTY 大小 = min(行列);`SshSessionManager` 维护 `attached_surfaces: HashMap<SurfaceId, (rows, cols)>`
+- **依赖**: GAP-5.1
+- **风险点**: Pane 关闭时 detach
+- **DoD**: 2 个 Pane 共享 SSH session,PTY 大小 = 较小者
+- **对标**: cmux 多 surface 共享 SSH PTY
 
-### 6.4 输入广播（向所有窗格输入）
+---
+
+## 7. 类别 E:集成与可编程
+
+### E.P0
+
+#### GAP-6.1 Socket API v2 完整协议 {#gap-6-1}
+- **状态**: ❌
+- **优先级**: P0
+- **PureTerm 现状**: 3 个 method(`pureterm msg`)
+- **目标**: 完成 GAP-2.3 设计的完整 method,首版 30+;每个命名空间至少 3-5 个 method;错误码 `-32601/-32602/-32603`
+- **依赖**: GAP-2.3
+- **风险点**: 同 GAP-2.3
+- **DoD**: 30+ method 在 `pureterm-cli` 中可调用
+- **对标**: cmux `Packages/SocketControl/`
+
+#### GAP-6.2 CLI 协议 {#gap-6-2}
+- **状态**: ❌
+- **优先级**: P0
+- **PureTerm 现状**: 基础 `pureterm { msg, migrate, ... }`
+- **目标**: 9 大组 — `pureterm { window, workspace, pane, surface, ssh, feed, system, debug, events }`,每组 5-10 子命令;全局 flag `--socket / --password / --json / --id-format`;环境变量 `PURETERM_SOCKET_PATH / PURETERM_WORKSPACE_ID`;`clap` 4.x derive 风格
+- **依赖**: GAP-6.1
+- **风险点**: CLI 维护成本
+- **DoD**: `pureterm --help` 列出 9 大组,每组 5+ 子命令
+- **对标**: cmux `CLI/cmux.swift`(32119 行,283+ 命令)
+
+### E.P1
+
+#### GAP-6.4 自定义命令注册 {#gap-6-4}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 无
+- **目标**: `alacritty.toml` `[[commands]]` 段:
+  ```toml
+  [[commands]]
+  id = "deploy.staging"
+  title = "Deploy to Staging"
+  key = "Cmd+Shift+D"
+  command = "ssh staging 'cd app && ./deploy.sh'"
+  ```
+  注册到 action 解析器 + 命令面板可搜
+- **依赖**: GAP-3.3(已 ✅)
+- **风险点**: 命令安全(避免任意命令执行)
+- **DoD**: 注册的 `deploy.staging` 在命令面板可搜到并触发
+- **对标**: cmux `Sources/CmuxConfig.swift::commands`
+
+#### GAP-6.7 事件流 + 持久 JSONL 日志 {#gap-6-7}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 无
+- **目标**: Socket API `events` 命名空间;事件分类(window / workspace / surface / pane / notification / feed / agent / sidebar / browser / app / config);JSONL 持久化 `~/.local/share/pureterm/events.jsonl`,16 MiB rotation;4096 in-memory replay buffer;`tokio::sync::broadcast` channel;CLI `pureterm events --type=feed`
+- **依赖**: GAP-6.1
+- **风险点**: 高频事件性能
+- **DoD**: `pureterm events --type=feed` 实时显示审批请求
+- **对标**: cmux `Sources/EventStream.swift` + `cmux events`
+
+### E.P2
+
+#### GAP-6.3 URL scheme / AppleScript 等价桥 {#gap-6-3}
+- **状态**: ❌
+- **优先级**: P2
+- **PureTerm 现状**: 无 URL scheme(见 GAP-5.5)
+- **目标**: macOS AppleScript 桥(`osascript -e 'tell application "PureTerm" to ...'` via `objc2` + `NSAppleEventManager`);Linux D-Bus(`zbus` crate);Windows COM
+- **依赖**: GAP-5.5
+- **风险点**: 平台差异大
+- **DoD**: macOS `osascript -e 'tell application "PureTerm" to create ssh tab'` 工作
+- **对标**: cmux `Sources/AppleScriptBridge.swift`
+
+#### GAP-6.6 tmux 兼容子集 {#gap-6-6}
+- **状态**: ❌
+- **优先级**: P2
+- **PureTerm 现状**: 无
+- **目标**: `pureterm tmux ...` 子集 — `capture-pane / resize-pane / pipe-pane / wait-for / swap-pane / break-pane / join-pane`;解析 tmux 参数映射到 Socket API
+- **依赖**: GAP-6.1
+- **风险点**: 100% 兼容不现实,做子集
+- **DoD**: `pureterm tmux capture-pane -t %0 -p` 输出最近 50 行
+- **对标**: tmux compat / Ghostty `terminal/tmux/*.zig`
+
+#### GAP-6.8 可编程 Sidebar 解释器(IPC 侧) {#gap-6-8}
+- **状态**: ❌
+- **优先级**: P2
+- **PureTerm 现状**: 无
+- **目标**: 同 GAP-3.2,本侧重 IPC — 解释器订阅事件流,sidebar 视图 = 事件流聚合 + 用户渲染回调
+- **依赖**: GAP-3.2、GAP-6.7
+- **DoD**: sidebar 文件订阅 `feed.*` 事件,实时显示待审批数
+
+### E.P3
+
+#### GAP-6.5 Dock 集成 {#gap-6-5}
+- **状态**: ❌
 - **优先级**: P3
-- **状态**: 只在 tmux_session 同步输入
-- **参考**:
-  - iTerm2: `sources/InputBroadcasting/iTermBroadcastInputHelper.m`
-- **关键文件**:
-  - iTerm2: `sources/InputBroadcasting/iTermBroadcastInputHelper.m`
+- **PureTerm 现状**: 无
+- **目标**: macOS Dock 角标(Feed 项数 / 待审批);`NSApplication.dockTile().setBadgeLabel()`;Dock 右键菜单显示最近 Workspace
+- **依赖**: GAP-7.4(Feed 审批)
+- **风险点**: 仅 macOS
+- **DoD**: macOS Dock 显示 "3" 角标
+- **对标**: cmux `Sources/DockController.swift`
 
 ---
 
-## 类别 7：安全特性
+## 8. 类别 F:AI Agent
 
-### 7.1 密码管理器集成
-- **优先级**: P2
-- **状态**: SecretRedaction 只掩码显示，无密码获取
-- **参考**:
-  - iTerm2: `sources/PasswordManager/` - 1Password/LastPass/Keychain
-  - iTerm2: `sources/PasswordManager/iTermPasswordManagerWindowController.m`
-- **关键文件**:
-  - iTerm2: `sources/PasswordManager/iTermPasswordManagerWindowController.m` (70KB)
-  - iTerm2: `sources/PasswordManager/KeychainPasswordDataSource.swift`
-  - iTerm2: `sources/PasswordManager/OnePasswordDataSource.swift`
-  - iTerm2: `sources/PasswordManager/LastPassDataSource.swift`
+### F.P0
 
-### 7.2 密码触发器（掩码）
+#### GAP-7.1 Agent Hooks 通用框架 {#gap-7-1}
+- **状态**: ❌
+- **优先级**: P0
+- **PureTerm 现状**: 无
+- **目标**: JSONL over stdin/stdout 协议;hook 事件 `PreToolUse / PostToolUse / Notification / Stop / PermissionRequest / AskUserQuestion / ExitPlanMode`;`tokio::process::Command` 子进程;与 Claude Code hook 协议对齐(https://docs.claude.com/en/docs/claude-code/hooks);TOML 配置 `[[agent.hook]] command = "..." event = "PreToolUse"`
+- **依赖**: 无
+- **风险点**: 进程崩溃、超时
+- **DoD**: 配置 hook 拦截 `Bash` tool,自动拒绝 `rm -rf` 命令
+- **对标**: cmux `Sources/AgentHook/`
+
+#### GAP-7.2 16+ agent adapter(Claude Code 优先) {#gap-7-2}
+- **状态**: ❌
+- **优先级**: P0
+- **PureTerm 现状**: 无
+- **目标**:
+  - 优先级:Claude Code → Codex → OpenCode → Grok → Pi → 其他
+  - 每个 adapter:识别进程 + 注入 hook + 显示状态
+  - `pureterm agents` 列出已注册,`pureterm agents install claude-code` 安装 hook
+  - Claude Code:写 `.claude/hooks.json`
+  - Codex:`~/.codex/config.toml::notify`
+- **依赖**: GAP-7.1
+- **风险点**: agent 协议变化快
+- **DoD**: 安装 Claude Code hook,PreToolUse 事件被 PureTerm 拦截
+- **对标**: cmux `Sources/AgentHook/Adapters/`
+
+#### GAP-7.4 Feed 审批面板 {#gap-7-4}
+- **状态**: ❌
+- **优先级**: P0
+- **PureTerm 现状**: 无
+- **目标**: 右侧栏 Feed mode;Permission / ExitPlanMode / AskUserQuestion;Once / Always(此会话) / All tools(此 agent) / Bypass(临时) / Deny;120s 软等待(超时默认 deny);审计日志 `~/.local/share/pureterm/feed.jsonl`;agent → hook → 事件总线 → Feed
+- **依赖**: GAP-7.1、GAP-3.1
+- **风险点**: 同步阻塞 hook 的超时
+- **DoD**: Claude Code 请求 `Bash` 权限,Feed 弹 4 选项,选 Once 后命令执行
+- **对标**: cmux `Sources/Feed/RightSidebar.swift`
+
+### F.P1
+
+#### GAP-7.3 Agent Hibernation {#gap-7-3}
+- **状态**: ❌
 - **优先级**: P1
-- **状态**: 未实现
-- **参考**:
-  - iTerm2: `sources/Triggers/PasswordTrigger.m`
-- **关键文件**:
-  - iTerm2: `sources/Triggers/PasswordTrigger.h`、`PasswordTrigger.m`
+- **PureTerm 现状**: 无
+- **目标**: 监控 idle 时间;超阈值弹确认(`maxLiveTerminals=12, idleSeconds=5, 60s confirmation`);`SIGSTOP + 保存 session id`;`--resume <id>` 重启;`nix` crate(Unix);定期 `top -l 1 -pid <pid>` 或 `/proc/<pid>/stat`
+- **依赖**: GAP-7.2
+- **风险点**: SIGSTOP 不可移植到 Windows
+- **DoD**: 5 个 agent,3 个 idle 5 分钟后被 hibernate,resume 后 session 恢复
+- **对标**: cmux `Sources/AgentHibernation.swift`
 
-### 7.3 注释/标记
+#### GAP-7.5 Agent Session Restore {#gap-7-5}
+- **状态**: ❌
+- **优先级**: P1
+- **PureTerm 现状**: 无
+- **目标**: 持久化 session id 到 `~/.local/share/pureterm/agents/<agent>-sessions.json`;启动时 `--resume <id>`;支持 `claude --resume` / `codex --resume`
+- **依赖**: GAP-7.2、GAP-2.4
+- **风险点**: agent resume 协议可能变化
+- **DoD**: 关 PureTerm,重启后 Claude Code 自动恢复最近 session
+- **对标**: cmux `Sources/Agent/SessionRestore.swift`
+
+### F.P2
+
+#### GAP-7.6 Vault agent registry {#gap-7-6}
+- **状态**: ❌
+- **优先级**: P2
+- **PureTerm 现状**: 无
+- **目标**: `alacritty.toml::[vault.agents]` 声明式注册:
+  ```toml
+  [[vault.agents]]
+  name = "claude-code"
+  detect = "ps aux | grep claude"
+  session_id_source = "transcript"
+  resume_command = "claude --resume $SESSION_ID"
+  ```
+  启动扫描注册表识别运行 agent
+- **依赖**: GAP-7.5
+- **风险点**: detect 启发式
+- **DoD**: 配置 Claude Code,启动自动识别并 attach 到现有 session
+- **对标**: cmux `Sources/CmuxConfig.swift::vault.agents[]`
+
+#### GAP-7.7 Custom resume bindings {#gap-7-7}
+- **状态**: ❌
+- **优先级**: P2
+- **PureTerm 现状**: 无
+- **目标**: 自定义命令模板 + 签名审批;`pureterm surface resume set --kind tmux --checkpoint work --shell "tmux attach -t work"`;`handlebars` crate + HMAC-SHA256;通过 GAP-7.4 Feed 审批流
+- **依赖**: GAP-7.6
+- **风险点**: 安全性(共享密钥)
+- **DoD**: 配置 `--kind tmux --checkpoint work`,session 关闭时执行 `tmux attach`
+- **对标**: cmux `Sources/ResumeBinding.swift`
+
+#### GAP-7.8 agent-browser 兼容 {#gap-7-8}
+- **状态**: ❌
+- **优先级**: P2
+- **PureTerm 现状**: 无 Browser 面板(见 GAP-3.5)
+- **目标**: GAP-3.5 实现后,实现 agent-browser 兼容子集 — `click / type / screenshot / navigate / extract`;参考 `https://agent-browser.dev/protocol`
+- **依赖**: GAP-3.5
+- **风险点**: 兼容性深度
+- **DoD**: agent 发 `click #submit`,Browser 面板点击对应 DOM
+- **对标**: cmux `Sources/Browser/`(93/125 命令兼容)
+
+---
+
+## 9. 类别 G:平台
+
+### G.P3
+
+#### GAP-8.1 Sparkle auto-update {#gap-8-1}
+- **状态**: ❌
 - **优先级**: P3
-- **状态**: 未实现
-- **参考**:
-  - iTerm2: `sources/Annotations/`
-  - iTerm2: `sources/Triggers/MarkTrigger.m`
-- **关键文件**:
-  - iTerm2: `sources/Annotations/PTYAnnotation.m`
+- **PureTerm 现状**: 无自动更新
+- **目标**: macOS 嵌入 Sparkle 框架(`objc2`);Linux `apt/pacman` 仓库 + 检查;Windows `winget` + Squirrel;跨平台抽象 `updater::check_and_notify()`
+- **依赖**: 无
+- **风险点**: macOS 依赖打包
+- **DoD**: macOS 检查新版本,菜单栏通知
+- **对标**: cmux `Sources/Updater/SparkleController.swift`
 
 ---
 
-## 类别 8：生产力特性
+## 10. ⛔ 明确拒绝
 
-### 8.1 Toolbelt（侧边面板）
-- **优先级**: P2
-- **状态**: 未实现（只有快速栏、命令面板）
-- **参考**:
-  - iTerm2: `sources/Toolbelt/` - 命令历史、粘贴历史、片段、配置、目录浏览器、笔记
-  - Archive: `archive/pureterm-ui/src/toolbelt.rs`
-- **关键文件**:
-  - iTerm2: `sources/Toolbelt/iTermToolbeltView.m` (35KB)
-  - iTerm2: `sources/Toolbelt/ToolCommandHistoryView.m`
-  - iTerm2: `sources/Toolbelt/ToolPasteHistory.m`
-  - iTerm2: `sources/Toolbelt/ToolDirectoriesView.m`
-
-### 8.2 命令面板
-- **优先级**: P1
-- **状态**: 基础实现存在
-- **参考**: Archive: `archive/pureterm-ui/src/command_palette.rs`
-
-### 8.3 自动 Profile 切换
-- **优先级**: P2
-- **状态**: 基础目录跟踪，无自动 profile 切换
-- **参考**:
-  - iTerm2: `sources/AutomaticProfileSwitching/`
-- **关键文件**:
-  - iTerm2: `sources/AutomaticProfileSwitching/`
-
-### 8.4 SSH 文件浏览器 (SFTP GUI)
-- **优先级**: P2
-- **状态**: 基础 SFTP 传输，无图形浏览器
-- **参考**:
-  - iTerm2: `SSHFilePanel.swift` (84KB) - 图形 SFTP 浏览器
-  - Archive: `archive/pureterm-ui/src/sftp_browser.rs`
-  - Archive: `archive/pureterm-session/src/ssh/sftp.rs`
-- **关键文件**:
-  - iTerm2: `SSHFilePanel.swift`
+| GAP | 标题 | 拒绝理由 |
+|---|---|---|
+| GAP-8.2 | 商业 tier | 偏离开源定位 |
+| GAP-8.3 | iOS 伴侣 app | PureTerm 主线不进入移动平台战略;跨平台桌面是优势 |
+| GAP-8.4 | Cloud VM(Next.js + AWS RDS 后端) | 非开源范围,不进入云组件 |
 
 ---
 
-## 类别 9：平台集成
+## 11. 进度看板(滚动更新)
 
-### 9.1 Touch Bar 支持
-- **优先级**: N/A（macOS 专用，与跨平台目标不符）
-- **参考**: iTerm2: `sources/TouchBar/`
+| GAP | 标题 | 类别 | 优先级 | 状态 | 闭环日期 | 备注 |
+|---|---|---|---|---|---|---|
+| GAP-1.2 | DECSCL 设备控制 | C | P2 | ❌ | - | - |
+| GAP-1.3 | 标题栈(CSI 22/23t) | C | P2 | ❌ | - | - |
+| GAP-1.4 | BiDi 双向文本 | C | P2 | ❌ | - | - |
+| GAP-2.1 | Surface/Pane/Workspace/Window 抽象层 | A | P1 | ❌ | - | - |
+| GAP-2.2 | 嵌套水平+垂直分屏 | A | P0 | 🚧 | - | split_tree 已有,缺 action 入口 |
+| GAP-2.3 | Socket API 协议 + 端口模型 | A | P0 | 🚧 | - | 3/30+ method |
+| GAP-2.4 | 远程守护进程 puretermd | A | P1 | ❌ | - | - |
+| GAP-2.5 | 多 UI 路径统一治理 | A | P0 | 🚧 | - | iced 已是主路径 |
+| GAP-2.6 | iOS 伴侣 + Cloud VM | A | P3 | ⛔ | - | 见 §10 |
+| GAP-3.1 | 双侧边栏 | B | P1 | ❌ | - | - |
+| GAP-3.2 | 可编程 Sidebars(DSL) | B | P2 | ❌ | - | - |
+| GAP-3.3 | 命令面板 ⌘⇧P | B | P0 | ✅ | 2026-06-08 | nucleo-matcher + Actions/Profiles |
+| GAP-3.4 | 状态栏 | B | P1 | ❌ | - | - |
+| GAP-3.5 | 内置 Browser 面板 | B | P1 | ❌ | - | wry crate |
+| GAP-3.6 | macOS Glass 效果 | B | P3 | ❌ | - | - |
+| GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | 🚧 | - | 50+ Action,缺模板 |
+| GAP-3.8 | 搜索体系 | B | P1 | 🚧 | - | 基础搜索已有,缺目录/全局 |
+| GAP-4.1 | Vim 复制模式 | C | P1 | ❌ | - | - |
+| GAP-4.2 | 智能选择 hover preview | C | P1 | 🚧 | - | 9 规则已有,缺 hover |
+| GAP-4.3 | Tail-Find 自动滚动搜索 | C | P1 | ❌ | - | - |
+| GAP-4.6 | Touch Bar / VoiceOver | C | P3 | ❌ | - | - |
+| GAP-5.1 | 持久 PTY 守护进程 | D | P0 | ❌ | - | - |
+| GAP-5.2 | SOCKS5/HTTP CONNECT Tunnel | D | P1 | ❌ | - | - |
+| GAP-5.3 | smallest-screen-wins resize | D | P2 | ❌ | - | - |
+| GAP-5.4 | SSH agent forwarding | D | P1 | ❌ | - | - |
+| GAP-5.5 | pureterm:// URL scheme | D | P1 | ❌ | - | - |
+| GAP-5.6 | reconnect/disconnect 状态机 | D | P0 | ❌ | - | - |
+| GAP-5.7 | SSH Tab UI 串通 | D | P0 | ✅ | 2026-06-08 | ⌘⇧S + graceful_close |
+| GAP-5.8 | SSH 主 UI 设置 UI | D | P0 | ✅ | 2026-06-08 | 右侧栏 + CredentialStore |
+| GAP-5.9 | SSH 命令面板集成 | D | P0 | ✅ | 2026-06-08 | Profiles mode 一跳到底 |
+| GAP-6.1 | Socket API v2 协议 | E | P0 | ❌ | - | - |
+| GAP-6.2 | CLI 协议 | E | P0 | ❌ | - | - |
+| GAP-6.3 | URL scheme / AppleScript 桥 | E | P2 | ❌ | - | - |
+| GAP-6.4 | 自定义命令注册 | E | P1 | ❌ | - | - |
+| GAP-6.5 | Dock 集成 | E | P3 | ❌ | - | - |
+| GAP-6.6 | tmux 兼容子集 | E | P2 | ❌ | - | - |
+| GAP-6.7 | 事件流 + JSONL 日志 | E | P1 | ❌ | - | - |
+| GAP-6.8 | 可编程 Sidebar 解释器 | E | P2 | ❌ | - | - |
+| GAP-7.1 | Agent Hooks 通用框架 | F | P0 | ❌ | - | - |
+| GAP-7.2 | 16+ agent adapter | F | P0 | ❌ | - | Claude Code 优先 |
+| GAP-7.3 | Agent Hibernation | F | P1 | ❌ | - | - |
+| GAP-7.4 | Feed 审批面板 | F | P0 | ❌ | - | - |
+| GAP-7.5 | Agent Session Restore | F | P1 | ❌ | - | - |
+| GAP-7.6 | Vault agent registry | F | P2 | ❌ | - | - |
+| GAP-7.7 | Custom resume bindings | F | P2 | ❌ | - | - |
+| GAP-7.8 | agent-browser 兼容 | F | P2 | ❌ | - | - |
+| GAP-8.1 | Sparkle auto-update | G | P3 | ❌ | - | macOS 优先 |
+| GAP-8.2 | 商业 tier | G | P3 | ⛔ | - | 见 §10 |
+| GAP-8.3 | iOS 伴侣 | G | P3 | ⛔ | - | 见 §10 |
+| GAP-8.4 | Cloud VM | G | P3 | ⛔ | - | 见 §10 |
+| GAP-8.5 | 跨平台优势 | G | N/A | ✅ | - | 已是优势 |
 
-### 9.2 无障碍/VoiceOver
-- **优先级**: P1
-- **状态**: Alacritty 运行时未完整实现
-- **参考**:
-  - Ghostty: `Surface.zig` 完全 VoiceOver 支持
-  - iTerm2: `sources/Accessibility/`
-  - Archive: `archive/pureterm/src/accessibility.rs`
-- **关键文件**:
-  - Ghostty: `src/Surface.zig` - 文本快照无障碍
-  - Ghostty: `src/Accessibility.zig`
-
-### 9.3 检查器/调试面板
-- **优先级**: P2
-- **状态**: 基础框架存在但不完整
-- **参考**:
-  - Ghostty: `inspector/widgets/` - 页面内存、键盘历史、渲染器信息、屏幕网格
-  - Archive: `archive/pureterm-ui/src/inspector.rs`
-- **关键文件**:
-  - Ghostty: `src/inspector/Inspector.zig`
-  - Ghostty: `src/inspector/widgets/screen.zig`
-  - Ghostty: `src/inspector/widgets/termio.zig`
-
----
-
-## 优先级汇总
-
-### P0 - 关键（必须实现）
-1. ~~OSC 133 Shell 集成~~ ✅ 已实现（MVP）
-2. ~~多标签支持~~ ✅ 已实现（Phase 1 MVP）
-3. ~~SSH 会话后端~~ ✅ 已实现（MVP）
-4. ~~触发器系统~~ ✅ 已实现（MVP）
-5. ~~多通道渲染管线~~ ✅ 已实现（wgpu 8 通道 + 独立渲染线程）
-
-### P1 - 高优先级（应该有）
-6. ~~智能选择~~ ✅ 已实现（9 条规则 + TOML 配置）
-7. ~~彩色 Emoji / BGRA 字体图集~~ ✅ 已实现（双图集 + 条件采样）
-8. 语义历史 / 悬停预览
-9. ~~HarfBuzz 文本整形~~ ✅ 已完成（harfbuzz-sys + ShapedGlyphCache + 偏移量）
-10. ~~背景图像 GPU 渲染~~ ✅ 已实现（PNG/JPEG + fit/position/opacity + 实时重载）
-11. 自定义着色器 (ShaderToy)
-12. 复制模式（Vi 风格）
-13. 协同处理
-14. ~~字体回退链~~ ✅ 已实现（fontdb 5 步回退 + per-character atlas index）
-15. 字体图集矩形装箱
-
-### P2 - 中优先级（最好有）
-16. Sixel 图形
-17. 分割窗格
-18. GPU 标签栏
-19. 状态栏
-20. Tail-Find 搜索
-21. 代码片段系统
-22. 密码管理器集成
-23. 密码触发器
-24. Serial 会话后端
-25. 自动 Profile 切换
-26. SFTP 浏览器 GUI
-27. Workgroups
-28. Tmux 控制模式
-29. BiDi 支持
-30. 检查器面板
-
-### P3 - 低优先级（未来）
-31. 输入广播
-32. 注释/标记
-33. 会话录制 (DVR)
-34. Telnet 会话后端
+> **不在本表追踪的归档项**(详见 [`README.md` §已归档特性](../README.md#已归档特性2026-06-08-起)):
+> 触发器系统(原 GAP-4.4)、OSC 133 Shell 集成扩展(原 GAP-4.5)、8 pass wgpu 管线、HarfBuzz 整形、字体回退链、背景图像渲染、5 个实验 crate。
 
 ---
 
-## 关键实现参考文件
+## 12. 维护说明
 
-1. `/Users/admin/Code/Github/iTerm2-master/sources/Triggers/Trigger.m` - 基础触发器系统架构
-2. `/Users/admin/Code/Github/ghostty-main/src/renderer/Thread.zig` - 独立渲染线程与 mailbox
-3. `/Users/admin/Code/Github/ghostty-main/src/termio/shell_integration.zig` - OSC 133 shell 集成
-4. `/Users/admin/Code/CNB/PureTerm/archive/pureterm-core/src/trigger.rs` - Legacy 触发器实现参考
-5. `/Users/admin/Code/CNB/PureTerm/archive/pureterm-ui/src/terminal/pane.rs` - 带智能选择的终端窗格
-6. `/Users/admin/Code/Github/ghostty-main/src/font/shaper/harfbuzz.zig` - HarfBuzz 文本整形 ✅ 已实现
-7. `/Users/admin/Code/Github/iTerm2-master/sources/SemanticHistory/iTermSemanticHistoryController.m` - 语义历史 (45KB)
-8. `/Users/admin/Code/Github/iTerm2-master/sources/Toolbelt/iTermToolbeltView.m` - Toolbelt (35KB)
-9. `/Users/admin/Code/Github/iTerm2-master/sources/PasswordManager/iTermPasswordManagerWindowController.m` - 密码管理 (70KB)
+**何时更新本文件**:
+- 完成一个 P0/P1 → 同步 §1.1 数字摘要 + §11 进度看板 + §2 已实现条目
+- 季度末 → 同步 §1.2 本季度焦点
+- cmux/Ghostty/iTerm2 有重大发布 → 整体复盘并增补 GAP
+- 新能力归档 → 移到 [`README.md` §已归档特性](../README.md#已归档特性2026-06-08-起),从本文件移除
+
+**不写实现细节**:
+- 本文件是 roadmap,不写代码
+- 子任务在 GitHub Issue 或 `docs/superpowers/specs+plans/` 中维护
+- 关联 PR 链接在 §11 备注列填入
+
+**与 README 的边界**:
+- 本文件:未来要做什么 + 当前在做什么
+- README:当前已经做了什么 + 历史归档了什么
+
+---
+
+## 13. 参考资源
+
+### 13.1 cmux 关键目录
+
+| 路径 | 用途 |
+|---|---|
+| `cmux/Sources/TerminalController.swift`(21540 行) | v2 method 调度器 |
+| `cmux/Packages/SocketControl/` | 283+ v2 socket method |
+| `cmux/CLI/cmux.swift`(32119 行) | CLI 283+ 命令 |
+| `cmux/daemon/remote/cmuxd-remote/` | Go 持久 PTY daemon |
+| `cmux/Sources/AgentHook/` | Agent hook 框架 |
+| `cmux/Sources/Feed/` | Feed 审批面板 |
+| `cmux/Sources/Sidebar/` | 双侧边栏 |
+| `cmux/vendor/bonsplit` | 嵌套分屏库 |
+
+### 13.2 PureTerm 内部参考
+
+| 路径 | 用途 |
+|---|---|
+| `crates/pureterm/src/iced_app.rs` | iced UI 主循环(96 KB) |
+| `crates/pureterm/src/split_tree.rs` | 分屏树(23.5 KB) |
+| `crates/pureterm/src/terminal_shader.rs` | 终端着色器(30.9 KB) |
+| `crates/pureterm/src/config_watcher.rs` | 配置热重载 |
+| `crates/pureterm/src/ssh/` | SSH 后端(7 个文件) |
+| `crates/pureterm-settings/src/pages/` | Settings UI 6 页面 |
+| `crates/alacritty_terminal/src/smart_selection.rs` | 智能选择 9 规则 |
+| `archive/` | 归档历史(见 `removed-legacy-features.md`) |
+
+### 13.3 协议与规范
+
+| 协议 | 链接 |
+|---|---|
+| JSON-RPC 2.0 | https://www.jsonrpc.org/specification |
+| Claude Code hooks | https://docs.claude.com/en/docs/claude-code/hooks |
+| agent-browser | https://agent-browser.dev/protocol |
+| XTerm modifyOtherKeys | https://invisible-island.net/xterm/modified-keys.html |
+| Tmux control mode | https://github.com/tmux/tmux/wiki/Control-Mode |
+| Kitty image protocol | https://sw.kovidgoyal.net/kitty/graphics-protocol/ |
