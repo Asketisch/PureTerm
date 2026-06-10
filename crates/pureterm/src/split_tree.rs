@@ -659,6 +659,59 @@ impl SplitNode {
         }
         None
     }
+
+    // ---- GAP-2.2 嵌套分屏补齐:Equalize / Swap / Focus Next-Prev ----
+
+    /// Equalize:把所有 Split 节点的 ratio 强制设为 0.5。
+    /// 递归遍历整棵子树,叶子节点跳过。
+    pub fn equalize_all(&mut self) {
+        match self {
+            SplitNode::Leaf(_) => {}
+            SplitNode::Split { ratio, first, second, .. } => {
+                *ratio = 0.5;
+                first.equalize_all();
+                second.equalize_all();
+            }
+        }
+    }
+
+    /// Swap:找到含 pane_id 的最浅 Split,交换 first/second 并翻转
+    /// ratio = 1.0 - ratio(保证拖拽手感不跳)。
+    /// 返回 true 表示成功(pane_id 必须在某个 Split 下,否则 false —
+    /// 这种情况只发生在 root 是 Leaf 且唯一包含该 pane 的情形)。
+    pub fn swap_with_sibling(&mut self, pane_id: PaneId) -> bool {
+        match self {
+            SplitNode::Leaf(_) => false,
+            SplitNode::Split { ratio, first, second, .. } => {
+                // 命中:子树直接包含 pane(任一子树是 Leaf 或包含该 pane)
+                if first.contains(pane_id) && second.contains(pane_id) {
+                    // 不应发生:两个子树都含同一 pane_id;按"非"处理,继续递归
+                    // (实际上 PaneId 全局唯一,这分支永远不命中)
+                } else if first.contains(pane_id) || second.contains(pane_id) {
+                    std::mem::swap(first, second);
+                    *ratio = 1.0 - *ratio;
+                    return true;
+                }
+                // 未命中:递归到子树
+                first.swap_with_sibling(pane_id) || second.swap_with_sibling(pane_id)
+            }
+        }
+    }
+
+    /// Focus Next/Prev:返回 DFS 先序中相对于 pane_id 偏移 delta 的 pane(wrap)。
+    /// delta = +1 → 下一个,delta = -1 → 上一个;|delta|>1 同样支持。
+    /// 返回 None 表示 pane_id 不在树中,或树为空。
+    pub fn neighbor_in_order(&self, pane_id: PaneId, delta: i32) -> Option<PaneId> {
+        let ids = self.pane_ids();
+        if ids.is_empty() {
+            return None;
+        }
+        let pos = ids.iter().position(|&id| id == pane_id)?;
+        let len = ids.len() as i32;
+        // 防御性归一化:rem_euclid 处理负数 wrap
+        let next = ((pos as i32 + delta).rem_euclid(len)) as usize;
+        Some(ids[next])
+    }
 }
 
 /// 分割线的位置信息。
@@ -680,5 +733,173 @@ impl DividerRect {
         } else {
             0.0
         }
+    }
+}
+
+// ---- GAP-2.2 单元测试 ----
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 构造 3 层嵌套:H[ V[a, b], H[c, V[d, e]] ]
+    /// 形成 5 个 pane(a..e),用于覆盖嵌套场景。
+    fn build_nested() -> (SplitNode, [PaneId; 5]) {
+        let ids = [
+            PaneId(101), PaneId(102), PaneId(103), PaneId(104), PaneId(105),
+        ];
+        let inner_v1 = SplitNode::Split {
+            split_id: 1,
+            direction: SplitDirection::Vertical,
+            ratio: 0.3,
+            first: Box::new(SplitNode::Leaf(ids[0])),
+            second: Box::new(SplitNode::Leaf(ids[1])),
+        };
+        let inner_v2 = SplitNode::Split {
+            split_id: 2,
+            direction: SplitDirection::Vertical,
+            ratio: 0.4,
+            first: Box::new(SplitNode::Leaf(ids[3])),
+            second: Box::new(SplitNode::Leaf(ids[4])),
+        };
+        let inner_h = SplitNode::Split {
+            split_id: 3,
+            direction: SplitDirection::Horizontal,
+            ratio: 0.7,
+            first: Box::new(SplitNode::Leaf(ids[2])),
+            second: Box::new(inner_v2),
+        };
+        let root = SplitNode::Split {
+            split_id: 4,
+            direction: SplitDirection::Horizontal,
+            ratio: 0.2,
+            first: Box::new(inner_v1),
+            second: Box::new(inner_h),
+        };
+        (root, ids)
+    }
+
+    /// 收集所有 Split 节点的 ratio,用于 equalize 断言。
+    fn collect_ratios(node: &SplitNode, out: &mut Vec<f32>) {
+        if let SplitNode::Split { ratio, first, second, .. } = node {
+            out.push(*ratio);
+            collect_ratios(first, out);
+            collect_ratios(second, out);
+        }
+    }
+
+    #[test]
+    fn equalize_all_sets_every_split_to_half() {
+        let (mut tree, _) = build_nested();
+        tree.equalize_all();
+        let mut ratios = Vec::new();
+        collect_ratios(&tree, &mut ratios);
+        assert_eq!(ratios.len(), 4, "应有 4 个 Split 节点");
+        for r in ratios {
+            assert!((r - 0.5).abs() < 1e-6, "每个 Split.ratio 应为 0.5,实际 {}", r);
+        }
+    }
+
+    #[test]
+    fn equalize_all_on_leaf_is_noop() {
+        let mut tree = SplitNode::Leaf(PaneId(42));
+        tree.equalize_all();
+        assert!(matches!(tree, SplitNode::Leaf(PaneId(42))));
+    }
+
+    #[test]
+    fn swap_with_sibling_swaps_and_inverts_ratio() {
+        let (mut tree, ids) = build_nested();
+        // 找到含 ids[0] 的最浅 Split(根 H,first=V[a,b], second=H[...])
+        // 期望:根 Split 的 first/second 交换,ratio 从 0.2 → 0.8
+        let ok = tree.swap_with_sibling(ids[0]);
+        assert!(ok);
+        if let SplitNode::Split { ratio, first, .. } = &tree {
+            assert!((*ratio - 0.8).abs() < 1e-6, "ratio 应翻转为 0.8,实际 {}", ratio);
+            // 交换后 first 应是原 inner_h(含 ids[2..])
+            assert!(first.contains(ids[2]));
+            assert!(!first.contains(ids[0]));
+        } else {
+            panic!("根应仍为 Split");
+        }
+    }
+
+    #[test]
+    fn swap_with_sibling_twice_returns_to_original() {
+        let (mut tree, ids) = build_nested();
+        let r1 = if let SplitNode::Split { ratio, .. } = &tree { *ratio } else { panic!() };
+        assert!(tree.swap_with_sibling(ids[0]));
+        assert!(tree.swap_with_sibling(ids[0]));
+        let r2 = if let SplitNode::Split { ratio, .. } = &tree { *ratio } else { panic!() };
+        assert!((r1 - r2).abs() < 1e-6, "swap 两次应回到原 ratio");
+        // 结构也回到原状(first 仍含 ids[0])
+        if let SplitNode::Split { first, .. } = &tree {
+            assert!(first.contains(ids[0]));
+        }
+    }
+
+    #[test]
+    fn swap_with_sibling_on_root_leaf_returns_false() {
+        let pane = PaneId(7);
+        let mut tree = SplitNode::Leaf(pane);
+        assert!(!tree.swap_with_sibling(pane));
+    }
+
+    #[test]
+    fn swap_with_sibling_on_unknown_pane_returns_false() {
+        let (mut tree, _) = build_nested();
+        let unknown = PaneId(9999);
+        assert!(!tree.swap_with_sibling(unknown));
+    }
+
+    #[test]
+    fn neighbor_in_order_next_wraps_at_boundary() {
+        let (tree, ids) = build_nested();
+        // pane_ids() DFS 先序:首先 inner_v1 (ids[0], ids[1]),
+        // 然后 inner_h: ids[2], 然后 inner_v2 (ids[3], ids[4])
+        let order = tree.pane_ids();
+        assert_eq!(order, vec![ids[0], ids[1], ids[2], ids[3], ids[4]]);
+        // next from last wraps to first
+        assert_eq!(tree.neighbor_in_order(ids[4], 1), Some(ids[0]));
+        // prev from first wraps to last
+        assert_eq!(tree.neighbor_in_order(ids[0], -1), Some(ids[4]));
+        // mid +1
+        assert_eq!(tree.neighbor_in_order(ids[2], 1), Some(ids[3]));
+        // mid -1
+        assert_eq!(tree.neighbor_in_order(ids[2], -1), Some(ids[1]));
+    }
+
+    #[test]
+    fn neighbor_in_order_unknown_pane_returns_none() {
+        let (tree, _) = build_nested();
+        assert_eq!(tree.neighbor_in_order(PaneId(8888), 1), None);
+    }
+
+    #[test]
+    fn neighbor_in_order_single_pane_returns_self() {
+        let p = PaneId(1);
+        let tree = SplitNode::Leaf(p);
+        assert_eq!(tree.neighbor_in_order(p, 1), Some(p));
+        assert_eq!(tree.neighbor_in_order(p, -1), Some(p));
+    }
+
+    /// 复用 remove() 验证"移走 pane 后父 Split 折叠"行为符合 detach 语义。
+    #[test]
+    fn remove_collapses_parent_split() {
+        let (mut tree, ids) = build_nested();
+        // 移走 ids[0] → inner_v1 折叠为 Leaf(ids[1]),根的 first 变成 Leaf(ids[1])
+        let remaining = tree.remove(ids[0]);
+        assert!(remaining.is_some());
+        // ids[0] 不再存在,ids[1..5] 仍在
+        let ids_after = tree.pane_ids();
+        assert_eq!(ids_after.len(), 4);
+        assert!(!ids_after.contains(&ids[0]));
+        for i in 1..5 { assert!(ids_after.contains(&ids[i])); }
+    }
+
+    #[test]
+    fn remove_on_root_leaf_returns_none() {
+        let p = PaneId(1);
+        let mut tree = SplitNode::Leaf(p);
+        assert_eq!(tree.remove(p), None);
     }
 }

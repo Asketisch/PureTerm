@@ -53,24 +53,23 @@
 
 | 类别 | ✅ | 🚧 | ❌ | ⛔ | 小计 |
 |---|---|---|---|---|---|
-| A. 核心架构 | 0 | 2 | 3 | 0 | 5 |
+| A. 核心架构 | 1 | 1 | 3 | 0 | 5 |
 | B. UI/UX | 1 | 0 | 6 | 0 | 7 |
 | C. 终端交互 | 0 | 0 | 7 | 0 | 7 |
 | D. SSH | 3 | 0 | 6 | 0 | 9 |
 | E. 集成与可编程 | 0 | 0 | 8 | 0 | 8 |
 | F. AI Agent | 0 | 0 | 8 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **5** | **2** | **39** | **3** | **49** |
+| **总计** | **6** | **1** | **39** | **3** | **49** |
 
-整体进度:✅ 5/49 ≈ 10%(含 🚧 折半计为 12%)
+整体进度:✅ 6/49 ≈ 12%(含 🚧 折半计为 13%)
 
 ### 1.2 本季度焦点(P0 优先)
 
-1. **GAP-2.2** 嵌套分屏补齐(等分 / 交换 / 缩放 / 焦点切换)
-2. **GAP-2.3** Socket API v2 协议设计(method 分类骨架)
-3. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
-4. **GAP-5.6** SSH reconnect/disconnect 状态机
-5. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode)
+1. **GAP-2.3** Socket API v2 协议设计(method 分类骨架)
+2. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
+3. **GAP-5.6** SSH reconnect/disconnect 状态机
+4. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode)
 
 ---
 
@@ -80,6 +79,7 @@
 
 | GAP | 标题 | 类别 | 闭环日期 | 实现位置 |
 |---|---|---|---|---|
+| GAP-2.2 | 嵌套分屏补齐(Equalize/Swap/Zoom/Focus Next-Prev/Move-to-Tab-Window) | A | 2026-06-10 | `crates/pureterm/src/split_tree.rs`(equalize_all / swap_with_sibling / neighbor_in_order)+ `iced_app.rs`(Tab.zoom_state + 6 Message + 5 ContextMenuItem + 7 命令面板 builtin) |
 | GAP-3.3 | 命令面板 ⌘⇧P | B | 2026-06-08 | `crates/pureterm/src/iced_app.rs`(nucleo-matcher + Actions/Profiles 双模式) |
 | GAP-5.7 | SSH Tab UI 串通 | D | 2026-06-08 | `crates/pureterm/src/ssh/` + iced UI 串通(`⌘⇧S`、异步 spawn、graceful_close) |
 | GAP-5.8 | SSH 主 UI 设置 UI | D | 2026-06-08 | 右侧栏 `SshSettingsPanelState` + `CredentialStore` 主密码端到端 |
@@ -93,27 +93,27 @@
 ### A.P0
 
 #### GAP-2.2 嵌套水平+垂直分屏(bonsplit) {#gap-2-2}
-- **状态**: 🚧
+- **状态**: ✅(2026-06-10 闭环)
 - **优先级**: P0
-- **PureTerm 现状**: `crates/pureterm/src/split_tree.rs`(23.5 KB)实现 `SplitNode { Leaf | Split { direction, ratio, first, second } }`,水平/垂直递归嵌套 + 拖拽,`MIN_RATIO=0.1 / MAX_RATIO=0.9`
-- **目标**:
-  - Equalize Splits(`Cmd+Shift+E` 一键等分)
-  - Swap Panes(拖拽交换)
-  - Zoom Pane(`Cmd+Shift+Enter` 临时最大化)
-  - Focus Next/Prev Pane(`Cmd+Alt+方向键`)
-  - Move Pane to New Tab/Window
-- **依赖**: GAP-2.1(Workspace 抽象)— 可并行
-- **风险点**: 焦点切换算法在深嵌套层级的性能
-- **DoD**: 嵌套 3 层分屏,`Cmd+Shift+E` 等分,`Cmd+Alt+方向键` 焦点移动到正确 Pane
+- **PureTerm 现状**: `crates/pureterm/src/split_tree.rs` 实现 `SplitNode { Leaf | Split { direction, ratio, first, second } }`,水平/垂直递归嵌套 + 拖拽,`MIN_RATIO=0.1 / MAX_RATIO=0.9`
+- **闭环条目**:
+  - Equalize Splits(`⌘=` 一键等分,递归 `equalize_all`;2026-06-11 由 `⌘⇧E` 调整,避开 macOS 输入法切换冲突)
+  - Swap Panes(`⌘⇧X` 交换 first/second,翻转 ratio 不跳)
+  - Zoom Pane(`⌘⇧Enter` 临时最大化,`Tab.zoom_state` 保存原树)
+  - Focus Next/Prev Pane(`⌘]` / `⌘[`,DFS 先序 wrap;与现有 `⌘⌥+方向键` 几何相邻并存)
+  - Move Pane to New Tab(`⌘⇧T`)/ New Window(`⌘⇧N`)
+- **三入口**:键盘 + 右键菜单 + 命令面板(`split.*` 7 个 builtin id)
+- **单元测试**: `split_tree::tests` 11 个用例(嵌套 3 层 / wrap / swap 二次回归 / 根 Leaf 边界)
+- **未做(留作小迭代)**:`ContextMenuItem::Separator`、"Move Pane to existing Tab"
 - **对标**: cmux `vendor/bonsplit`
 
 #### GAP-2.3 Socket API 协议 + 端口模型 {#gap-2-3}
-- **状态**: 🚧
+- **状态**: ❌(2026-06-10 纠偏:原标 🚧 "3/30+ method" 与代码不符 — 原 IPC 代码全部归档到 `archive/pureterm-display-path/alacritty/polling/ipc.rs`,主二进制无 IPC)
 - **优先级**: P0
-- **PureTerm 现状**: `pureterm msg` 子命令已实现 Unix socket,仅 3 个 method(`CreateWindow / Config / GetConfig`),`IoListener::spawn` 暴露
-- **目标**: Socket API v2 协议层,method 命名空间:`window.* / workspace.* / pane.* / surface.* / notification.* / feed.* / system.* / debug.*`,首版 30+ method;JSON-RPC 2.0 风格;`tokio::net::UnixListener` + `SocketRouter` HashMap
+- **PureTerm 现状**: 无 IPC。主二进制 `crates/pureterm` 没有 `pureterm msg` 子命令、没有 `IoListener::spawn`、没有 tokio UnixListener。归档版本是 `polling` crate + 单 line-JSON、`SocketMessage { CreateWindow | Config | GetConfig }` 裸 enum、无 id/method/error code
+- **目标**: Socket API v2 协议层,method 命名空间:`window.* / workspace.* / pane.* / surface.* / notification.* / feed.* / system.* / debug.*`,首版 30+ method;JSON-RPC 2.0 风格;`tokio::net::UnixListener` + `SocketRouter` HashMap;预估 6-10k 行 / 2-3 周(从归档复活 + 改写协议)
 - **依赖**: GAP-2.1(抽象层) — 可并行启动协议骨架
-- **风险点**: 协议稳定性的向后兼容设计
+- **风险点**: wire 格式向后兼容设计;iced 0.14 与 tokio 事件循环挂接(Subscription::channel)
 - **DoD**: 至少 30 个 method 在 `pureterm-cli` 中可调用,与 GUI 行为一致
 - **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
 
@@ -163,14 +163,18 @@
 #### GAP-3.7 完整快捷键自定义 + 模板 {#gap-3-7}
 - **状态**: 🚧
 - **优先级**: P0
-- **PureTerm 现状**: `bindings.rs::enum Action`(50+ 变体)支持完整自定义 TOML 配置;**无预设模板**,有 6 处 `unimplemented!()`(`input/mod.rs` L1268-1309)
+- **PureTerm 现状**(2026-06-10 纠偏:原描述误指 `input/mod.rs L1268-1309` 有 6 处 `unimplemented!()` — 实际 0 处,该位置在 vendored archive 的 `bindings.rs::tests` mock 模块):
+  - vendored `archive/pureterm-display-path/alacritty/config/bindings.rs` 的 `Action` enum 有 50+ 变体,**但主二进制 `crates/pureterm/src/iced_app.rs::handle_keyboard`(L2479+)是手写内联 `match` dispatch,完全未对接该 Action enum**
+  - `pureterm-settings/src/pages/keybindings.rs` 是只读视图(TOML 由用户手编)
+  - **无任何 chord 字段、无 live reload keymap 信号、无 CLI `pureterm shortcuts ...` 子命令**
 - **目标**:
+  - 把 iced_app 的内联 dispatch 重构为"查表 + 派发 Action"(主要工作量在此)
   - 6 套预设模板 — `resources/presets/{tmux,vim,iterm,agent-triage,vscode,custom}.toml`
   - 单键 + chord 完整支持(扩展 `Binding { key, mods, action, mode }` 加 `chord: Option<BindingKey>`)
   - live reload(`Cmd+Shift+R` 或 `config_watcher.rs` 扩展 `KeymapChanged`)
-  - CLI 子命令:`pureterm shortcuts list/preset/set/reset`
+  - CLI 子命令:`pureterm shortcuts list/preset/set/reset`(主二进制需引入 clap)
 - **依赖**: 无
-- **风险点**: chord 解析复杂度
+- **风险点**: 重写 4319 行核心 `handle_keyboard` 回归风险高;chord 解析复杂度
 - **DoD**: `pureterm shortcuts preset vim` 切换后,`j` `k` `h` `l` 在 normal mode 可移动光标
 - **对标**: cmux `Sources/CmuxConfig.swift::shortcuts.bindings`
 
@@ -636,8 +640,8 @@
 | GAP-1.3 | 标题栈(CSI 22/23t) | C | P2 | ❌ | - | - |
 | GAP-1.4 | BiDi 双向文本 | C | P2 | ❌ | - | - |
 | GAP-2.1 | Surface/Pane/Workspace/Window 抽象层 | A | P1 | ❌ | - | - |
-| GAP-2.2 | 嵌套水平+垂直分屏 | A | P0 | 🚧 | - | split_tree 已有,缺 action 入口 |
-| GAP-2.3 | Socket API 协议 + 端口模型 | A | P0 | 🚧 | - | 3/30+ method |
+| GAP-2.2 | 嵌套水平+垂直分屏 | A | P0 | ✅ | 2026-06-10 | Equalize/Swap/Zoom/Focus Next-Prev/Move-to-Tab-Window 三入口 + 11 单测 |
+| GAP-2.3 | Socket API 协议 + 端口模型 | A | P0 | ❌ | - | 2026-06-10 纠偏:原 IPC 全部在 archive/,主二进制无 |
 | GAP-2.4 | 远程守护进程 puretermd | A | P1 | ❌ | - | - |
 | GAP-2.5 | 多 UI 路径统一治理 | A | P0 | 🚧 | - | iced 已是主路径 |
 | GAP-2.6 | iOS 伴侣 + Cloud VM | A | P3 | ⛔ | - | 见 §10 |
@@ -647,7 +651,7 @@
 | GAP-3.4 | 状态栏 | B | P1 | ❌ | - | - |
 | GAP-3.5 | 内置 Browser 面板 | B | P1 | ❌ | - | wry crate |
 | GAP-3.6 | macOS Glass 效果 | B | P3 | ❌ | - | - |
-| GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | 🚧 | - | 50+ Action,缺模板 |
+| GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | 🚧 | - | 2026-06-10 纠偏:核心是 iced_app::handle_keyboard 内联 dispatch 需重构(Action enum 在 archive/) |
 | GAP-3.8 | 搜索体系 | B | P1 | 🚧 | - | 基础搜索已有,缺目录/全局 |
 | GAP-4.1 | Vim 复制模式 | C | P1 | ❌ | - | - |
 | GAP-4.2 | 智能选择 hover preview | C | P1 | 🚧 | - | 9 规则已有,缺 hover |

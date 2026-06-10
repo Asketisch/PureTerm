@@ -53,6 +53,28 @@ pub struct Tab {
     tab_color: Option<Color>,
     /// Creation timestamp — used for SSH grace period detection.
     created_at: Instant,
+    /// GAP-2.2 Zoom 状态:
+    /// - `None` = 正常态。
+    /// - `Some(saved)` = 当前在 Zoom 中,`split_tree` 已被替换为 `Leaf(zoomed_pane)`,
+    ///   saved 持有进入 zoom 前的完整树。
+    /// 不变量:任何修改 `split_tree` 的入口(split/close/swap/equalize/detach)
+    /// 必须先调 `restore_zoom_if_any()` 还原。
+    zoom_state: Option<SplitNode>,
+}
+
+impl Tab {
+    /// GAP-2.2:若处于 Zoom 态,将 saved 树写回 `split_tree`,清空 zoom_state。
+    /// 必须在 split / close / swap / equalize / detach 等修改 split_tree 的
+    /// 入口最开头调用,保证 zoom 不变量。Active pane 不变。
+    fn restore_zoom_if_any(&mut self) {
+        if let Some(saved) = self.zoom_state.take() {
+            // 仅当 saved 仍包含当前 active_pane 时还原结构;否则保持 Leaf
+            // 兜底(理论上不应发生,因为 zoom 期间无法切走 active_pane)。
+            if saved.contains(self.active_pane) {
+                self.split_tree = saved;
+            }
+        }
+    }
 }
 
 pub struct PureTermApp {
@@ -197,13 +219,19 @@ pub enum ContextMenuItem {
     SplitHorizontal,
     SplitVertical,
     ClosePane,
+    // GAP-2.2 嵌套分屏补齐(Focus Next/Prev 不入此菜单,见 plan §2)
+    EqualizeSplits,
+    SwapPane,
+    ToggleZoom,
+    MovePaneToNewTab,
+    MovePaneToNewWindow,
     // SSH (P3 GAP-5.7)
     #[cfg(unix)]
     NewSshTab,
 }
 
 impl ContextMenuItem {
-    const ALL: [ContextMenuItem; 11] = [
+    const ALL: [ContextMenuItem; 16] = [
         ContextMenuItem::CloseTab,
         ContextMenuItem::CloseOtherTabs,
         ContextMenuItem::CloseTabsToLeft,
@@ -215,20 +243,25 @@ impl ContextMenuItem {
         ContextMenuItem::SplitHorizontal,
         ContextMenuItem::SplitVertical,
         ContextMenuItem::ClosePane,
+        ContextMenuItem::EqualizeSplits,
+        ContextMenuItem::SwapPane,
+        ContextMenuItem::ToggleZoom,
+        ContextMenuItem::MovePaneToNewTab,
+        ContextMenuItem::MovePaneToNewWindow,
     ];
 
     /// All entries including cfg-gated ones; used by label() and the
     /// context-menu renderer. On non-unix targets the SSH entry is
     /// absent.
     #[cfg(unix)]
-    const ALL_PLUS_SSH: [ContextMenuItem; 12] = {
-        let mut out = [ContextMenuItem::ClosePane; 12];
+    const ALL_PLUS_SSH: [ContextMenuItem; 17] = {
+        let mut out = [ContextMenuItem::ClosePane; 17];
         let mut i = 0;
-        while i < 11 {
+        while i < 16 {
             out[i] = Self::ALL[i];
             i += 1;
         }
-        out[11] = ContextMenuItem::NewSshTab;
+        out[16] = ContextMenuItem::NewSshTab;
         out
     };
 
@@ -245,6 +278,11 @@ impl ContextMenuItem {
             ContextMenuItem::SplitHorizontal => "分屏 (左右)".to_string(),
             ContextMenuItem::SplitVertical => "分屏 (上下)".to_string(),
             ContextMenuItem::ClosePane => "关闭面板".to_string(),
+            ContextMenuItem::EqualizeSplits => "等分分屏".to_string(),
+            ContextMenuItem::SwapPane => "交换面板".to_string(),
+            ContextMenuItem::ToggleZoom => "最大化面板".to_string(),
+            ContextMenuItem::MovePaneToNewTab => "移到新标签页".to_string(),
+            ContextMenuItem::MovePaneToNewWindow => "移到新窗口".to_string(),
             #[cfg(unix)]
             ContextMenuItem::NewSshTab => i18n.t("context_menu.new_ssh_tab"),
         }
@@ -349,6 +387,20 @@ pub enum Message {
     DividerPress(DragState),
     DividerDrag(Point),
     DividerRelease,
+    // GAP-2.2 嵌套分屏补齐
+    /// Equalize:把所有 Split.ratio 设为 0.5。
+    EqualizeSplits,
+    /// Swap:交换当前 pane 与其 Split 兄弟子树。
+    SwapPane,
+    /// Zoom:当前 pane 临时最大化 / 恢复。
+    ToggleZoom,
+    /// Focus Next/Prev:DFS 先序循环切换焦点。+1=Next, -1=Prev。
+    FocusPaneInOrder(i32),
+    /// Move-to-new-Tab(Pane 级)。注意已有 `MoveToNewWindow`(Tab 级,
+    /// `ContextMenuItem`)— 本 variant 是 Pane 级抽离。
+    MovePaneToNewTab,
+    /// Move-to-new-Window(Pane 级,同上)。
+    MovePaneToNewWindow,
     // Global mouse events for drag tracking
     GlobalCursorMoved(Point),
     GlobalMouseRelease,
@@ -571,6 +623,7 @@ impl PureTermApp {
             active_pane: pane_id,
             tab_color: None,
             created_at: Instant::now(),
+            zoom_state: None,
         });
         id
     }
@@ -724,6 +777,7 @@ impl PureTermApp {
             active_pane: pane_id,
             tab_color: None,
             created_at: Instant::now(),
+            zoom_state: None,
         });
         id
     }
@@ -949,6 +1003,16 @@ impl PureTermApp {
         push_builtin("prev_tab", "palette.action.prev_tab.label", "palette.action.prev_tab.hint", "palette.action.prev_tab.search", &mut all_entries);
         push_builtin("split_h", "palette.action.split_h.label", "palette.action.split_h.hint", "palette.action.split_h.search", &mut all_entries);
         push_builtin("split_v", "palette.action.split_v.label", "palette.action.split_v.hint", "palette.action.split_v.search", &mut all_entries);
+        // GAP-2.2:7 个新分屏命令。i18n key 未配则 i18n.t() 返回 key 本身,
+        // 不影响 dispatch(模糊搜索仍可命中 search key 的字面 "split"),
+        // 后续可补 zh/en 资源。
+        push_builtin("split.equalize", "palette.action.split_equalize.label", "palette.action.split_equalize.hint", "palette.action.split_equalize.search", &mut all_entries);
+        push_builtin("split.swap", "palette.action.split_swap.label", "palette.action.split_swap.hint", "palette.action.split_swap.search", &mut all_entries);
+        push_builtin("split.zoom", "palette.action.split_zoom.label", "palette.action.split_zoom.hint", "palette.action.split_zoom.search", &mut all_entries);
+        push_builtin("split.focus_next", "palette.action.split_focus_next.label", "palette.action.split_focus_next.hint", "palette.action.split_focus_next.search", &mut all_entries);
+        push_builtin("split.focus_prev", "palette.action.split_focus_prev.label", "palette.action.split_focus_prev.hint", "palette.action.split_focus_prev.search", &mut all_entries);
+        push_builtin("split.move_to_new_tab", "palette.action.split_move_to_new_tab.label", "palette.action.split_move_to_new_tab.hint", "palette.action.split_move_to_new_tab.search", &mut all_entries);
+        push_builtin("split.move_to_new_window", "palette.action.split_move_to_new_window.label", "palette.action.split_move_to_new_window.hint", "palette.action.split_move_to_new_window.search", &mut all_entries);
         push_builtin("settings", "palette.action.settings.label", "palette.action.settings.hint", "palette.action.settings.search", &mut all_entries);
         #[cfg(unix)]
         {
@@ -1031,6 +1095,14 @@ impl PureTermApp {
                     "prev_tab" => self.activate_prev_tab(),
                     "split_h" => self.split_pane(SplitDirection::Horizontal),
                     "split_v" => self.split_pane(SplitDirection::Vertical),
+                    // GAP-2.2:7 个新分屏命令委派给 Message arm,与键盘 / 右键菜单共享 dispatch。
+                    "split.equalize" => return Task::done(Message::EqualizeSplits),
+                    "split.swap" => return Task::done(Message::SwapPane),
+                    "split.zoom" => return Task::done(Message::ToggleZoom),
+                    "split.focus_next" => return Task::done(Message::FocusPaneInOrder(1)),
+                    "split.focus_prev" => return Task::done(Message::FocusPaneInOrder(-1)),
+                    "split.move_to_new_tab" => return Task::done(Message::MovePaneToNewTab),
+                    "split.move_to_new_window" => return Task::done(Message::MovePaneToNewWindow),
                     "settings" => {
                         return self.update(Message::OpenSettings);
                     },
@@ -1750,6 +1822,28 @@ impl PureTermApp {
                         self.active_tab = menu.tab_id;
                         self.close_active_pane();
                     }
+                    // GAP-2.2:5 个新分屏动作 — 切换到目标 tab 后委派给 Message arm,
+                    // 单一实现路径,与键盘 / 命令面板共享 dispatch。
+                    ContextMenuItem::EqualizeSplits => {
+                        self.active_tab = menu.tab_id;
+                        return Task::done(Message::EqualizeSplits);
+                    }
+                    ContextMenuItem::SwapPane => {
+                        self.active_tab = menu.tab_id;
+                        return Task::done(Message::SwapPane);
+                    }
+                    ContextMenuItem::ToggleZoom => {
+                        self.active_tab = menu.tab_id;
+                        return Task::done(Message::ToggleZoom);
+                    }
+                    ContextMenuItem::MovePaneToNewTab => {
+                        self.active_tab = menu.tab_id;
+                        return Task::done(Message::MovePaneToNewTab);
+                    }
+                    ContextMenuItem::MovePaneToNewWindow => {
+                        self.active_tab = menu.tab_id;
+                        return Task::done(Message::MovePaneToNewWindow);
+                    }
                     #[cfg(unix)]
                     ContextMenuItem::NewSshTab => {
                         return Task::done(Message::OpenSshDialog);
@@ -1812,6 +1906,119 @@ impl PureTermApp {
             }
             Message::ClosePane => {
                 self.close_active_pane();
+            }
+            // ---- GAP-2.2 嵌套分屏补齐 ----
+            Message::EqualizeSplits => {
+                let active_tab_id = self.active_tab;
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+                    tab.restore_zoom_if_any();
+                    tab.split_tree.equalize_all();
+                }
+                self.resize_active_tab_panes();
+            }
+            Message::SwapPane => {
+                let active_tab_id = self.active_tab;
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+                    tab.restore_zoom_if_any();
+                    let pane = tab.active_pane;
+                    let _ = tab.split_tree.swap_with_sibling(pane);
+                }
+                self.resize_active_tab_panes();
+            }
+            Message::ToggleZoom => {
+                let active_tab_id = self.active_tab;
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+                    if let Some(saved) = tab.zoom_state.take() {
+                        // 当前在 zoom 中 → 恢复 saved 树
+                        if saved.contains(tab.active_pane) {
+                            tab.split_tree = saved;
+                        }
+                        // else: saved 不再含 active_pane,保持 Leaf(兜底)
+                    } else if tab.split_tree.pane_count() > 1 {
+                        // 进入 zoom:把当前 split_tree 移入 zoom_state,
+                        // split_tree 替换为 Leaf(active_pane)。
+                        let active = tab.active_pane;
+                        let saved = std::mem::replace(
+                            &mut tab.split_tree,
+                            SplitNode::Leaf(active),
+                        );
+                        tab.zoom_state = Some(saved);
+                    }
+                    // 单 pane Tab:no-op(没必要 zoom)
+                }
+                self.resize_active_tab_panes();
+            }
+            Message::FocusPaneInOrder(delta) => {
+                let next = self.active_tab_ref()
+                    .and_then(|tab| tab.split_tree.neighbor_in_order(tab.active_pane, delta));
+                if let Some(next) = next {
+                    return Task::done(Message::PaneFocused(next));
+                }
+            }
+            Message::MovePaneToNewTab => {
+                if let Some(pane) = self.detach_active_pane() {
+                    let new_tab_id = TabId(self.next_tab_id);
+                    self.next_tab_id += 1;
+                    let pane_id = pane.id;
+                    let title = pane.title.clone();
+                    let mut panes = HashMap::new();
+                    panes.insert(pane_id, pane);
+                    self.tabs.push(Tab {
+                        id: new_tab_id,
+                        title,
+                        panes,
+                        split_tree: SplitNode::single(pane_id),
+                        active_pane: pane_id,
+                        tab_color: None,
+                        created_at: Instant::now(),
+                        zoom_state: None,
+                    });
+                    self.active_tab = new_tab_id;
+                    self.resize_active_tab_panes();
+                }
+            }
+            Message::MovePaneToNewWindow => {
+                if let Some(pane) = self.detach_active_pane() {
+                    let pane_id = pane.id;
+                    let title = pane.title.clone();
+                    let mut panes = HashMap::new();
+                    panes.insert(pane_id, pane);
+                    // 新窗口 Tab 从 1 开始(参考现有 MoveToNewWindow 设置 tab.id = TabId(0))。
+                    let tab = Tab {
+                        id: TabId(0),
+                        title,
+                        panes,
+                        split_tree: SplitNode::single(pane_id),
+                        active_pane: pane_id,
+                        tab_color: None,
+                        created_at: Instant::now(),
+                        zoom_state: None,
+                    };
+                    let settings = window::Settings {
+                        size: Size::new(1024.0, 768.0),
+                        decorations: true,
+                        resizable: true,
+                        closeable: true,
+                        transparent: true,
+                        ..Default::default()
+                    };
+                    let (win_id, task) = window::open(settings);
+                    let resize_task = {
+                        let gs = self.glyph_state.borrow();
+                        let cw = gs.cell_width;
+                        let ch = gs.cell_height;
+                        drop(gs);
+                        window::set_resize_increments(win_id, Some(Size::new(cw, ch)))
+                    };
+                    self.detached_windows.push(DetachedWindow {
+                        window_id: win_id,
+                        tab,
+                    });
+                    return Task::batch(vec![
+                        task.map(|_| Message::TerminalWakeup),
+                        resize_task.map(|_: ()| Message::TerminalWakeup),
+                    ]) as Task<Message>;
+                }
             }
             Message::PaneFocused(pane_id) => {
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == self.active_tab) {
@@ -2452,7 +2659,12 @@ impl PureTermApp {
                 }
                 return Task::none();
             }
-            KEvent::KeyPressed { key: Key::Named(Named::Enter), .. } => {
+            KEvent::KeyPressed { key: Key::Named(Named::Enter), modifiers, .. } => {
+                // GAP-2.2:⌘⇧Enter 触发 ToggleZoom。必须早返,否则会落到下方
+                // overlay/PTY 路径(发 \r 到当前 pane)。
+                if modifiers.command() && modifiers.shift() {
+                    return Task::done(Message::ToggleZoom);
+                }
                 if let Some(ref menu) = self.context_menu {
                     if let Some(item) = menu.hovered_item {
                         return Task::done(Message::ContextMenuAction(item));
@@ -2502,6 +2714,13 @@ impl PureTermApp {
                     if let Key::Character(ref c) = key {
                         match c.as_str() {
                             "," => return Task::none(),
+                            // GAP-2.2:⌘⇧T 抢在 ⌘T(NewTab)之前命中。macOS 把 ⌘⇧T
+                            // 上报为 Character("T") 且 shift modifier 可能未置位
+                            // (类似 L2730-2738 注释的 SSH 处理),双形态兜底。
+                            s if s == "T"
+                                || (s.eq_ignore_ascii_case("t") && modifiers.shift()) => {
+                                return Task::done(Message::MovePaneToNewTab);
+                            }
                             "t" => return Task::done(Message::NewTab),
                             "w" => {
                                 // Close pane first; if last pane, close tab
@@ -2538,6 +2757,28 @@ impl PureTermApp {
                             "a" => return Task::done(Message::SelectAll),
                             "}" => return Task::done(Message::NextTab),
                             "{" => return Task::done(Message::PrevTab),
+                            // GAP-2.2:⌘] / ⌘[ Focus Next/Prev Pane(DFS 先序)。
+                            // 不与 ⌘⇧] / ⌘⇧[(macOS 上报为 "}" / "{")冲突 —
+                            // 后者继续是 NextTab/PrevTab。iTerm2 同款键位。
+                            "]" => return Task::done(Message::FocusPaneInOrder(1)),
+                            "[" => return Task::done(Message::FocusPaneInOrder(-1)),
+                            // GAP-2.2:⌘= Equalize(无 shift)。原绑 ⌘⇧E 与
+                            // macOS 中文输入法的 "English/中文" 切换冲突
+                            // (2026-06-11 用户反馈,plan §13),改用 ⌘=,
+                            // 语义贴合"=" 即"equal",且不被任何 macOS 系统
+                            // 快捷键占用。仅匹配字面 "=",⌘⇧=(macOS 上报
+                            // 为 Character("+"))不命中,避免误触。
+                            "=" => return Task::done(Message::EqualizeSplits),
+                            // GAP-2.2:⌘⇧X 交换。键当前未占用,双形态兜底。
+                            s if s == "X"
+                                || (s.eq_ignore_ascii_case("x") && modifiers.shift()) => {
+                                return Task::done(Message::SwapPane);
+                            }
+                            // GAP-2.2:⌘⇧N Move-to-new-Window(Pane 级)。⌘N 未占用,双形态兜底。
+                            s if s == "N"
+                                || (s.eq_ignore_ascii_case("n") && modifiers.shift()) => {
+                                return Task::done(Message::MovePaneToNewWindow);
+                            }
                             #[cfg(unix)]
                             // Match on the resulting character, not the
                             // shift modifier. On macOS, ⌘⇧S can be
@@ -2868,6 +3109,11 @@ impl PureTermApp {
             None => return,
         };
 
+        // GAP-2.2 zoom 不变量:若处于 zoom 中,split 前先还原原树。否则
+        // split 会作用在 Leaf 上,saved 树成为孤儿,后续 ToggleZoom 会
+        // 丢失新建 pane。
+        tab.restore_zoom_if_any();
+
         // Calculate new pane dimensions from layout
         let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
         let layout = tab.split_tree.compute_layout(
@@ -2935,6 +3181,9 @@ impl PureTermApp {
 
         let new_active = {
             let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id).unwrap();
+            // GAP-2.2 zoom 不变量:close 前先还原 saved 树,否则 remove() 作用在
+            // Leaf 上,zoom_state 持有的旧树会成为孤儿。
+            tab.restore_zoom_if_any();
             tab.split_tree.remove(active_pane_id)
         };
 
@@ -2968,6 +3217,50 @@ impl PureTermApp {
                 }
             }
         }
+    }
+
+    // ---- GAP-2.2 嵌套分屏补齐:helper ----
+
+    /// 在活跃 tab 上调用 `resize_panes_in_tab`,使用当前 viewport 与 cell 尺寸。
+    /// 任何修改 active tab 的 split_tree(equalize / swap / zoom / detach)后都应调用。
+    fn resize_active_tab_panes(&mut self) {
+        let active_tab_id = self.active_tab;
+        let viewport_w = self.viewport_size.width;
+        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let (cw, ch) = {
+            let gs = self.glyph_state.borrow();
+            (gs.cell_width as u16, gs.cell_height as u16)
+        };
+        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+            Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+        }
+    }
+
+    /// 把活跃 tab 的活跃 pane 从 split_tree 中抽离,返回被抽离的 Pane。
+    /// 失败条件:
+    ///   - active tab 不存在 → None
+    ///   - active tab 只剩一个 pane(根 Leaf)→ None,原 tab 不变
+    /// 成功后:
+    ///   - 原 tab 的 split_tree 已通过 `remove()` 折叠
+    ///   - active_pane 重置为折叠后的 first_pane
+    ///   - panes 已删除该 pane(注意:不 release SSH pool,因为 pane 即将在新 tab/window 继续活跃)
+    ///   - 剩余 pane 已自动 resize
+    fn detach_active_pane(&mut self) -> Option<Pane> {
+        let active_tab_id = self.active_tab;
+        let pane = {
+            let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id)?;
+            if tab.panes.len() <= 1 {
+                return None;
+            }
+            tab.restore_zoom_if_any();
+            let pane_id = tab.active_pane;
+            // remove() 返回 Some(remaining_first_pane);若被 panes.len()<=1 拦截外仍 None,放弃
+            let new_first = tab.split_tree.remove(pane_id)?;
+            tab.active_pane = new_first;
+            tab.panes.remove(&pane_id)?
+        };
+        self.resize_active_tab_panes();
+        Some(pane)
     }
 
     /// Resize all panes in a tab according to the current split layout.
