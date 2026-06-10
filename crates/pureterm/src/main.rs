@@ -1,6 +1,7 @@
 mod app_config;
 mod config_watcher;
 mod iced_app;
+mod ime_widget;
 mod split_tree;
 #[cfg(target_os = "macos")]
 mod macos_menu;

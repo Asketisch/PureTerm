@@ -5,6 +5,7 @@ use iced_wgpu::graphics::Viewport;
 use iced_wgpu::primitive::{self, Pipeline, Primitive};
 use wgpu::util::DeviceExt;
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::fmt;
 use std::sync::Arc;
@@ -14,6 +15,16 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use crossfont::{FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size, Style, Weight, Slant};
 use pureterm_alacritty_runtime::renderer::glyph_atlas::{AtlasKind, CachedGlyph, WgpuGlyphAtlas};
+
+// 1x1 placeholder pixel data used when an atlas has no dirty content yet.
+// Keeps the bind group valid even before the first glyph is rasterized.
+const PLACEHOLDER_GRAY: &[u8] = &[0u8];
+const PLACEHOLDER_COLOR: &[u8] = &[0u8, 0u8, 0u8, 0u8];
+
+/// Shared scale factor written by `prepare()` (renderer thread) and read by
+/// `draw()` (UI thread). Stored as `f32` bits in an `AtomicU32`.
+fn f32_to_bits(f: f32) -> u32 { f.to_bits() }
+fn bits_to_f32(u: u32) -> f32 { f32::from_bits(u) }
 
 // --- Vertex types ---
 
@@ -102,7 +113,16 @@ pub struct TerminalPipeline {
     nearest_sampler: wgpu::Sampler,
 
     // Shared atlas textures (GlyphState is shared across all panes;
-    // first pane to call prepare() uploads dirty atlas data)
+    // first pane to call prepare() uploads dirty atlas data).
+    // Textures are persistent across frames; we only recreate them
+    // when the atlas size changes (e.g., new glyphs push it to grow).
+    // On steady-state frames we use `queue.write_texture` for partial updates.
+    grayscale_atlas_texture: Option<wgpu::Texture>,
+    color_atlas_texture: Option<wgpu::Texture>,
+    grayscale_atlas_size: (u32, u32),
+    color_atlas_size: (u32, u32),
+    // Views derived from the textures above; the bind group is cached
+    // and only re-created when the views change (i.e., on texture recreate).
     grayscale_atlas_view: Option<wgpu::TextureView>,
     color_atlas_view: Option<wgpu::TextureView>,
     text_atlas_bind_group: Option<wgpu::BindGroup>,
@@ -199,7 +219,7 @@ impl Pipeline for TerminalPipeline {
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
                 wgpu::BindGroupLayoutEntry {
@@ -215,7 +235,7 @@ impl Pipeline for TerminalPipeline {
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
             ],
@@ -251,8 +271,8 @@ impl Pipeline for TerminalPipeline {
 
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Text Sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
             address_mode_u: wgpu::AddressMode::ClampToEdge,
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
@@ -265,6 +285,10 @@ impl Pipeline for TerminalPipeline {
             text_atlas_bgl,
             text_uniform_bgl,
             nearest_sampler,
+            grayscale_atlas_texture: None,
+            color_atlas_texture: None,
+            grayscale_atlas_size: (0, 0),
+            color_atlas_size: (0, 0),
             grayscale_atlas_view: None,
             color_atlas_view: None,
             text_atlas_bind_group: None,
@@ -323,6 +347,9 @@ pub struct TerminalPrimitive {
     /// Per-frame GPU buffers – each Primitive instance owns its own,
     /// avoiding the shared-Pipeline overwrite bug in split-screen.
     gpu: Mutex<GpuResources>,
+    /// Shared scale factor: updated by `prepare()` with the actual viewport
+    /// scale factor each frame; read by `draw()` to detect changes.
+    viewport_scale_factor: Arc<AtomicU32>,
 }
 
 impl fmt::Debug for TerminalPrimitive {
@@ -342,10 +369,21 @@ impl Primitive for TerminalPrimitive {
         &self,
         pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
-        _queue: &wgpu::Queue,
+        queue: &wgpu::Queue,
         bounds: &Rectangle,
-        _viewport: &Viewport,
+        viewport: &Viewport,
     ) {
+        // Publish the actual viewport scale factor so that `draw()` (next frame)
+        // can reconfigure the glyph atlas if needed.
+        let vp_scale = viewport.scale_factor();
+        self.viewport_scale_factor.store(
+            f32_to_bits(vp_scale),
+            Ordering::Relaxed,
+        );
+
+        // Keep uniforms in logical coordinates — iced_wgpu sets the GPU viewport
+        // to bounds × scale_factor, so the vertex shader's NDC conversion must use
+        // the same logical coordinate system as the vertex positions.
         let uniforms = ScreenUniforms {
             corner_radius: 0.0,
             screen_width: bounds.width,
@@ -378,66 +416,157 @@ impl Primitive for TerminalPrimitive {
             gpu.bg_index_count = 0;
         }
 
-        // --- Atlas textures ---
+        // --- Atlas textures (persistent) ---
+        // Per atlas, decide whether to (a) recreate the texture (first frame
+        // or size grew) or (b) just upload the new dirty data via
+        // queue.write_texture. The bind group is only rebuilt when a texture
+        // is actually recreated, eliminating per-frame GPU churn.
+        //
+        // CRITICAL: when take_dirty_data() returns None on a steady-state
+        // frame (no new glyphs), the existing texture/view/bind_group must
+        // be preserved. The 1x1 placeholder is only used on the very first
+        // frame when the texture is None — folding it into a per-frame size
+        // check would cause the texture to be destroyed and re-created as
+        // 1x1 on every static frame, wiping the glyph cache and rendering
+        // text invisible (Fix 3.5).
+        let mut views_changed = false;
+
         if let Some((ref data, w, h)) = self.grayscale_atlas {
-            let tex = device.create_texture_with_data(_queue, &wgpu::TextureDescriptor {
-                label: Some("Gray Atlas"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            let need_recreate = pipeline.grayscale_atlas_texture.is_none()
+                || pipeline.grayscale_atlas_size != (w, h);
+            if need_recreate {
+                let tex = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
+                    label: Some("Gray Atlas"),
+                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    mip_level_count: 1, sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::R8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                }, wgpu::util::TextureDataOrder::LayerMajor, data);
+                pipeline.grayscale_atlas_texture = Some(tex);
+                pipeline.grayscale_atlas_size = (w, h);
+                pipeline.grayscale_atlas_view = Some(
+                    pipeline.grayscale_atlas_texture.as_ref().unwrap().create_view(&Default::default())
+                );
+                views_changed = true;
+            } else {
+                // Same size, real data: partial upload into the existing texture.
+                // Wgpu requires bytes_per_row to be a multiple of COPY_BYTES_PER_ROW_ALIGNMENT (256);
+                // the atlas allocator emits power-of-two widths so this holds.
+                if let Some(tex) = pipeline.grayscale_atlas_texture.as_ref() {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: tex,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        data,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(w), // R8Unorm = 1 byte per pixel
+                            rows_per_image: Some(h),
+                        },
+                        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    );
+                }
+            }
+        } else if pipeline.grayscale_atlas_texture.is_none() {
+            // First frame, no glyphs rasterized yet: create a 1x1 placeholder
+            // so the bind group is valid. Subsequent frames without new data
+            // fall through to the "do nothing" branch below.
+            let tex = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
+                label: Some("Gray Atlas Placeholder"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
                 mip_level_count: 1, sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::R8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
-            }, wgpu::util::TextureDataOrder::LayerMajor, data);
-            pipeline.grayscale_atlas_view = Some(tex.create_view(&Default::default()));
+            }, wgpu::util::TextureDataOrder::LayerMajor, PLACEHOLDER_GRAY);
+            pipeline.grayscale_atlas_texture = Some(tex);
+            pipeline.grayscale_atlas_size = (1, 1);
+            pipeline.grayscale_atlas_view = Some(
+                pipeline.grayscale_atlas_texture.as_ref().unwrap().create_view(&Default::default())
+            );
+            views_changed = true;
         }
+        // Else: texture exists and no new data → preserve texture/view.
 
         if let Some((ref data, w, h)) = self.color_atlas {
-            let tex = device.create_texture_with_data(_queue, &wgpu::TextureDescriptor {
-                label: Some("Color Atlas"),
-                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+            let need_recreate = pipeline.color_atlas_texture.is_none()
+                || pipeline.color_atlas_size != (w, h);
+            if need_recreate {
+                let tex = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
+                    label: Some("Color Atlas"),
+                    size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    mip_level_count: 1, sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                }, wgpu::util::TextureDataOrder::LayerMajor, data);
+                pipeline.color_atlas_texture = Some(tex);
+                pipeline.color_atlas_size = (w, h);
+                pipeline.color_atlas_view = Some(
+                    pipeline.color_atlas_texture.as_ref().unwrap().create_view(&Default::default())
+                );
+                views_changed = true;
+            } else {
+                if let Some(tex) = pipeline.color_atlas_texture.as_ref() {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: tex,
+                            mip_level: 0,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        data,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(w * 4), // Rgba8UnormSrgb = 4 bytes per pixel
+                            rows_per_image: Some(h),
+                        },
+                        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    );
+                }
+            }
+        } else if pipeline.color_atlas_texture.is_none() {
+            let tex = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
+                label: Some("Color Atlas Placeholder"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
                 mip_level_count: 1, sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8UnormSrgb,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
-            }, wgpu::util::TextureDataOrder::LayerMajor, data);
-            pipeline.color_atlas_view = Some(tex.create_view(&Default::default()));
+            }, wgpu::util::TextureDataOrder::LayerMajor, PLACEHOLDER_COLOR);
+            pipeline.color_atlas_texture = Some(tex);
+            pipeline.color_atlas_size = (1, 1);
+            pipeline.color_atlas_view = Some(
+                pipeline.color_atlas_texture.as_ref().unwrap().create_view(&Default::default())
+            );
+            views_changed = true;
         }
+        // Else: texture exists and no new data → preserve texture/view.
 
-        // Ensure placeholder atlas views if not yet set
-        if pipeline.grayscale_atlas_view.is_none() {
-            let tex = device.create_texture_with_data(_queue, &wgpu::TextureDescriptor {
-                label: Some("Placeholder Gray"), size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-                mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::R8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
-            }, wgpu::util::TextureDataOrder::LayerMajor, &[0u8]);
-            pipeline.grayscale_atlas_view = Some(tex.create_view(&Default::default()));
+        // Recreate atlas bind group only when views changed (texture was
+        // recreated) or the bind group hasn't been built yet.
+        if views_changed || pipeline.text_atlas_bind_group.is_none() {
+            let gray_view = pipeline.grayscale_atlas_view.as_ref().unwrap();
+            let color_view = pipeline.color_atlas_view.as_ref().unwrap();
+            pipeline.text_atlas_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Atlas BG"),
+                layout: &pipeline.text_atlas_bgl,
+                entries: &[
+                    wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(gray_view) },
+                    wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&pipeline.nearest_sampler) },
+                    wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(color_view) },
+                    wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&pipeline.nearest_sampler) },
+                ],
+            }));
         }
-        if pipeline.color_atlas_view.is_none() {
-            let tex = device.create_texture_with_data(_queue, &wgpu::TextureDescriptor {
-                label: Some("Placeholder Color"), size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-                mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING, view_formats: &[],
-            }, wgpu::util::TextureDataOrder::LayerMajor, &[0, 0, 0, 0]);
-            pipeline.color_atlas_view = Some(tex.create_view(&Default::default()));
-        }
-
-        // Rebuild atlas bind group
-        let gray_view = pipeline.grayscale_atlas_view.as_ref().unwrap();
-        let color_view = pipeline.color_atlas_view.as_ref().unwrap();
-        pipeline.text_atlas_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Atlas BG"),
-            layout: &pipeline.text_atlas_bgl,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(gray_view) },
-                wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&pipeline.nearest_sampler) },
-                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::TextureView(color_view) },
-                wgpu::BindGroupEntry { binding: 3, resource: wgpu::BindingResource::Sampler(&pipeline.nearest_sampler) },
-            ],
-        }));
 
         // --- CellText pass ---
         if !self.text_vertices.is_empty() {
@@ -508,62 +637,120 @@ pub struct GlyphState {
     pub rasterizer: Rasterizer,
     pub font_key: FontKey,
     pub font_size: Size,
+    /// Actual rasterization size (logical size × scale_factor) for HiDPI support.
+    pub scaled_font_size: Size,
     pub cell_width: f32,
     pub cell_height: f32,
     pub font_descent: f32,
+    pub scale_factor: f32,
+    /// Stored font config for reconfigure without caller providing them again.
+    pub font_family: String,
+    pub size_pt: f32,
 }
 
 impl GlyphState {
-    pub fn new_with_config(font_family: &str, size_pt: f32) -> Self {
+    pub fn new_with_config(font_family: &str, size_pt: f32, scale_factor: f32) -> Self {
         let mut rasterizer = Rasterizer::new().expect("Failed to create rasterizer");
         let font_size = Size::new(size_pt);
+        let scaled_font_size = font_size.scale(scale_factor);
         let font_desc = FontDesc::new(font_family, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
-        let font_key = rasterizer.load_font(&font_desc, font_size).unwrap_or_else(|_| {
+        let font_key = rasterizer.load_font(&font_desc, scaled_font_size).unwrap_or_else(|_| {
             let fallback = FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal });
-            rasterizer.load_font(&fallback, font_size).expect("Failed to load fallback font")
+            rasterizer.load_font(&fallback, scaled_font_size).expect("Failed to load fallback font")
         });
-        let metrics = rasterizer.metrics(font_key, font_size).expect("Failed to get metrics");
+        let metrics = rasterizer.metrics(font_key, scaled_font_size).expect("Failed to get metrics");
 
-        let cell_width = metrics.average_advance.floor().max(1.0) as f32;
-        let cell_height = metrics.line_height.floor().max(1.0) as f32;
-        let font_descent = metrics.descent as f32;
+        // Convert physical metrics back to logical for grid calculations
+        let cell_width = (metrics.average_advance / scale_factor as f64).floor().max(1.0) as f32;
+        let cell_height = (metrics.line_height / scale_factor as f64).floor().max(1.0) as f32;
+        let font_descent = metrics.descent / scale_factor as f32;
 
         Self {
             atlas: WgpuGlyphAtlas::new(),
             rasterizer,
             font_key,
             font_size,
+            scaled_font_size,
             cell_width,
             cell_height,
             font_descent,
+            scale_factor,
+            font_family: font_family.to_string(),
+            size_pt,
         }
     }
 
-    pub fn reconfigure(&mut self, font_family: &str, size_pt: f32) {
+    /// Reconfigure font family, size, and scale factor together.
+    pub fn reconfigure_scaled(&mut self, font_family: &str, size_pt: f32, scale_factor: f32) {
+        self.scale_factor = scale_factor;
+        self.font_family = font_family.to_string();
+        self.size_pt = size_pt;
         let font_size = Size::new(size_pt);
+        let scaled_font_size = font_size.scale(scale_factor);
         let font_desc = FontDesc::new(font_family, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
-        let font_key = self.rasterizer.load_font(&font_desc, font_size).unwrap_or_else(|_| {
+        let font_key = self.rasterizer.load_font(&font_desc, scaled_font_size).unwrap_or_else(|_| {
             let fallback = FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal });
-            self.rasterizer.load_font(&fallback, font_size).expect("Failed to load fallback font")
+            self.rasterizer.load_font(&fallback, scaled_font_size).expect("Failed to load fallback font")
         });
-        let metrics = self.rasterizer.metrics(font_key, font_size).expect("Failed to get metrics");
+        let metrics = self.rasterizer.metrics(font_key, scaled_font_size).expect("Failed to get metrics");
 
+        // Convert physical metrics back to logical for grid calculations
         self.font_key = font_key;
         self.font_size = font_size;
-        self.cell_width = metrics.average_advance.floor().max(1.0) as f32;
-        self.cell_height = metrics.line_height.floor().max(1.0) as f32;
-        self.font_descent = metrics.descent as f32;
+        self.scaled_font_size = scaled_font_size;
+        self.cell_width = (metrics.average_advance / scale_factor as f64).floor().max(1.0) as f32;
+        self.cell_height = (metrics.line_height / scale_factor as f64).floor().max(1.0) as f32;
+        self.font_descent = metrics.descent / scale_factor as f32;
         self.atlas = WgpuGlyphAtlas::new();
+    }
+
+    /// Update only the scale factor, keeping the current font family and size.
+    /// Returns true if the scale factor actually changed.
+    pub fn update_scale_factor(&mut self, scale_factor: f32) -> bool {
+        if (self.scale_factor - scale_factor).abs() < 0.01 {
+            return false;
+        }
+        self.reconfigure_scaled(&self.font_family.clone(), self.size_pt, scale_factor);
+        true
     }
 
     pub fn get_or_rasterize(&mut self, c: char) -> Option<CachedGlyph> {
         if let Some(cached) = self.atlas.get(0, c) {
-            return Some(cached);
+            // Atlas stores physical-pixel glyphs; scale offsets to logical
+            // for vertex positioning. Cache hit must apply the same
+            // normalization as the new-rasterize path below — otherwise
+            // on Retina (scale_factor=2.0) the consumer gets 2× the
+            // expected logical width and the glyph overflows its cell.
+            return Some(CachedGlyph {
+                u: cached.u,
+                v: cached.v,
+                u2: cached.u2,
+                v2: cached.v2,
+                x_offset: cached.x_offset / self.scale_factor,
+                y_offset: cached.y_offset / self.scale_factor,
+                width: cached.width / self.scale_factor,
+                height: cached.height / self.scale_factor,
+                atlas_kind: cached.atlas_kind,
+            });
         }
 
-        let glyph_key = GlyphKey { character: c, font_key: self.font_key, size: self.font_size };
+        let glyph_key = GlyphKey { character: c, font_key: self.font_key, size: self.scaled_font_size };
         match self.rasterizer.get_glyph(glyph_key) {
-            Ok(glyph) => Some(self.atlas.insert(0, c, &glyph)),
+            Ok(glyph) => {
+                let cached = self.atlas.insert(0, c, &glyph);
+                // Atlas stores physical-pixel glyphs; scale offsets to logical for vertex positioning
+                Some(CachedGlyph {
+                    u: cached.u,
+                    v: cached.v,
+                    u2: cached.u2,
+                    v2: cached.v2,
+                    x_offset: cached.x_offset / self.scale_factor,
+                    y_offset: cached.y_offset / self.scale_factor,
+                    width: cached.width / self.scale_factor,
+                    height: cached.height / self.scale_factor,
+                    atlas_kind: cached.atlas_kind,
+                })
+            }
             Err(_) => None,
         }
     }
@@ -581,6 +768,10 @@ pub struct TerminalProgram {
     pub background_color: [f32; 4],
     pub foreground_color: [f32; 4],
     pub opacity: f32,
+    /// Shared atomic for the *actual* viewport scale factor, written by
+    /// `prepare()` each frame. `draw()` reads it and reconfigures the
+    /// glyph atlas when the value changes.
+    pub viewport_scale_factor: Arc<AtomicU32>,
 }
 
 #[derive(Default)]
@@ -596,6 +787,18 @@ impl<M> shader::Program<M> for TerminalProgram {
         _cursor: iced::mouse::Cursor,
         bounds: Rectangle,
     ) -> Self::Primitive {
+        // Check if the renderer thread has reported a different viewport scale
+        // factor (written by `prepare()` on the previous frame). If so,
+        // reconfigure the glyph atlas to rasterize at the correct resolution.
+        // The atomic is initialized to 1.0 (not 0) so the first frame is valid.
+        let vp_scale = bits_to_f32(self.viewport_scale_factor.load(Ordering::Relaxed));
+        if self.glyph_state.borrow_mut().update_scale_factor(vp_scale) {
+            log::info!("Retina: reconfigured glyph atlas for scale_factor={}", vp_scale);
+        }
+
+        // All vertex positions remain in logical coordinates.
+        // iced_wgpu sets the GPU viewport to bounds × scale_factor, so the
+        // vertex shader maps logical positions through NDC to physical pixels.
         let screen_w = bounds.width;
         let screen_h = bounds.height;
         // Apply window opacity to background color alpha channel
@@ -647,9 +850,9 @@ impl<M> shader::Program<M> for TerminalProgram {
 
         // Phase 2: Build GPU primitives from snapshot (no lock held)
         let mut gs = self.glyph_state.borrow_mut();
-        let cell_w = gs.cell_width;
-        let cell_h = gs.cell_height;
-        let font_descent = gs.font_descent;
+        let cell_w = gs.cell_width;   // logical
+        let cell_h = gs.cell_height;  // logical
+        let font_descent = gs.font_descent; // logical
 
         let computed_cols = (screen_w / cell_w).floor().max(1.0) as usize;
         let computed_rows = (screen_h / cell_h).floor().max(1.0) as usize;
@@ -689,6 +892,7 @@ impl<M> shader::Program<M> for TerminalProgram {
                     fg
                 };
 
+                // Glyph offsets are already in logical coordinates
                 let gx = x + glyph.x_offset;
                 let gy = y + (cell_h + font_descent - glyph.y_offset);
                 let gw = glyph.width;
@@ -725,6 +929,7 @@ impl<M> shader::Program<M> for TerminalProgram {
             grayscale_atlas,
             color_atlas,
             gpu: Mutex::new(GpuResources::default()),
+            viewport_scale_factor: self.viewport_scale_factor.clone(),
         }
     }
 }

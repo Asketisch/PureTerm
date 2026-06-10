@@ -77,6 +77,13 @@ pub struct PureTermApp {
     context_menu: Option<ContextMenuState>,
     last_cursor_pos: Point,
     viewport_size: Size,
+    /// Device pixel ratio (2.0 on Retina). Used to rasterize glyphs at native resolution.
+    scale_factor: f32,
+    /// Shared atomic for the actual viewport scale factor, bridging
+    /// prepare() → draw() across frames.
+    viewport_scale_factor: Arc<std::sync::atomic::AtomicU32>,
+    /// True while the OS IME is actively composing text (e.g. Chinese pinyin input).
+    ime_composing: bool,
     // Rename
     renaming_tab: Option<RenamingState>,
     // Tab color picker
@@ -284,8 +291,12 @@ pub enum Message {
     MainWindowOpened(window::Id),
     TerminalWakeup,
     Keyboard(iced::keyboard::Event),
+    /// IME event (Chinese/Japanese/Korean input method composition & commit).
+    InputMethod(iced::advanced::input_method::Event),
     WindowResized(window::Id, Size),
     WindowClosed(window::Id),
+    /// Device pixel ratio changed (e.g. dragging window between Retina and 1× displays).
+    ScaleFactorChanged(window::Id, f32),
     OpenSettings,
     Settings(SettingsMessage),
     SettingsWindowOpened(window::Id),
@@ -465,7 +476,7 @@ impl PureTermApp {
         let (id, task) = window::open(settings);
 
         let glyph_state = Arc::new(RefCell::new(
-            GlyphState::new_with_config(&config.font_family, config.font_size),
+            GlyphState::new_with_config(&config.font_family, config.font_size, 1.0),
         ));
 
         let locale = config.locale.clone();
@@ -502,6 +513,13 @@ impl PureTermApp {
             context_menu: None,
             last_cursor_pos: Point::default(),
             viewport_size: Size::new(1024.0, 768.0),
+            scale_factor: 1.0,
+            // Initialize atomic to 1.0 (not 0) so that the first frame's
+            // draw() reads a valid scale factor and the atlas reconfigures
+            // correctly even before prepare() runs. 0 was a sentinel that
+            // caused first-frame blurriness on Retina displays.
+            viewport_scale_factor: Arc::new(std::sync::atomic::AtomicU32::new(1.0f32.to_bits())),
+            ime_composing: false,
             renaming_tab: None,
             color_picker_tab: None,
             tab_list: None,
@@ -1238,6 +1256,23 @@ impl PureTermApp {
             Message::Keyboard(event) => {
                 return self.handle_keyboard(event);
             }
+            Message::InputMethod(ime_event) => {
+                use iced::advanced::input_method::Event as ImeEvent;
+                match ime_event {
+                    ImeEvent::Commit(text) => {
+                        if let Some(ctx) = self.active_terminal_ctx() {
+                            ctx.write_to_pty(text.as_bytes());
+                        }
+                        self.ime_composing = false;
+                    }
+                    ImeEvent::Preedit(text, _) => {
+                        self.ime_composing = !text.is_empty();
+                    }
+                    ImeEvent::Opened | ImeEvent::Closed => {
+                        self.ime_composing = false;
+                    }
+                }
+            }
             Message::WindowResized(win_id, size) => {
                 if Some(win_id) != self.main_window {
                     // Resize detached windows too
@@ -1272,6 +1307,18 @@ impl PureTermApp {
                 self.last_resize_time = Some(Instant::now());
 
                 // 取出 self 数据后，再 mut 借用 tabs
+                // 兜底：如果 GlyphState 还没按真实 scale 对齐（首帧 / 跨屏移动），
+                // 先 reconfigure 再读 cell,避免 cell 物理尺寸与 glyph 物理尺寸失配
+                {
+                    let gs_scale = self.glyph_state.borrow().scale_factor;
+                    if (gs_scale - self.scale_factor).abs() > 0.01 {
+                        self.glyph_state.borrow_mut().reconfigure_scaled(
+                            &self.config.font_family,
+                            self.config.font_size,
+                            self.scale_factor,
+                        );
+                    }
+                }
                 let cw: u16 = self.glyph_state.borrow().cell_width as u16;
                 let ch: u16 = self.glyph_state.borrow().cell_height as u16;
                 let terminal_height = (size.height - TAB_BAR_HEIGHT).max(0.0);
@@ -1279,6 +1326,31 @@ impl PureTermApp {
                 // Resize all panes in all tabs based on their layout
                 for tab in &mut self.tabs {
                     Self::resize_panes_in_tab(tab, size.width, terminal_height, cw, ch);
+                }
+            }
+            Message::ScaleFactorChanged(win_id, scale) => {
+                if Some(win_id) != self.main_window {
+                    return Task::none();
+                }
+                let scale_changed = (self.scale_factor - scale).abs() > 0.01;
+                self.scale_factor = scale;
+                if scale_changed {
+                    self.glyph_state.borrow_mut().reconfigure_scaled(
+                        &self.config.font_family,
+                        self.config.font_size,
+                        scale,
+                    );
+                    let gs = self.glyph_state.borrow();
+                    let cw = gs.cell_width as u16;
+                    let ch = gs.cell_height as u16;
+                    drop(gs);
+                    let terminal_height =
+                        (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                    for tab in &mut self.tabs {
+                        Self::resize_panes_in_tab(
+                            tab, self.viewport_size.width, terminal_height, cw, ch,
+                        );
+                    }
                 }
             }
             Message::WindowClosed(win_id) => {
@@ -1310,17 +1382,12 @@ impl PureTermApp {
                 // current mtime is within ~200ms of `last_self_write`,
                 // this event was almost certainly triggered by our own
                 // recent write (persist_ssh_profiles or settings Save).
-                // Reloading would either be a no-op or — worse, in the
-                // race where notify queued the event before we updated
-                // in-memory state — clobber that fresh state.
                 if let Some(self_t) = self.last_self_write {
                     if let Ok(disk_t) = std::fs::metadata(&self.config_path)
                         .and_then(|m| m.modified())
                     {
                         let within_window = match disk_t.duration_since(self_t) {
                             Ok(d) => d < std::time::Duration::from_millis(200),
-                            // disk_t < self_t (clock skew or unchanged
-                            // mtime): treat as own write too.
                             Err(_) => true,
                         };
                         if within_window {
@@ -1332,48 +1399,7 @@ impl PureTermApp {
                     }
                 }
 
-                let new_config = AppConfig::load(&self.config_path);
-                let font_changed = new_config.font_family != self.config.font_family
-                    || new_config.font_size != self.config.font_size;
-                if new_config.locale != self.config.locale {
-                    self.i18n.set_locale(&new_config.locale);
-                }
-                self.config = new_config;
-
-                // Reload SSH profiles. If the user has the settings
-                // panel open and is mid-edit, prefer the panel's
-                // drafts (which are local edits) over the file's
-                // contents — but only when drafts are non-empty.
-                #[cfg(unix)]
-                {
-                    let loaded = AppConfig::load_ssh_profiles(&self.config_path);
-                    let has_unsaved_edits = self
-                        .ssh_settings
-                        .as_ref()
-                        .map(|s| !s.drafts.is_empty())
-                        .unwrap_or(false);
-                    if !has_unsaved_edits {
-                        self.ssh_profiles = loaded;
-                    }
-                }
-
-                if font_changed {
-                    let mut gs = self.glyph_state.borrow_mut();
-                    gs.reconfigure(&self.config.font_family, self.config.font_size);
-                    let cw = gs.cell_width as u16;
-                    let ch = gs.cell_height as u16;
-                    drop(gs);
-
-                    // 取出 self 数据后，再 mut 借用 tabs
-                    let terminal_height =
-                        (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
-                    let viewport_w = self.viewport_size.width;
-
-                    // Resize all panes in all tabs with new cell dimensions
-                    for tab in &mut self.tabs {
-                        Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
-                    }
-                }
+                self.apply_config_reload();
             }
             Message::OpenSettings => {
                 if self.settings_window.is_some() {
@@ -1400,16 +1426,37 @@ impl PureTermApp {
                 }
             }
             Message::Settings(msg) => {
-                // Intercept SavedAt before forwarding so we can record the
-                // mtime for the notify-watcher debounce. The settings
-                // window doesn't do anything with this message itself —
-                // we forward it for symmetry / future use, but the side
-                // effect lives here.
+                let is_save = matches!(&msg, SettingsMessage::Save);
+
+                // Intercept SavedAt for notify-watcher debounce (kept as
+                // fallback: the standalone settings daemon still relies on it,
+                // and the mtime is needed to suppress the redundant
+                // ConfigReloaded from the file watcher).
                 if let SettingsMessage::SavedAt(mtime) = &msg {
                     self.last_self_write = Some(*mtime);
+                    // Secondary reload — harmless if Part-1 already ran.
+                    self.apply_config_reload();
                 }
+
                 if let Some(ref mut state) = self.settings_state {
                     let task = state.update(msg);
+
+                    if is_save {
+                        // state.update(Save) has synchronously written the
+                        // config to disk via mutate_config().  Reload
+                        // immediately so colors/fonts take effect on the
+                        // very next frame, without waiting for SavedAt
+                        // (which may be delayed by the Iced redraw loop:
+                        // it arrives as a Task output after messages are
+                        // drained, so the loop's break-condition skips it).
+                        self.apply_config_reload();
+                        self.last_self_write = std::fs::metadata(
+                            &self.config_path,
+                        )
+                        .and_then(|m| m.modified())
+                        .ok();
+                    }
+
                     return task.map(Message::Settings);
                 }
             }
@@ -2444,6 +2491,13 @@ impl PureTermApp {
                     return Task::none();
                 }
 
+                // IME composing: skip PTY write for intermediate Latin keys.
+                // The final composed text arrives via InputMethod::Commit.
+                // Allow Cmd+ shortcuts through even during composition.
+                if self.ime_composing && !modifiers.command() {
+                    return Task::none();
+                }
+
                 if modifiers.command() {
                     if let Key::Character(ref c) = key {
                         match c.as_str() {
@@ -2718,6 +2772,56 @@ impl PureTermApp {
     }
 
     // ── Split pane helpers ──────────────────────────────────────────
+
+    /// Reload config from disk and apply all side effects (locale, SSH
+    /// profiles, font + grid resize).  Shared by `ConfigReloaded` (file
+    /// watcher) and `Settings(SavedAt)` (embedded settings save).
+    fn apply_config_reload(&mut self) {
+        let new_config = AppConfig::load(&self.config_path);
+        let font_changed = new_config.font_family != self.config.font_family
+            || new_config.font_size != self.config.font_size;
+        if new_config.locale != self.config.locale {
+            self.i18n.set_locale(&new_config.locale);
+        }
+        self.config = new_config;
+
+        // Reload SSH profiles. If the user has the settings
+        // panel open and is mid-edit, prefer the panel's
+        // drafts (which are local edits) over the file's
+        // contents — but only when drafts are non-empty.
+        #[cfg(unix)]
+        {
+            let loaded = AppConfig::load_ssh_profiles(&self.config_path);
+            let has_unsaved_edits = self
+                .ssh_settings
+                .as_ref()
+                .map(|s| !s.drafts.is_empty())
+                .unwrap_or(false);
+            if !has_unsaved_edits {
+                self.ssh_profiles = loaded;
+            }
+        }
+
+        if font_changed {
+            let mut gs = self.glyph_state.borrow_mut();
+            gs.reconfigure_scaled(
+                &self.config.font_family,
+                self.config.font_size,
+                self.scale_factor,
+            );
+            let cw = gs.cell_width as u16;
+            let ch = gs.cell_height as u16;
+            drop(gs);
+
+            let terminal_height =
+                (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+            let viewport_w = self.viewport_size.width;
+
+            for tab in &mut self.tabs {
+                Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+            }
+        }
+    }
 
     /// 根据当前 split_tree 布局，重新 resize tab 中所有 pane 的 PTY。
     /// 在拖动分割线、窗口 resize、分屏/关闭 pane 等情况后调用，
@@ -3788,14 +3892,17 @@ impl PureTermApp {
                     background_color: self.config.background_color,
                     foreground_color: self.config.foreground_color,
                     opacity: self.config.opacity,
+                    viewport_scale_factor: self.viewport_scale_factor.clone(),
                 })
                 .width(Length::Fill)
                 .height(Length::Fill);
 
-                return mouse_area(shader)
-                    .on_scroll(Message::MouseScroll)
-                    .on_move(Message::CursorMoved)
-                    .into();
+                return crate::ime_widget::ImeWrapper::new(
+                    mouse_area(shader)
+                        .on_scroll(Message::MouseScroll)
+                        .on_move(Message::CursorMoved)
+                        .into(),
+                ).into();
             }
         }
 
@@ -3983,6 +4090,7 @@ impl PureTermApp {
             background_color: self.config.background_color,
             foreground_color: self.config.foreground_color,
             opacity: self.config.opacity,
+            viewport_scale_factor: self.viewport_scale_factor.clone(),
         })
         .width(Length::Fill)
         .height(Length::Fill);
@@ -3993,6 +4101,10 @@ impl PureTermApp {
             .on_press(Message::PaneFocused(pane_id))
             .on_right_press(Message::PaneRightClick(pane_id))
             .into();
+
+        // Wrap with IME activation so the OS enables input method for this pane
+        let el: Element<'_, Message, Theme, iced::Renderer> =
+            crate::ime_widget::ImeWrapper::new(el).into();
 
         // Active pane gets a subtle border highlight
         if is_active {
@@ -4110,6 +4222,9 @@ impl PureTermApp {
                 Event::Window(window::Event::Closed) => {
                     Some(Message::WindowClosed(win_id))
                 }
+                Event::Window(window::Event::Rescaled(scale)) => {
+                    Some(Message::ScaleFactorChanged(win_id, scale))
+                }
                 Event::Keyboard(iced::keyboard::Event::KeyPressed {
                     key: iced::keyboard::Key::Character(ref c),
                     modifiers,
@@ -4131,6 +4246,10 @@ impl PureTermApp {
                 // 全局鼠标左键释放：用于结束分割线拖动
                 Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                     Some(Message::GlobalMouseRelease)
+                }
+                // IME events (Chinese/Japanese/Korean input)
+                Event::InputMethod(ime_event) => {
+                    Some(Message::InputMethod(ime_event))
                 }
                 _ => None,
             }
