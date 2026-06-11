@@ -191,17 +191,21 @@
 - **对标**: cmux `Sources/Sidebar/`
 
 #### GAP-3.4 状态栏 {#gap-3-4}
-- **状态**: ❌
+- **状态**: 🚧
 - **优先级**: P1
-- **PureTerm 现状**: 只有标签栏,无状态栏
-- **目标**:
-  - 顶部 title bar shortcut hint pills(当前 mode 快捷键提示)
-  - 侧边栏 footer update pill
-  - 菜单栏 extra badge(macOS `NSStatusItem` via `objc2`)
-  - 底部状态栏(`Container::new().height(Length::Fixed(24.0))`):命令 / Git 分支 / CPU 内存 / SSH 状态
+- **PureTerm 现状**: 底部 24px 状态栏已实现,显示:工作目录(OSC 7)·Git 分支(30s 轮询)·SSH 指示器·前台进程名·光标位置
+- **已实现**:
+  - `STATUS_BAR_HEIGHT = 24.0` + `terminal_content_height()` 统一替换 16 处高度公式
+  - `view_bottom_bar()` 渲染方法(`crates/pureterm/src/iced_app.rs`)
+  - OSC 7 CWD 扫描器(`crates/alacritty_terminal/src/event_loop.rs::scan_osc7`)
+  - `CwdChanged` 事件传递链(`Event → TerminalEvent → iced_app`)
+  - Git 分支纯文件系统查找(`crates/pureterm/src/status_bar.rs::read_git_branch`)
+  - SSH 连接状态指示(直接读取 `TerminalContext::is_ssh()`)
+  - 前台进程名轮询(`status_bar::get_foreground_process`,child PID 从 `LocalCtx` 暴露)
+- **未做(留后续迭代)**:顶部 title bar shortcut hint pills / 菜单栏 extra badge / CPU 内存
 - **依赖**: 无
-- **风险点**: 高度计算(挤压终端空间)
-- **DoD**: 底部状态栏显示命令提示 + Git 分支;macOS 显示菜单栏图标
+- **风险点**: 高度计算(已解决,统一辅助函数)
+- **DoD**: 底部状态栏显示命令提示 + Git 分支 ✅;macOS 显示菜单栏图标(留后续)
 - **对标**: cmux `Sources/StatusBar/` + `Sources/TitleBar/`
 
 #### GAP-3.5 内置 Browser 面板(WebView) {#gap-3-5}
@@ -648,7 +652,7 @@
 | GAP-3.1 | 双侧边栏 | B | P1 | ❌ | - | - |
 | GAP-3.2 | 可编程 Sidebars(DSL) | B | P2 | ❌ | - | - |
 | GAP-3.3 | 命令面板 ⌘⇧P | B | P0 | ✅ | 2026-06-08 | nucleo-matcher + Actions/Profiles |
-| GAP-3.4 | 状态栏 | B | P1 | ❌ | - | - |
+| GAP-3.4 | 状态栏 | B | P1 | 🚧 | - | 底部 24px:OSC 7 CWD·Git 分支·SSH·进程名·光标位置;菜单栏图标留后续 |
 | GAP-3.5 | 内置 Browser 面板 | B | P1 | ❌ | - | wry crate |
 | GAP-3.6 | macOS Glass 效果 | B | P3 | ❌ | - | - |
 | GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | 🚧 | - | 2026-06-10 纠偏:核心是 iced_app::handle_keyboard 内联 dispatch 需重构(Action enum 在 archive/) |

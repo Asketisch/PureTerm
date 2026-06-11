@@ -171,6 +171,11 @@ where
                 }
             }
 
+            // Scan for OSC 7 CWD reporting.
+            if let Some(cwd) = scan_osc7(&buf[..unprocessed]) {
+                self.event_proxy.send_event(Event::CwdChanged(cwd));
+            }
+
             processed += unprocessed;
             unprocessed = 0;
 
@@ -683,5 +688,87 @@ mod tests_pty_write_arc {
                 panic!("unexpected variant");
             }
         }
+    }
+}
+
+/// Scan raw bytes for the last OSC 7 sequence: `\x1b]7;file://host/path\x07` or `\x1b]7;...\x1b\\`.
+/// Returns the decoded path (percent-decoded) if found, or `None`.
+fn scan_osc7(buf: &[u8]) -> Option<String> {
+    let prefix = b"\x1b]7;";
+    let mut i = 0;
+    let mut last_url: Option<&[u8]> = None;
+
+    while i + prefix.len() < buf.len() {
+        if let Some(pos) = memchr::memchr(prefix[0], &buf[i..]) {
+            let start = i + pos;
+            if buf[start..].starts_with(prefix) {
+                let url_start = start + prefix.len();
+                // Find terminator: BEL (0x07) or ST (\x1b\\)
+                if let Some(end) = memchr::memchr(0x07, &buf[url_start..]) {
+                    last_url = Some(&buf[url_start..url_start + end]);
+                    i = url_start + end + 1;
+                    continue;
+                }
+                // Try ST terminator: \x1b\\
+                let rest = &buf[url_start..];
+                for j in 0..rest.len().saturating_sub(1) {
+                    if rest[j] == 0x1b && rest[j + 1] == b'\\' {
+                        last_url = Some(&buf[url_start..url_start + j]);
+                        i = url_start + j + 2;
+                        continue;
+                    }
+                }
+                break;
+            } else {
+                i = start + 1;
+            }
+        } else {
+            break;
+        }
+    }
+
+    last_url.and_then(extract_osc7_path)
+}
+
+/// Extract the path component from an OSC 7 URL payload (`file://host/path`).
+fn extract_osc7_path(url: &[u8]) -> Option<String> {
+    let url_str = std::str::from_utf8(url).ok()?;
+    // file://host/path — find third slash
+    if let Some(idx) = url_str.find("://") {
+        let after_scheme = &url_str[idx + 3..];
+        // Skip host part (everything up to the first /)
+        if let Some(slash_pos) = after_scheme.find('/') {
+            let path = &after_scheme[slash_pos..];
+            return Some(percent_decode(path));
+        }
+    }
+    None
+}
+
+/// Simple percent-decode for URL paths.
+fn percent_decode(input: &str) -> String {
+    let mut result = String::with_capacity(input.len());
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
+                result.push(((hi << 4) | lo) as char);
+                i += 3;
+                continue;
+            }
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+fn hex_val(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }

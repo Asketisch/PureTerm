@@ -26,6 +26,7 @@ use crate::ssh::pty::SshPty;
 pub enum TerminalEvent {
     Wakeup,
     Exit,
+    CwdChanged(String),
 }
 
 /// Bridge: implements `EventListener` by sending through a crossbeam channel.
@@ -47,6 +48,7 @@ impl EventListener for ChannelEventListener {
             TEvent::Wakeup => TerminalEvent::Wakeup,
             TEvent::Exit => TerminalEvent::Exit,
             TEvent::ChildExit(_) => TerminalEvent::Exit,
+            TEvent::CwdChanged(path) => TerminalEvent::CwdChanged(path),
             _ => return,
         };
         let _ = self.tx.send(mapped);
@@ -59,6 +61,7 @@ struct LocalCtx {
     notifier: Notifier,
     event_rx: Receiver<TerminalEvent>,
     size: TermSize,
+    child_pid: u32,
 }
 
 /// SSH PTY context: owns a remote ssh -tt child.
@@ -118,7 +121,57 @@ impl TerminalContext {
             cell_height,
         };
         tty::setup_env();
+
+        // --- OSC 7 CWD hook via environment (no PTY stdin injection) ---
+        //
+        // For zsh: set ZDOTDIR to a temp dir containing a .zshenv that
+        // restores the original ZDOTDIR, sources the user's real .zshenv,
+        // then loads our OSC 7 hook.  Inspired by cmux's shell integration.
+        //
+        // For bash: set PROMPT_COMMAND env var with the hook.
+        //
+        // This avoids sending bytes via Msg::Input which can block the PTY
+        // IO thread on macOS .app bundles when the payload exceeds ~80 bytes.
+
+        let osc7_func = r#"_pt_osc7() { printf '\e]7;file://%s%s\e\\' "$HOST" "$PWD"; }"#;
+        let pid = std::process::id();
+
+        // -- zsh: ZDOTDIR bootstrap --
+        let zdot_dir = format!("/tmp/.pureterm-zdotdir-{}", pid);
+        let _ = std::fs::create_dir_all(&zdot_dir);
+        let real_zdotdir = std::env::var("ZDOTDIR")
+            .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
+        let zshenv_content = format!(
+            r#"# PureTerm zsh bootstrap — restores original ZDOTDIR and loads OSC 7 hook.
+ZDOTDIR="{real_zdotdir}"
+if [ -f "$ZDOTDIR/.zshenv" ]; then . "$ZDOTDIR/.zshenv"; fi
+{osc7_func}
+autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook chpwd _pt_osc7
+_pt_osc7
+"#,
+            real_zdotdir = real_zdotdir.replace('"', "\\\""),
+            osc7_func = osc7_func,
+        );
+        let _ = std::fs::write(format!("{}/.zshenv", zdot_dir), zshenv_content);
+        std::env::set_var("ZDOTDIR", &zdot_dir);
+
+        // -- bash: PROMPT_COMMAND env var --
+        // The function def + initial call must be in PROMPT_COMMAND because
+        // bash reads this env var on startup.
+        std::env::set_var(
+            "PROMPT_COMMAND",
+            format!(
+                "{func}; _pt_osc7; __pt_pc=$PROMPT_COMMAND; PROMPT_COMMAND=\"_pt_osc7${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}\"",
+                func = osc7_func,
+            ),
+        );
+
         let pty = tty::new(&pty_options, window_size, 0)?;
+
+        // Restore ZDOTDIR so subsequent PTY spawns aren't affected.
+        std::env::set_var("ZDOTDIR", &real_zdotdir);
+
+        let child_pid = pty.child().id();
 
         let pty_loop = PtyEventLoop::new(
             Arc::clone(&terminal),
@@ -136,6 +189,7 @@ impl TerminalContext {
             notifier: Notifier(loop_tx),
             event_rx,
             size,
+            child_pid,
         }))
     }
 
@@ -270,6 +324,15 @@ impl TerminalContext {
             TerminalContext::Local(_) => false,
             #[cfg(unix)]
             TerminalContext::Ssh(_) => true,
+        }
+    }
+
+    /// Return the child PID (only meaningful for local PTY contexts).
+    pub fn child_pid(&self) -> Option<u32> {
+        match self {
+            TerminalContext::Local(ctx) => Some(ctx.child_pid),
+            #[cfg(unix)]
+            TerminalContext::Ssh(_) => None,
         }
     }
 

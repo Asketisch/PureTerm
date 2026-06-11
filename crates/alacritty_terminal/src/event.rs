@@ -90,6 +90,9 @@ pub enum Event {
 
     /// Shell integration semantic mark (OSC 133).
     ShellMark(ShellMark),
+
+    /// Working directory changed via OSC 7.
+    CwdChanged(String),
 }
 
 impl Debug for Event {
@@ -109,6 +112,7 @@ impl Debug for Event {
             Event::Exit => write!(f, "Exit"),
             Event::ChildExit(status) => write!(f, "ChildExit({status:?})"),
             Event::ShellMark(mark) => write!(f, "ShellMark({:?}, row={})", mark.kind, mark.row),
+            Event::CwdChanged(path) => write!(f, "CwdChanged({path})"),
         }
     }
 }

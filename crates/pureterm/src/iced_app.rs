@@ -139,6 +139,11 @@ pub struct PureTermApp {
     /// mtime against this; if they match within ~200ms the reload is
     /// suppressed. See section-scoped config plan §改动 5.
     last_self_write: Option<std::time::SystemTime>,
+    // Status bar (GAP-3.4)
+    status_bar_cwd: Option<String>,
+    status_bar_git_branch: Option<String>,
+    status_bar_process_name: Option<String>,
+    status_bar_last_poll: Instant,
 }
 
 /// P3 of GAP-5.7: state for the SSH connection dialog shown by ⌘⇧S or
@@ -307,6 +312,15 @@ struct DetachedWindow {
 
 const TAB_BAR_HEIGHT: f32 = 32.0;
 
+/// 底部状态栏高度（GAP-3.4）。
+const STATUS_BAR_HEIGHT: f32 = 24.0;
+
+/// 终端内容可用高度 = 视口高度 - 标签栏 - 状态栏。
+#[inline]
+fn terminal_content_height(viewport_height: f32) -> f32 {
+    (viewport_height - TAB_BAR_HEIGHT - STATUS_BAR_HEIGHT).max(0.0)
+}
+
 /// 分割线拖拽状态。
 #[derive(Debug, Clone)]
 pub struct DragState {
@@ -335,6 +349,8 @@ pub enum Message {
     WindowClosed(window::Id),
     /// Device pixel ratio changed (e.g. dragging window between Retina and 1× displays).
     ScaleFactorChanged(window::Id, f32),
+    /// File/directory dropped onto the window via OS drag-and-drop.
+    FileDropped(PathBuf),
     OpenSettings,
     Settings(SettingsMessage),
     SettingsWindowOpened(window::Id),
@@ -579,6 +595,11 @@ impl PureTermApp {
             drag_state: None,
             command_palette: None,
             last_self_write: None,
+            // Status bar (GAP-3.4)
+            status_bar_cwd: None,
+            status_bar_git_branch: None,
+            status_bar_process_name: None,
+            status_bar_last_poll: Instant::now(),
         };
 
         let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
@@ -596,7 +617,7 @@ impl PureTermApp {
             TerminalContext::new_local().expect("Failed to create terminal context"),
         );
 
-        let terminal_height = (viewport_height - TAB_BAR_HEIGHT).max(0.0);
+        let terminal_height = terminal_content_height(viewport_height);
 
         let gs = self.glyph_state.borrow();
         let cols = (viewport_width / gs.cell_width).floor().max(1.0) as usize;
@@ -753,7 +774,7 @@ impl PureTermApp {
 
         // Apply initial size
         let gs = self.glyph_state.borrow();
-        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let terminal_height = terminal_content_height(self.viewport_size.height);
         let cols = (self.viewport_size.width / gs.cell_width).floor().max(1.0) as usize;
         let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
         terminal_ctx.resize(cols, rows, gs.cell_width as u16, gs.cell_height as u16);
@@ -1254,6 +1275,18 @@ impl PureTermApp {
                                 TerminalEvent::Exit => {
                                     exited_panes.push((tab.id, *pane_id, tab.created_at, tab.panes.len()));
                                 }
+                                TerminalEvent::CwdChanged(path) => {
+                                    if *pane_id == tab.active_pane && tab.id == self.active_tab {
+                                        self.status_bar_cwd = Some(path);
+                                        // Immediately refresh git branch on CWD change.
+                                        if let Some(ref cwd) = self.status_bar_cwd {
+                                            self.status_bar_git_branch =
+                                                crate::status_bar::read_git_branch(
+                                                    std::path::Path::new(cwd),
+                                                );
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1324,6 +1357,20 @@ impl PureTermApp {
                         }
                     }
                 }
+
+                // Status bar periodic poll (every 30s): refresh git branch + process name.
+                if self.status_bar_last_poll.elapsed() > Duration::from_secs(30) {
+                    self.status_bar_last_poll = Instant::now();
+                    if let Some(ref cwd) = self.status_bar_cwd {
+                        self.status_bar_git_branch =
+                            crate::status_bar::read_git_branch(std::path::Path::new(cwd));
+                    }
+                    // Foreground process name from child PID.
+                    self.status_bar_process_name = self
+                        .active_terminal_ctx()
+                        .and_then(|ctx| ctx.child_pid())
+                        .and_then(crate::status_bar::get_foreground_process);
+                }
             }
             Message::Keyboard(event) => {
                 return self.handle_keyboard(event);
@@ -1350,7 +1397,7 @@ impl PureTermApp {
                     // Resize detached windows too
                     for dw in &mut self.detached_windows {
                         if dw.window_id == win_id {
-                            let terminal_height = (size.height - TAB_BAR_HEIGHT).max(0.0);
+                            let terminal_height = terminal_content_height(size.height);
                             let gs = self.glyph_state.borrow();
                             let cols =
                                 (size.width / gs.cell_width).floor().max(1.0) as usize;
@@ -1393,7 +1440,7 @@ impl PureTermApp {
                 }
                 let cw: u16 = self.glyph_state.borrow().cell_width as u16;
                 let ch: u16 = self.glyph_state.borrow().cell_height as u16;
-                let terminal_height = (size.height - TAB_BAR_HEIGHT).max(0.0);
+                let terminal_height = terminal_content_height(size.height);
 
                 // Resize all panes in all tabs based on their layout
                 for tab in &mut self.tabs {
@@ -1417,7 +1464,7 @@ impl PureTermApp {
                     let ch = gs.cell_height as u16;
                     drop(gs);
                     let terminal_height =
-                        (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                        terminal_content_height(self.viewport_size.height);
                     for tab in &mut self.tabs {
                         Self::resize_panes_in_tab(
                             tab, self.viewport_size.width, terminal_height, cw, ch,
@@ -1472,6 +1519,14 @@ impl PureTermApp {
                 }
 
                 self.apply_config_reload();
+            }
+            Message::FileDropped(path) => {
+                if let Some(ctx) = self.active_terminal_ctx() {
+                    let mut path_str = path.to_string_lossy().into_owned();
+                    path_str.push(' ');
+                    ctx.write_to_pty(path_str.as_bytes());
+                }
+                return Task::none();
             }
             Message::OpenSettings => {
                 if self.settings_window.is_some() {
@@ -2430,7 +2485,7 @@ impl PureTermApp {
             Message::DividerPress(mut drag) => {
                 // 在按下时通过 split_id 找到分割线屏幕位置和可用大小
                 if let Some(tab) = self.tabs.iter().find(|t| t.id == drag.tab_id) {
-                    let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                    let terminal_height = terminal_content_height(self.viewport_size.height);
                     if let Some(divider) = tab.split_tree.compute_divider_by_split_id(
                         drag.split_id,
                         0.0, 0.0,
@@ -2470,7 +2525,7 @@ impl PureTermApp {
                     let ch: u16 = self.glyph_state.borrow().cell_height as u16;
                     let viewport_w = self.viewport_size.width;
                     let terminal_height =
-                        (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                        terminal_content_height(self.viewport_size.height);
 
                     if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == drag.tab_id) {
                         tab.split_tree.update_split_ratio_by_id(drag.split_id, new_ratio);
@@ -2487,7 +2542,7 @@ impl PureTermApp {
                     // 触发最终 PTY resize
                     let tab = self.tabs.iter_mut().find(|t| t.id == drag.tab_id);
                     if let Some(tab) = tab {
-                        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                        let terminal_height = terminal_content_height(self.viewport_size.height);
                         let layout = tab.split_tree.compute_layout(
                             0.0, 0.0, self.viewport_size.width, terminal_height,
                         );
@@ -2537,7 +2592,7 @@ impl PureTermApp {
                     tab.panes.remove(&pane_id);
                     tab.active_pane = new_active;
                     // Resize remaining panes
-                    let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                    let terminal_height = terminal_content_height(self.viewport_size.height);
                     let layout = tab.split_tree.compute_layout(
                         0.0, 0.0, self.viewport_size.width, terminal_height,
                     );
@@ -3055,7 +3110,7 @@ impl PureTermApp {
             drop(gs);
 
             let terminal_height =
-                (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+                terminal_content_height(self.viewport_size.height);
             let viewport_w = self.viewport_size.width;
 
             for tab in &mut self.tabs {
@@ -3115,7 +3170,7 @@ impl PureTermApp {
         tab.restore_zoom_if_any();
 
         // Calculate new pane dimensions from layout
-        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let terminal_height = terminal_content_height(self.viewport_size.height);
         let layout = tab.split_tree.compute_layout(
             0.0, 0.0, self.viewport_size.width, terminal_height,
         );
@@ -3201,7 +3256,7 @@ impl PureTermApp {
             tab.panes.remove(&active_pane_id);
             tab.active_pane = new_active;
             // Resize remaining panes
-            let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+            let terminal_height = terminal_content_height(self.viewport_size.height);
             let layout = tab.split_tree.compute_layout(
                 0.0, 0.0, self.viewport_size.width, terminal_height,
             );
@@ -3226,7 +3281,7 @@ impl PureTermApp {
     fn resize_active_tab_panes(&mut self) {
         let active_tab_id = self.active_tab;
         let viewport_w = self.viewport_size.width;
-        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let terminal_height = terminal_content_height(self.viewport_size.height);
         let (cw, ch) = {
             let gs = self.glyph_state.borrow();
             (gs.cell_width as u16, gs.cell_height as u16)
@@ -3265,7 +3320,7 @@ impl PureTermApp {
 
     /// Resize all panes in a tab according to the current split layout.
     fn resize_tab_panes(&mut self, tab: &mut Tab) {
-        let terminal_height = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let terminal_height = terminal_content_height(self.viewport_size.height);
         let layout = tab.split_tree.compute_layout(
             0.0, 0.0, self.viewport_size.width, terminal_height,
         );
@@ -3475,6 +3530,99 @@ impl PureTermApp {
 
         mouse_area(bar_container)
             .on_move(|p| Message::CursorMoved(p))
+            .into()
+    }
+
+    // ---- Status bar (GAP-3.4) ----
+
+    /// Get cursor position (row, col) of the active pane's terminal.
+    fn get_active_cursor_pos(&self) -> (usize, usize) {
+        let Some(tab) = self.active_tab_ref() else {
+            return (0, 0);
+        };
+        let Some(pane) = tab.panes.get(&tab.active_pane) else {
+            return (0, 0);
+        };
+        let term = pane.terminal_ctx.terminal().lock_unfair();
+        let cursor = &term.grid().cursor;
+        (cursor.point.line.0.max(0) as usize, cursor.point.column.0)
+    }
+
+    /// Bottom status bar: cwd + git branch + SSH indicator + cursor position.
+    fn view_bottom_bar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
+        use iced::widget::{container, row, space, text};
+        use iced::{Background, Border, Length, Shadow};
+
+        let mut bar = row![].spacing(0).align_y(iced::Alignment::Center);
+
+        // CWD
+        let cwd_text = self
+            .status_bar_cwd
+            .as_deref()
+            .unwrap_or("~");
+        bar = bar.push(
+            text(cwd_text).size(11).color(Color::from_rgba(0.65, 0.75, 0.65, 1.0)),
+        );
+
+        // Git branch
+        if let Some(ref branch) = self.status_bar_git_branch {
+            bar = bar.push(
+                text(format!("  \u{e0a0} {}", branch))
+                    .size(11)
+                    .color(Color::from_rgba(0.6, 0.65, 0.8, 1.0)),
+            );
+        }
+
+        // SSH indicator
+        if let Some(tab) = self.active_tab_ref() {
+            if let Some(pane) = tab.panes.get(&tab.active_pane) {
+                if pane.terminal_ctx.is_ssh() {
+                    bar = bar.push(
+                        text("  SSH")
+                            .size(11)
+                            .color(Color::from_rgba(0.9, 0.5, 0.5, 1.0)),
+                    );
+                }
+            }
+        }
+
+        // Process name
+        if let Some(ref proc) = self.status_bar_process_name {
+            bar = bar.push(
+                text(format!("  {}", proc))
+                    .size(11)
+                    .color(Color::from_rgba(0.55, 0.55, 0.55, 1.0)),
+            );
+        }
+
+        // Spacer to push cursor position right
+        bar = bar.push(space().width(Length::Fill));
+
+        // Cursor position (right-aligned)
+        let (row_num, col_num) = self.get_active_cursor_pos();
+        bar = bar.push(
+            text(format!("{}:{}", row_num + 1, col_num + 1))
+                .size(11)
+                .color(Color::from_rgba(0.5, 0.5, 0.5, 1.0)),
+        );
+
+        container(bar.width(Length::Fill))
+            .width(Length::Fill)
+            .height(STATUS_BAR_HEIGHT)
+            .padding([2, 8])
+            .style(|_| container::Style {
+                background: Some(Background::Color(Color::from_rgba(
+                    0.12, 0.12, 0.14, 1.0,
+                ))),
+                text_color: None,
+                snap: false,
+                border: Border {
+                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.05),
+                    width: 0.5,
+                    radius: 0.0.into(),
+                },
+                shadow: Shadow::default(),
+            })
             .into()
     }
 
@@ -4217,7 +4365,7 @@ impl PureTermApp {
             };
 
         let base: Element<'_, Message, Theme, iced::Renderer> =
-            column![self.view_top_bar(), terminal]
+            column![self.view_top_bar(), terminal, self.view_bottom_bar()]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into();
@@ -4296,7 +4444,7 @@ impl PureTermApp {
 
     /// Render the split tree for a tab.
     fn view_split_tree(&self, tab: &Tab) -> Element<'_, Message, Theme, iced::Renderer> {
-        let terminal_h = (self.viewport_size.height - TAB_BAR_HEIGHT).max(0.0);
+        let terminal_h = terminal_content_height(self.viewport_size.height);
         self.view_node(&tab.split_tree, tab.active_pane, tab.id, self.viewport_size.width, terminal_h)
     }
 
@@ -4543,6 +4691,9 @@ impl PureTermApp {
                 // IME events (Chinese/Japanese/Korean input)
                 Event::InputMethod(ime_event) => {
                     Some(Message::InputMethod(ime_event))
+                }
+                Event::Window(window::Event::FileDropped(path)) => {
+                    Some(Message::FileDropped(path))
                 }
                 _ => None,
             }

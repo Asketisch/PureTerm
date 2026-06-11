@@ -3,6 +3,7 @@ mod config_watcher;
 mod iced_app;
 mod ime_widget;
 mod split_tree;
+mod status_bar;
 #[cfg(target_os = "macos")]
 mod macos_menu;
 #[cfg(target_os = "macos")]
