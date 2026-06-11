@@ -130,6 +130,10 @@ pub struct PureTermApp {
     detached_windows: Vec<DetachedWindow>,
     // Split pane drag state
     drag_state: Option<DragState>,
+    /// 文本选择拖动状态：按下时开启，松手时清。`term.selection` 本身保留。
+    selection_drag: Option<SelectionDragState>,
+    /// 多击连击跟踪（单击 = Simple, 双击 = Semantic, 三击 = Lines）。
+    click_tracker: Option<ClickTracker>,
     /// Most recent mtime this process wrote to `config_path` (via
     /// `persist_ssh_profiles` or via the embedded settings window's Save).
     /// The notify-based `config_watcher` always fires after our own writes,
@@ -338,6 +342,24 @@ pub struct DragState {
     pub start_ratio: f32,
 }
 
+/// 文本选择拖动状态。仅在 Simple 选区下激活；Semantic/Lines 选区点击即终态。
+#[derive(Debug, Clone)]
+struct SelectionDragState {
+    pane_id: PaneId,
+}
+
+/// 连击跟踪：用于检测单击 / 双击 / 三击。
+#[derive(Debug, Clone)]
+struct ClickTracker {
+    pane_id: PaneId,
+    /// 上次按下的格坐标（仅同格连击才递增计数）。
+    last_point: TermPoint,
+    /// 上次按下的时刻。
+    last_time: Instant,
+    /// 1=Simple, 2=Semantic, 3=Lines；>3 时回卷到 1。
+    count: u8,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     MainWindowOpened(window::Id),
@@ -397,6 +419,8 @@ pub enum Message {
     SplitVertical,
     ClosePane,
     PaneFocused(PaneId),
+    /// 鼠标在 pane 上按下：激活 pane + 启动选区（区分单/双/三击）。
+    PaneMousePressed(PaneId),
     PaneMouseScroll(PaneId, iced::mouse::ScrollDelta),
     PaneCursorMoved(PaneId, Point),
     PaneRightClick(PaneId),
@@ -593,6 +617,8 @@ impl PureTermApp {
             tab_list: None,
             detached_windows: Vec::new(),
             drag_state: None,
+            selection_drag: None,
+            click_tracker: None,
             command_palette: None,
             last_self_write: None,
             // Status bar (GAP-3.4)
@@ -657,6 +683,56 @@ impl PureTermApp {
         self.active_tab_ref()
             .and_then(|tab| tab.panes.get(&tab.active_pane))
             .map(|pane| pane.terminal_ctx.clone())
+    }
+
+    /// 把 `mouse_area` 报回的 pane-widget-local 像素坐标换算成 alacritty 网格坐标。
+    /// `display_offset` 必须由调用者从同一 pane 的 Term 锁中现取，保证与渲染对齐。
+    /// 计算逻辑与 `terminal_shader.rs::TerminalProgram::draw()` 的 pad 公式
+    /// 一一对应,确保命中与渲染同一个网格。
+    fn pane_local_pixel_to_grid(
+        &self,
+        pane_id: PaneId,
+        pos: Point,
+        display_offset: usize,
+    ) -> Option<(TermPoint, Side)> {
+        let tab = self.tabs.iter().find(|t| t.panes.contains_key(&pane_id))?;
+        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let layout = tab.split_tree.compute_layout(
+            0.0,
+            0.0,
+            self.viewport_size.width,
+            terminal_height,
+        );
+        let rect = *layout.get(&pane_id)?;
+        let (cell_w, cell_h) = {
+            let gs = self.glyph_state.borrow();
+            (gs.cell_width, gs.cell_height)
+        };
+        if cell_w <= 0.0 || cell_h <= 0.0 {
+            return None;
+        }
+        let computed_cols = (rect.w / cell_w).floor().max(1.0) as i32;
+        let computed_rows = (rect.h / cell_h).floor().max(1.0) as i32;
+        let pad_x = (rect.w - computed_cols as f32 * cell_w).max(0.0) / 2.0;
+        let pad_y = (rect.h - computed_rows as f32 * cell_h).max(0.0) / 2.0;
+        let cell_x_raw = (pos.x - pad_x) / cell_w;
+        let cell_y_raw = (pos.y - pad_y) / cell_h;
+        let cell_col = cell_x_raw
+            .floor()
+            .clamp(0.0, (computed_cols - 1) as f32) as i32;
+        let cell_row = cell_y_raw
+            .floor()
+            .clamp(0.0, (computed_rows - 1) as f32) as i32;
+        // 可见区域显示行 = grid_line + display_offset → grid_line = cell_row - display_offset
+        let line = Line(cell_row - display_offset as i32);
+        let col = Column(cell_col as usize);
+        let cell_x_offset = (pos.x - pad_x) - (cell_col as f32) * cell_w;
+        let side = if cell_x_offset < cell_w * 0.5 {
+            Side::Left
+        } else {
+            Side::Right
+        };
+        Some((TermPoint::new(line, col), side))
     }
 
     /// P3 GAP-5.7: synchronously spawn an SSH PTY and create a new Tab
@@ -2082,6 +2158,65 @@ impl PureTermApp {
                     }
                 }
             }
+            Message::PaneMousePressed(pane_id) => {
+                // 1) 把 pane 设为活跃(原 PaneFocused 副作用)。
+                if let Some(tab) = self.tabs.iter_mut().find(|t| t.panes.contains_key(&pane_id))
+                {
+                    self.active_tab = tab.id;
+                    tab.active_pane = pane_id;
+                }
+                // 2) 拿到 pane 的 TerminalContext。
+                let ctx = self
+                    .tabs
+                    .iter()
+                    .find(|t| t.panes.contains_key(&pane_id))
+                    .and_then(|t| t.panes.get(&pane_id))
+                    .map(|p| p.terminal_ctx.clone());
+                let Some(ctx) = ctx else { return Task::none(); };
+                // 3) 由 mouse_area.on_move 写入的 last_cursor_pos 是 widget-local
+                //    像素坐标。配合 display_offset 算出 (line, col, side)。
+                let pos = self.last_cursor_pos;
+                let display_offset = ctx.terminal().lock().grid().display_offset();
+                let Some((point, side)) =
+                    self.pane_local_pixel_to_grid(pane_id, pos, display_offset)
+                else {
+                    return Task::none();
+                };
+                // 4) 连击计数(同 pane + 同格 + 350ms 阈值内)。
+                let now = Instant::now();
+                let count = match &self.click_tracker {
+                    Some(t)
+                        if t.pane_id == pane_id
+                            && t.last_point == point
+                            && now.duration_since(t.last_time)
+                                < Duration::from_millis(350) =>
+                    {
+                        (t.count % 3) + 1
+                    }
+                    _ => 1,
+                };
+                self.click_tracker = Some(ClickTracker {
+                    pane_id,
+                    last_point: point,
+                    last_time: now,
+                    count,
+                });
+                let ty = match count {
+                    2 => SelectionType::Semantic,
+                    3 => SelectionType::Lines,
+                    _ => SelectionType::Simple,
+                };
+                // 5) 落选区 + 启用拖动(仅 Simple 才追踪 drag)。
+                {
+                    let mut term = ctx.terminal().lock();
+                    term.selection = Some(Selection::new(ty, point, side));
+                }
+                self.selection_drag = if ty == SelectionType::Simple {
+                    Some(SelectionDragState { pane_id })
+                } else {
+                    None
+                };
+            }
             Message::PaneMouseScroll(pane_id, delta) => {
                 self.handle_scroll_for_pane(pane_id, delta);
             }
@@ -2091,6 +2226,32 @@ impl PureTermApp {
                 if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == self.active_tab) {
                     if tab.panes.contains_key(&pane_id) {
                         tab.active_pane = pane_id;
+                    }
+                }
+                // 若该 pane 处于选区拖动中,扩展 selection 终点。
+                let drag_active = self
+                    .selection_drag
+                    .as_ref()
+                    .map(|d| d.pane_id == pane_id)
+                    .unwrap_or(false);
+                if drag_active {
+                    let ctx = self
+                        .tabs
+                        .iter()
+                        .find(|t| t.panes.contains_key(&pane_id))
+                        .and_then(|t| t.panes.get(&pane_id))
+                        .map(|p| p.terminal_ctx.clone());
+                    if let Some(ctx) = ctx {
+                        let display_offset =
+                            ctx.terminal().lock().grid().display_offset();
+                        if let Some((point, side)) =
+                            self.pane_local_pixel_to_grid(pane_id, pos, display_offset)
+                        {
+                            let mut term = ctx.terminal().lock();
+                            if let Some(sel) = term.selection.as_mut() {
+                                sel.update(point, side);
+                            }
+                        }
                     }
                 }
             }
@@ -2538,6 +2699,8 @@ impl PureTermApp {
                 }
             }
             Message::GlobalMouseRelease => {
+                // 结束选区拖动:清掉 drag 标志,但保留 term.selection 让 Cmd+C 仍能拷。
+                self.selection_drag = None;
                 if let Some(drag) = self.drag_state.take() {
                     // 触发最终 PTY resize
                     let tab = self.tabs.iter_mut().find(|t| t.id == drag.tab_id);
@@ -4539,7 +4702,7 @@ impl PureTermApp {
         let el: Element<'_, Message, Theme, iced::Renderer> = mouse_area(shader)
             .on_scroll(move |delta| Message::PaneMouseScroll(pane_id, delta))
             .on_move(move |pos| Message::PaneCursorMoved(pane_id, pos))
-            .on_press(Message::PaneFocused(pane_id))
+            .on_press(Message::PaneMousePressed(pane_id))
             .on_right_press(Message::PaneRightClick(pane_id))
             .into();
 

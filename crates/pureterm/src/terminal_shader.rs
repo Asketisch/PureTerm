@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use crate::terminal_context::TerminalContext;
 use alacritty_terminal::grid::Dimensions;
+use alacritty_terminal::index::{Column, Line, Point as TermPoint};
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use crossfont::{FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size, Style, Weight, Slant};
 use pureterm_alacritty_runtime::renderer::glyph_atlas::{AtlasKind, CachedGlyph, WgpuGlyphAtlas};
@@ -818,7 +819,7 @@ impl<M> shader::Program<M> for TerminalProgram {
             bg: Color,
         }
 
-        let (cells, display_offset, cursor_row, cursor_col, colors) = {
+        let (cells, display_offset, cursor_row, cursor_col, colors, selection_range) = {
             let term = self.ctx.terminal().lock_unfair();
             let display_offset = term.grid().display_offset();
             let cursor = &term.grid().cursor;
@@ -834,7 +835,10 @@ impl<M> shader::Program<M> for TerminalProgram {
                     bg: indexed.cell.bg,
                 })
                 .collect();
-            (cells, display_offset, cursor_row, cursor_col, colors)
+            // 选区高亮:把 Selection 解析为 SelectionRange(可能跨多行/可能为 Block)。
+            // 渲染时(下方 cell 循环)用 SelectionRange::contains(point) 判定每格是否高亮。
+            let selection_range = term.selection.as_ref().and_then(|s| s.to_range(&*term));
+            (cells, display_offset, cursor_row, cursor_col, colors, selection_range)
         }; // Lock released here
 
         // Inject configured foreground color into the colors array so that
@@ -867,6 +871,11 @@ impl<M> shader::Program<M> for TerminalProgram {
         // Full-screen background
         push_bg_quad(&mut bg_vertices, &mut bg_indices, 0.0, 0.0, screen_w, screen_h, bg_color);
 
+        // 选区高亮颜色(半透明蓝)。
+        // alacritty kernel 的 Colors 数组没有 selection 槽,色彩配置不通过它走;
+        // 这里固定一个 macOS 系蓝色,后续可暴露为 config 项。
+        let sel_color: [f32; 4] = [0.30, 0.50, 0.90, 0.40];
+
         // Iterate cell snapshots: backgrounds + text glyphs
         for cell in &cells {
             let x = pad_x + cell.col as f32 * cell_w;
@@ -876,6 +885,22 @@ impl<M> shader::Program<M> for TerminalProgram {
             if cell.bg != Color::Named(NamedColor::Background) {
                 let color = color_to_f32(cell.bg, &colors);
                 push_bg_quad(&mut bg_vertices, &mut bg_indices, x, y, cell_w, cell_h, color);
+            }
+
+            // 选区高亮(画在 cell 自身背景之上、glyph 之前)。
+            // cell.row 是 display 行号(grid_line + display_offset),
+            // selection_range 用 grid Line(可能为负),需换算到同一坐标系再判定。
+            if let Some(range) = selection_range {
+                let grid_line = Line(cell.row as i32 - display_offset as i32);
+                let p = TermPoint::new(grid_line, Column(cell.col));
+                if range.contains(p) {
+                    push_bg_quad(
+                        &mut bg_vertices,
+                        &mut bg_indices,
+                        x, y, cell_w, cell_h,
+                        sel_color,
+                    );
+                }
             }
 
             // Text glyph
