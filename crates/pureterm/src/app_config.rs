@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use pureterm_settings::config_io;
 
+use crate::keymap::RawBinding;
 use crate::ssh::config::SshProfile;
 
 #[derive(Clone, Debug)]
@@ -137,6 +138,63 @@ impl AppConfig {
                 Vec::new()
             },
         }
+    }
+
+    /// Load `[[keyboard.bindings]]` from the TOML config.
+    ///
+    /// Each entry has `key`, `mods` (optional), and `action` fields in
+    /// Alacritty-compatible format. Returns raw strings for the keymap
+    /// module to parse into typed `Binding` structs.
+    ///
+    /// Failure-tolerant: missing or malformed bindings are silently
+    /// skipped; an empty Vec is returned if the table is absent.
+    pub fn load_keybindings(path: &Path) -> Vec<RawBinding> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::debug!("load_keybindings: cannot read {:?}: {}", path, e);
+                return Vec::new();
+            },
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("load_keybindings: parse {:?} failed: {}", path, e);
+                return Vec::new();
+            },
+        };
+        let Some(bindings_value) = value
+            .get("keyboard")
+            .and_then(|k| k.get("bindings"))
+            .and_then(|b| b.as_array())
+        else {
+            return Vec::new();
+        };
+        let mut result = Vec::new();
+        for entry in bindings_value {
+            let table = match entry.as_table() {
+                Some(t) => t,
+                None => continue,
+            };
+            let key = match table.get("key").and_then(|v| v.as_str()) {
+                Some(k) => k.to_string(),
+                None => continue,
+            };
+            let mods = table
+                .get("mods")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let action = match table.get("action").and_then(|v| v.as_str()) {
+                Some(a) => a.to_string(),
+                None => continue,
+            };
+            result.push(RawBinding { key, mods, action });
+        }
+        if !result.is_empty() {
+            log::info!("load_keybindings: loaded {} bindings", result.len());
+        }
+        result
     }
 }
 

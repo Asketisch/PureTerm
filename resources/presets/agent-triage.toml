@@ -1,0 +1,89 @@
+# PureTerm agent-triage keymap
+# Optimized for multi-pane AI agent workflows.
+# Usage: pureterm shortcuts preset agent-triage
+#
+# Design goals:
+#   - Fast tab switching (⌘1-9, ⌘⇧] / [)
+#   - Quick split/zoom for side-by-side agent + output
+#   - Swap panes to rearrange agent layout
+#   - All defaults preserved; only additions are documented.
+
+# ── Core (same as default) ─────────────────────────────────────────────
+
+[[keyboard.bindings]]
+key = "t"
+mods = "Command"
+action = "NewTab"
+
+[[keyboard.bindings]]
+key = "w"
+mods = "Command"
+action = "ClosePane"
+
+[[keyboard.bindings]]
+key = "d"
+mods = "Command"
+action = "SplitHorizontal"
+
+[[keyboard.bindings]]
+key = "D"
+mods = "Command"
+action = "SplitVertical"
+
+[[keyboard.bindings]]
+key = "="
+mods = "Command"
+action = "EqualizeSplits"
+
+[[keyboard.bindings]]
+key = "X"
+mods = "Command"
+action = "SwapPane"
+
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Command|Shift"
+action = "ToggleZoom"
+
+[[keyboard.bindings]]
+key = "]"
+mods = "Command"
+action = "FocusPaneNext"
+
+[[keyboard.bindings]]
+key = "["
+mods = "Command"
+action = "FocusPanePrev"
+
+[[keyboard.bindings]]
+key = "v"
+mods = "Command"
+action = "Paste"
+
+[[keyboard.bindings]]
+key = "c"
+mods = "Command"
+action = "Copy"
+
+[[keyboard.bindings]]
+key = "S"
+mods = "Command"
+action = "OpenSshDialog"
+
+[[keyboard.bindings]]
+key = "P"
+mods = "Command"
+action = "OpenCommandPalette"
+
+# ── Agent-triage specifics ─────────────────────────────────────────────
+# Move pane to new tab for quick agent isolation
+[[keyboard.bindings]]
+key = "T"
+mods = "Command|Shift"
+action = "MovePaneToNewTab"
+
+# Move pane to new window for cross-monitor agent monitoring
+[[keyboard.bindings]]
+key = "N"
+mods = "Command|Shift"
+action = "MovePaneToNewWindow"

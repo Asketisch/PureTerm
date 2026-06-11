@@ -26,6 +26,7 @@ use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::TermMode;
 
 use crate::app_config::AppConfig;
+use crate::keymap::{Action, Keymap, ResolveResult};
 use crate::split_tree::{
     DividerRect, Pane, PaneId, PaneRect, SplitDirection, SplitNode,
     DIVIDER_HIT_WIDTH, DIVIDER_WIDTH, MAX_RATIO, MIN_RATIO,
@@ -86,6 +87,7 @@ pub struct PureTermApp {
     glyph_state: Arc<RefCell<GlyphState>>,
     config: AppConfig,
     config_path: PathBuf,
+    keymap: Keymap,
     settings_state: Option<SettingsState>,
     settings_window: Option<window::Id>,
     last_resize_time: Option<Instant>,
@@ -584,6 +586,7 @@ impl PureTermApp {
             glyph_state,
             config,
             config_path,
+            keymap: Keymap::from_defaults(),
             settings_state: None,
             settings_window: None,
             last_resize_time: None,
@@ -1180,26 +1183,12 @@ impl PureTermApp {
         match action {
             CommandEntry::Builtin { id, .. } => {
                 self.command_palette = None;
+                // GAP-3.7: Try unified Action dispatch first
+                if let Some(action) = crate::keymap::action_from_palette_id(&id) {
+                    return self.dispatch_action(action);
+                }
+                // Palette-only entries that don't map to keyboard Actions
                 match id.as_str() {
-                    "new_tab" => {
-                        let id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
-                        self.active_tab = id;
-                    },
-                    "close_tab" => {
-                        self.close_active_tab();
-                    },
-                    "next_tab" => self.activate_next_tab(),
-                    "prev_tab" => self.activate_prev_tab(),
-                    "split_h" => self.split_pane(SplitDirection::Horizontal),
-                    "split_v" => self.split_pane(SplitDirection::Vertical),
-                    // GAP-2.2:7 个新分屏命令委派给 Message arm,与键盘 / 右键菜单共享 dispatch。
-                    "split.equalize" => return Task::done(Message::EqualizeSplits),
-                    "split.swap" => return Task::done(Message::SwapPane),
-                    "split.zoom" => return Task::done(Message::ToggleZoom),
-                    "split.focus_next" => return Task::done(Message::FocusPaneInOrder(1)),
-                    "split.focus_prev" => return Task::done(Message::FocusPaneInOrder(-1)),
-                    "split.move_to_new_tab" => return Task::done(Message::MovePaneToNewTab),
-                    "split.move_to_new_window" => return Task::done(Message::MovePaneToNewWindow),
                     "settings" => {
                         return self.update(Message::OpenSettings);
                     },
@@ -1843,6 +1832,16 @@ impl PureTermApp {
                     None => return Task::none(),
                 };
                 let tab_idx = self.tabs.iter().position(|t| t.id == menu.tab_id);
+
+                // GAP-3.7: Pane-level items — convert to Action and dispatch.
+                // These first set active_tab to the menu's target tab, then
+                // go through the unified dispatch path.
+                if let Some(action) = crate::keymap::action_from_context_menu(item) {
+                    self.active_tab = menu.tab_id;
+                    return self.dispatch_action(action);
+                }
+
+                // Tab-level items — need tab_id context, not convertible to Action.
                 match item {
                     ContextMenuItem::CloseTab => {
                         return Task::done(Message::CloseTab(menu.tab_id));
@@ -1941,44 +1940,9 @@ impl PureTermApp {
                     ContextMenuItem::ChangeTabColor => {
                         self.color_picker_tab = Some(menu.tab_id);
                     }
-                    ContextMenuItem::SplitHorizontal => {
-                        self.active_tab = menu.tab_id;
-                        self.split_pane(SplitDirection::Horizontal);
-                    }
-                    ContextMenuItem::SplitVertical => {
-                        self.active_tab = menu.tab_id;
-                        self.split_pane(SplitDirection::Vertical);
-                    }
-                    ContextMenuItem::ClosePane => {
-                        self.active_tab = menu.tab_id;
-                        self.close_active_pane();
-                    }
-                    // GAP-2.2:5 个新分屏动作 — 切换到目标 tab 后委派给 Message arm,
-                    // 单一实现路径,与键盘 / 命令面板共享 dispatch。
-                    ContextMenuItem::EqualizeSplits => {
-                        self.active_tab = menu.tab_id;
-                        return Task::done(Message::EqualizeSplits);
-                    }
-                    ContextMenuItem::SwapPane => {
-                        self.active_tab = menu.tab_id;
-                        return Task::done(Message::SwapPane);
-                    }
-                    ContextMenuItem::ToggleZoom => {
-                        self.active_tab = menu.tab_id;
-                        return Task::done(Message::ToggleZoom);
-                    }
-                    ContextMenuItem::MovePaneToNewTab => {
-                        self.active_tab = menu.tab_id;
-                        return Task::done(Message::MovePaneToNewTab);
-                    }
-                    ContextMenuItem::MovePaneToNewWindow => {
-                        self.active_tab = menu.tab_id;
-                        return Task::done(Message::MovePaneToNewWindow);
-                    }
-                    #[cfg(unix)]
-                    ContextMenuItem::NewSshTab => {
-                        return Task::done(Message::OpenSshDialog);
-                    }
+                    // Remaining items are handled by action_from_context_menu above.
+                    // This arm is unreachable but required by the exhaustive match.
+                    _ => {}
                 }
             }
             Message::ContextMenuHovered(item) => {
@@ -2928,125 +2892,24 @@ impl PureTermApp {
                     return Task::none();
                 }
 
-                if modifiers.command() {
-                    if let Key::Character(ref c) = key {
-                        match c.as_str() {
-                            "," => return Task::none(),
-                            // GAP-2.2:⌘⇧T 抢在 ⌘T(NewTab)之前命中。macOS 把 ⌘⇧T
-                            // 上报为 Character("T") 且 shift modifier 可能未置位
-                            // (类似 L2730-2738 注释的 SSH 处理),双形态兜底。
-                            s if s == "T"
-                                || (s.eq_ignore_ascii_case("t") && modifiers.shift()) => {
-                                return Task::done(Message::MovePaneToNewTab);
-                            }
-                            "t" => return Task::done(Message::NewTab),
-                            "w" => {
-                                // Close pane first; if last pane, close tab
-                                let has_multiple_panes = self.active_tab_ref()
-                                    .map(|t| t.panes.len() > 1)
-                                    .unwrap_or(false);
-                                if has_multiple_panes {
-                                    return Task::done(Message::ClosePane);
-                                } else {
-                                    return Task::done(Message::CloseTab(self.active_tab));
-                                }
-                            }
-                            "d" => {
-                                if modifiers.shift() {
-                                    return Task::done(Message::SplitVertical);
-                                } else {
-                                    return Task::done(Message::SplitHorizontal);
-                                }
-                            }
-                            "v" => {
-                                let text = std::panic::catch_unwind(|| {
-                                    arboard::Clipboard::new()
-                                        .and_then(|mut cb| cb.get_text())
-                                        .ok()
-                                })
-                                .ok()
-                                .flatten();
-                                if let Some(text) = text {
-                                    return Task::done(Message::ClipboardPaste(text));
-                                }
-                                return Task::none();
-                            }
-                            "c" => return Task::done(Message::ClipboardCopy),
-                            "a" => return Task::done(Message::SelectAll),
-                            "}" => return Task::done(Message::NextTab),
-                            "{" => return Task::done(Message::PrevTab),
-                            // GAP-2.2:⌘] / ⌘[ Focus Next/Prev Pane(DFS 先序)。
-                            // 不与 ⌘⇧] / ⌘⇧[(macOS 上报为 "}" / "{")冲突 —
-                            // 后者继续是 NextTab/PrevTab。iTerm2 同款键位。
-                            "]" => return Task::done(Message::FocusPaneInOrder(1)),
-                            "[" => return Task::done(Message::FocusPaneInOrder(-1)),
-                            // GAP-2.2:⌘= Equalize(无 shift)。原绑 ⌘⇧E 与
-                            // macOS 中文输入法的 "English/中文" 切换冲突
-                            // (2026-06-11 用户反馈,plan §13),改用 ⌘=,
-                            // 语义贴合"=" 即"equal",且不被任何 macOS 系统
-                            // 快捷键占用。仅匹配字面 "=",⌘⇧=(macOS 上报
-                            // 为 Character("+"))不命中,避免误触。
-                            "=" => return Task::done(Message::EqualizeSplits),
-                            // GAP-2.2:⌘⇧X 交换。键当前未占用,双形态兜底。
-                            s if s == "X"
-                                || (s.eq_ignore_ascii_case("x") && modifiers.shift()) => {
-                                return Task::done(Message::SwapPane);
-                            }
-                            // GAP-2.2:⌘⇧N Move-to-new-Window(Pane 级)。⌘N 未占用,双形态兜底。
-                            s if s == "N"
-                                || (s.eq_ignore_ascii_case("n") && modifiers.shift()) => {
-                                return Task::done(Message::MovePaneToNewWindow);
-                            }
-                            #[cfg(unix)]
-                            // Match on the resulting character, not the
-                            // shift modifier. On macOS, ⌘⇧S can be
-                            // reported as Key::Character("S") with the
-                            // SHIFT flag *not* set in modifiers (the
-                            // shift is encoded in the upper-case). Match
-                            // both "S" and "s" so we catch either form.
-                            // We have no ⌘s binding, so widening to "s"
-                            // is safe.
-                            s if s.eq_ignore_ascii_case("s") => {
-                                return Task::done(Message::OpenSshDialog);
-                            },
-                            #[cfg(unix)]
-                            s if s.eq_ignore_ascii_case("p") => {
-                                return Task::done(Message::OpenCommandPalette);
-                            },
-                            s if s.len() == 1 => {
-                                if let Some(digit) = s.chars().next().and_then(|ch| ch.to_digit(10)) {
-                                    if digit >= 1 && digit <= 9 {
-                                        return Task::done(
-                                            Message::ActivateTabByIndex((digit - 1) as usize),
-                                        );
-                                    }
-                                }
-                            }
-                            _ => {}
-                        }
+                // GAP-3.7: Keymap lookup replaces the inline match dispatch.
+                // The keymap bindings table exactly reproduces the old
+                // hardcoded behaviour, but is config-driven and overridable.
+                let now = std::time::Instant::now();
+                match self.keymap.resolve(&key, modifiers, now) {
+                    ResolveResult::Action(action) | ResolveResult::ChordAction(action) => {
+                        return self.dispatch_action(action);
                     }
-                    return Task::none();
-                }
-
-                // Cmd+Option+Arrow for pane navigation
-                if modifiers.command() && modifiers.alt() {
-                    if let Key::Named(named) = &key {
-                        let dir: Option<SplitDirection> = match named {
-                            Named::ArrowLeft | Named::ArrowRight => Some(SplitDirection::Horizontal),
-                            Named::ArrowUp | Named::ArrowDown => Some(SplitDirection::Vertical),
-                            _ => None,
-                        };
-                        if let Some(split_dir) = dir {
-                            if let Some(tab) = self.active_tab_ref() {
-                                if let Some(adj) = tab.split_tree.find_adjacent(tab.active_pane, split_dir) {
-                                    return Task::done(Message::PaneFocused(adj));
-                                }
-                            }
-                            return Task::none();
-                        }
+                    ResolveResult::ChordPending => {
+                        // Chord prefix accepted — swallow the key.
+                        return Task::none();
+                    }
+                    ResolveResult::Passthrough => {
+                        // No binding matched — fall through to PTY passthrough.
                     }
                 }
 
+                // PTY passthrough: no keymap binding matched.
                 if let Some(ctx) = self.active_terminal_ctx() {
                     let bytes = self.key_to_bytes(&key, text.as_deref(), modifiers);
                     if !bytes.is_empty() {
@@ -3057,6 +2920,95 @@ impl PureTermApp {
             KEvent::KeyReleased { .. } | KEvent::ModifiersChanged(_) => {}
         }
         Task::none()
+    }
+
+    /// GAP-3.7: Convert an `Action` to the corresponding `Task<Message>`.
+    ///
+    /// This is the unified dispatch path shared by keyboard shortcuts,
+    /// command palette, and context menu. The actual business logic
+    /// lives in the `update()` match arms; this method only produces
+    /// the appropriate `Message` variant.
+    fn dispatch_action(&mut self, action: Action) -> Task<Message> {
+        match action {
+            Action::NewTab => {
+                let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                self.active_tab = new_id;
+                Task::none()
+            }
+            Action::CloseTab => Task::done(Message::CloseTab(self.active_tab)),
+            Action::ClosePaneOrTab => {
+                // Context-dependent: close pane first; if last pane, close tab
+                let has_multiple_panes = self
+                    .active_tab_ref()
+                    .map(|t| t.panes.len() > 1)
+                    .unwrap_or(false);
+                if has_multiple_panes {
+                    Task::done(Message::ClosePane)
+                } else {
+                    Task::done(Message::CloseTab(self.active_tab))
+                }
+            }
+            Action::NextTab => Task::done(Message::NextTab),
+            Action::PrevTab => Task::done(Message::PrevTab),
+            Action::ActivateTabByIndex(i) => Task::done(Message::ActivateTabByIndex(i)),
+            Action::MovePaneToNewTab => Task::done(Message::MovePaneToNewTab),
+            Action::MovePaneToNewWindow => Task::done(Message::MovePaneToNewWindow),
+
+            // Split pane
+            Action::SplitHorizontal => Task::done(Message::SplitHorizontal),
+            Action::SplitVertical => Task::done(Message::SplitVertical),
+            Action::EqualizeSplits => Task::done(Message::EqualizeSplits),
+            Action::SwapPane => Task::done(Message::SwapPane),
+            Action::ToggleZoom => Task::done(Message::ToggleZoom),
+            Action::FocusPaneInOrder(delta) => Task::done(Message::FocusPaneInOrder(delta)),
+            Action::PaneFocusAdjacent(dir) => {
+                if let Some(tab) = self.active_tab_ref() {
+                    if let Some(adj) = tab.split_tree.find_adjacent(tab.active_pane, dir) {
+                        return Task::done(Message::PaneFocused(adj));
+                    }
+                }
+                Task::none()
+            }
+
+            // Clipboard
+            Action::ClipboardPaste => {
+                let text = std::panic::catch_unwind(|| {
+                    arboard::Clipboard::new()
+                        .and_then(|mut cb| cb.get_text())
+                        .ok()
+                })
+                .ok()
+                .flatten();
+                if let Some(text) = text {
+                    Task::done(Message::ClipboardPaste(text))
+                } else {
+                    Task::none()
+                }
+            }
+            Action::ClipboardCopy => Task::done(Message::ClipboardCopy),
+            Action::SelectAll => Task::done(Message::SelectAll),
+
+            // Dialogs
+            Action::OpenSshDialog => {
+                #[cfg(unix)]
+                {
+                    Task::done(Message::OpenSshDialog)
+                }
+                #[cfg(not(unix))]
+                {
+                    Task::none()
+                }
+            }
+            Action::OpenCommandPalette => Task::done(Message::OpenCommandPalette),
+            Action::OpenSettings => Task::done(Message::OpenSettings),
+
+            // Font / window — not yet wired, no-op
+            Action::IncreaseFontSize
+            | Action::DecreaseFontSize
+            | Action::ResetFontSize
+            | Action::ToggleFullscreen
+            | Action::SpawnNewInstance => Task::none(),
+        }
     }
 
     fn key_to_bytes(
@@ -3280,6 +3232,11 @@ impl PureTermApp {
                 Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
             }
         }
+
+        // GAP-3.7: Reload keybindings from [[keyboard.bindings]].
+        let raw = AppConfig::load_keybindings(&self.config_path);
+        let defaults = Keymap::from_defaults();
+        self.keymap = Keymap::from_toml_overrides(&raw, &defaults);
     }
 
     /// 根据当前 split_tree 布局，重新 resize tab 中所有 pane 的 PTY。

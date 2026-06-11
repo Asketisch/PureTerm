@@ -27,6 +27,7 @@
 - **SSH 一等公民** — 完整后端 + Profile + 加密凭证 + 主 UI 设置 + 命令面板一跳到底(2026-06-08 GAP-5.7/5.8/5.9 闭环)
 - **独立设置 UI 进程** — Iced 0.14 daemon,`Cmd+,` 启动,6 个分类页面
 - **命令面板** — `⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,Actions / Profiles 双模式
+- **快捷键自定义** — TOML 配置驱动 + 6 套预设模板(vim/tmux/iterm/vscode/agent-triage) + CLI `pureterm shortcuts` + 热重载(2026-06-12 GAP-3.7 闭环)
 - **配置热重载** — 改 `alacritty.toml` 自动应用,无需重启
 - **跨平台** — macOS / Linux / Windows 三平台持续维护
 
@@ -115,7 +116,7 @@ PureTerm 由 6 个 crate 组成的工作区:
 - 完整 VTE 解析:CSI / ESC / OSC / DCS / APC / PM
 - 智能选择 9 规则:URL / SSH URL / 邮箱 / 引号字符串 / 文件路径 / C++ namespace / dotted include / Git SHA / IPv4(`crates/alacritty_terminal/src/smart_selection.rs`)
 - Alacritty 原生 Vi 模式
-- 键盘绑定:50+ Action 枚举,完整 TOML 自定义
+- 键盘绑定:30+ Action 枚举,TOML 可自定义 + 6 套预设模板 + CLI 管理(`crates/pureterm/src/keymap.rs`)
 - IME 输入法候选
 
 ### 跨平台
@@ -172,6 +173,37 @@ action = { Ssh = "ListProfiles" }
 按 `Cmd+,` 启动独立设置进程:
 - 修改任意配置项 → 写入 `alacritty.toml`(原子写入,保留格式)
 - 主进程 `ConfigMonitor` 检测到改动 → 自动热重载,无需重启
+
+### 快捷键自定义(GAP-3.7)
+
+**CLI 管理:**
+
+```bash
+# 查看当前所有快捷键
+pureterm shortcuts list
+
+# 切换预设模板(vim/tmux/iterm/vscode/agent-triage)
+pureterm shortcuts preset vim
+
+# 恢复默认
+pureterm shortcuts reset
+```
+
+**TOML 手动编辑** (`~/.config/pureterm/alacritty.toml`):
+
+```toml
+[[keyboard.bindings]]
+key = "d"
+mods = "Command"
+action = "SplitVertical"
+
+[[keyboard.bindings]]
+key = "z"
+mods = "Command"
+action = "ToggleZoom"
+```
+
+保存后自动热重载,无需重启。自定义绑定覆盖同名默认绑定。
 
 ---
 

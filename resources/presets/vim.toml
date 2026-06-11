@@ -1,0 +1,99 @@
+# PureTerm vim-style keymap
+# Pane navigation with hjkl, plus standard macOS tab/window bindings.
+# Usage: pureterm shortcuts preset vim
+
+# ── Tab management (unchanged from default) ────────────────────────────
+
+[[keyboard.bindings]]
+key = "t"
+mods = "Command"
+action = "NewTab"
+
+[[keyboard.bindings]]
+key = "w"
+mods = "Command"
+action = "ClosePane"
+
+[[keyboard.bindings]]
+key = "}"
+mods = "Command"
+action = "NextTab"
+
+[[keyboard.bindings]]
+key = "{"
+mods = "Command"
+action = "PrevTab"
+
+# ── Split pane (unchanged) ─────────────────────────────────────────────
+
+[[keyboard.bindings]]
+key = "d"
+mods = "Command"
+action = "SplitHorizontal"
+
+[[keyboard.bindings]]
+key = "D"
+mods = "Command"
+action = "SplitVertical"
+
+[[keyboard.bindings]]
+key = "="
+mods = "Command"
+action = "EqualizeSplits"
+
+[[keyboard.bindings]]
+key = "X"
+mods = "Command"
+action = "SwapPane"
+
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Command|Shift"
+action = "ToggleZoom"
+
+# ── Clipboard (unchanged) ──────────────────────────────────────────────
+
+[[keyboard.bindings]]
+key = "v"
+mods = "Command"
+action = "Paste"
+
+[[keyboard.bindings]]
+key = "c"
+mods = "Command"
+action = "Copy"
+
+# ── Vim-style pane navigation ──────────────────────────────────────────
+# ⌘+h/j/k/l for pane navigation (adjacent, not DFS order)
+
+[[keyboard.bindings]]
+key = "h"
+mods = "Command"
+action = "FocusPanePrev"
+
+[[keyboard.bindings]]
+key = "l"
+mods = "Command"
+action = "FocusPaneNext"
+
+[[keyboard.bindings]]
+key = "j"
+mods = "Command"
+action = "FocusPanePrev"
+
+[[keyboard.bindings]]
+key = "k"
+mods = "Command"
+action = "FocusPaneNext"
+
+# ── Dialogs ────────────────────────────────────────────────────────────
+
+[[keyboard.bindings]]
+key = "S"
+mods = "Command"
+action = "OpenSshDialog"
+
+[[keyboard.bindings]]
+key = "P"
+mods = "Command"
+action = "OpenCommandPalette"

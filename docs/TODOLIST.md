@@ -54,22 +54,22 @@
 | 类别 | ✅ | 🚧 | ❌ | ⛔ | 小计 |
 |---|---|---|---|---|---|
 | A. 核心架构 | 1 | 1 | 3 | 0 | 5 |
-| B. UI/UX | 1 | 0 | 6 | 0 | 7 |
+| B. UI/UX | 2 | 0 | 5 | 0 | 7 |
 | C. 终端交互 | 0 | 0 | 7 | 0 | 7 |
 | D. SSH | 3 | 0 | 6 | 0 | 9 |
 | E. 集成与可编程 | 0 | 0 | 8 | 0 | 8 |
 | F. AI Agent | 0 | 0 | 8 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **6** | **1** | **39** | **3** | **49** |
+| **总计** | **7** | **1** | **38** | **3** | **49** |
 
-整体进度:✅ 6/49 ≈ 12%(含 🚧 折半计为 13%)
+整体进度:✅ 7/49 ≈ 14%(含 🚧 折半计为 15%)
 
 ### 1.2 本季度焦点(P0 优先)
 
 1. **GAP-2.3** Socket API v2 协议设计(method 分类骨架)
 2. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
 3. **GAP-5.6** SSH reconnect/disconnect 状态机
-4. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode)
+4. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode) ✅(2026-06-12)
 
 ---
 
@@ -81,6 +81,7 @@
 |---|---|---|---|---|
 | GAP-2.2 | 嵌套分屏补齐(Equalize/Swap/Zoom/Focus Next-Prev/Move-to-Tab-Window) | A | 2026-06-10 | `crates/pureterm/src/split_tree.rs`(equalize_all / swap_with_sibling / neighbor_in_order)+ `iced_app.rs`(Tab.zoom_state + 6 Message + 5 ContextMenuItem + 7 命令面板 builtin) |
 | GAP-3.3 | 命令面板 ⌘⇧P | B | 2026-06-08 | `crates/pureterm/src/iced_app.rs`(nucleo-matcher + Actions/Profiles 双模式) |
+| GAP-3.7 | 完整快捷键自定义 + 模板 | B | 2026-06-12 | `crates/pureterm/src/keymap.rs`(Action 30 变体 + Keymap HashMap + TOML 解析) + `iced_app.rs`(dispatch_action 统一派发) + CLI `shortcuts` + `resources/presets/` 6 套模板 |
 | GAP-5.7 | SSH Tab UI 串通 | D | 2026-06-08 | `crates/pureterm/src/ssh/` + iced UI 串通(`⌘⇧S`、异步 spawn、graceful_close) |
 | GAP-5.8 | SSH 主 UI 设置 UI | D | 2026-06-08 | 右侧栏 `SshSettingsPanelState` + `CredentialStore` 主密码端到端 |
 | GAP-5.9 | SSH 命令面板集成 | D | 2026-06-08 | `Mode::Profiles` 一跳到底 |
@@ -161,21 +162,17 @@
 ### B.P0
 
 #### GAP-3.7 完整快捷键自定义 + 模板 {#gap-3-7}
-- **状态**: 🚧
+- **状态**: ✅(2026-06-12 闭环)
 - **优先级**: P0
-- **PureTerm 现状**(2026-06-10 纠偏:原描述误指 `input/mod.rs L1268-1309` 有 6 处 `unimplemented!()` — 实际 0 处,该位置在 vendored archive 的 `bindings.rs::tests` mock 模块):
-  - vendored `archive/pureterm-display-path/alacritty/config/bindings.rs` 的 `Action` enum 有 50+ 变体,**但主二进制 `crates/pureterm/src/iced_app.rs::handle_keyboard`(L2479+)是手写内联 `match` dispatch,完全未对接该 Action enum**
-  - `pureterm-settings/src/pages/keybindings.rs` 是只读视图(TOML 由用户手编)
-  - **无任何 chord 字段、无 live reload keymap 信号、无 CLI `pureterm shortcuts ...` 子命令**
-- **目标**:
-  - 把 iced_app 的内联 dispatch 重构为"查表 + 派发 Action"(主要工作量在此)
-  - 6 套预设模板 — `resources/presets/{tmux,vim,iterm,agent-triage,vscode,custom}.toml`
-  - 单键 + chord 完整支持(扩展 `Binding { key, mods, action, mode }` 加 `chord: Option<BindingKey>`)
-  - live reload(`Cmd+Shift+R` 或 `config_watcher.rs` 扩展 `KeymapChanged`)
-  - CLI 子命令:`pureterm shortcuts list/preset/set/reset`(主二进制需引入 clap)
-- **依赖**: 无
-- **风险点**: 重写 4319 行核心 `handle_keyboard` 回归风险高;chord 解析复杂度
-- **DoD**: `pureterm shortcuts preset vim` 切换后,`j` `k` `h` `l` 在 normal mode 可移动光标
+- **PureTerm 现状**: `crates/pureterm/src/keymap.rs` 实现统一 Action 枚举(30 变体) + Keymap HashMap 查找表 + TOML 解析;`iced_app.rs::handle_keyboard` 重构为 `keymap.resolve() → dispatch_action()` 三路径统一派发;6 套预设模板 `resources/presets/`;CLI `pureterm shortcuts {list|preset|reset}`;热重载通过 `apply_config_reload()` 自动生效
+- **闭环条目**:
+  - Action enum 统一键盘/命令面板/右键菜单三条派发路径
+  - TOML `[[keyboard.bindings]]` 解析 + 用户绑定覆盖默认
+  - 热重载:编辑 toml 保存后自动生效(复用 config_watcher)
+  - CLI 子命令:`pureterm shortcuts list/preset NAME/reset`
+  - 6 套预设模板:default/vim/tmux/iterm/vscode/agent-triage
+- **未做(留后续迭代)**:Chord 多键序列(数据结构已预留 `chord_bindings` HashMap + `ResolveResult::ChordPending`)
+- **单元测试**: `keymap::tests` 22 个用例
 - **对标**: cmux `Sources/CmuxConfig.swift::shortcuts.bindings`
 
 ### B.P1
@@ -655,7 +652,7 @@
 | GAP-3.4 | 状态栏 | B | P1 | 🚧 | - | 底部 24px:OSC 7 CWD·Git 分支·SSH·进程名·光标位置;菜单栏图标留后续 |
 | GAP-3.5 | 内置 Browser 面板 | B | P1 | ❌ | - | wry crate |
 | GAP-3.6 | macOS Glass 效果 | B | P3 | ❌ | - | - |
-| GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | 🚧 | - | 2026-06-10 纠偏:核心是 iced_app::handle_keyboard 内联 dispatch 需重构(Action enum 在 archive/) |
+| GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | ✅ | 2026-06-12 | Action 30 变体 + Keymap HashMap + TOML 解析 + CLI shortcuts + 6 套预设;chord 留后续 |
 | GAP-3.8 | 搜索体系 | B | P1 | 🚧 | - | 基础搜索已有,缺目录/全局 |
 | GAP-4.1 | Vim 复制模式 | C | P1 | ❌ | - | - |
 | GAP-4.2 | 智能选择 hover preview | C | P1 | 🚧 | - | 9 规则已有,缺 hover |

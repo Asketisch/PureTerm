@@ -1,0 +1,62 @@
+# PureTerm VS Code terminal-compatible keymap
+# Aligns with VS Code's integrated terminal shortcuts.
+# Usage: pureterm shortcuts preset vscode
+
+[[keyboard.bindings]]
+key = "t"
+mods = "Command"
+action = "NewTab"
+
+[[keyboard.bindings]]
+key = "w"
+mods = "Command"
+action = "ClosePane"
+
+[[keyboard.bindings]]
+key = "}"
+mods = "Command"
+action = "NextTab"
+
+[[keyboard.bindings]]
+key = "{"
+mods = "Command"
+action = "PrevTab"
+
+# VS Code: ⌘\ split terminal
+[[keyboard.bindings]]
+key = "\\"
+mods = "Command"
+action = "SplitHorizontal"
+
+[[keyboard.bindings]]
+key = "="
+mods = "Command"
+action = "EqualizeSplits"
+
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Command|Shift"
+action = "ToggleZoom"
+
+# VS Code: focus panes with ⌘⌥ arrow
+# (already in defaults via Cmd+Option+Arrow → PaneFocusAdjacent)
+
+[[keyboard.bindings]]
+key = "v"
+mods = "Command"
+action = "Paste"
+
+[[keyboard.bindings]]
+key = "c"
+mods = "Command"
+action = "Copy"
+
+[[keyboard.bindings]]
+key = "S"
+mods = "Command"
+action = "OpenSshDialog"
+
+[[keyboard.bindings]]
+key = "P"
+mods = "Command"
+action = "OpenCommandPalette"

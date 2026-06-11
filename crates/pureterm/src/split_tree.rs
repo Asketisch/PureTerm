@@ -47,7 +47,7 @@ pub struct Pane {
 }
 
 /// 分割方向。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SplitDirection {
     /// 左右分割（垂直分割线）。
     Horizontal,

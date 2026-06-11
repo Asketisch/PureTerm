@@ -1,0 +1,91 @@
+# PureTerm iTerm2-compatible keymap
+# Matches common iTerm2 defaults for users migrating from iTerm2.
+# Usage: pureterm shortcuts preset iterm
+
+[[keyboard.bindings]]
+key = "t"
+mods = "Command"
+action = "NewTab"
+
+[[keyboard.bindings]]
+key = "w"
+mods = "Command"
+action = "ClosePane"
+
+[[keyboard.bindings]]
+key = "}"
+mods = "Command"
+action = "NextTab"
+
+[[keyboard.bindings]]
+key = "{"
+mods = "Command"
+action = "PrevTab"
+
+[[keyboard.bindings]]
+key = "d"
+mods = "Command"
+action = "SplitHorizontal"
+
+[[keyboard.bindings]]
+key = "D"
+mods = "Command"
+action = "SplitVertical"
+
+[[keyboard.bindings]]
+key = "="
+mods = "Command"
+action = "EqualizeSplits"
+
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Command|Shift"
+action = "ToggleZoom"
+
+# iTerm2: ⌘] / ⌘[ for pane focus
+[[keyboard.bindings]]
+key = "]"
+mods = "Command"
+action = "FocusPaneNext"
+
+[[keyboard.bindings]]
+key = "["
+mods = "Command"
+action = "FocusPanePrev"
+
+# iTerm2: ⌘⇧Enter maximize pane
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Command|Shift"
+action = "ToggleZoom"
+
+[[keyboard.bindings]]
+key = "v"
+mods = "Command"
+action = "Paste"
+
+[[keyboard.bindings]]
+key = "c"
+mods = "Command"
+action = "Copy"
+
+[[keyboard.bindings]]
+key = "a"
+mods = "Command"
+action = "SelectAll"
+
+[[keyboard.bindings]]
+key = "S"
+mods = "Command"
+action = "OpenSshDialog"
+
+[[keyboard.bindings]]
+key = "P"
+mods = "Command"
+action = "OpenCommandPalette"
+
+# iTerm2: ⌘⇧N new window (map to MovePaneToNewWindow)
+[[keyboard.bindings]]
+key = "N"
+mods = "Command|Shift"
+action = "MovePaneToNewWindow"

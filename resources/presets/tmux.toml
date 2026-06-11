@@ -1,0 +1,101 @@
+# PureTerm tmux-style keymap
+# Ctrl+B prefix chord for pane/window management.
+# Usage: pureterm shortcuts preset tmux
+#
+# Note: chord support is Phase 6 (GAP-3.7). Until then, this preset
+# uses Cmd-based bindings as a close approximation.
+
+# ── Tab = tmux window ──────────────────────────────────────────────────
+
+[[keyboard.bindings]]
+key = "t"
+mods = "Command"
+action = "NewTab"
+
+[[keyboard.bindings]]
+key = "w"
+mods = "Command"
+action = "ClosePane"
+
+[[keyboard.bindings]]
+key = "}"
+mods = "Command"
+action = "NextTab"
+
+[[keyboard.bindings]]
+key = "{"
+mods = "Command"
+action = "PrevTab"
+
+# ── Split pane ─────────────────────────────────────────────────────────
+
+[[keyboard.bindings]]
+key = "d"
+mods = "Command"
+action = "SplitHorizontal"
+
+[[keyboard.bindings]]
+key = "D"
+mods = "Command"
+action = "SplitVertical"
+
+[[keyboard.bindings]]
+key = "="
+mods = "Command"
+action = "EqualizeSplits"
+
+[[keyboard.bindings]]
+key = "X"
+mods = "Command"
+action = "SwapPane"
+
+[[keyboard.bindings]]
+key = "Enter"
+mods = "Command|Shift"
+action = "ToggleZoom"
+
+# ── tmux-style: Cmd+Arrow for pane nav ─────────────────────────────────
+
+[[keyboard.bindings]]
+key = "ArrowUp"
+mods = "Command"
+action = "FocusPanePrev"
+
+[[keyboard.bindings]]
+key = "ArrowDown"
+mods = "Command"
+action = "FocusPaneNext"
+
+[[keyboard.bindings]]
+key = "ArrowLeft"
+mods = "Command"
+action = "FocusPanePrev"
+
+[[keyboard.bindings]]
+key = "ArrowRight"
+mods = "Command"
+action = "FocusPaneNext"
+
+# ── Clipboard ──────────────────────────────────────────────────────────
+
+[[keyboard.bindings]]
+key = "v"
+mods = "Command"
+action = "Paste"
+
+[[keyboard.bindings]]
+key = "c"
+mods = "Command"
+action = "Copy"
+
+# ── Dialogs ────────────────────────────────────────────────────────────
+
+[[keyboard.bindings]]
+key = "S"
+mods = "Command"
+action = "OpenSshDialog"
+
+[[keyboard.bindings]]
+key = "P"
+mods = "Command"
+action = "OpenCommandPalette"
