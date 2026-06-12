@@ -334,6 +334,9 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("palette.action.settings.label".into(), "Open Settings".into());
     m.insert("palette.action.settings.hint".into(), "Open the independent settings window".into());
     m.insert("palette.action.settings.search".into(), "settings preferences".into());
+    m.insert("palette.action.toggle_vi_mode.label".into(), "Toggle Vi/Copy Mode".into());
+    m.insert("palette.action.toggle_vi_mode.hint".into(), "Enter vi mode for keyboard-driven selection".into());
+    m.insert("palette.action.toggle_vi_mode.search".into(), "vi copy mode selection vim".into());
     m.insert("palette.action.ssh_connect.label".into(), "SSH: Connect to a server".into());
     m.insert("palette.action.ssh_connect.hint".into(), "Pick a profile and connect".into());
     m.insert("palette.action.ssh_connect.search".into(), "ssh connect new connection".into());
@@ -583,6 +586,9 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("palette.action.settings.label".into(), "打开设置".into());
     m.insert("palette.action.settings.hint".into(), "打开独立设置窗口".into());
     m.insert("palette.action.settings.search".into(), "设置 偏好".into());
+    m.insert("palette.action.toggle_vi_mode.label".into(), "切换 Vi/复制模式".into());
+    m.insert("palette.action.toggle_vi_mode.hint".into(), "进入 vi 模式进行键盘驱动的文本选择".into());
+    m.insert("palette.action.toggle_vi_mode.search".into(), "vi 复制 模式 选择 vim".into());
     m.insert("palette.action.ssh_connect.label".into(), "SSH：连接服务器".into());
     m.insert("palette.action.ssh_connect.hint".into(), "选择配置并连接".into());
     m.insert("palette.action.ssh_connect.search".into(), "ssh 连接 新建 远程".into());

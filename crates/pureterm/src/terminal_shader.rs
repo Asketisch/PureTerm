@@ -13,6 +13,7 @@ use std::sync::Arc;
 use crate::terminal_context::TerminalContext;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as TermPoint};
+use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use crossfont::{FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size, Style, Weight, Slant};
 use pureterm_alacritty_runtime::renderer::glyph_atlas::{AtlasKind, CachedGlyph, WgpuGlyphAtlas};
@@ -773,6 +774,10 @@ pub struct TerminalProgram {
     /// `prepare()` each frame. `draw()` reads it and reconfigures the
     /// glyph atlas when the value changes.
     pub viewport_scale_factor: Arc<AtomicU32>,
+    /// GAP-4.1: Shared vi search pattern for match highlighting.
+    /// The app sets this when the user types in the search bar;
+    /// the shader reads it during `draw()` to highlight matches.
+    pub vi_search_pattern: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 #[derive(Default)]
@@ -819,7 +824,7 @@ impl<M> shader::Program<M> for TerminalProgram {
             bg: Color,
         }
 
-        let (cells, display_offset, cursor_row, cursor_col, colors, selection_range) = {
+        let (cells, display_offset, cursor_row, cursor_col, colors, selection_range, vi_mode_active, vi_cursor_row, vi_cursor_col) = {
             let term = self.ctx.terminal().lock_unfair();
             let display_offset = term.grid().display_offset();
             let cursor = &term.grid().cursor;
@@ -838,7 +843,17 @@ impl<M> shader::Program<M> for TerminalProgram {
             // 选区高亮:把 Selection 解析为 SelectionRange(可能跨多行/可能为 Block)。
             // 渲染时(下方 cell 循环)用 SelectionRange::contains(point) 判定每格是否高亮。
             let selection_range = term.selection.as_ref().and_then(|s| s.to_range(&*term));
-            (cells, display_offset, cursor_row, cursor_col, colors, selection_range)
+            // GAP-4.1: Vi mode cursor info
+            let vi_mode_active = term.mode().contains(TermMode::VI);
+            let (vi_cursor_row, vi_cursor_col) = if vi_mode_active {
+                let vc = &term.vi_mode_cursor.point;
+                let row = (vc.line.0 + display_offset as i32) as usize;
+                let col = vc.column.0;
+                (row, col)
+            } else {
+                (0usize, 0usize)
+            };
+            (cells, display_offset, cursor_row, cursor_col, colors, selection_range, vi_mode_active, vi_cursor_row, vi_cursor_col)
         }; // Lock released here
 
         // Inject configured foreground color into the colors array so that
@@ -876,6 +891,39 @@ impl<M> shader::Program<M> for TerminalProgram {
         // 这里固定一个 macOS 系蓝色,后续可暴露为 config 项。
         let sel_color: [f32; 4] = [0.30, 0.50, 0.90, 0.40];
 
+        // GAP-4.1: Vi search match highlighting.
+        // Compute visible search matches if a pattern is set.
+        let search_match_color: [f32; 4] = [0.85, 0.65, 0.15, 0.35]; // warm amber
+        let search_matches: Vec<std::ops::RangeInclusive<TermPoint>> = {
+            let pattern = self.vi_search_pattern.lock().ok().and_then(|p| p.clone());
+            match pattern {
+                Some(pat) if !pat.is_empty() => {
+                    let term = self.ctx.terminal().lock();
+                    match alacritty_terminal::term::search::RegexSearch::new(&pat) {
+                        Ok(mut regex) => {
+                            let top = term.topmost_line();
+                            let screen = term.screen_lines() as i32;
+                            let start = TermPoint::new(top, Column(0));
+                            let end = TermPoint::new(Line(-(display_offset as i32) + screen - 1), term.last_column());
+                            let iter = alacritty_terminal::term::search::RegexIter::new(
+                                start, end,
+                                alacritty_terminal::index::Direction::Right,
+                                &*term,
+                                &mut regex,
+                            );
+                            iter.collect()
+                        }
+                        Err(_) => Vec::new(),
+                    }
+                }
+                _ => Vec::new(),
+            }
+        };
+        // Helper: check if a grid point falls inside any search match
+        let is_search_match = |p: TermPoint| -> bool {
+            search_matches.iter().any(|m| m.contains(&p))
+        };
+
         // Iterate cell snapshots: backgrounds + text glyphs
         for cell in &cells {
             let x = pad_x + cell.col as f32 * cell_w;
@@ -899,6 +947,20 @@ impl<M> shader::Program<M> for TerminalProgram {
                         &mut bg_indices,
                         x, y, cell_w, cell_h,
                         sel_color,
+                    );
+                }
+            }
+
+            // GAP-4.1: Search match highlighting (amber overlay)
+            if !search_matches.is_empty() {
+                let grid_line = Line(cell.row as i32 - display_offset as i32);
+                let p = TermPoint::new(grid_line, Column(cell.col));
+                if is_search_match(p) {
+                    push_bg_quad(
+                        &mut bg_vertices,
+                        &mut bg_indices,
+                        x, y, cell_w, cell_h,
+                        search_match_color,
                     );
                 }
             }
@@ -939,6 +1001,19 @@ impl<M> shader::Program<M> for TerminalProgram {
         let cx = pad_x + cursor_col as f32 * cell_w;
         let cy = pad_y + cursor_row as f32 * cell_h;
         push_bg_quad(&mut bg_vertices, &mut bg_indices, cx, cy, cell_w, cell_h, cursor_color);
+
+        // GAP-4.1: Vi mode cursor — teal/cyan to visually distinguish from normal cursor.
+        // In vi mode the primary cursor is dimmed and the vi cursor is prominent.
+        if vi_mode_active {
+            // Dim the primary cursor
+            let dim_color = [0.4, 0.4, 0.4, 0.3];
+            push_bg_quad(&mut bg_vertices, &mut bg_indices, cx, cy, cell_w, cell_h, dim_color);
+            // Render vi cursor in teal
+            let vi_color = [0.2, 0.8, 0.7, 0.85];
+            let vx = pad_x + vi_cursor_col as f32 * cell_w;
+            let vy = pad_y + vi_cursor_row as f32 * cell_h;
+            push_bg_quad(&mut bg_vertices, &mut bg_indices, vx, vy, cell_w, cell_h, vi_color);
+        }
 
         // Take dirty atlas data
         let grayscale_atlas = gs.atlas.take_dirty_data();

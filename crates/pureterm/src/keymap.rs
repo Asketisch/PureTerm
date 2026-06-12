@@ -62,6 +62,12 @@ pub enum Action {
     ResetFontSize,
     ToggleFullscreen,
     SpawnNewInstance,
+
+    // ── Vi / Copy mode ───────────────────────────────────────────────
+    /// Toggle Vi (copy) mode on the active pane.
+    /// When active, keystrokes are interpreted as vi motions instead of
+    /// being forwarded to the PTY.
+    ToggleViMode,
 }
 
 // ── BindingKey ──────────────────────────────────────────────────────────
@@ -310,6 +316,14 @@ impl Keymap {
         );
 
         // ── Cmd+Option+Arrow → PaneFocusAdjacent ────────────────────
+        // Ctrl+Shift+Space → ToggleViMode (copy mode)
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        bindings.insert(
+            (ctrl_shift, BindingKey::Named(BindingNamedKey::Space)),
+            Action::ToggleViMode,
+        );
+
+        // ── Cmd+Option+Arrow → PaneFocusAdjacent ────────────────────
         bindings.insert(
             (cmd_alt, BindingKey::Named(BindingNamedKey::ArrowLeft)),
             Action::PaneFocusAdjacent(SplitDirection::Horizontal),
@@ -548,6 +562,9 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "ToggleFullscreen" => Ok(Action::ToggleFullscreen),
         "SpawnNewInstance" => Ok(Action::SpawnNewInstance),
 
+        // Vi / Copy mode
+        "ToggleViMode" | "ViMode" | "CopyMode" => Ok(Action::ToggleViMode),
+
         _ => Err(format!("unknown action: {s}")),
     }
 }
@@ -572,6 +589,7 @@ pub fn action_from_palette_id(id: &str) -> Option<Action> {
         "split.focus_prev" => Some(Action::FocusPaneInOrder(-1)),
         "split.move_to_new_tab" => Some(Action::MovePaneToNewTab),
         "split.move_to_new_window" => Some(Action::MovePaneToNewWindow),
+        "toggle_vi_mode" | "toggle_copy_mode" => Some(Action::ToggleViMode),
         _ => None,
     }
 }

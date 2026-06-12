@@ -13,6 +13,7 @@ mod macos_reopen;
 mod ssh;
 mod terminal_context;
 mod terminal_shader;
+mod vi_mode_handler;
 
 fn main() -> iced::Result {
     env_logger::init();
@@ -203,6 +204,7 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::ResetFontSize => "Font Reset".into(),
         keymap::Action::ToggleFullscreen => "Fullscreen".into(),
         keymap::Action::SpawnNewInstance => "New Instance".into(),
+        keymap::Action::ToggleViMode => "Toggle Vi/Copy Mode".into(),
     }
 }
 

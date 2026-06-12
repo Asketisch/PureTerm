@@ -61,6 +61,9 @@ pub struct Tab {
     /// 不变量:任何修改 `split_tree` 的入口(split/close/swap/equalize/detach)
     /// 必须先调 `restore_zoom_if_any()` 还原。
     zoom_state: Option<SplitNode>,
+    /// GAP-4.1 Vi/Copy mode sub-mode for the active pane.
+    /// `None` = vi mode not active. `Some(ViSubMode)` = vi mode is on.
+    vi_sub_mode: Option<crate::vi_mode_handler::ViSubMode>,
 }
 
 impl Tab {
@@ -150,6 +153,11 @@ pub struct PureTermApp {
     status_bar_git_branch: Option<String>,
     status_bar_process_name: Option<String>,
     status_bar_last_poll: Instant,
+    // GAP-4.1 Vi search
+    vi_search: Option<ViSearchState>,
+    /// Shared search pattern between app and GPU shader.
+    /// The shader reads this during draw() for match highlighting.
+    vi_search_pattern: std::sync::Arc<std::sync::Mutex<Option<String>>>,
 }
 
 /// P3 of GAP-5.7: state for the SSH connection dialog shown by ⌘⇧S or
@@ -499,6 +507,12 @@ pub enum Message {
     CommandPaletteEnter,
     CommandPaletteUp,
     CommandPaletteDown,
+    // GAP-4.1 Vi / Copy mode
+    ToggleViMode,
+    // GAP-4.1 Vi search bar
+    ViSearchQuery(String),
+    ViSearchConfirm,
+    ViSearchClose,
 }
 
 /// P4: which `SshProfile` field is being edited in the panel.
@@ -547,6 +561,12 @@ enum CommandEntry {
     SshOpenSettings,
     #[cfg(unix)]
     SshListProfiles,
+}
+
+/// GAP-4.1: State for the vi mode search bar (activated by `/` or `?`).
+struct ViSearchState {
+    query: String,
+    direction: alacritty_terminal::index::Direction,
 }
 
 impl PureTermApp {
@@ -629,6 +649,8 @@ impl PureTermApp {
             status_bar_git_branch: None,
             status_bar_process_name: None,
             status_bar_last_poll: Instant::now(),
+            vi_search: None,
+            vi_search_pattern: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
 
         let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
@@ -674,6 +696,7 @@ impl PureTermApp {
             tab_color: None,
             created_at: Instant::now(),
             zoom_state: None,
+            vi_sub_mode: None,
         });
         id
     }
@@ -682,10 +705,21 @@ impl PureTermApp {
         self.tabs.iter().find(|t| t.id == self.active_tab)
     }
 
+    fn active_tab_mut(&mut self) -> Option<&mut Tab> {
+        self.tabs.iter_mut().find(|t| t.id == self.active_tab)
+    }
+
     fn active_terminal_ctx(&self) -> Option<Arc<TerminalContext>> {
         self.active_tab_ref()
             .and_then(|tab| tab.panes.get(&tab.active_pane))
             .map(|pane| pane.terminal_ctx.clone())
+    }
+
+    /// GAP-4.1: Check if vi mode is active on the current active pane.
+    fn is_vi_mode_active(&self) -> bool {
+        self.active_tab_ref()
+            .map(|tab| tab.vi_sub_mode.is_some())
+            .unwrap_or(false)
     }
 
     /// 把 `mouse_area` 报回的 pane-widget-local 像素坐标换算成 alacritty 网格坐标。
@@ -878,6 +912,7 @@ impl PureTermApp {
             tab_color: None,
             created_at: Instant::now(),
             zoom_state: None,
+            vi_sub_mode: None,
         });
         id
     }
@@ -1114,6 +1149,8 @@ impl PureTermApp {
         push_builtin("split.move_to_new_tab", "palette.action.split_move_to_new_tab.label", "palette.action.split_move_to_new_tab.hint", "palette.action.split_move_to_new_tab.search", &mut all_entries);
         push_builtin("split.move_to_new_window", "palette.action.split_move_to_new_window.label", "palette.action.split_move_to_new_window.hint", "palette.action.split_move_to_new_window.search", &mut all_entries);
         push_builtin("settings", "palette.action.settings.label", "palette.action.settings.hint", "palette.action.settings.search", &mut all_entries);
+        // GAP-4.1: Vi/Copy mode toggle in command palette
+        push_builtin("toggle_vi_mode", "palette.action.toggle_vi_mode.label", "palette.action.toggle_vi_mode.hint", "palette.action.toggle_vi_mode.search", &mut all_entries);
         #[cfg(unix)]
         {
             all_entries.push((
@@ -1754,6 +1791,61 @@ impl PureTermApp {
                     term.selection = Some(sel);
                 }
             }
+            // GAP-4.1: Toggle Vi (copy) mode on the active pane's terminal.
+            Message::ToggleViMode => {
+                if let Some(ctx) = self.active_terminal_ctx() {
+                    let mut term = ctx.terminal().lock();
+                    term.toggle_vi_mode();
+                    let vi_active = term.mode().contains(alacritty_terminal::term::TermMode::VI);
+                    if let Some(tab) = self.active_tab_mut() {
+                        tab.vi_sub_mode = if vi_active {
+                            Some(crate::vi_mode_handler::ViSubMode::Normal)
+                        } else {
+                            None
+                        };
+                    }
+                }
+            }
+            // GAP-4.1: Vi search bar messages
+            Message::ViSearchQuery(query) => {
+                if let Some(ref mut search) = self.vi_search {
+                    search.query = query.clone();
+                    // Update shared pattern for shader highlighting
+                    if let Ok(mut pat) = self.vi_search_pattern.lock() {
+                        *pat = if query.is_empty() { None } else { Some(query) };
+                    }
+                }
+            }
+            Message::ViSearchConfirm => {
+                if let Some(ref search) = self.vi_search {
+                    let query = search.query.clone();
+                    let direction = search.direction;
+                    if !query.is_empty() {
+                        if let Some(ctx) = self.active_terminal_ctx() {
+                            let mut term = ctx.terminal().lock();
+                            if let Ok(mut regex) = alacritty_terminal::term::search::RegexSearch::new(&query) {
+                                let vi_point = term.vi_mode_cursor.point;
+                                let side = alacritty_terminal::index::Side::Right;
+                                if let Some(_mat) = term.search_next(&mut regex, vi_point, direction, side, None) {
+                                    // Move vi cursor to the match start/end based on direction
+                                    let target = match direction {
+                                        alacritty_terminal::index::Direction::Right => *_mat.end(),
+                                        alacritty_terminal::index::Direction::Left => *_mat.start(),
+                                    };
+                                    term.vi_goto_point(target);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Message::ViSearchClose => {
+                // Clear shared pattern
+                if let Ok(mut pat) = self.vi_search_pattern.lock() {
+                    *pat = None;
+                }
+                self.vi_search = None;
+            }
             Message::PtyExited(tab_id) => {
                 // 子进程退出，关闭对应 tab
                 return Task::done(Message::CloseTab(tab_id));
@@ -2067,6 +2159,7 @@ impl PureTermApp {
                         tab_color: None,
                         created_at: Instant::now(),
                         zoom_state: None,
+                        vi_sub_mode: None,
                     });
                     self.active_tab = new_tab_id;
                     self.resize_active_tab_panes();
@@ -2088,6 +2181,7 @@ impl PureTermApp {
                         tab_color: None,
                         created_at: Instant::now(),
                         zoom_state: None,
+                        vi_sub_mode: None,
                     };
                     let settings = window::Settings {
                         size: Size::new(1024.0, 768.0),
@@ -2767,6 +2861,33 @@ impl PureTermApp {
                     self.command_palette = None;
                     return Task::none();
                 }
+                // GAP-4.1: Escape in vi mode → close search bar first, then exit visual/vi mode
+                if self.vi_search.is_some() {
+                    return Task::done(Message::ViSearchClose);
+                }
+                if self.is_vi_mode_active() {
+                    // Collect vi sub-mode snapshot and terminal ctx first
+                    let vi_sub = self.active_tab_ref().and_then(|t| t.vi_sub_mode);
+                    let ctx_opt = self.active_terminal_ctx();
+                    if let (Some(mut sub_mode), Some(ctx)) = (vi_sub, ctx_opt) {
+                        let should_exit = crate::vi_mode_handler::handle_vi_escape(
+                            &mut sub_mode,
+                            &ctx,
+                        );
+                        if should_exit {
+                            ctx.terminal().lock().toggle_vi_mode();
+                            if let Some(tab) = self.active_tab_mut() {
+                                tab.vi_sub_mode = None;
+                            }
+                        } else {
+                            // Sub-mode changed (e.g. Visual → Normal)
+                            if let Some(tab) = self.active_tab_mut() {
+                                tab.vi_sub_mode = Some(sub_mode);
+                            }
+                        }
+                    }
+                    return Task::none();
+                }
                 // Fall through to send Escape to PTY
                 if let Some(ctx) = self.active_terminal_ctx() {
                     ctx.write_to_pty(b"\x1b");
@@ -2859,6 +2980,10 @@ impl PureTermApp {
                 if self.command_palette.is_some() {
                     return Task::done(Message::CommandPaletteEnter);
                 }
+                // GAP-4.1: Vi search Enter — confirm search
+                if self.vi_search.is_some() {
+                    return Task::done(Message::ViSearchConfirm);
+                }
                 // SSH dialog Enter — connect to selected profile
                 #[cfg(unix)]
                 if let Some(ref dialog) = self.ssh_dialog {
@@ -2880,8 +3005,17 @@ impl PureTermApp {
                         || self.command_palette.is_some()
                         || self.context_menu.is_some()
                         || self.renaming_tab.is_some()
-                        || self.tab_list.is_some())
+                        || self.tab_list.is_some()
+                        || self.vi_search.is_some())
                 {
+                    // GAP-4.1: Forward printable text to vi search bar
+                    if self.vi_search.is_some() {
+                        if let Some(t) = text.as_deref() {
+                            if !t.is_empty() {
+                                return Task::done(Message::ViSearchQuery(self.vi_search.as_ref().unwrap().query.clone() + t));
+                            }
+                        }
+                    }
                     return Task::none();
                 }
 
@@ -2890,6 +3024,52 @@ impl PureTermApp {
                 // Allow Cmd+ shortcuts through even during composition.
                 if self.ime_composing && !modifiers.command() {
                     return Task::none();
+                }
+
+                // GAP-4.1: Vi mode keyboard interception.
+                // When vi mode is active, interpret keystrokes as vi motions
+                // instead of forwarding to PTY. Allow Cmd+ shortcuts through
+                // (so user can still ⌘C copy, ⌘V paste, ⌘⇧P palette, etc.).
+                if self.is_vi_mode_active() && !modifiers.command() {
+                    let vi_sub = self.active_tab_ref().and_then(|t| t.vi_sub_mode);
+                    let ctx_opt = self.active_terminal_ctx();
+                    if let (Some(mut sub_mode), Some(ctx)) = (vi_sub, ctx_opt) {
+                        let action = crate::vi_mode_handler::handle_vi_keypress(
+                            text.as_deref(),
+                            modifiers,
+                            &mut sub_mode,
+                            &ctx,
+                        );
+                        match action {
+                            crate::vi_mode_handler::ViAction::ExitViMode => {
+                                ctx.terminal().lock().toggle_vi_mode();
+                                if let Some(tab) = self.active_tab_mut() {
+                                    tab.vi_sub_mode = None;
+                                }
+                            }
+                            crate::vi_mode_handler::ViAction::MotionApplied => {
+                                // Update sub-mode in case it changed
+                                if let Some(tab) = self.active_tab_mut() {
+                                    tab.vi_sub_mode = Some(sub_mode);
+                                }
+                            }
+                            crate::vi_mode_handler::ViAction::EnterSearch(direction) => {
+                                // Open vi search bar
+                                self.vi_search = Some(ViSearchState {
+                                    query: String::new(),
+                                    direction,
+                                });
+                            }
+                            crate::vi_mode_handler::ViAction::SearchNavigate(forward) => {
+                                // Jump to next/prev search match (only if search is active)
+                                if self.vi_search.is_some() {
+                                    return Task::done(Message::ViSearchConfirm);
+                                }
+                            }
+                            crate::vi_mode_handler::ViAction::Ignored => {}
+                        }
+                        return Task::none();
+                    }
                 }
 
                 // GAP-3.7: Keymap lookup replaces the inline match dispatch.
@@ -3008,6 +3188,9 @@ impl PureTermApp {
             | Action::ResetFontSize
             | Action::ToggleFullscreen
             | Action::SpawnNewInstance => Task::none(),
+
+            // GAP-4.1 Vi / Copy mode
+            Action::ToggleViMode => Task::done(Message::ToggleViMode),
         }
     }
 
@@ -3706,6 +3889,23 @@ impl PureTermApp {
             }
         }
 
+        // GAP-4.1: Vi/Copy mode indicator
+        if let Some(tab) = self.active_tab_ref() {
+            if let Some(ref sub_mode) = tab.vi_sub_mode {
+                let label = match sub_mode {
+                    crate::vi_mode_handler::ViSubMode::Normal => "  -- COPY --",
+                    crate::vi_mode_handler::ViSubMode::Visual => "  -- VISUAL --",
+                    crate::vi_mode_handler::ViSubMode::VisualLine => "  -- VLINE --",
+                    crate::vi_mode_handler::ViSubMode::VisualBlock => "  -- VBLOCK --",
+                };
+                bar = bar.push(
+                    text(label)
+                        .size(11)
+                        .color(Color::from_rgba(0.2, 0.85, 0.7, 1.0)),
+                );
+            }
+        }
+
         // Process name
         if let Some(ref proc) = self.status_bar_process_name {
             bar = bar.push(
@@ -4336,6 +4536,47 @@ impl PureTermApp {
         )
     }
 
+    /// GAP-4.1: Vi mode search bar — rendered as a small input pinned to the
+    /// bottom-center of the terminal area. Activated by `/` (forward) or `?`
+    /// (backward) while in vi mode.
+    fn view_vi_search(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        let search = self.vi_search.as_ref()?;
+
+        let prompt = match search.direction {
+            alacritty_terminal::index::Direction::Right => "/",
+            alacritty_terminal::index::Direction::Left => "?",
+        };
+        let display_text = format!("{}{}", prompt, search.query);
+
+        let bar = container(
+            text(display_text)
+                .size(13)
+                .color(Color::from_rgba(0.9, 0.9, 0.9, 1.0))
+        )
+        .padding([4, 10])
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.15, 0.15, 0.18, 0.92))),
+            border: Border {
+                color: Color::from_rgba(0.2, 0.8, 0.7, 0.6),
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        });
+
+        // Pin to bottom-center of the terminal area
+        let terminal_h = terminal_content_height(self.viewport_size.height);
+        let y = terminal_h - 36.0;
+        let cx = (self.viewport_size.width - 300.0).max(0.0) / 2.0;
+
+        Some(
+            iced::widget::pin(bar)
+                .x(cx)
+                .y(y)
+                .into(),
+        )
+    }
+
     fn view_tab_list(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         let state = self.tab_list.as_ref()?;
 
@@ -4454,6 +4695,7 @@ impl PureTermApp {
                     foreground_color: self.config.foreground_color,
                     opacity: self.config.opacity,
                     viewport_scale_factor: self.viewport_scale_factor.clone(),
+                    vi_search_pattern: self.vi_search_pattern.clone(),
                 })
                 .width(Length::Fill)
                 .height(Length::Fill);
@@ -4503,7 +4745,8 @@ impl PureTermApp {
             // stack. Include all overlay states here.
             || self.ssh_dialog.is_some()
             || self.ssh_settings.is_some()
-            || self.command_palette.is_some();
+            || self.command_palette.is_some()
+            || self.vi_search.is_some();
 
         if has_overlay {
             // No full-screen `dismiss` overlay here. The previous design
@@ -4551,6 +4794,11 @@ impl PureTermApp {
             }
             if let Some(palette_el) = self.view_command_palette() {
                 layers.push(palette_el);
+            }
+
+            // GAP-4.1: Vi search bar overlay
+            if let Some(search_el) = self.view_vi_search() {
+                layers.push(search_el);
             }
 
             stack(layers)
@@ -4652,6 +4900,7 @@ impl PureTermApp {
             foreground_color: self.config.foreground_color,
             opacity: self.config.opacity,
             viewport_scale_factor: self.viewport_scale_factor.clone(),
+            vi_search_pattern: self.vi_search_pattern.clone(),
         })
         .width(Length::Fill)
         .height(Length::Fill);
