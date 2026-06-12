@@ -158,6 +158,11 @@ pub struct PureTermApp {
     /// Shared search pattern between app and GPU shader.
     /// The shader reads this during draw() for match highlighting.
     vi_search_pattern: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    // GAP-2.3 Socket API IPC
+    ipc_router: std::sync::Arc<crate::ipc::SocketRouter>,
+    ipc_handle: Option<crate::ipc::IpcHandle>,
+    /// Shared channel state between subscription() and the stream builder.
+    ipc_channel_state: std::sync::Arc<IpcChannelState>,
 }
 
 /// P3 of GAP-5.7: state for the SSH connection dialog shown by ⌘⇧S or
@@ -513,6 +518,8 @@ pub enum Message {
     ViSearchQuery(String),
     ViSearchConfirm,
     ViSearchClose,
+    // GAP-2.3 Socket API IPC
+    Ipc(crate::ipc::IpcRequest),
 }
 
 /// P4: which `SshProfile` field is being edited in the panel.
@@ -567,6 +574,53 @@ enum CommandEntry {
 struct ViSearchState {
     query: String,
     direction: alacritty_terminal::index::Direction,
+}
+
+// GAP-2.3: IPC stream builder.
+//
+// The challenge: Subscription::run requires a function pointer (fn() -> Stream),
+// but we need to share a tokio mpsc channel between the stream (consumer) and
+// the IPC listener task (producer). Solution: use Subscription::run_with with
+// an Arc<IpcChannelState> as the shared data. The builder function creates the
+// channel pair, stores the sender in the Arc for the listener to clone, and
+// keeps the receiver in the stream.
+
+/// Shared state between the subscription stream and the IPC listener.
+struct IpcChannelState {
+    tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<crate::ipc::IpcRequest>>>,
+}
+
+/// Wrapper to make IpcChannelState hashable for Subscription::run_with.
+/// Hashes by pointer address so each instance is unique.
+#[derive(Clone)]
+struct IpcKey(std::sync::Arc<IpcChannelState>);
+
+impl std::hash::Hash for IpcKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (std::sync::Arc::as_ptr(&self.0) as usize).hash(state);
+    }
+}
+
+/// Builder function for Subscription::run_with.
+/// Creates the mpsc channel, stores tx in the shared state, and returns a
+/// stream that forwards IpcRequests as Messages.
+fn ipc_stream_builder(
+    key: &IpcKey,
+) -> impl iced::futures::Stream<Item = Message> {
+    // Create the channel pair.
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::ipc::IpcRequest>(32);
+
+    // Store the sender so MainWindowOpened can clone it for the listener.
+    *key.0.tx.lock().unwrap() = Some(tx);
+
+    // Return a stream that forwards IpcRequests as Messages.
+    iced::stream::channel(32, |mut sender: iced::futures::channel::mpsc::Sender<Message>| async move {
+        while let Some(req) = rx.recv().await {
+            if sender.try_send(Message::Ipc(req)).is_err() {
+                break;
+            }
+        }
+    })
 }
 
 impl PureTermApp {
@@ -651,6 +705,12 @@ impl PureTermApp {
             status_bar_last_poll: Instant::now(),
             vi_search: None,
             vi_search_pattern: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            // GAP-2.3: IPC router is Arc so it can be shared with the async listener task.
+            ipc_router: crate::ipc::SocketRouter::new(),
+            ipc_handle: None,
+            ipc_channel_state: std::sync::Arc::new(IpcChannelState {
+                tx: std::sync::Mutex::new(None),
+            }),
         };
 
         let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
@@ -1306,6 +1366,33 @@ impl PureTermApp {
         match message {
             Message::MainWindowOpened(id) => {
                 self.main_window = Some(id);
+                // GAP-2.3: Spawn IPC listener now that the app is running.
+                if self.ipc_handle.is_none() {
+                    let socket_path = crate::ipc::listener::default_socket_path();
+                    // Try to get the sender from the shared channel state.
+                    // The subscription() call creates the channel and stores tx here.
+                    let ipc_tx = self.ipc_channel_state.tx.lock().unwrap().clone();
+                    match ipc_tx {
+                        Some(tx) => {
+                            match crate::ipc::listener::spawn_ipc_listener(
+                                socket_path,
+                                self.ipc_router.clone(),
+                                tx,
+                            ) {
+                                Ok(handle) => {
+                                    log::info!("IPC listener started: {}", handle.socket_path.display());
+                                    self.ipc_handle = Some(handle);
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to start IPC listener: {e}");
+                                }
+                            }
+                        }
+                        None => {
+                            log::warn!("IPC: subscription() has not created the channel yet");
+                        }
+                    }
+                }
                 let gs = self.glyph_state.borrow();
                 let cw = gs.cell_width;
                 let ch = gs.cell_height;
@@ -1845,6 +1932,21 @@ impl PureTermApp {
                     *pat = None;
                 }
                 self.vi_search = None;
+            }
+            // GAP-2.3: Dispatch IPC request from the socket listener.
+            Message::Ipc(ipc_req) => {
+                let snap = crate::ipc::methods::AppSnapshot {
+                    window_count: if self.main_window.is_some() { 1 } else { 0 },
+                    tab_titles: self.tabs.iter().map(|t| t.title.clone()).collect(),
+                    pane_counts: self.tabs.iter().map(|t| t.panes.len()).collect(),
+                    active_tab_index: self.tabs.iter().position(|t| t.id == self.active_tab).unwrap_or(0),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                };
+                let resp = self.ipc_router.dispatch(ipc_req.id, &ipc_req.method, ipc_req.params, &snap);
+                // Send response back through the oneshot channel.
+                if let Some(reply_tx) = ipc_req.reply_tx.lock().unwrap().take() {
+                    let _ = reply_tx.send(resp);
+                }
             }
             Message::PtyExited(tab_id) => {
                 // 子进程退出，关闭对应 tab
@@ -5071,7 +5173,15 @@ impl PureTermApp {
         let config_sub = crate::config_watcher::watch(self.config_path.clone())
             .map(|_| Message::ConfigReloaded);
 
-        let subs = vec![keyboard_sub, wakeup_sub, resize_sub, config_sub];
+        // GAP-2.3: IPC subscription — creates the channel pair in the stream
+        // builder and forwards IpcRequests as Messages to update().
+        // The sender is stored in ipc_channel_state for MainWindowOpened to clone.
+        let ipc_sub = Subscription::run_with(
+            IpcKey(self.ipc_channel_state.clone()),
+            ipc_stream_builder,
+        );
+
+        let subs = vec![keyboard_sub, wakeup_sub, resize_sub, config_sub, ipc_sub];
 
         Subscription::batch(subs)
     }

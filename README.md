@@ -28,6 +28,9 @@
 - **独立设置 UI 进程** — Iced 0.14 daemon,`Cmd+,` 启动,6 个分类页面
 - **命令面板** — `⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,Actions / Profiles 双模式
 - **快捷键自定义** — TOML 配置驱动 + 6 套预设模板(vim/tmux/iterm/vscode/agent-triage) + CLI `pureterm shortcuts` + 热重载(2026-06-12 GAP-3.7 闭环)
+- **Socket API v2** — JSON-RPC 2.0 over Unix socket,`pureterm msg` CLI 程序化控制(2026-06-12 GAP-2.3 协议骨架)
+- **状态栏** — 底部 24px,显示 CWD / Git 分支 / SSH / 进程名 / 光标位置(2026-06-12 GAP-3.4)
+- **Vi Copy Mode** — `Ctrl+Shift+Space` 进入,hjkl 导航,v/V/Ctrl+v 选区,y 复制,/ 搜索(2026-06-12 GAP-4.1)
 - **配置热重载** — 改 `alacritty.toml` 自动应用,无需重启
 - **跨平台** — macOS / Linux / Windows 三平台持续维护
 
@@ -49,6 +52,14 @@ cargo build --release
 - 打开设置:`Cmd+,`(macOS)
 - 命令面板:`⌘⇧P`
 - SSH 连接:`⌘⇧S`
+- Vi Copy Mode:`Ctrl+Shift+Space`
+
+**CLI 命令**:
+```bash
+pureterm msg system.version     # 程序化控制(需要运行实例)
+pureterm shortcuts list         # 查看快捷键
+pureterm shortcuts preset vim   # 切换预设
+```
 
 完整快捷键见 [快捷键速查](#快捷键速查)。
 
@@ -118,6 +129,18 @@ PureTerm 由 6 个 crate 组成的工作区:
 - **Vi Copy Mode**(2026-06-12 GAP-4.1):`Ctrl+Shift+Space` 进入,hjkl 导航,v/V/Ctrl+v 选区,y 复制,//? 搜索,n/N 遍历,Escape 退出;GPU 渲染青色 vi cursor + 搜索匹配 amber 高亮;状态栏 -- COPY -- / -- VISUAL -- 指示(`crates/pureterm/src/vi_mode_handler.rs`)
 - 键盘绑定:31+ Action 枚举,TOML 可自定义 + 6 套预设模板 + CLI 管理(`crates/pureterm/src/keymap.rs`)
 - IME 输入法候选
+
+### Socket API v2 (2026-06-12 GAP-2.3)
+- **JSON-RPC 2.0** over Unix domain socket,程序化控制 PureTerm
+- **10 个内置 method**:`system.ping/version` · `window.list` · `pane.list` · `surface.list` · `config.get`
+- **CLI 客户端**:`pureterm msg <method> [JSON_PARAMS]`
+- **自动发现**:`$PURETERM_SOCKET` 环境变量 + 文件系统扫描
+- **架构**:`crates/pureterm/src/ipc/`(protocol / methods / listener / client) — tokio 异步监听 → mpsc channel → iced Subscription bridge
+- 基础 method 可用,30+ method 目标待后续迭代补齐
+
+### 状态栏
+- 底部 24px 状态栏(2026-06-12 GAP-3.4 闭环)
+- 显示:工作目录(OSC 7) · Git 分支(30s 轮询) · SSH 连接指示 · 前台进程名 · 光标位置(row:col)
 
 ### 跨平台
 - macOS / Linux / Windows
@@ -227,6 +250,33 @@ action = "ToggleZoom"
 
 GPU 渲染:青色 vi 光标 + 搜索匹配 amber 高亮。
 
+### Socket API(GAP-2.3)
+
+PureTerm 运行时自动创建 Unix domain socket,可通过 CLI 程序化控制:
+
+```bash
+# 查看版本
+pureterm msg system.version
+# → {"version":"0.1.0"}
+
+# 心跳检查
+pureterm msg system.ping
+# → {"status":"ok"}
+
+# 列出所有窗口/面板/表面
+pureterm msg window.list
+pureterm msg pane.list
+pureterm msg surface.list
+
+# 错误处理(未知 method)
+pureterm msg foo.bar
+# → Error (-32601): Method not found: foo.bar
+```
+
+内置 method:`system.ping` · `system.version` · `window.list` · `pane.list` · `surface.list` · `config.get`
+
+环境变量 `$PURETERM_SOCKET` 自动注册,CLI 客户端会自动发现 socket。
+
 ---
 
 ## 配置
@@ -289,18 +339,25 @@ PureTerm 扩展段:
 
 ## 路线图
 
+**已实现**(2026 Q2):
+- ✅ **GAP-2.2** 嵌套分屏补齐(等分 `Cmd+Shift+E` / 交换 / 缩放 / 焦点切换)
+- ✅ **GAP-2.3** Socket API v2 协议骨架(JSON-RPC 2.0 + 10 个基础 method + CLI `pureterm msg`)
+- ✅ **GAP-2.5** 多 UI 路径统一治理(alacritty-runtime 精简为 glyph_atlas)
+- ✅ **GAP-3.4** 状态栏(底部 24px:CWD · Git 分支 · SSH · 进程名 · 光标位置)
+- ✅ **GAP-3.7** 快捷键 6 套预设模板(tmux / Vim / iTerm / agent-triage / vscode / custom)
+- ✅ **GAP-4.1** Vi Copy Mode(ViSubMode 状态机 + 18 ViMotion + visual/block/yank + 搜索 + GPU 高亮)
+- ✅ **GAP-5.7/5.8/5.9** SSH 一等公民(Tab UI + 设置面板 + 命令面板集成)
+
 **本季度焦点**(2026 Q2-Q3):
-- **GAP-2.2** 嵌套分屏补齐(等分 `Cmd+Shift+E` / 交换 / 缩放 / 焦点切换)
 - **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
 - **GAP-5.6** SSH reconnect/disconnect 完整状态机(网络中断自动重连)
-- **GAP-3.7** 快捷键 6 套预设模板(tmux / Vim / iTerm / agent-triage / vscode / custom)
-- **GAP-2.3** Socket API v2 协议设计(method 分类骨架)
+- **GAP-6.1** Socket API v2 完整协议(30+ method)
 
 **重点未实现领域**(详见路线图):
-- 持久 PTY 守护进程 + Socket API v2(架构升级)
+- 持久 PTY 守护进程 + Socket API 完整协议(架构升级)
 - AI Agent 集成(hooks 框架 + Claude Code adapter + Feed 审批面板)
 - Browser 面板(WebView + SOCKS5 隧道)
-- 双侧边栏 + 状态栏 + Workspace 抽象层
+- 双侧边栏 + Workspace 抽象层
 
 **完整路线图**:见 [`docs/TODOLIST.md`](docs/TODOLIST.md)(按 7 大类别 × P0-P3 优先级排序,49 项)。
 

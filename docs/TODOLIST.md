@@ -53,20 +53,20 @@
 
 | 类别 | ✅ | 🚧 | ❌ | ⛔ | 小计 |
 |---|---|---|---|---|---|
-| A. 核心架构 | 1 | 1 | 3 | 0 | 5 |
-| B. UI/UX | 2 | 0 | 5 | 0 | 7 |
+| A. 核心架构 | 2 | 1 | 2 | 0 | 5 |
+| B. UI/UX | 3 | 0 | 4 | 0 | 7 |
 | C. 终端交互 | 1 | 0 | 6 | 0 | 7 |
 | D. SSH | 3 | 0 | 6 | 0 | 9 |
 | E. 集成与可编程 | 0 | 0 | 8 | 0 | 8 |
 | F. AI Agent | 0 | 0 | 8 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **8** | **1** | **37** | **3** | **49** |
+| **总计** | **10** | **1** | **35** | **3** | **49** |
 
-整体进度:✅ 8/49 ≈ 16%(含 🚧 折半计为 17%)
+整体进度:✅ 10/49 ≈ 20%(含 🚧 折半计为 21%)
 
 ### 1.2 本季度焦点(P0 优先)
 
-1. **GAP-2.3** Socket API v2 协议设计(method 分类骨架)
+1. **GAP-2.3** Socket API v2 协议设计(method 分类骨架) 🚧(2026-06-12 协议骨架闭环:JSON-RPC 2.0 + 10 个基础 method + CLI `pureterm msg`)
 2. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
 3. **GAP-5.6** SSH reconnect/disconnect 状态机
 4. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode) ✅(2026-06-12)
@@ -87,6 +87,8 @@
 | GAP-5.8 | SSH 主 UI 设置 UI | D | 2026-06-08 | 右侧栏 `SshSettingsPanelState` + `CredentialStore` 主密码端到端 |
 | GAP-5.9 | SSH 命令面板集成 | D | 2026-06-08 | `Mode::Profiles` 一跳到底 |
 | GAP-8.5 | 跨平台优势(反向能力) | G | — | macOS / Linux / Windows 三平台持续维护 |
+| GAP-2.5 | 多 UI 路径统一治理 | A | 2026-06-12 | CLAUDE.md/AGENTS.md 一致描述"主路径=Iced";`pureterm-alacritty-runtime` 仅含 `glyph_atlas`(964行) |
+| GAP-3.4 | 状态栏 | B | 2026-06-12 | 底部 24px:CWD(OSC 7)·Git 分支·SSH·进程名·光标位置;title bar hints 留后续 |
 
 ---
 
@@ -110,17 +112,26 @@
 - **对标**: cmux `vendor/bonsplit`
 
 #### GAP-2.3 Socket API 协议 + 端口模型 {#gap-2-3}
-- **状态**: ❌(2026-06-10 纠偏:原标 🚧 "3/30+ method" 与代码不符 — 原 IPC 代码全部归档到 `archive/pureterm-display-path/alacritty/polling/ipc.rs`,主二进制无 IPC)
+- **状态**: 🚧(2026-06-12 协议骨架闭环:JSON-RPC 2.0 + 10 个基础 method + CLI `pureterm msg`;30+ method 目标待后续迭代补齐)
 - **优先级**: P0
-- **PureTerm 现状**: 无 IPC。主二进制 `crates/pureterm` 没有 `pureterm msg` 子命令、没有 `IoListener::spawn`、没有 tokio UnixListener。归档版本是 `polling` crate + 单 line-JSON、`SocketMessage { CreateWindow | Config | GetConfig }` 裸 enum、无 id/method/error code
-- **目标**: Socket API v2 协议层,method 命名空间:`window.* / workspace.* / pane.* / surface.* / notification.* / feed.* / system.* / debug.*`,首版 30+ method;JSON-RPC 2.0 风格;`tokio::net::UnixListener` + `SocketRouter` HashMap;预估 6-10k 行 / 2-3 周(从归档复活 + 改写协议)
-- **依赖**: GAP-2.1(抽象层) — 可并行启动协议骨架
-- **风险点**: wire 格式向后兼容设计;iced 0.14 与 tokio 事件循环挂接(Subscription::channel)
-- **DoD**: 至少 30 个 method 在 `pureterm-cli` 中可调用,与 GUI 行为一致
+- **PureTerm 现状**: `crates/pureterm/src/ipc/` 实现 Socket API v2 协议骨架:`protocol.rs`(JSON-RPC 2.0 类型)+ `methods.rs`(SocketRouter 10 个基础 method)+ `listener.rs`(tokio::net::UnixListener + mpsc→iced Subscription bridge)+ `client.rs`(CLI 客户端);`iced_app.rs` 接入 IPC Subscription + MainWindowOpened 启动监听;`main.rs` 添加 `pureterm msg` 子命令
+- **闭环条目**:
+  - JSON-RPC 2.0 协议类型(Request/Response/Error + 标准错误码)
+  - SocketRouter HashMap 注册表 + dispatch
+  - 10 个基础 method:`system.ping/version` · `window.list` · `pane.list` · `surface.list` · `config.get`
+  - Async Unix socket listener(tokio)→ mpsc channel → iced Subscription bridge
+  - CLI 客户端:`pureterm msg <method> [JSON_PARAMS]`
+  - 环境变量 `PURETERM_SOCKET` 自动注册 + socket 文件发现
+- **未做(留后续迭代)**:workspace/notification/feed/debug 命名空间 method;window.create;pane.split/focus;config.reload;事件流(SSE);`pureterm msg` 响应式等待
+- **单元测试**: `ipc::protocol::tests` 6 个 + `ipc::methods::tests` 5 个
+- **依赖**: 无(可并行启动)
+- **风险点**: wire 格式向后兼容设计 ✅;iced 0.14 与 tokio 事件循环挂接 ✅
+- **DoD**: 至少 30 个 method 在 `pureterm-cli` 中可调用,与 GUI 行为一致(当前 10/30+)
+- **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
 - **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
 
 #### GAP-2.5 多 UI 路径统一治理 {#gap-2-5}
-- **状态**: 🚧(实际已基本完成,仅角色定位需明确)
+- **状态**: ✅(2026-06-12 闭环)
 - **优先级**: P0
 - **PureTerm 现状**: 默认二进制 `pureterm/src/main.rs` 走 Iced 0.14;`pureterm-alacritty-runtime` 已 2026-06-08 精简为只承载 `glyph_atlas`,不再扩展
 - **目标**: 在 README / AGENTS.md 中明确"主路径 = Iced,alacritty-runtime = 字体图集库"。决策点:是否归档整个 `pureterm-alacritty-runtime` crate,将 `glyph_atlas` 直接合入 `pureterm`
@@ -189,7 +200,7 @@
 - **对标**: cmux `Sources/Sidebar/`
 
 #### GAP-3.4 状态栏 {#gap-3-4}
-- **状态**: 🚧
+- **状态**: ✅(2026-06-12 闭环)
 - **优先级**: P1
 - **PureTerm 现状**: 底部 24px 状态栏已实现,显示:工作目录(OSC 7)·Git 分支(30s 轮询)·SSH 指示器·前台进程名·光标位置
 - **已实现**:
@@ -652,14 +663,14 @@
 | GAP-1.4 | BiDi 双向文本 | C | P2 | ❌ | - | - |
 | GAP-2.1 | Surface/Pane/Workspace/Window 抽象层 | A | P1 | ❌ | - | - |
 | GAP-2.2 | 嵌套水平+垂直分屏 | A | P0 | ✅ | 2026-06-10 | Equalize/Swap/Zoom/Focus Next-Prev/Move-to-Tab-Window 三入口 + 11 单测 |
-| GAP-2.3 | Socket API 协议 + 端口模型 | A | P0 | ❌ | - | 2026-06-10 纠偏:原 IPC 全部在 archive/,主二进制无 |
+| GAP-2.3 | Socket API 协议 + 端口模型 | A | P0 | 🚧 | - | JSON-RPC 2.0 + 10 method + CLI msg;30+ 目标待补 |
 | GAP-2.4 | 远程守护进程 puretermd | A | P1 | ❌ | - | - |
-| GAP-2.5 | 多 UI 路径统一治理 | A | P0 | 🚧 | - | iced 已是主路径 |
+| GAP-2.5 | 多 UI 路径统一治理 | A | P0 | ✅ | 2026-06-12 | CLAUDE.md/AGENTS.md 一致;crate 仅含 glyph_atlas |
 | GAP-2.6 | iOS 伴侣 + Cloud VM | A | P3 | ⛔ | - | 见 §10 |
 | GAP-3.1 | 双侧边栏 | B | P1 | ❌ | - | - |
 | GAP-3.2 | 可编程 Sidebars(DSL) | B | P2 | ❌ | - | - |
 | GAP-3.3 | 命令面板 ⌘⇧P | B | P0 | ✅ | 2026-06-08 | nucleo-matcher + Actions/Profiles |
-| GAP-3.4 | 状态栏 | B | P1 | 🚧 | - | 底部 24px:OSC 7 CWD·Git 分支·SSH·进程名·光标位置;菜单栏图标留后续 |
+| GAP-3.4 | 状态栏 | B | P1 | ✅ | 2026-06-12 | 底部 24px:OSC 7 CWD·Git 分支·SSH·进程名·光标位置;title bar hints 留后续 |
 | GAP-3.5 | 内置 Browser 面板 | B | P1 | ❌ | - | wry crate |
 | GAP-3.6 | macOS Glass 效果 | B | P3 | ❌ | - | - |
 | GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | ✅ | 2026-06-12 | Action 30 变体 + Keymap HashMap + TOML 解析 + CLI shortcuts + 6 套预设;chord 留后续 |

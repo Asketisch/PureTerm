@@ -2,6 +2,7 @@ mod app_config;
 mod config_watcher;
 mod iced_app;
 mod ime_widget;
+mod ipc;
 mod keymap;
 mod split_tree;
 mod status_bar;
@@ -35,16 +36,36 @@ fn main() -> iced::Result {
 fn handle_cli(args: &[String]) {
     match args.first().map(|s| s.as_str()) {
         Some("shortcuts") => shortcuts_cli(&args[1..]),
+        Some("msg") => msg_cli(&args[1..]),
         _ => {
             eprintln!("PureTerm - GPU-accelerated terminal emulator");
             eprintln!();
             eprintln!("Usage: pureterm [COMMAND]");
             eprintln!();
             eprintln!("Commands:");
+            eprintln!("  msg <method> [JSON_PARAMS]  Send IPC command to running instance");
             eprintln!("  shortcuts list              List current key bindings");
             eprintln!("  shortcuts preset <NAME>     Apply a preset (default|vim|tmux|iterm|vscode|agent-triage)");
             eprintln!("  shortcuts reset             Reset to factory defaults");
         }
+    }
+}
+
+fn msg_cli(args: &[String]) {
+    let method = match args.first().map(|s| s.as_str()) {
+        Some(m) => m,
+        None => {
+            ipc::client::print_help();
+            std::process::exit(1);
+        }
+    };
+
+    // Optional JSON params as second argument.
+    let params = args.get(1).and_then(|s| serde_json::from_str(s).ok());
+
+    if let Err(e) = ipc::client::send_rpc(method, params, None) {
+        eprintln!("{e}");
+        std::process::exit(1);
     }
 }
 

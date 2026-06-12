@@ -16,7 +16,7 @@ bytemuck = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 crossfont = "0.8.1"
 notify = "8.0.0"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["sync", "time", "net", "io-util"] }
 env_logger = "0.11"
 log = "0.4"
 parking_lot = "0.12"
