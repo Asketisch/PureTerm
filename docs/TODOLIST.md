@@ -55,14 +55,14 @@
 |---|---|---|---|---|---|
 | A. 核心架构 | 1 | 1 | 3 | 0 | 5 |
 | B. UI/UX | 2 | 0 | 5 | 0 | 7 |
-| C. 终端交互 | 0 | 0 | 7 | 0 | 7 |
+| C. 终端交互 | 1 | 0 | 6 | 0 | 7 |
 | D. SSH | 3 | 0 | 6 | 0 | 9 |
 | E. 集成与可编程 | 0 | 0 | 8 | 0 | 8 |
 | F. AI Agent | 0 | 0 | 8 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **7** | **1** | **38** | **3** | **49** |
+| **总计** | **8** | **1** | **37** | **3** | **49** |
 
-整体进度:✅ 7/49 ≈ 14%(含 🚧 折半计为 15%)
+整体进度:✅ 8/49 ≈ 16%(含 🚧 折半计为 17%)
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -82,6 +82,7 @@
 | GAP-2.2 | 嵌套分屏补齐(Equalize/Swap/Zoom/Focus Next-Prev/Move-to-Tab-Window) | A | 2026-06-10 | `crates/pureterm/src/split_tree.rs`(equalize_all / swap_with_sibling / neighbor_in_order)+ `iced_app.rs`(Tab.zoom_state + 6 Message + 5 ContextMenuItem + 7 命令面板 builtin) |
 | GAP-3.3 | 命令面板 ⌘⇧P | B | 2026-06-08 | `crates/pureterm/src/iced_app.rs`(nucleo-matcher + Actions/Profiles 双模式) |
 | GAP-3.7 | 完整快捷键自定义 + 模板 | B | 2026-06-12 | `crates/pureterm/src/keymap.rs`(Action 30 变体 + Keymap HashMap + TOML 解析) + `iced_app.rs`(dispatch_action 统一派发) + CLI `shortcuts` + `resources/presets/` 6 套模板 |
+| GAP-4.1 | Vim 复制模式(Copy Mode) | C | 2026-06-12 | `crates/pureterm/src/vi_mode_handler.rs`(ViSubMode 状态机 + 18 ViMotion + visual 选区 + yank + 搜索) + `terminal_shader.rs`(vi cursor 渲染 + 搜索高亮) + `iced_app.rs`(键盘拦截 + 搜索栏 UI + 状态栏指示) |
 | GAP-5.7 | SSH Tab UI 串通 | D | 2026-06-08 | `crates/pureterm/src/ssh/` + iced UI 串通(`⌘⇧S`、异步 spawn、graceful_close) |
 | GAP-5.8 | SSH 主 UI 设置 UI | D | 2026-06-08 | 右侧栏 `SshSettingsPanelState` + `CredentialStore` 主密码端到端 |
 | GAP-5.9 | SSH 命令面板集成 | D | 2026-06-08 | `Mode::Profiles` 一跳到底 |
@@ -260,13 +261,22 @@
 ### C.P1
 
 #### GAP-4.1 Vim 复制模式 {#gap-4-1}
-- **状态**: ❌
+- **状态**: ✅(2026-06-12 闭环)
 - **优先级**: P1
-- **PureTerm 现状**: Alacritty 有 `Vi` 模式 + `Action::Vi(ViAction)`,但**不是完整 copy mode**(不能从光标开始选区)
-- **目标**: 独立 Copy Mode — `Enter / Alt+Enter` 触发,`jkhl` 移动,`v` visual,`V` line,`Ctrl+v` block,`y` 复制,`/` 搜索,`Esc` 退出;复用 Alacritty `vi_mode` 模块(已 vendored);新增 `CopyMode { mode, anchor, cursor }` 状态机
-- **依赖**: 无
-- **风险点**: 与现有 Vi 模式共存
-- **DoD**: `Enter` 进入 copy mode,`jk` 移动,`v` 选词,`y` 复制,`Esc` 退出
+- **PureTerm 现状**: `crates/pureterm/src/vi_mode_handler.rs` 实现 `ViSubMode` 状态机(Normal/Visual/VisualLine/VisualBlock),复用 vendored Alacritty `ViMotion`(18 种)+ `ViModeCursor` + `Selection` + `RegexSearch` + `selection_to_string()`
+- **闭环条目**:
+  - `Ctrl+Shift+Space` 进入/退出 Vi Copy Mode
+  - hjkl / w b e / 0 $ / g G / { } / % 导航(18 种 ViMotion)
+  - Ctrl+u / Ctrl+d 半页滚动
+  - v / V / Ctrl+v 进入 Visual / VisualLine / VisualBlock 选区
+  - y 复制选中文本到系统剪贴板 + 退出 vi mode; yy 复制当前行
+  - / ? 进入搜索;n N 遍历匹配;搜索匹配 amber 高亮(GPU shader)
+  - Escape 三级退出:搜索栏 → visual 子模式 → vi mode
+  - 状态栏 -- COPY -- / -- VISUAL -- / -- VLINE -- / -- VBLOCK -- 指示
+  - 命令面板 ⌘⇧P → 搜索 "vi" → "Toggle Vi/Copy Mode"
+  - GPU 渲染:青色 vi cursor + 主光标淡化 + 搜索匹配 amber 高亮
+- **三入口**:键盘 `Ctrl+Shift+Space` + 命令面板 + keymap TOML 可自定义
+- **单元测试**: `vi_mode_handler::tests` 3 个用例 + Alacritty vi_mode 原有 19 个用例
 - **对标**: cmux `Sources/CopyMode/` + iTerm2 `iTermCopyModeHandler.m`(24KB)
 
 #### GAP-4.2 智能选择 hover preview {#gap-4-2}
@@ -654,7 +664,7 @@
 | GAP-3.6 | macOS Glass 效果 | B | P3 | ❌ | - | - |
 | GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | ✅ | 2026-06-12 | Action 30 变体 + Keymap HashMap + TOML 解析 + CLI shortcuts + 6 套预设;chord 留后续 |
 | GAP-3.8 | 搜索体系 | B | P1 | 🚧 | - | 基础搜索已有,缺目录/全局 |
-| GAP-4.1 | Vim 复制模式 | C | P1 | ❌ | - | - |
+| GAP-4.1 | Vim 复制模式 | C | P1 | ✅ | 2026-06-12 | ViSubMode + 18 ViMotion + visual/block/yank + 搜索 + GPU 高亮 + 状态栏指示 |
 | GAP-4.2 | 智能选择 hover preview | C | P1 | 🚧 | - | 9 规则已有,缺 hover |
 | GAP-4.3 | Tail-Find 自动滚动搜索 | C | P1 | ❌ | - | - |
 | GAP-4.6 | Touch Bar / VoiceOver | C | P3 | ❌ | - | - |

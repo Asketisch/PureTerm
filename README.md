@@ -115,8 +115,8 @@ PureTerm 由 6 个 crate 组成的工作区:
 ### 终端交互
 - 完整 VTE 解析:CSI / ESC / OSC / DCS / APC / PM
 - 智能选择 9 规则:URL / SSH URL / 邮箱 / 引号字符串 / 文件路径 / C++ namespace / dotted include / Git SHA / IPv4(`crates/alacritty_terminal/src/smart_selection.rs`)
-- Alacritty 原生 Vi 模式
-- 键盘绑定:30+ Action 枚举,TOML 可自定义 + 6 套预设模板 + CLI 管理(`crates/pureterm/src/keymap.rs`)
+- **Vi Copy Mode**(2026-06-12 GAP-4.1):`Ctrl+Shift+Space` 进入,hjkl 导航,v/V/Ctrl+v 选区,y 复制,//? 搜索,n/N 遍历,Escape 退出;GPU 渲染青色 vi cursor + 搜索匹配 amber 高亮;状态栏 -- COPY -- / -- VISUAL -- 指示(`crates/pureterm/src/vi_mode_handler.rs`)
+- 键盘绑定:31+ Action 枚举,TOML 可自定义 + 6 套预设模板 + CLI 管理(`crates/pureterm/src/keymap.rs`)
 - IME 输入法候选
 
 ### 跨平台
@@ -205,6 +205,28 @@ action = "ToggleZoom"
 
 保存后自动热重载,无需重启。自定义绑定覆盖同名默认绑定。
 
+### Vi Copy Mode(GAP-4.1)
+
+按 `Ctrl+Shift+Space` 进入 Vi Copy Mode(状态栏显示 `-- COPY --`):
+
+| 按键 | 动作 |
+|---|---|
+| `h` `j` `k` `l` | 左/下/上/右移动 |
+| `w` `b` `e` | 按词前进/后退/词尾 |
+| `0` `$` | 行首/行尾 |
+| `g` `G` | 屏幕顶部/底部 |
+| `Ctrl+u` `Ctrl+d` | 半页上滚/下滚 |
+| `v` | 进入 Visual 选区(字符) |
+| `V` | 进入 Visual Line 选区(整行) |
+| `Ctrl+v` | 进入 Visual Block 选区(矩形) |
+| `y` | 复制选中内容到剪贴板并退出 |
+| `yy` | 复制当前行 |
+| `/` `?` | 向前/向后搜索(弹出搜索栏) |
+| `n` `N` | 下一个/上一个匹配 |
+| `Escape` | 退出搜索 → 退出 visual → 退出 vi mode |
+
+GPU 渲染:青色 vi 光标 + 搜索匹配 amber 高亮。
+
 ---
 
 ## 配置
@@ -236,7 +258,7 @@ PureTerm 扩展段:
 | SSH 连接 | `⌘⇧S` | 弹 SSH Profile 选择 |
 | SSH 设置 | `Ctrl+Shift+F5`(默认) | 可在 `[keyboard.bindings]` 自定义 |
 | 设置 | `⌘,` | 启动独立 Settings UI 进程 |
-| Vi 模式 | `⌥+Space` | Alacritty 原生 |
+| Vi Copy Mode | `Ctrl+Shift+Space` | 进入 vi 模式,hjkl 移动,v 选区,y 复制,/ 搜索 |
 | 搜索向前 | `⌘F` | |
 | 搜索向后 | `⌘⇧F` | |
 
