@@ -13,7 +13,7 @@ use tokio::net::UnixListener;
 
 use log::{error, info, warn};
 
-use super::methods::{AppSnapshot, SocketRouter};
+use super::methods::SocketRouter;
 use super::protocol::{JsonRpcRequest, JsonRpcResponse};
 
 /// Environment variable name for the IPC socket path.

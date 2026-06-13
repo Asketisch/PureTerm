@@ -1933,19 +1933,49 @@ impl PureTermApp {
                 }
                 self.vi_search = None;
             }
-            // GAP-2.3: Dispatch IPC request from the socket listener.
+            // GAP-2.3 / GAP-6.1: Dispatch IPC request from the socket listener.
             Message::Ipc(ipc_req) => {
+                // Build a rich snapshot from live app state.
                 let snap = crate::ipc::methods::AppSnapshot {
                     window_count: if self.main_window.is_some() { 1 } else { 0 },
                     tab_titles: self.tabs.iter().map(|t| t.title.clone()).collect(),
+                    tab_ids: self.tabs.iter().map(|t| t.id.0).collect(),
                     pane_counts: self.tabs.iter().map(|t| t.panes.len()).collect(),
                     active_tab_index: self.tabs.iter().position(|t| t.id == self.active_tab).unwrap_or(0),
                     version: env!("CARGO_PKG_VERSION").to_string(),
+                    ssh_profile_names: {
+                        #[cfg(unix)]
+                        { self.ssh_profiles.iter().map(|p| p.name.clone()).collect() }
+                        #[cfg(not(unix))]
+                        { Vec::new() }
+                    },
+                    config_path: Some(self.config_path.to_string_lossy().into_owned()),
+                    tab_cwds: self.tabs.iter().map(|t| {
+                        // CWD is tracked per-active-pane via OSC 7. The status bar
+                        // reflects the currently focused tab's surface; report that
+                        // for the active tab and None for others until per-tab CWD
+                        // tracking is added.
+                        if t.id == self.active_tab {
+                            self.status_bar_cwd.clone()
+                        } else {
+                            None
+                        }
+                    }).collect(),
+                    active_pane_ids: self.tabs.iter().map(|t| t.active_pane.0).collect(),
                 };
-                let resp = self.ipc_router.dispatch(ipc_req.id, &ipc_req.method, ipc_req.params, &snap);
+
+                let (resp, side_effect) = self.ipc_router.dispatch(
+                    ipc_req.id, &ipc_req.method, ipc_req.params, &snap,
+                );
+
                 // Send response back through the oneshot channel.
                 if let Some(reply_tx) = ipc_req.reply_tx.lock().unwrap().take() {
                     let _ = reply_tx.send(resp);
+                }
+
+                // Execute side effect (write operation) after responding.
+                if let Some(fx) = side_effect {
+                    return self.execute_ipc_side_effect(fx);
                 }
             }
             Message::PtyExited(tab_id) => {
@@ -3522,6 +3552,73 @@ impl PureTermApp {
         let raw = AppConfig::load_keybindings(&self.config_path);
         let defaults = Keymap::from_defaults();
         self.keymap = Keymap::from_toml_overrides(&raw, &defaults);
+    }
+
+    /// GAP-6.1: Execute a side effect returned by a Socket API write method.
+    ///
+    /// Called from `Message::Ipc` after the response has been sent. Maps each
+    /// `IpcSideEffect` variant to the corresponding internal action or `Task`,
+    /// mirroring the equivalent keyboard-driven `Message` handler.
+    fn execute_ipc_side_effect(&mut self, fx: crate::ipc::IpcSideEffect) -> Task<Message> {
+        use crate::ipc::IpcSideEffect as Fx;
+        match fx {
+            // ── Tab operations ──
+            Fx::NewTab => {
+                let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                self.active_tab = new_id;
+                Task::none()
+            }
+            Fx::CloseTab { index } => {
+                if let Some(tab) = self.tabs.get(index) {
+                    let tab_id = tab.id;
+                    Task::done(Message::CloseTab(tab_id))
+                } else {
+                    Task::none()
+                }
+            }
+            Fx::SwitchTab { index } => {
+                if let Some(tab) = self.tabs.get(index) {
+                    let tab_id = tab.id;
+                    Task::done(Message::ActivateTab(tab_id))
+                } else {
+                    Task::none()
+                }
+            }
+            // ── Split / pane operations ──
+            Fx::SplitHorizontal => {
+                self.split_pane(SplitDirection::Horizontal);
+                Task::none()
+            }
+            Fx::SplitVertical => {
+                self.split_pane(SplitDirection::Vertical);
+                Task::none()
+            }
+            Fx::ClosePane => {
+                self.close_active_pane();
+                Task::none()
+            }
+            Fx::SwapPane => Task::done(Message::SwapPane),
+            Fx::ToggleZoom => Task::done(Message::ToggleZoom),
+            Fx::EqualizeSplits => Task::done(Message::EqualizeSplits),
+            Fx::FocusNextPane => Task::done(Message::FocusPaneInOrder(1)),
+            Fx::FocusPrevPane => Task::done(Message::FocusPaneInOrder(-1)),
+            // ── Config ──
+            Fx::ReloadConfig => {
+                self.apply_config_reload();
+                Task::none()
+            }
+            // ── SSH ──
+            #[cfg(unix)]
+            Fx::SshConnect { profile_index } => {
+                if self.ssh_manager.is_none() {
+                    let socket_dir = std::env::temp_dir().join("pureterm-ssh");
+                    let _ = std::fs::create_dir_all(&socket_dir);
+                    self.ssh_manager = Some(Arc::new(SshSessionManager::new(socket_dir, 30)));
+                }
+                self.connect_ssh_tab(profile_index);
+                Task::none()
+            }
+        }
     }
 
     /// 根据当前 split_tree 布局，重新 resize tab 中所有 pane 的 PTY。

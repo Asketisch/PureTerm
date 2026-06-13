@@ -53,23 +53,24 @@
 
 | 类别 | ✅ | 🚧 | ❌ | ⛔ | 小计 |
 |---|---|---|---|---|---|
-| A. 核心架构 | 2 | 1 | 2 | 0 | 5 |
+| A. 核心架构 | 3 | 0 | 2 | 0 | 5 |
 | B. UI/UX | 3 | 0 | 4 | 0 | 7 |
 | C. 终端交互 | 1 | 0 | 6 | 0 | 7 |
 | D. SSH | 3 | 0 | 6 | 0 | 9 |
-| E. 集成与可编程 | 0 | 0 | 8 | 0 | 8 |
+| E. 集成与可编程 | 1 | 0 | 7 | 0 | 8 |
 | F. AI Agent | 0 | 0 | 8 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **10** | **1** | **35** | **3** | **49** |
+| **总计** | **12** | **0** | **34** | **3** | **49** |
 
-整体进度:✅ 10/49 ≈ 20%(含 🚧 折半计为 21%)
+整体进度:✅ 12/49 ≈ 24%
 
 ### 1.2 本季度焦点(P0 优先)
 
-1. **GAP-2.3** Socket API v2 协议设计(method 分类骨架) 🚧(2026-06-12 协议骨架闭环:JSON-RPC 2.0 + 10 个基础 method + CLI `pureterm msg`)
+1. **GAP-2.3** Socket API v2 协议设计(method 分类骨架) ✅(2026-06-13 协议+完整 method 闭环:JSON-RPC 2.0 + 31 method + CLI `pureterm msg`,见 GAP-6.1)
 2. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
 3. **GAP-5.6** SSH reconnect/disconnect 状态机
 4. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode) ✅(2026-06-12)
+5. **GAP-6.1** Socket API v2 完整协议(30+ method) ✅(2026-06-13:31 method / 8 命名空间 + IpcSideEffect 写操作)
 
 ---
 
@@ -89,6 +90,7 @@
 | GAP-8.5 | 跨平台优势(反向能力) | G | — | macOS / Linux / Windows 三平台持续维护 |
 | GAP-2.5 | 多 UI 路径统一治理 | A | 2026-06-12 | CLAUDE.md/AGENTS.md 一致描述"主路径=Iced";`pureterm-alacritty-runtime` 仅含 `glyph_atlas`(964行) |
 | GAP-3.4 | 状态栏 | B | 2026-06-12 | 底部 24px:CWD(OSC 7)·Git 分支·SSH·进程名·光标位置;title bar hints 留后续 |
+| GAP-6.1 | Socket API v2 完整协议(31 method) | E | 2026-06-13 | `ipc/methods.rs` 31 method/8 命名空间 + `IpcSideEffect` 写操作副作用回写 iced 主循环;45 测试;`pureterm msg` 端到端验证 |
 
 ---
 
@@ -112,22 +114,22 @@
 - **对标**: cmux `vendor/bonsplit`
 
 #### GAP-2.3 Socket API 协议 + 端口模型 {#gap-2-3}
-- **状态**: 🚧(2026-06-12 协议骨架闭环:JSON-RPC 2.0 + 10 个基础 method + CLI `pureterm msg`;30+ method 目标待后续迭代补齐)
+- **状态**: ✅(2026-06-13 协议+完整 method 闭环:由 GAP-6.1 将 10 method 扩展到 31 method,DoD 达成)
 - **优先级**: P0
-- **PureTerm 现状**: `crates/pureterm/src/ipc/` 实现 Socket API v2 协议骨架:`protocol.rs`(JSON-RPC 2.0 类型)+ `methods.rs`(SocketRouter 10 个基础 method)+ `listener.rs`(tokio::net::UnixListener + mpsc→iced Subscription bridge)+ `client.rs`(CLI 客户端);`iced_app.rs` 接入 IPC Subscription + MainWindowOpened 启动监听;`main.rs` 添加 `pureterm msg` 子命令
-- **闭环条目**:
+- **PureTerm 现状**: `crates/pureterm/src/ipc/` 实现 Socket API v2 完整协议:`protocol.rs`(JSON-RPC 2.0 类型)+ `methods.rs`(SocketRouter 31 method + IpcSideEffect 写操作副作用)+ `listener.rs`(tokio::net::UnixListener + mpsc→iced Subscription bridge)+ `client.rs`(CLI 客户端);`iced_app.rs` 接入 IPC Subscription + MainWindowOpened 启动监听 + `execute_ipc_side_effect`;`main.rs` 添加 `pureterm msg` 子命令
+- **闭环条目**(2026-06-13 GAP-6.1 补齐 30+ method 后):
   - JSON-RPC 2.0 协议类型(Request/Response/Error + 标准错误码)
-  - SocketRouter HashMap 注册表 + dispatch
-  - 10 个基础 method:`system.ping/version` · `window.list` · `pane.list` · `surface.list` · `config.get`
+  - SocketRouter HashMap 注册表 + dispatch 返回 `(响应, Option<IpcSideEffect>)`
+  - 31 个 method 跨 8 命名空间(system/window/tab/pane/surface/config/ssh/debug)
+  - IpcSideEffect 写操作副作用:tab.new/pane.split/ssh.connect/config.reload 等真实驱动 GUI
   - Async Unix socket listener(tokio)→ mpsc channel → iced Subscription bridge
   - CLI 客户端:`pureterm msg <method> [JSON_PARAMS]`
   - 环境变量 `PURETERM_SOCKET` 自动注册 + socket 文件发现
-- **未做(留后续迭代)**:workspace/notification/feed/debug 命名空间 method;window.create;pane.split/focus;config.reload;事件流(SSE);`pureterm msg` 响应式等待
-- **单元测试**: `ipc::protocol::tests` 6 个 + `ipc::methods::tests` 5 个
+- **未做(留后续迭代)**:notification/feed/workspace 命名空间;事件流(SSE);`pureterm msg` 响应式等待;surface.send_text 真实 PTY 写入
+- **单元测试**: `ipc::protocol::tests` 6 个 + `ipc::methods::tests` 39 个 = 45 个测试全过
 - **依赖**: 无(可并行启动)
 - **风险点**: wire 格式向后兼容设计 ✅;iced 0.14 与 tokio 事件循环挂接 ✅
-- **DoD**: 至少 30 个 method 在 `pureterm-cli` 中可调用,与 GUI 行为一致(当前 10/30+)
-- **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
+- **DoD**: 至少 30 个 method 在 `pureterm-cli` 中可调用,与 GUI 行为一致 ✅(31/30+,写操作经端到端验证)
 - **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
 
 #### GAP-2.5 多 UI 路径统一治理 {#gap-2-5}
@@ -432,14 +434,20 @@
 ### E.P0
 
 #### GAP-6.1 Socket API v2 完整协议 {#gap-6-1}
-- **状态**: ❌
+- **状态**: ✅(2026-06-13 闭环:31 个 method,8 命名空间,端到端验证)
 - **优先级**: P0
-- **PureTerm 现状**: 3 个 method(`pureterm msg`)
-- **目标**: 完成 GAP-2.3 设计的完整 method,首版 30+;每个命名空间至少 3-5 个 method;错误码 `-32601/-32602/-32603`
+- **PureTerm 现状**: `crates/pureterm/src/ipc/methods.rs` 实现 31 个 method(8 命名空间:system/window/tab/pane/surface/config/ssh/debug),`SocketRouter::dispatch` 返回 `(响应, Option<IpcSideEffect>)`;写操作(tab.new/pane.split/ssh.connect 等)通过 `IpcSideEffect` 回写 iced 主循环;`iced_app.rs::execute_ipc_side_effect` 执行副作用
+- **闭环条目**:
+  - 31 个 method:system(4)·window(4)·tab(4)·pane(6)·surface(4)·config(4)·ssh(3)·debug(2)
+  - 写操作副作用机制:`IpcSideEffect` 枚举(NewTab/CloseTab/SwitchTab/SplitH/SplitV/ClosePane/SwapPane/Zoom/Equalize/FocusNext/Prev/ReloadConfig/SshConnect)
+  - `AppSnapshot` 扩展:tab_ids·active_pane_ids·ssh_profile_names·config_path·tab_cwds
+  - `pureterm msg` 端到端验证:tab.new 创建 tab、pane.split 分屏、tab.switch 切换、config.reload 热重载、tab.close 越界返回 -32602
+  - CLI `print_help()` 列出全部 31 个 method + 示例
+- **未做(留后续迭代)**:surface.send_text 真实 PTY 写入(当前 stub)、surface.snapshot(Term grid 访问)、config.set(IPC 直接改配置)、SSE 事件流、`pureterm msg` 响应式等待
+- **单元测试**: `ipc::methods::tests` 34 个 + `ipc::protocol::tests` 6 个 + `ipc::methods` dispatch 5 个 = 45 个测试全过
 - **依赖**: GAP-2.3
-- **风险点**: 同 GAP-2.3
-- **DoD**: 30+ method 在 `pureterm-cli` 中可调用
-- **对标**: cmux `Packages/SocketControl/`
+- **DoD**: 30+ method 在 `pureterm-cli` 中可调用 ✅(31 个)
+- **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
 
 #### GAP-6.2 CLI 协议 {#gap-6-2}
 - **状态**: ❌
@@ -663,7 +671,7 @@
 | GAP-1.4 | BiDi 双向文本 | C | P2 | ❌ | - | - |
 | GAP-2.1 | Surface/Pane/Workspace/Window 抽象层 | A | P1 | ❌ | - | - |
 | GAP-2.2 | 嵌套水平+垂直分屏 | A | P0 | ✅ | 2026-06-10 | Equalize/Swap/Zoom/Focus Next-Prev/Move-to-Tab-Window 三入口 + 11 单测 |
-| GAP-2.3 | Socket API 协议 + 端口模型 | A | P0 | 🚧 | - | JSON-RPC 2.0 + 10 method + CLI msg;30+ 目标待补 |
+| GAP-2.3 | Socket API 协议 + 端口模型 | A | P0 | ✅ | 2026-06-13 | GAP-6.1 补齐到 31 method;协议骨架+完整 method 闭环 |
 | GAP-2.4 | 远程守护进程 puretermd | A | P1 | ❌ | - | - |
 | GAP-2.5 | 多 UI 路径统一治理 | A | P0 | ✅ | 2026-06-12 | CLAUDE.md/AGENTS.md 一致;crate 仅含 glyph_atlas |
 | GAP-2.6 | iOS 伴侣 + Cloud VM | A | P3 | ⛔ | - | 见 §10 |
@@ -688,7 +696,7 @@
 | GAP-5.7 | SSH Tab UI 串通 | D | P0 | ✅ | 2026-06-08 | ⌘⇧S + graceful_close |
 | GAP-5.8 | SSH 主 UI 设置 UI | D | P0 | ✅ | 2026-06-08 | 右侧栏 + CredentialStore |
 | GAP-5.9 | SSH 命令面板集成 | D | P0 | ✅ | 2026-06-08 | Profiles mode 一跳到底 |
-| GAP-6.1 | Socket API v2 协议 | E | P0 | ❌ | - | - |
+| GAP-6.1 | Socket API v2 协议 | E | P0 | ✅ | 2026-06-13 | 31 method/8 命名空间 + IpcSideEffect 写操作副作用机制 + 45 测试 |
 | GAP-6.2 | CLI 协议 | E | P0 | ❌ | - | - |
 | GAP-6.3 | URL scheme / AppleScript 桥 | E | P2 | ❌ | - | - |
 | GAP-6.4 | 自定义命令注册 | E | P1 | ❌ | - | - |

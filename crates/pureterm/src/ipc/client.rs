@@ -60,20 +60,69 @@ pub fn send_rpc(method: &str, params: Option<serde_json::Value>, socket_override
 
 /// Print help text for the `pureterm msg` command.
 pub fn print_help() {
-    eprintln!("Usage: pureterm msg <method> [JSON_PARAMS]");
-    eprintln!();
-    eprintln!("Send a JSON-RPC request to a running PureTerm instance.");
-    eprintln!();
-    eprintln!("Built-in methods:");
-    eprintln!("  system.ping            Health check");
-    eprintln!("  system.version         Show version");
-    eprintln!("  window.list            List open windows");
-    eprintln!("  pane.list              List all panes");
-    eprintln!("  surface.list           List all surfaces");
-    eprintln!("  config.get             Get config values");
-    eprintln!();
-    eprintln!("Examples:");
-    eprintln!("  pureterm msg system.ping");
-    eprintln!("  pureterm msg system.version");
-    eprintln!("  pureterm msg pane.list");
+    // Printed as a raw string (no format args) so JSON example braces
+    // are not interpreted as format placeholders.
+    let help = "\
+Usage: pureterm msg <method> [JSON_PARAMS]
+
+Send a JSON-RPC request to a running PureTerm instance.
+GAP-6.1: 30+ methods across 8 namespaces.
+
+system.*
+  system.ping                      Health check
+  system.version                   Show version
+  system.info                      OS / version / tab & pane counts
+  system.methods                   List all available methods
+
+window.*
+  window.list                      List open windows
+  window.create                    Create new tab (single-window mode)
+  window.close                     Close active tab
+  window.focus                     Focus window
+
+tab.*
+  tab.list                         List tabs with id/title/panes
+  tab.new                          Create a new tab
+  tab.close [{\"index\":N}]           Close a tab by index
+  tab.switch {\"index\":N}            Switch to a tab by index
+
+pane.*
+  pane.list                        List all panes
+  pane.split {\"direction\":\"v|h\"}    Split active pane
+  pane.close                       Close active pane
+  pane.focus {\"direction\":\"next|prev\"}
+  pane.swap                        Swap pane with sibling
+  pane.zoom                        Toggle pane zoom
+
+surface.*
+  surface.list                     List surfaces (PTY instances)
+  surface.send_text {\"text\":\"...\"}  Send text to a surface
+  surface.resize                   (note: use pane.split)
+  surface.snapshot                 (not yet implemented)
+
+config.*
+  config.get [{\"key\":\"...\"}]         Get config key(s)
+  config.list                      List known config keys
+  config.reload                    Reload config from disk
+  config.set                       (use settings UI instead)
+
+ssh.*
+  ssh.list_profiles                List configured SSH profiles
+  ssh.connect {\"index\":N}           Connect to a profile
+  ssh.disconnect                   (close the SSH tab)
+
+debug.*
+  debug.ping                       Debug health check
+  debug.dump_state                 Dump app state summary
+
+Examples:
+  pureterm msg system.ping
+  pureterm msg system.methods
+  pureterm msg tab.new
+  pureterm msg tab.switch '{\"index\":1}'
+  pureterm msg pane.split '{\"direction\":\"horizontal\"}'
+  pureterm msg ssh.list_profiles
+  pureterm msg ssh.connect '{\"index\":0}'
+";
+    eprint!("{help}");
 }
