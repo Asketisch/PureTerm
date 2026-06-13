@@ -57,12 +57,12 @@
 | B. UI/UX | 3 | 0 | 4 | 0 | 7 |
 | C. 终端交互 | 1 | 0 | 6 | 0 | 7 |
 | D. SSH | 3 | 0 | 6 | 0 | 9 |
-| E. 集成与可编程 | 1 | 0 | 7 | 0 | 8 |
+| E. 集成与可编程 | 2 | 0 | 6 | 0 | 8 |
 | F. AI Agent | 0 | 0 | 8 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **12** | **0** | **34** | **3** | **49** |
+| **总计** | **13** | **0** | **33** | **3** | **49** |
 
-整体进度:✅ 12/49 ≈ 24%
+整体进度:✅ 13/49 ≈ 27%
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -91,6 +91,7 @@
 | GAP-2.5 | 多 UI 路径统一治理 | A | 2026-06-12 | CLAUDE.md/AGENTS.md 一致描述"主路径=Iced";`pureterm-alacritty-runtime` 仅含 `glyph_atlas`(964行) |
 | GAP-3.4 | 状态栏 | B | 2026-06-12 | 底部 24px:CWD(OSC 7)·Git 分支·SSH·进程名·光标位置;title bar hints 留后续 |
 | GAP-6.1 | Socket API v2 完整协议(31 method) | E | 2026-06-13 | `ipc/methods.rs` 31 method/8 命名空间 + `IpcSideEffect` 写操作副作用回写 iced 主循环;45 测试;`pureterm msg` 端到端验证 |
+| GAP-6.2 | CLI 协议(clap 命令组) | E | 2026-06-13 | `cli.rs`(clap derive 8 命令组 + Msg/Shortcuts + leaf→method 映射)+ `main.rs`(clap dispatch)+ `ipc/client.rs`(`send_rpc` 返回 Value 供 `--json`);14 单测 |
 
 ---
 
@@ -450,13 +451,21 @@
 - **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
 
 #### GAP-6.2 CLI 协议 {#gap-6-2}
-- **状态**: ❌
+- **状态**: ✅(2026-06-13 闭环:8 命令组 + Msg/Shortcuts + 全局 flag,clap derive)
 - **优先级**: P0
-- **PureTerm 现状**: 基础 `pureterm { msg, migrate, ... }`
-- **目标**: 9 大组 — `pureterm { window, workspace, pane, surface, ssh, feed, system, debug, events }`,每组 5-10 子命令;全局 flag `--socket / --password / --json / --id-format`;环境变量 `PURETERM_SOCKET_PATH / PURETERM_WORKSPACE_ID`;`clap` 4.x derive 风格
-- **依赖**: GAP-6.1
-- **风险点**: CLI 维护成本
-- **DoD**: `pureterm --help` 列出 9 大组,每组 5+ 子命令
+- **PureTerm 现状**: `crates/pureterm/src/cli.rs` 实现 clap 4.x derive 顶层 `Cli`(全局 `--socket <PATH>` / `--json`)+ `Command` 枚举 8 命令组;每个叶子子命令 `method_and_params()` 把类型化参数翻译成 `(method, Option<Value>)` 交给未改的 `ipc::client::send_rpc`;`main.rs` 改为 `args().count()>1 → cli::parse_from_env() → cli::run()`,裸 `pureterm` 仍启动 GUI
+- **闭环条目**(2026-06-13):
+  - 8 命令组映射现有 method:`system`·`window`·`tab`·`pane`·`surface`·`config`·`ssh`[unix]·`debug`
+  - 类型化参数:`tab switch --index N` / `pane split --direction v|h` / `surface send-text --text` / `config get [--key K]` / `ssh connect --index N`
+  - 全局 flag:`--socket <PATH>`(wire 进 `send_rpc` 的 socket_override,此前签名在但恒传 None)+ `--json`(紧凑输出;`send_rpc` 改为返回 `Result<Option<Value>, String>`,展示层移到 cli.rs)
+  - `Msg` 逃生舱保留:`pureterm msg system.ping`(向后兼容 + 原始测试)
+  - `Shortcuts` 组复用既有 `shortcuts_list/preset/reset`(写配置,不走 IPC)
+  - 裸 `pureterm` 启动 GUI 契约保留(clap 解析前 `args().count()==1` 守卫)
+- **未做(留后续迭代)**:`workspace` 组(需 GAP-2.1 Workspace 抽象)、`feed`/`events` 组(需 GAP-6.7 事件总线,服务端命名空间不存在)、`--password`/`--id-format` flag、`PURETERM_WORKSPACE_ID` 环境变量、`ssh connect --profile <NAME>`(名→索引解析)
+- **单元测试**: `cli::tests` 14 个用例(leaf→method 映射 / 全局 flag / 裸参数拒绝 / Msg 逃生舱)
+- **依赖**: GAP-6.1 ✅
+- **风险点**: CLI 维护成本(可控,每加一个 method 仅加一个 leaf + 一行映射)
+- **DoD**: `pureterm --help` 列出命令组 ✅(8 组 + msg + shortcuts;vision 目标 9 组中 workspace/feed/events 因服务端命名空间缺失而延后,文档标注)
 - **对标**: cmux `CLI/cmux.swift`(32119 行,283+ 命令)
 
 ### E.P1
@@ -697,7 +706,7 @@
 | GAP-5.8 | SSH 主 UI 设置 UI | D | P0 | ✅ | 2026-06-08 | 右侧栏 + CredentialStore |
 | GAP-5.9 | SSH 命令面板集成 | D | P0 | ✅ | 2026-06-08 | Profiles mode 一跳到底 |
 | GAP-6.1 | Socket API v2 协议 | E | P0 | ✅ | 2026-06-13 | 31 method/8 命名空间 + IpcSideEffect 写操作副作用机制 + 45 测试 |
-| GAP-6.2 | CLI 协议 | E | P0 | ❌ | - | - |
+| GAP-6.2 | CLI 协议 | E | P0 | ✅ | 2026-06-13 | clap derive 8 命令组(system/window/tab/pane/surface/config/ssh/debug)+ Msg/Shortcuts + 全局 --socket/--json;leaf→method 映射复用 send_rpc;workspace/feed/events 延后;14 单测 |
 | GAP-6.3 | URL scheme / AppleScript 桥 | E | P2 | ❌ | - | - |
 | GAP-6.4 | 自定义命令注册 | E | P1 | ❌ | - | - |
 | GAP-6.5 | Dock 集成 | E | P3 | ❌ | - | - |

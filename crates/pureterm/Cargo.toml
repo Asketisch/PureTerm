@@ -27,6 +27,8 @@ alacritty_config_derive = { path = "../alacritty_config_derive" }
 alacritty_config = { path = "../alacritty_config" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# GAP-6.2: structured CLI command groups (clap derive, mirroring pureterm-settings).
+clap = { version = "4", features = ["derive"] }
 toml = "0.9"
 # PureTerm: format-preserving TOML writer; the main process now reuses
 # `pureterm_settings::config_io::mutate_config` to persist SSH profiles

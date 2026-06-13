@@ -1,4 +1,5 @@
 mod app_config;
+mod cli;
 mod config_watcher;
 mod iced_app;
 mod ime_widget;
@@ -19,11 +20,10 @@ mod vi_mode_handler;
 fn main() -> iced::Result {
     env_logger::init();
 
-    // GAP-3.7: Simple CLI dispatch before launching GUI.
-    // Supports: pureterm shortcuts {list|preset NAME|reset}
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 {
-        handle_cli(&args[1..]);
+    // GAP-6.2: structured CLI command groups (clap derive). Bare `pureterm`
+    // (no args) launches the GUI; any argument dispatches to the CLI.
+    if std::env::args().count() > 1 {
+        cli::run(cli::parse_from_env());
         std::process::exit(0);
     }
 
@@ -31,63 +31,9 @@ fn main() -> iced::Result {
     iced_app::run()
 }
 
-// ── CLI entry point ─────────────────────────────────────────────────────
+// ── Keyboard shortcut helpers (invoked from cli.rs Shortcuts group) ───────
 
-fn handle_cli(args: &[String]) {
-    match args.first().map(|s| s.as_str()) {
-        Some("shortcuts") => shortcuts_cli(&args[1..]),
-        Some("msg") => msg_cli(&args[1..]),
-        _ => {
-            eprintln!("PureTerm - GPU-accelerated terminal emulator");
-            eprintln!();
-            eprintln!("Usage: pureterm [COMMAND]");
-            eprintln!();
-            eprintln!("Commands:");
-            eprintln!("  msg <method> [JSON_PARAMS]  Send IPC command to running instance");
-            eprintln!("  shortcuts list              List current key bindings");
-            eprintln!("  shortcuts preset <NAME>     Apply a preset (default|vim|tmux|iterm|vscode|agent-triage)");
-            eprintln!("  shortcuts reset             Reset to factory defaults");
-        }
-    }
-}
-
-fn msg_cli(args: &[String]) {
-    let method = match args.first().map(|s| s.as_str()) {
-        Some(m) => m,
-        None => {
-            ipc::client::print_help();
-            std::process::exit(1);
-        }
-    };
-
-    // Optional JSON params as second argument.
-    let params = args.get(1).and_then(|s| serde_json::from_str(s).ok());
-
-    if let Err(e) = ipc::client::send_rpc(method, params, None) {
-        eprintln!("{e}");
-        std::process::exit(1);
-    }
-}
-
-fn shortcuts_cli(args: &[String]) {
-    match args.first().map(|s| s.as_str()) {
-        Some("list") => shortcuts_list(),
-        Some("preset") => {
-            let name = args.get(1).map(|s| s.as_str()).unwrap_or_else(|| {
-                eprintln!("Usage: pureterm shortcuts preset <NAME>");
-                eprintln!("Available: default, vim, tmux, iterm, vscode, agent-triage");
-                std::process::exit(1);
-            });
-            shortcuts_preset(name);
-        }
-        Some("reset") => shortcuts_reset(),
-        _ => {
-            eprintln!("Usage: pureterm shortcuts <list|preset NAME|reset>");
-        }
-    }
-}
-
-fn shortcuts_list() {
+pub(crate) fn shortcuts_list() {
     use iced::keyboard::Modifiers;
 
     let km = keymap::Keymap::from_defaults();
@@ -99,7 +45,7 @@ fn shortcuts_list() {
     }
 }
 
-fn shortcuts_preset(name: &str) {
+pub(crate) fn shortcuts_preset(name: &str) {
     let content = match name {
         "default" => include_str!("../../../resources/presets/default.toml").to_string(),
         "vim" => include_str!("../../../resources/presets/vim.toml").to_string(),
@@ -121,7 +67,7 @@ fn shortcuts_preset(name: &str) {
     eprintln!("If PureTerm is running, keybindings will reload automatically.");
 }
 
-fn shortcuts_reset() {
+pub(crate) fn shortcuts_reset() {
     let config_path = app_config::AppConfig::config_path();
     write_keybindings_to_config(&config_path, "");
     eprintln!("Reset keybindings to defaults in {}", config_path.display());

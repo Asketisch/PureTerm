@@ -3737,6 +3737,7 @@ dependencies = [
  "arboard",
  "argon2",
  "bytemuck",
+ "clap",
  "crossbeam-channel",
  "crossfont",
  "dirs",

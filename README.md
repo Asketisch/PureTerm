@@ -28,7 +28,7 @@
 - **独立设置 UI 进程** — Iced 0.14 daemon,`Cmd+,` 启动,6 个分类页面
 - **命令面板** — `⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,Actions / Profiles 双模式
 - **快捷键自定义** — TOML 配置驱动 + 6 套预设模板(vim/tmux/iterm/vscode/agent-triage) + CLI `pureterm shortcuts` + 热重载(2026-06-12 GAP-3.7 闭环)
-- **Socket API v2** — JSON-RPC 2.0 over Unix socket,31 个 method 跨 8 命名空间,`pureterm msg` CLI 程序化控制含写操作(tab/pane/ssh/config)(2026-06-13 GAP-6.1)
+- **Socket API v2** — JSON-RPC 2.0 over Unix socket,31 个 method 跨 8 命名空间;结构化 CLI `pureterm <group> <sub>`(GAP-6.2)+ 原始 `pureterm msg` 逃生舱,含写操作(tab/pane/ssh/config)(2026-06-13 GAP-6.1/6.2)
 - **状态栏** — 底部 24px,显示 CWD / Git 分支 / SSH / 进程名 / 光标位置(2026-06-12 GAP-3.4)
 - **Vi Copy Mode** — `Ctrl+Shift+Space` 进入,hjkl 导航,v/V/Ctrl+v 选区,y 复制,/ 搜索(2026-06-12 GAP-4.1)
 - **配置热重载** — 改 `alacritty.toml` 自动应用,无需重启
@@ -56,7 +56,8 @@ cargo build --release
 
 **CLI 命令**:
 ```bash
-pureterm msg system.version     # 程序化控制(需要运行实例)
+pureterm system version         # 程序化控制(需要运行实例,GAP-6.2 命令组)
+pureterm tab new                # 创建标签;pureterm --help 列出 8 个命令组
 pureterm shortcuts list         # 查看快捷键
 pureterm shortcuts preset vim   # 切换预设
 ```
@@ -142,8 +143,8 @@ PureTerm 由 6 个 crate 组成的工作区:
   - `ssh.*`(3):list_profiles / connect / disconnect
   - `debug.*`(2):ping / dump_state
 - **写操作副作用机制**:`IpcSideEffect` 枚举 — 写 method(tab.new / pane.split / ssh.connect / config.reload 等)通过副作用回写 iced 主循环,真实驱动 UI 状态变更
-- **CLI 客户端**:`pureterm msg <method> [JSON_PARAMS]`
-- **自动发现**:`$PURETERM_SOCKET` 环境变量 + 文件系统扫描
+- **CLI 客户端**:结构化命令组 `pureterm <group> <subcommand> [flags]`(2026-06-13 GAP-6.2),原始逃生舱 `pureterm msg <method> [JSON_PARAMS]`
+- **自动发现**:`$PURETERM_SOCKET` 环境变量 + 文件系统扫描;CLI 全局 flag `--socket <PATH>` 覆盖 / `--json` 紧凑输出
 - **架构**:`crates/pureterm/src/ipc/`(protocol / methods / listener / client) — tokio 异步监听 → mpsc channel → iced Subscription bridge → `dispatch` 返回 `(响应, Option<IpcSideEffect>)`
 - **测试**:45 个单元测试全过
 
@@ -259,35 +260,35 @@ action = "ToggleZoom"
 
 GPU 渲染:青色 vi 光标 + 搜索匹配 amber 高亮。
 
-### Socket API(GAP-6.1)
+### Socket API(GAP-6.1 + GAP-6.2)
 
-PureTerm 运行时自动创建 Unix domain socket,可通过 CLI 程序化控制(31 个 method,含写操作):
+PureTerm 运行时自动创建 Unix domain socket,可通过 CLI 程序化控制(31 个 method,含写操作)。GAP-6.2 提供 8 个结构化命令组(类型化参数,无需手写 JSON);`msg` 是原始 JSON-RPC 逃生舱:
 
 ```bash
-# 查看版本 / 心跳
+# 结构化命令组(GAP-6.2,推荐)— pureterm --help 列出全部
+pureterm system version                       # 查看版本
+pureterm system ping                          # 心跳
+pureterm tab list                             # 列出标签
+pureterm tab new                              # 创建新标签
+pureterm tab switch --index 1                 # 切换到标签 1
+pureterm pane split --direction h             # 水平分屏(v|h)
+pureterm pane zoom                            # 切换 pane 缩放
+pureterm pane focus --direction next
+pureterm config reload                        # 热重载配置
+pureterm ssh list-profiles                    # 列出 SSH Profile(unix)
+pureterm system methods                       # 列出所有可用 method
+
+# 全局 flag
+pureterm --json tab list                      # 紧凑 JSON 输出
+pureterm --socket /tmp/x.sock system ping     # 显式指定 socket
+
+# 原始 JSON-RPC 逃生舱(GAP-6.1,任意 method)
 pureterm msg system.version
-pureterm msg system.ping
-
-# 列出所有窗口/标签/面板/表面
-pureterm msg window.list
-pureterm msg tab.list
-pureterm msg pane.list
-pureterm msg surface.list
-
-# 写操作 — 真实驱动 GUI 状态(通过 IpcSideEffect 回写 iced 主循环)
-pureterm msg tab.new                          # 创建新标签
-pureterm msg tab.switch '{"index":1}'         # 切换到标签 1
-pureterm msg pane.split '{"direction":"horizontal"}'  # 水平分屏
-pureterm msg pane.zoom                        # 切换 pane 缩放
-pureterm msg pane.focus '{"direction":"next"}'
-pureterm msg config.reload                    # 热重载配置
-pureterm msg ssh.list_profiles                # 列出 SSH Profile
-
-# 列出所有可用 method
-pureterm msg system.methods
+pureterm msg tab.switch '{"index":1}'
+pureterm msg pane.split '{"direction":"horizontal"}'
 
 # 错误处理(越界索引 → -32602 参数错误)
-pureterm msg tab.close '{"index":99}'
+pureterm tab switch --index 99
 # → Error (-32602): Index 99 out of range (0..2)
 
 # 错误处理(未知 method)
@@ -295,7 +296,45 @@ pureterm msg foo.bar
 # → Error (-32601): Method not found: foo.bar
 ```
 
-完整 method 列表运行 `pureterm msg`(无参数)查看帮助。环境变量 `$PURETERM_SOCKET` 自动注册,CLI 客户端会自动发现 socket。
+完整命令组运行 `pureterm --help`(列出 8 组 + msg + shortcuts),某组的子命令运行 `pureterm <group> --help`,全部 method 列表运行 `pureterm system methods`。环境变量 `$PURETERM_SOCKET` 自动注册,CLI 客户端会自动发现 socket;也可用 `--socket <PATH>` 覆盖。
+
+### 测试 GAP-6.2 CLI
+
+```bash
+# 1. 构建
+cargo build --release
+
+# 2. 无需 GUI 的纯 CLI 校验(help / 错误处理)
+./target/release/pureterm --help               # 列出 8 命令组 + msg + shortcuts
+./target/release/pureterm tab --help           # 列出 tab 子命令
+./target/release/pureterm system --help
+./target/release/pureterm bogus                # → clap 报错 exit 2(未知子命令)
+
+# 3. 端到端(需要运行实例):开两个终端
+#    终端 A:启动 GUI
+./target/release/pureterm &
+#    终端 B:发命令,观察终端 A 的窗口实时变化
+./target/release/pureterm system ping          # → {"status":"ok"}
+./target/release/pureterm system info          # → 版本/OS/tab/pane 计数
+./target/release/pureterm system methods       # → 31 个 method 列表
+./target/release/pureterm tab new              # → 终端 A 出现新标签
+./target/release/pureterm tab list             # → JSON 标签列表
+./target/release/pureterm tab switch --index 1 # → 终端 A 切到标签 1
+./target/release/pureterm pane split --direction h   # → 水平分屏
+./target/release/pureterm pane zoom            # → 切换 pane 缩放
+./target/release/pureterm pane focus --direction next
+./target/release/pureterm config reload        # → 热重载配置
+./target/release/pureterm --json tab list      # → 紧凑 JSON(对比 pretty)
+./target/release/pureterm ssh list-profiles    # → 已配置的 SSH Profile(unix)
+
+# 4. 单元测试(leaf→method 映射 / 全局 flag / 裸参数守卫 / Msg 逃生舱)
+cargo test -p pureterm cli::
+
+# 5. 全量回归(确保 send_rpc 改签名未破坏既有功能)
+cargo test -p pureterm
+```
+
+写操作(tab.new / pane.split / config.reload 等)经 `IpcSideEffect` 回写 iced 主循环,所以**终端 A 的 GUI 会实时变化** —— 这是验证写路径成功的直观方式。`msg` 是原始 JSON-RPC 逃生舱,与命令组走同一 socket,可用于任意 method。
 
 ---
 
