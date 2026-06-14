@@ -156,6 +156,26 @@ PureTerm 由 6 个 crate 组成的工作区:
 - **架构**:`crates/pureterm/src/ipc/`(protocol / methods / listener / client) — tokio 异步监听 → mpsc channel → iced Subscription bridge → `dispatch` 返回 `(响应, Option<IpcSideEffect>)`
 - **测试**:45 个单元测试全过
 
+### 自定义命令(2026-06-15 GAP-6.4)
+- 在 `pureterm.toml` 声明 `[[commands]]`,把常用 shell 片段(deploy / make test / ssh 跳板)做成「绑快捷键 + ⌘⇧P 可搜 + 一键触发」的命令
+- **执行模型**:触发时把 `command + 回车` 写进**当前 pane 的 PTY**,在 pane 的 shell/CWD 执行、输出可见(类似 iTerm2 snippets / tmux send-keys);不引入新进程管理,快捷键与命令面板共用同一 `dispatch_action`
+- 配置示例:
+  ```toml
+  [[commands]]
+  id = "deploy.staging"
+  title = "Deploy to Staging"
+  key = "Cmd+Shift+D"          # 可选;不写则仅面板可搜
+  command = "ssh staging 'cd app && ./deploy.sh'"
+
+  [[commands]]
+  id = "make.test"
+  title = "Run Tests"
+  command = "make test"
+  ```
+- **键修饰符**:`+` 和 `|` 都接受(`Cmd+Shift+D` 或 `Command|Shift|D`);也可拆成 `key = "D"` + `mods = "Command|Shift"`。shift + 字母会自动注册 macOS 双形态(小写+shift / 大写无 shift),非 shift 字母归一为小写
+- **热重载**:存盘即生效(`apply_config_reload` 重新加载 + 重新注册绑定)
+- 实现:`crates/pureterm/src/keymap.rs`(`CustomCommand` + `Action::CustomCommand` + `split_mods_and_key` + `register_custom_commands`)+ `app_config.rs`(`load_custom_commands`)+ `iced_app.rs`(dispatch + 面板);13 单测
+
 ### 状态栏
 - 底部 24px 状态栏(2026-06-12 GAP-3.4 闭环)
 - 显示:工作目录(OSC 7) · Git 分支(30s 轮询) · SSH 连接指示 · 前台进程名 · 光标位置(row:col)

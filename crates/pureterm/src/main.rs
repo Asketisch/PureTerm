@@ -172,6 +172,9 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::ToggleFullscreen => "Fullscreen".into(),
         keymap::Action::SpawnNewInstance => "New Instance".into(),
         keymap::Action::ToggleViMode => "Toggle Vi/Copy Mode".into(),
+        // GAP-6.4: user-defined commands aren't part of the preset set,
+        // but the match must be exhaustive for the `shortcuts` CLI.
+        keymap::Action::CustomCommand(id) => format!("Custom: {id}"),
     }
 }
 

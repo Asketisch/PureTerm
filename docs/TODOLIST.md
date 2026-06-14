@@ -56,19 +56,19 @@
 | A. 核心架构 | 3 | 0 | 2 | 0 | 5 |
 | B. UI/UX | 3 | 0 | 4 | 0 | 7 |
 | C. 终端交互 | 1 | 0 | 6 | 0 | 7 |
-| D. SSH | 3 | 0 | 6 | 0 | 9 |
-| E. 集成与可编程 | 2 | 0 | 6 | 0 | 8 |
+| D. SSH | 3 | 1 | 5 | 0 | 9 |
+| E. 集成与可编程 | 3 | 0 | 5 | 0 | 8 |
 | F. AI Agent | 0 | 0 | 8 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **13** | **0** | **33** | **3** | **49** |
+| **总计** | **14** | **1** | **31** | **3** | **49** |
 
-整体进度:✅ 13/49 ≈ 27%
+整体进度:✅ 14/49 ≈ 29% · 🚧 1
 
 ### 1.2 本季度焦点(P0 优先)
 
 1. **GAP-2.3** Socket API v2 协议设计(method 分类骨架) ✅(2026-06-13 协议+完整 method 闭环:JSON-RPC 2.0 + 31 method + CLI `pureterm msg`,见 GAP-6.1)
 2. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
-3. **GAP-5.6** SSH reconnect/disconnect 状态机
+3. **GAP-5.6** SSH reconnect/disconnect 状态机 🚧(2026-06-14 进程内子集闭环:状态机 + 指数退避 + UI + ssh.disconnect 真实落地;daemon 化留 GAP-5.1)
 4. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode) ✅(2026-06-12)
 5. **GAP-6.1** Socket API v2 完整协议(30+ method) ✅(2026-06-13:31 method / 8 命名空间 + IpcSideEffect 写操作)
 
@@ -92,6 +92,7 @@
 | GAP-3.4 | 状态栏 | B | 2026-06-12 | 底部 24px:CWD(OSC 7)·Git 分支·SSH·进程名·光标位置;title bar hints 留后续 |
 | GAP-6.1 | Socket API v2 完整协议(31 method) | E | 2026-06-13 | `ipc/methods.rs` 31 method/8 命名空间 + `IpcSideEffect` 写操作副作用回写 iced 主循环;45 测试;`pureterm msg` 端到端验证 |
 | GAP-6.2 | CLI 协议(clap 命令组) | E | 2026-06-13 | `cli.rs`(clap derive 8 命令组 + Msg/Shortcuts + leaf→method 映射)+ `main.rs`(clap dispatch)+ `ipc/client.rs`(`send_rpc` 返回 Value 供 `--json`);14 单测 |
+| GAP-6.4 | 自定义命令注册([[commands]]) | E | 2026-06-15 | `keymap.rs`(`CustomCommand` + `Action::CustomCommand` + `split_mods_and_key` +/- 分隔 + `register_custom_commands` macOS shift 字母双形态)+ `app_config.rs`(`load_custom_commands` 容错+id 去重)+ `iced_app.rs`(字段 + `dispatch_action` 写 PTY + `CommandEntry::Custom` 面板);触发=写 `command+\r` 进当前 pane PTY;13 单测 |
 
 ---
 
@@ -100,48 +101,25 @@
 ### A.P0
 
 #### GAP-2.2 嵌套水平+垂直分屏(bonsplit) {#gap-2-2}
-- **状态**: ✅(2026-06-10 闭环)
+- **状态**: ✅(2026-06-10 闭环)— 详见 [README §已实现特性 → 标签与分屏](../README.md#已实现特性)
 - **优先级**: P0
-- **PureTerm 现状**: `crates/pureterm/src/split_tree.rs` 实现 `SplitNode { Leaf | Split { direction, ratio, first, second } }`,水平/垂直递归嵌套 + 拖拽,`MIN_RATIO=0.1 / MAX_RATIO=0.9`
-- **闭环条目**:
-  - Equalize Splits(`⌘=` 一键等分,递归 `equalize_all`;2026-06-11 由 `⌘⇧E` 调整,避开 macOS 输入法切换冲突)
-  - Swap Panes(`⌘⇧X` 交换 first/second,翻转 ratio 不跳)
-  - Zoom Pane(`⌘⇧Enter` 临时最大化,`Tab.zoom_state` 保存原树)
-  - Focus Next/Prev Pane(`⌘]` / `⌘[`,DFS 先序 wrap;与现有 `⌘⌥+方向键` 几何相邻并存)
-  - Move Pane to New Tab(`⌘⇧T`)/ New Window(`⌘⇧N`)
-- **三入口**:键盘 + 右键菜单 + 命令面板(`split.*` 7 个 builtin id)
-- **单元测试**: `split_tree::tests` 11 个用例(嵌套 3 层 / wrap / swap 二次回归 / 根 Leaf 边界)
-- **未做(留作小迭代)**:`ContextMenuItem::Separator`、"Move Pane to existing Tab"
+- **留作小迭代**:`ContextMenuItem::Separator`、"Move Pane to existing Tab"
+- **单元测试**: `split_tree::tests` 11 个(嵌套 3 层 / wrap / swap 二次回归 / 根 Leaf 边界)
 - **对标**: cmux `vendor/bonsplit`
 
 #### GAP-2.3 Socket API 协议 + 端口模型 {#gap-2-3}
-- **状态**: ✅(2026-06-13 协议+完整 method 闭环:由 GAP-6.1 将 10 method 扩展到 31 method,DoD 达成)
+- **状态**: ✅(2026-06-13)— 详见 [README §已实现特性 → Socket API v2](../README.md#已实现特性)
 - **优先级**: P0
-- **PureTerm 现状**: `crates/pureterm/src/ipc/` 实现 Socket API v2 完整协议:`protocol.rs`(JSON-RPC 2.0 类型)+ `methods.rs`(SocketRouter 31 method + IpcSideEffect 写操作副作用)+ `listener.rs`(tokio::net::UnixListener + mpsc→iced Subscription bridge)+ `client.rs`(CLI 客户端);`iced_app.rs` 接入 IPC Subscription + MainWindowOpened 启动监听 + `execute_ipc_side_effect`;`main.rs` 添加 `pureterm msg` 子命令
-- **闭环条目**(2026-06-13 GAP-6.1 补齐 30+ method 后):
-  - JSON-RPC 2.0 协议类型(Request/Response/Error + 标准错误码)
-  - SocketRouter HashMap 注册表 + dispatch 返回 `(响应, Option<IpcSideEffect>)`
-  - 31 个 method 跨 8 命名空间(system/window/tab/pane/surface/config/ssh/debug)
-  - IpcSideEffect 写操作副作用:tab.new/pane.split/ssh.connect/config.reload 等真实驱动 GUI
-  - Async Unix socket listener(tokio)→ mpsc channel → iced Subscription bridge
-  - CLI 客户端:`pureterm msg <method> [JSON_PARAMS]`
-  - 环境变量 `PURETERM_SOCKET` 自动注册 + socket 文件发现
-- **未做(留后续迭代)**:notification/feed/workspace 命名空间;事件流(SSE);`pureterm msg` 响应式等待;surface.send_text 真实 PTY 写入
-- **单元测试**: `ipc::protocol::tests` 6 个 + `ipc::methods::tests` 39 个 = 45 个测试全过
-- **依赖**: 无(可并行启动)
-- **风险点**: wire 格式向后兼容设计 ✅;iced 0.14 与 tokio 事件循环挂接 ✅
-- **DoD**: 至少 30 个 method 在 `pureterm-cli` 中可调用,与 GUI 行为一致 ✅(31/30+,写操作经端到端验证)
+- **留后续迭代**:notification/feed/workspace 命名空间;事件流 SSE(见 GAP-6.7);`pureterm msg` 响应式等待;`surface.send_text` 真实 PTY 写入
+- **单元测试**: `ipc::protocol::tests` 6 + `ipc::methods::tests` 39 = 45 个
+- **DoD**: ≥30 method 在 CLI 可调用 ✅(31)
 - **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
 
 #### GAP-2.5 多 UI 路径统一治理 {#gap-2-5}
-- **状态**: ✅(2026-06-12 闭环)
+- **状态**: ✅(2026-06-12)— 详见 [README §架构](../README.md#架构)
 - **优先级**: P0
-- **PureTerm 现状**: 默认二进制 `pureterm/src/main.rs` 走 Iced 0.14;`pureterm-alacritty-runtime` 已 2026-06-08 精简为只承载 `glyph_atlas`,不再扩展
-- **目标**: 在 README / AGENTS.md 中明确"主路径 = Iced,alacritty-runtime = 字体图集库"。决策点:是否归档整个 `pureterm-alacritty-runtime` crate,将 `glyph_atlas` 直接合入 `pureterm`
-- **依赖**: 无
-- **风险点**: 归档剩余模块会破坏 vendored Alacritty 引用链
-- **DoD**: AGENTS.md 与 CLAUDE.md 描述一致,新贡献者无歧义
-- **对标**: cmux 单一 AppKit/SwiftUI 路径,无此问题
+- **DoD**: AGENTS.md 与 CLAUDE.md 描述一致,新贡献者无歧义 ✅
+- **对标**: cmux 单一 AppKit/SwiftUI 路径
 
 ### A.P1
 
@@ -177,17 +155,10 @@
 ### B.P0
 
 #### GAP-3.7 完整快捷键自定义 + 模板 {#gap-3-7}
-- **状态**: ✅(2026-06-12 闭环)
+- **状态**: ✅(2026-06-12)— 详见 [README §使用示例 → 快捷键自定义](../README.md#使用示例)
 - **优先级**: P0
-- **PureTerm 现状**: `crates/pureterm/src/keymap.rs` 实现统一 Action 枚举(30 变体) + Keymap HashMap 查找表 + TOML 解析;`iced_app.rs::handle_keyboard` 重构为 `keymap.resolve() → dispatch_action()` 三路径统一派发;6 套预设模板 `resources/presets/`;CLI `pureterm shortcuts {list|preset|reset}`;热重载通过 `apply_config_reload()` 自动生效
-- **闭环条目**:
-  - Action enum 统一键盘/命令面板/右键菜单三条派发路径
-  - TOML `[[keyboard.bindings]]` 解析 + 用户绑定覆盖默认
-  - 热重载:编辑 toml 保存后自动生效(复用 config_watcher)
-  - CLI 子命令:`pureterm shortcuts list/preset NAME/reset`
-  - 6 套预设模板:default/vim/tmux/iterm/vscode/agent-triage
-- **未做(留后续迭代)**:Chord 多键序列(数据结构已预留 `chord_bindings` HashMap + `ResolveResult::ChordPending`)
-- **单元测试**: `keymap::tests` 22 个用例
+- **留后续迭代**:Chord 多键序列(数据结构已预留 `chord_bindings` + `ResolveResult::ChordPending`)
+- **单元测试**: `keymap::tests` 22 个
 - **对标**: cmux `Sources/CmuxConfig.swift::shortcuts.bindings`
 
 ### B.P1
@@ -203,21 +174,10 @@
 - **对标**: cmux `Sources/Sidebar/`
 
 #### GAP-3.4 状态栏 {#gap-3-4}
-- **状态**: ✅(2026-06-12 闭环)
+- **状态**: ✅(2026-06-12)— 详见 [README §已实现特性 → 状态栏](../README.md#已实现特性)
 - **优先级**: P1
-- **PureTerm 现状**: 底部 24px 状态栏已实现,显示:工作目录(OSC 7)·Git 分支(30s 轮询)·SSH 指示器·前台进程名·光标位置
-- **已实现**:
-  - `STATUS_BAR_HEIGHT = 24.0` + `terminal_content_height()` 统一替换 16 处高度公式
-  - `view_bottom_bar()` 渲染方法(`crates/pureterm/src/iced_app.rs`)
-  - OSC 7 CWD 扫描器(`crates/alacritty_terminal/src/event_loop.rs::scan_osc7`)
-  - `CwdChanged` 事件传递链(`Event → TerminalEvent → iced_app`)
-  - Git 分支纯文件系统查找(`crates/pureterm/src/status_bar.rs::read_git_branch`)
-  - SSH 连接状态指示(直接读取 `TerminalContext::is_ssh()`)
-  - 前台进程名轮询(`status_bar::get_foreground_process`,child PID 从 `LocalCtx` 暴露)
-- **未做(留后续迭代)**:顶部 title bar shortcut hint pills / 菜单栏 extra badge / CPU 内存
-- **依赖**: 无
-- **风险点**: 高度计算(已解决,统一辅助函数)
-- **DoD**: 底部状态栏显示命令提示 + Git 分支 ✅;macOS 显示菜单栏图标(留后续)
+- **留后续迭代**:顶部 title bar shortcut hint pills / 菜单栏 extra badge / CPU 内存
+- **DoD**: 底部状态栏显示命令提示 + Git 分支 ✅
 - **对标**: cmux `Sources/StatusBar/` + `Sources/TitleBar/`
 
 #### GAP-3.5 内置 Browser 面板(WebView) {#gap-3-5}
@@ -275,22 +235,9 @@
 ### C.P1
 
 #### GAP-4.1 Vim 复制模式 {#gap-4-1}
-- **状态**: ✅(2026-06-12 闭环)
+- **状态**: ✅(2026-06-12)— 详见 [README §使用示例 → Vi Copy Mode](../README.md#使用示例)
 - **优先级**: P1
-- **PureTerm 现状**: `crates/pureterm/src/vi_mode_handler.rs` 实现 `ViSubMode` 状态机(Normal/Visual/VisualLine/VisualBlock),复用 vendored Alacritty `ViMotion`(18 种)+ `ViModeCursor` + `Selection` + `RegexSearch` + `selection_to_string()`
-- **闭环条目**:
-  - `Ctrl+Shift+Space` 进入/退出 Vi Copy Mode
-  - hjkl / w b e / 0 $ / g G / { } / % 导航(18 种 ViMotion)
-  - Ctrl+u / Ctrl+d 半页滚动
-  - v / V / Ctrl+v 进入 Visual / VisualLine / VisualBlock 选区
-  - y 复制选中文本到系统剪贴板 + 退出 vi mode; yy 复制当前行
-  - / ? 进入搜索;n N 遍历匹配;搜索匹配 amber 高亮(GPU shader)
-  - Escape 三级退出:搜索栏 → visual 子模式 → vi mode
-  - 状态栏 -- COPY -- / -- VISUAL -- / -- VLINE -- / -- VBLOCK -- 指示
-  - 命令面板 ⌘⇧P → 搜索 "vi" → "Toggle Vi/Copy Mode"
-  - GPU 渲染:青色 vi cursor + 主光标淡化 + 搜索匹配 amber 高亮
-- **三入口**:键盘 `Ctrl+Shift+Space` + 命令面板 + keymap TOML 可自定义
-- **单元测试**: `vi_mode_handler::tests` 3 个用例 + Alacritty vi_mode 原有 19 个用例
+- **单元测试**: `vi_mode_handler::tests` 3 + Alacritty vi_mode 19
 - **对标**: cmux `Sources/CopyMode/` + iTerm2 `iTermCopyModeHandler.m`(24KB)
 
 #### GAP-4.2 智能选择 hover preview {#gap-4-2}
@@ -369,14 +316,19 @@
 - **对标**: cmux `daemon/remote/cmuxd-remote`
 
 #### GAP-5.6 完整 reconnect/disconnect 状态机 {#gap-5-6}
-- **状态**: ❌
+- **状态**: 🚧(2026-06-14 进程内子集闭环;daemon 化跨重启恢复留 GAP-5.1)— 已实现部分详见 [README §已实现特性 → SSH 断线重连](../README.md#已实现特性)
 - **优先级**: P0
-- **PureTerm 现状**: `SshPty` 单次 connect/disconnect,无重连
-- **目标**: 显式状态机 `enum SshState { Disconnected, Connecting, Authenticating, Connected(SessionId), Reconnecting { attempt, next_retry } }`;tokio interval + 指数退避(最大 60s);Socket API event `SshStateChanged { profile, state }`;UI 显示当前状态
-- **依赖**: GAP-5.1
-- **风险点**: 状态转换的边界情况(用户手动 disconnect 取消重连)
-- **DoD**: SSH 中拔网线 5s,网络恢复后自动重连,UI 显示重连过程
-- **对标**: cmux 完整事件流状态机
+- **实现位置**: `crates/pureterm/src/ssh/reconnect.rs` + `terminal_context.rs::SshCtx::reattach()`
+- **未做(留后续迭代)**:
+  - daemon 化跨重启恢复(GAP-5.1)
+  - `Authenticating` 独立状态(当前并入 Connecting)
+  - Socket API event `SshStateChanged { profile, state }`(需 GAP-6.7 事件流)
+  - 多 pane tab 中 SSH pane 退出重连(当前仅 last-pane 触发)
+  - 重连成功后的 `--- reconnected ---` 分隔线
+- **依赖**: GAP-5.1(daemon 化);进程内子集无新依赖
+- **DoD**: SSH 拔网线 5s 后自动重连,UI 显示重连过程 ✅(进程内)
+- **单元测试**: `ssh::reconnect::tests` 10 个
+- **对标**: cmux 完整事件流状态机;行为对齐 iTerm2 / Termius
 
 ### D.P1
 
@@ -435,57 +387,30 @@
 ### E.P0
 
 #### GAP-6.1 Socket API v2 完整协议 {#gap-6-1}
-- **状态**: ✅(2026-06-13 闭环:31 个 method,8 命名空间,端到端验证)
+- **状态**: ✅(2026-06-13)— 详见 [README §已实现特性 → Socket API v2](../README.md#已实现特性)
 - **优先级**: P0
-- **PureTerm 现状**: `crates/pureterm/src/ipc/methods.rs` 实现 31 个 method(8 命名空间:system/window/tab/pane/surface/config/ssh/debug),`SocketRouter::dispatch` 返回 `(响应, Option<IpcSideEffect>)`;写操作(tab.new/pane.split/ssh.connect 等)通过 `IpcSideEffect` 回写 iced 主循环;`iced_app.rs::execute_ipc_side_effect` 执行副作用
-- **闭环条目**:
-  - 31 个 method:system(4)·window(4)·tab(4)·pane(6)·surface(4)·config(4)·ssh(3)·debug(2)
-  - 写操作副作用机制:`IpcSideEffect` 枚举(NewTab/CloseTab/SwitchTab/SplitH/SplitV/ClosePane/SwapPane/Zoom/Equalize/FocusNext/Prev/ReloadConfig/SshConnect)
-  - `AppSnapshot` 扩展:tab_ids·active_pane_ids·ssh_profile_names·config_path·tab_cwds
-  - `pureterm msg` 端到端验证:tab.new 创建 tab、pane.split 分屏、tab.switch 切换、config.reload 热重载、tab.close 越界返回 -32602
-  - CLI `print_help()` 列出全部 31 个 method + 示例
-- **未做(留后续迭代)**:surface.send_text 真实 PTY 写入(当前 stub)、surface.snapshot(Term grid 访问)、config.set(IPC 直接改配置)、SSE 事件流、`pureterm msg` 响应式等待
-- **单元测试**: `ipc::methods::tests` 34 个 + `ipc::protocol::tests` 6 个 + `ipc::methods` dispatch 5 个 = 45 个测试全过
-- **依赖**: GAP-2.3
-- **DoD**: 30+ method 在 `pureterm-cli` 中可调用 ✅(31 个)
-- **对标**: cmux `Packages/SocketControl/`(283+ v2 method)
+- **留后续迭代**:`surface.send_text` 真实 PTY 写入(stub)、`surface.snapshot`、`config.set`、SSE 事件流(见 GAP-6.7)、`pureterm msg` 响应式等待
+- **单元测试**: `ipc::methods::tests` 34 + `protocol` 6 + dispatch 5 = 45 个
+- **DoD**: 30+ method 可调用 ✅(31)
+- **对标**: cmux `Packages/SocketControl/`(283+)
 
 #### GAP-6.2 CLI 协议 {#gap-6-2}
-- **状态**: ✅(2026-06-13 闭环:8 命令组 + Msg/Shortcuts + 全局 flag,clap derive)
+- **状态**: ✅(2026-06-13)— 详见 [README §使用示例 → Socket API](../README.md#使用示例)
 - **优先级**: P0
-- **PureTerm 现状**: `crates/pureterm/src/cli.rs` 实现 clap 4.x derive 顶层 `Cli`(全局 `--socket <PATH>` / `--json`)+ `Command` 枚举 8 命令组;每个叶子子命令 `method_and_params()` 把类型化参数翻译成 `(method, Option<Value>)` 交给未改的 `ipc::client::send_rpc`;`main.rs` 改为 `args().count()>1 → cli::parse_from_env() → cli::run()`,裸 `pureterm` 仍启动 GUI
-- **闭环条目**(2026-06-13):
-  - 8 命令组映射现有 method:`system`·`window`·`tab`·`pane`·`surface`·`config`·`ssh`[unix]·`debug`
-  - 类型化参数:`tab switch --index N` / `pane split --direction v|h` / `surface send-text --text` / `config get [--key K]` / `ssh connect --index N`
-  - 全局 flag:`--socket <PATH>`(wire 进 `send_rpc` 的 socket_override,此前签名在但恒传 None)+ `--json`(紧凑输出;`send_rpc` 改为返回 `Result<Option<Value>, String>`,展示层移到 cli.rs)
-  - `Msg` 逃生舱保留:`pureterm msg system.ping`(向后兼容 + 原始测试)
-  - `Shortcuts` 组复用既有 `shortcuts_list/preset/reset`(写配置,不走 IPC)
-  - 裸 `pureterm` 启动 GUI 契约保留(clap 解析前 `args().count()==1` 守卫)
-- **未做(留后续迭代)**:`workspace` 组(需 GAP-2.1 Workspace 抽象)、`feed`/`events` 组(需 GAP-6.7 事件总线,服务端命名空间不存在)、`--password`/`--id-format` flag、`PURETERM_WORKSPACE_ID` 环境变量、`ssh connect --profile <NAME>`(名→索引解析)
-- **单元测试**: `cli::tests` 14 个用例(leaf→method 映射 / 全局 flag / 裸参数拒绝 / Msg 逃生舱)
-- **依赖**: GAP-6.1 ✅
-- **风险点**: CLI 维护成本(可控,每加一个 method 仅加一个 leaf + 一行映射)
-- **DoD**: `pureterm --help` 列出命令组 ✅(8 组 + msg + shortcuts;vision 目标 9 组中 workspace/feed/events 因服务端命名空间缺失而延后,文档标注)
+- **留后续迭代**:`workspace` 组(需 GAP-2.1)、`feed`/`events` 组(需 GAP-6.7)、`--password`/`--id-format` flag、`PURETERM_WORKSPACE_ID` 环境变量、`ssh connect --profile <NAME>`
+- **单元测试**: `cli::tests` 14 个
+- **DoD**: `pureterm --help` 列出命令组 ✅(8 组 + msg + shortcuts)
 - **对标**: cmux `CLI/cmux.swift`(32119 行,283+ 命令)
 
 ### E.P1
 
 #### GAP-6.4 自定义命令注册 {#gap-6-4}
-- **状态**: ❌
+- **状态**: ✅(2026-06-15)— 详见 [README §已实现特性 → 自定义命令](../README.md#已实现特性)
 - **优先级**: P1
-- **PureTerm 现状**: 无
-- **目标**: `alacritty.toml` `[[commands]]` 段:
-  ```toml
-  [[commands]]
-  id = "deploy.staging"
-  title = "Deploy to Staging"
-  key = "Cmd+Shift+D"
-  command = "ssh staging 'cd app && ./deploy.sh'"
-  ```
-  注册到 action 解析器 + 命令面板可搜
-- **依赖**: GAP-3.3(已 ✅)
-- **风险点**: 命令安全(避免任意命令执行)
-- **DoD**: 注册的 `deploy.staging` 在命令面板可搜到并触发
+- **实现位置**: `crates/pureterm/src/keymap.rs`(`CustomCommand` 结构 + `Action::CustomCommand(String)` 变体 + `split_mods_and_key` 支持 `+`/`|` 双分隔 + `Keymap::register_custom_commands` 含 macOS shift+字母双形态归一)+ `app_config.rs::load_custom_commands`(镜像 `load_keybindings`,容错跳过坏条目 + id 去重后者覆盖)+ `iced_app.rs`(`custom_commands` 字段 + `new()`/`apply_config_reload` 两处加载 + `dispatch_action` 写 `command+\r` 进 PTY + `CommandEntry::Custom` 命令面板接入)
+- **执行模型**: 触发时把 `command + 回车` 写进当前 pane 的 PTY(`TerminalContext::write_to_pty`),在 pane 的 shell/CWD 执行、输出可见(类似 iTerm2 snippets / tmux send-keys);零新进程代码,快捷键与面板共用同一 `dispatch_action`
+- **单元测试**: `keymap::tests` 7 + `app_config::tests` 6(含 config→keymap 跨模块集成)= 13 个
+- **DoD**: 注册的 `[[commands]]` 在命令面板可搜到并触发 ✅
 - **对标**: cmux `Sources/CmuxConfig.swift::commands`
 
 #### GAP-6.7 事件流 + 持久 JSONL 日志 {#gap-6-7}
@@ -701,14 +626,14 @@
 | GAP-5.3 | smallest-screen-wins resize | D | P2 | ❌ | - | - |
 | GAP-5.4 | SSH agent forwarding | D | P1 | ❌ | - | - |
 | GAP-5.5 | pureterm:// URL scheme | D | P1 | ❌ | - | - |
-| GAP-5.6 | reconnect/disconnect 状态机 | D | P0 | ❌ | - | - |
+| GAP-5.6 | reconnect/disconnect 状态机 | D | P0 | 🚧 | 2026-06-14 | 进程内子集闭环:SshState 状态机 + 指数退避(3→60s×8)+ Condvar 可唤醒 + ReconnectHub(std::thread+tokio mpsc+持久 Subscription)+ ConnectionKey 防风暴 + 状态栏(SSH ↻/✗/⏻)+ ssh.disconnect IPC 真实落地 + reattach(同 terminal Arc 重建 loop,保留滚动历史);10 单测;daemon 化留 GAP-5.1 |
 | GAP-5.7 | SSH Tab UI 串通 | D | P0 | ✅ | 2026-06-08 | ⌘⇧S + graceful_close |
 | GAP-5.8 | SSH 主 UI 设置 UI | D | P0 | ✅ | 2026-06-08 | 右侧栏 + CredentialStore |
 | GAP-5.9 | SSH 命令面板集成 | D | P0 | ✅ | 2026-06-08 | Profiles mode 一跳到底 |
 | GAP-6.1 | Socket API v2 协议 | E | P0 | ✅ | 2026-06-13 | 31 method/8 命名空间 + IpcSideEffect 写操作副作用机制 + 45 测试 |
 | GAP-6.2 | CLI 协议 | E | P0 | ✅ | 2026-06-13 | clap derive 8 命令组(system/window/tab/pane/surface/config/ssh/debug)+ Msg/Shortcuts + 全局 --socket/--json;leaf→method 映射复用 send_rpc;workspace/feed/events 延后;14 单测 |
 | GAP-6.3 | URL scheme / AppleScript 桥 | E | P2 | ❌ | - | - |
-| GAP-6.4 | 自定义命令注册 | E | P1 | ❌ | - | - |
+| GAP-6.4 | 自定义命令注册 | E | P1 | ✅ | 2026-06-15 | `[[commands]]` → keymap 绑定 + ⌘⇧P 面板;触发写 `command+\r` 进当前 pane PTY(复用 write_to_pty);split_mods_and_key 支持 +/- 分隔 + macOS shift 字母双形态;13 单测 |
 | GAP-6.5 | Dock 集成 | E | P3 | ❌ | - | - |
 | GAP-6.6 | tmux 兼容子集 | E | P2 | ❌ | - | - |
 | GAP-6.7 | 事件流 + JSONL 日志 | E | P1 | ❌ | - | - |

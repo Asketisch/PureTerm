@@ -91,6 +91,9 @@ pub struct PureTermApp {
     config: AppConfig,
     config_path: PathBuf,
     keymap: Keymap,
+    /// GAP-6.4: user-defined `[[commands]]`. Searchable in the command
+    /// palette; those with a `key` are also registered as shortcuts.
+    custom_commands: Vec<crate::keymap::CustomCommand>,
     settings_state: Option<SettingsState>,
     settings_window: Option<window::Id>,
     last_resize_time: Option<Instant>,
@@ -577,6 +580,8 @@ enum CommandEntry {
     SshOpenSettings,
     #[cfg(unix)]
     SshListProfiles,
+    /// GAP-6.4: a user-defined `[[commands]]` entry, searchable by title.
+    Custom { id: String, title: String },
 }
 
 /// GAP-4.1: State for the vi mode search bar (activated by `/` or `?`).
@@ -698,6 +703,8 @@ impl PureTermApp {
         // `config_path` into `self` (the PathBuf isn't Copy).
         #[cfg(unix)]
         let ssh_profiles = AppConfig::load_ssh_profiles(&config_path);
+        // GAP-6.4: load user-defined [[commands]] before building the keymap.
+        let custom_commands = AppConfig::load_custom_commands(&config_path);
 
         let settings = window::Settings {
             size: Size::new(1024.0, 768.0),
@@ -727,7 +734,12 @@ impl PureTermApp {
             glyph_state,
             config,
             config_path,
-            keymap: Keymap::from_defaults(),
+            keymap: {
+                let mut km = Keymap::from_defaults();
+                km.register_custom_commands(&custom_commands);
+                km
+            },
+            custom_commands,
             settings_state: None,
             settings_window: None,
             last_resize_time: None,
@@ -1251,7 +1263,7 @@ impl PureTermApp {
             #[cfg(unix)]
             profiles: self.ssh_profiles.clone(),
         };
-        Self::refresh_palette_matches_inner(&mut state, &self.i18n);
+        Self::refresh_palette_matches_inner(&mut state, &self.i18n, &self.custom_commands);
         self.command_palette = Some(state);
     }
 
@@ -1260,7 +1272,7 @@ impl PureTermApp {
     /// given the small action set.
     fn refresh_palette_matches(&mut self) {
         let Some(state) = self.command_palette.as_mut() else { return };
-        Self::refresh_palette_matches_inner(state, &self.i18n);
+        Self::refresh_palette_matches_inner(state, &self.i18n, &self.custom_commands);
     }
 
     /// PureTerm GAP-5.9 follow-up: snap the Command Palette's
@@ -1291,7 +1303,11 @@ impl PureTermApp {
         ))
     }
 
-    fn refresh_palette_matches_inner(state: &mut CommandPaletteState, i18n: &I18n) {
+    fn refresh_palette_matches_inner(
+        state: &mut CommandPaletteState,
+        i18n: &I18n,
+        custom_commands: &[crate::keymap::CustomCommand],
+    ) {
         use nucleo_matcher::pattern::{AtomKind, CaseMatching, Normalization, Pattern};
         use nucleo_matcher::{Config, Matcher, Utf32Str};
 
@@ -1344,6 +1360,20 @@ impl PureTermApp {
             all_entries.push((
                 CommandEntry::SshListProfiles,
                 i18n.t("palette.action.ssh_list.search"),
+            ));
+        }
+
+        // GAP-6.4: user-defined [[commands]] — searchable by title + id.
+        for c in custom_commands {
+            let mut haystack = c.title.clone();
+            haystack.push(' ');
+            haystack.push_str(&c.id);
+            all_entries.push((
+                CommandEntry::Custom {
+                    id: c.id.clone(),
+                    title: c.title.clone(),
+                },
+                haystack,
             ));
         }
 
@@ -1429,6 +1459,12 @@ impl PureTermApp {
             CommandEntry::SshOpenSettings => {
                 self.command_palette = None;
                 self.update(Message::ToggleSshSettingsPanel)
+            },
+            // GAP-6.4: dispatch the user-defined command via the unified
+            // Action path (same as a keyboard shortcut would).
+            CommandEntry::Custom { id, .. } => {
+                self.command_palette = None;
+                self.dispatch_action(crate::keymap::Action::CustomCommand(id))
             },
         }
     }
@@ -3540,6 +3576,27 @@ impl PureTermApp {
 
             // GAP-4.1 Vi / Copy mode
             Action::ToggleViMode => Task::done(Message::ToggleViMode),
+
+            // GAP-6.4: write `command + Enter` into the active pane's PTY.
+            // Runs in the pane's shell/CWD (like iTerm2 snippets / tmux
+            // send-keys); output is visible. No new process management.
+            Action::CustomCommand(id) => {
+                if let Some(cmd) = self.custom_commands.iter().find(|c| c.id == id) {
+                    if let Some(ctx) = self.active_terminal_ctx() {
+                        let mut bytes = cmd.command.clone().into_bytes();
+                        bytes.push(b'\r');
+                        ctx.write_to_pty(&bytes);
+                    } else {
+                        log::warn!(
+                            "custom command '{}': no active pane to write to",
+                            cmd.id
+                        );
+                    }
+                } else {
+                    log::warn!("custom command id '{}' not found", id);
+                }
+                Task::none()
+            }
         }
     }
 
@@ -3769,6 +3826,14 @@ impl PureTermApp {
         let raw = AppConfig::load_keybindings(&self.config_path);
         let defaults = Keymap::from_defaults();
         self.keymap = Keymap::from_toml_overrides(&raw, &defaults);
+
+        // GAP-6.4: Reload [[commands]]. `from_toml_overrides` above built a
+        // fresh keymap from defaults + overrides, so stale custom bindings
+        // from the previous config are already gone — just re-register the
+        // new set. Also updates `self.custom_commands` so the palette sees
+        // any added/removed/renamed entries.
+        self.custom_commands = AppConfig::load_custom_commands(&self.config_path);
+        self.keymap.register_custom_commands(&self.custom_commands);
     }
 
     /// GAP-6.1: Execute a side effect returned by a Socket API write method.
@@ -4934,6 +4999,8 @@ impl PureTermApp {
                             CommandEntry::SshListProfiles => {
                                 self.i18n.t("palette.action.ssh_list.label")
                             },
+                            // GAP-6.4: show the user-defined title directly.
+                            CommandEntry::Custom { title, .. } => title.clone(),
                         };
                         let is_sel = idx == s.selected;
                         let btn = button(text(label).size(13))

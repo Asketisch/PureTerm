@@ -68,6 +68,12 @@ pub enum Action {
     /// When active, keystrokes are interpreted as vi motions instead of
     /// being forwarded to the PTY.
     ToggleViMode,
+
+    // ── User-defined commands (GAP-6.4) ───────────────────────────
+    /// Run a user-defined `[[commands]]` entry by id. Resolved to a command
+    /// string at dispatch time and written into the active pane's PTY
+    /// (see `iced_app::dispatch_action`).
+    CustomCommand(String),
 }
 
 // ── BindingKey ──────────────────────────────────────────────────────────
@@ -432,6 +438,60 @@ impl Keymap {
         }
     }
 
+    /// GAP-6.4: register user-defined `[[commands]]` as keymap bindings.
+    ///
+    /// Each command with a `key` becomes an `Action::CustomCommand(id)`
+    /// binding. Commands without a `key` are palette-only and skipped here.
+    ///
+    /// Letter-key normalization (mirrors how the default bindings are stored
+    /// so user shortcuts match the actual key events the OS delivers):
+    /// - **Shift + letter** → register both forms, since macOS may report
+    ///   the event as lowercase+shift OR uppercase without shift;
+    /// - **no Shift + letter** → store lowercase (the OS reports unshifted
+    ///   letters as lowercase), regardless of the case the user wrote.
+    pub fn register_custom_commands(&mut self, cmds: &[CustomCommand]) {
+        for c in cmds {
+            let Some(key_str) = c.key.as_deref() else {
+                continue;
+            };
+            let (mods, key) = split_mods_and_key(key_str, c.mods.as_deref());
+            let (Some(mods), Some(key)) = (mods, key) else {
+                continue;
+            };
+
+            let action = Action::CustomCommand(c.id.clone());
+
+            // Letter-key normalization (see method doc).
+            if let BindingKey::Character(ch) = &key {
+                if ch.len() == 1 && ch.chars().next().unwrap().is_ascii_alphabetic() {
+                    let c0 = ch.chars().next().unwrap();
+                    if mods.contains(Modifiers::SHIFT) {
+                        // macOS dual-form: report lowercase+shift OR uppercase
+                        // without shift. Register both so the binding fires
+                        // regardless of which form the OS delivers.
+                        let lower = c0.to_ascii_lowercase().to_string();
+                        let upper = c0.to_ascii_uppercase().to_string();
+                        self.bindings
+                            .insert((mods, BindingKey::Character(lower)), action.clone());
+                        self.bindings.insert(
+                            (mods ^ Modifiers::SHIFT, BindingKey::Character(upper)),
+                            action,
+                        );
+                        continue;
+                    } else {
+                        // Unshifted letter: the OS reports it lowercase, so
+                        // store lowercase to match (mirrors the defaults).
+                        let lower = c0.to_ascii_lowercase().to_string();
+                        self.bindings
+                            .insert((mods, BindingKey::Character(lower)), action);
+                        continue;
+                    }
+                }
+            }
+            self.bindings.insert((mods, key), action);
+        }
+    }
+
     /// Return a snapshot of the current bindings for display / CLI listing.
     pub fn list_bindings(&self) -> Vec<(Modifiers, BindingKey, Action)> {
         self.bindings
@@ -449,6 +509,25 @@ pub struct RawBinding {
     pub key: String,
     pub mods: String,
     pub action: String,
+}
+
+/// Raw `[[commands]]` entry as read from TOML (GAP-6.4). Defined here
+/// (alongside `RawBinding`) so `app_config::load_custom_commands` can
+/// return `Vec<CustomCommand>` without creating an `app_config → keymap`
+/// dependency cycle — this mirrors how `load_keybindings` returns
+/// `Vec<RawBinding>`.
+///
+/// The `key` field, when present, is a combined "Mods+Key" string (e.g.
+/// `"Cmd+Shift+D"`) or a bare key (e.g. `"F5"`); `mods` optionally overrides
+/// the modifier portion (in which case `key` is parsed bare). Parsed into a
+/// `Keymap` binding via `Keymap::register_custom_commands`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomCommand {
+    pub id: String,
+    pub title: String,
+    pub command: String,
+    pub key: Option<String>,
+    pub mods: Option<String>,
 }
 
 // ── TOML parsing helpers ────────────────────────────────────────────────
@@ -520,6 +599,52 @@ fn parse_key(s: &str) -> Result<BindingKey, String> {
         }
     };
     Ok(BindingKey::Named(named))
+}
+
+/// Split a combined "Mods+Key" string (GAP-6.4) into parsed `(Modifiers,
+/// BindingKey)`. Accepts both `+` and `|` as separators; the final segment
+/// is the key, preceding segments are modifiers.
+///
+/// If `explicit_mods` is `Some`, it is used for the modifier portion and
+/// `key_str` is parsed as a bare key (no splitting). This supports a
+/// separate `mods = "Command|Shift"` + `key = "D"` TOML form.
+///
+/// Returns `(None, _)` / `(_, None)` on parse failure (logged via `warn`);
+/// the caller skips the binding.
+fn split_mods_and_key(
+    key_str: &str,
+    explicit_mods: Option<&str>,
+) -> (Option<Modifiers>, Option<BindingKey>) {
+    let (mods_raw, key_raw) = match explicit_mods {
+        Some(em) => (em.to_string(), key_str.trim().to_string()),
+        None => {
+            // Split off the final segment after the last separator.
+            match key_str.rfind(|c| c == '+' || c == '|') {
+                Some(pos) => (
+                    key_str[..pos].to_string(),
+                    key_str[pos + 1..].trim().to_string(),
+                ),
+                None => (String::new(), key_str.trim().to_string()),
+            }
+        }
+    };
+    // Normalize '+' → '|' so parse_mods (which splits on '|') accepts both.
+    let mods_str = mods_raw.replace('+', "|");
+    let mods = match parse_mods(&mods_str) {
+        Ok(m) => Some(m),
+        Err(e) => {
+            log::warn!("custom command: bad mods '{}': {}", mods_raw, e);
+            None
+        }
+    };
+    let key = match parse_key(&key_raw) {
+        Ok(k) => Some(k),
+        Err(e) => {
+            log::warn!("custom command: bad key '{}': {}", key_raw, e);
+            None
+        }
+    };
+    (mods, key)
 }
 
 /// Parse an action string to an `Action` variant.
@@ -1005,5 +1130,106 @@ mod tests {
             Some(Action::EqualizeSplits)
         );
         assert_eq!(action_from_palette_id("settings"), None);
+    }
+
+    // ── GAP-6.4 custom command tests ───────────────────────────────
+
+    #[test]
+    fn test_split_mods_and_key_plus_separator() {
+        let (mods, key) = split_mods_and_key("Cmd+Shift+D", None);
+        assert_eq!(mods, Some(Modifiers::COMMAND | Modifiers::SHIFT));
+        assert_eq!(key, Some(BindingKey::Character("D".into())));
+    }
+
+    #[test]
+    fn test_split_mods_and_key_pipe_separator() {
+        let (mods, key) = split_mods_and_key("Command|Shift|D", None);
+        assert_eq!(mods, Some(Modifiers::COMMAND | Modifiers::SHIFT));
+        assert_eq!(key, Some(BindingKey::Character("D".into())));
+    }
+
+    #[test]
+    fn test_split_mods_and_key_no_mods() {
+        let (mods, key) = split_mods_and_key("F5", None);
+        assert_eq!(mods, Some(Modifiers::empty()));
+        assert_eq!(key, Some(BindingKey::Named(BindingNamedKey::F(5))));
+    }
+
+    #[test]
+    fn test_split_mods_and_key_explicit_mods() {
+        // When explicit mods are given, key_str is parsed as a bare key.
+        let (mods, key) = split_mods_and_key("D", Some("Alt"));
+        assert_eq!(mods, Some(Modifiers::ALT));
+        assert_eq!(key, Some(BindingKey::Character("D".into())));
+    }
+
+    #[test]
+    fn test_register_custom_command_basic() {
+        // Ctrl+B is not bound by defaults, so it must resolve to the
+        // registered custom command.
+        let mut km = make_keymap();
+        km.register_custom_commands(&[CustomCommand {
+            id: "cmd.basic".into(),
+            title: "Basic".into(),
+            command: "echo hi".into(),
+            key: Some("Ctrl+B".into()),
+            mods: None,
+        }]);
+        let r = km.resolve(
+            &Key::Character("b".into()),
+            Modifiers::CTRL,
+            Instant::now(),
+        );
+        assert_eq!(
+            r,
+            ResolveResult::Action(Action::CustomCommand("cmd.basic".into()))
+        );
+    }
+
+    #[test]
+    fn test_register_custom_command_shift_dual_form() {
+        // "Cmd+Shift+Q" must fire whether macOS reports it as
+        // lowercase 'q' with CMD|SHIFT, or uppercase 'Q' with CMD.
+        let mut km = make_keymap();
+        km.register_custom_commands(&[CustomCommand {
+            id: "cmd.shift".into(),
+            title: "Shift".into(),
+            command: "echo shift".into(),
+            key: Some("Cmd+Shift+Q".into()),
+            mods: None,
+        }]);
+        let r1 = km.resolve(
+            &Key::Character("q".into()),
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            Instant::now(),
+        );
+        assert_eq!(
+            r1,
+            ResolveResult::Action(Action::CustomCommand("cmd.shift".into()))
+        );
+        let r2 = km.resolve(
+            &Key::Character("Q".into()),
+            Modifiers::COMMAND,
+            Instant::now(),
+        );
+        assert_eq!(
+            r2,
+            ResolveResult::Action(Action::CustomCommand("cmd.shift".into()))
+        );
+    }
+
+    #[test]
+    fn test_register_custom_command_no_key_skipped() {
+        // A command without a `key` is palette-only; nothing is registered.
+        let mut km = make_keymap();
+        let before = km.bindings.len();
+        km.register_custom_commands(&[CustomCommand {
+            id: "cmd.nokey".into(),
+            title: "NoKey".into(),
+            command: "echo".into(),
+            key: None,
+            mods: None,
+        }]);
+        assert_eq!(km.bindings.len(), before);
     }
 }
