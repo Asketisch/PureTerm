@@ -124,6 +124,12 @@ pub struct PureTermApp {
     ssh_profiles: Vec<SshProfile>,
     #[cfg(unix)]
     ssh_manager: Option<Arc<SshSessionManager>>,
+    /// GAP-5.6: reconnect/disconnect hub. Eagerly initialized (cheap: just
+    /// channels + empty maps). Workers are spawned only on reconnect. Held
+    /// in an `Arc` so the iced `Subscription` id (`ReconnectKey`) is stable
+    /// across subscription re-evaluations.
+    #[cfg(unix)]
+    reconnect_hub: Arc<crate::ssh::reconnect::ReconnectHub>,
     // SSH settings panel (P4 GAP-5.8)
     #[cfg(unix)]
     ssh_settings: Option<SshSettingsPanelState>,
@@ -520,6 +526,9 @@ pub enum Message {
     ViSearchClose,
     // GAP-2.3 Socket API IPC
     Ipc(crate::ipc::IpcRequest),
+    // GAP-5.6 SSH reconnect worker → main loop
+    #[cfg(unix)]
+    SshReconnect(crate::ssh::reconnect::ReconnectUpdate),
 }
 
 /// P4: which `SshProfile` field is being edited in the panel.
@@ -623,6 +632,64 @@ fn ipc_stream_builder(
     })
 }
 
+// ── GAP-5.6 SSH reconnect subscription ─────────────────────────────────────
+// Mirrors the IpcKey/ipc_stream_builder pattern: a stable subscription id
+// (ReconnectKey, hashed by Arc pointer) and a builder that claims the hub's
+// updates receiver once and forwards ReconnectUpdates as Messages.
+
+#[cfg(unix)]
+struct ReconnectKey(std::sync::Arc<crate::ssh::reconnect::ReconnectHub>);
+
+#[cfg(unix)]
+impl std::hash::Hash for ReconnectKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (std::sync::Arc::as_ptr(&self.0) as usize).hash(state);
+    }
+}
+
+#[cfg(unix)]
+impl PartialEq for ReconnectKey {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+#[cfg(unix)]
+impl Eq for ReconnectKey {}
+
+#[cfg(unix)]
+impl Clone for ReconnectKey {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
+/// Builder for `Subscription::run_with`: claims the hub's updates receiver
+/// (once) and forwards `ReconnectUpdate`s as `Message::SshReconnect`.
+#[cfg(unix)]
+fn reconnect_stream_builder(
+    key: &ReconnectKey,
+) -> impl iced::futures::Stream<Item = Message> {
+    let rx = key.0.take_updates_receiver();
+    iced::stream::channel(
+        32,
+        move |mut sender: iced::futures::channel::mpsc::Sender<Message>| async move {
+            // The receiver is claimed once. If the subscription is
+            // re-evaluated, rx is None — skip the loop and stay idle (pending
+            // forever) rather than killing the existing stream.
+            if let Some(mut rx) = rx {
+                while let Some(update) = rx.recv().await {
+                    if sender.try_send(Message::SshReconnect(update)).is_err() {
+                        break;
+                    }
+                }
+            }
+            // Keep the stream alive indefinitely once it has nothing more to do.
+            std::future::pending::<()>().await;
+        },
+    )
+}
+
 impl PureTermApp {
     pub fn new() -> (Self, Task<Message>) {
         let config_path = AppConfig::config_path();
@@ -675,6 +742,8 @@ impl PureTermApp {
             ssh_profiles,
             #[cfg(unix)]
             ssh_manager: None,
+            #[cfg(unix)]
+            reconnect_hub: Arc::new(crate::ssh::reconnect::ReconnectHub::new()),
             #[cfg(unix)]
             ssh_settings: None,
             #[cfg(unix)]
@@ -773,6 +842,17 @@ impl PureTermApp {
         self.active_tab_ref()
             .and_then(|tab| tab.panes.get(&tab.active_pane))
             .map(|pane| pane.terminal_ctx.clone())
+    }
+
+    /// GAP-5.6: find a pane's terminal context by id, searching all tabs.
+    /// Returns a cloned `Arc` (like `active_terminal_ctx`) so callers can
+    /// mutate the context through interior mutability without holding a
+    /// borrow of `self`.
+    #[cfg(unix)]
+    fn pane_terminal_ctx(&self, pane_id: PaneId) -> Option<Arc<TerminalContext>> {
+        self.tabs
+            .iter()
+            .find_map(|tab| tab.panes.get(&pane_id).map(|p| p.terminal_ctx.clone()))
     }
 
     /// GAP-4.1: Check if vi mode is active on the current active pane.
@@ -898,7 +978,9 @@ impl PureTermApp {
             Ok((ssh_pty, socket_path, stderr)) => {
                 // socket_path already obtained from spawn_pty's internal
                 // get_or_create — no need to call it again.
-                match TerminalContext::new_ssh(&profile, ssh_pty, socket_path, None, stderr) {
+                // Pass the resolved password through so GAP-5.6 reconnect can
+                // replay it without re-querying the CredentialStore.
+                match TerminalContext::new_ssh(&profile, ssh_pty, socket_path, password.clone(), stderr) {
                     Ok(ctx) => {
                         let id = self.push_ssh_tab(profile_name.clone(), ctx);
                         self.ssh_dialog = None;
@@ -935,6 +1017,44 @@ impl PureTermApp {
                 error: Some(message),
             });
         }
+    }
+
+    /// GAP-5.6: kick off background reconnect for an SSH pane whose
+    /// connection dropped. Transitions the pane to `Reconnecting` and spawns
+    /// the hub worker; the worker's `ReconnectUpdate`s come back via
+    /// [`Message::SshReconnect`].
+    #[cfg(unix)]
+    fn trigger_ssh_reconnect(&mut self, tab_id: TabId, pane_id: PaneId) {
+        // Gather the pane's reconnect params (limits the immutable borrow of
+        // self to this block so the ssh_manager mutation below is clean).
+        let params = {
+            let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) else {
+                return;
+            };
+            let Some(pane) = tab.panes.get(&pane_id) else { return };
+            let Some(params) = pane.terminal_ctx.ssh_reconnect_params() else {
+                return;
+            };
+            // Mark Reconnecting now so the status bar updates immediately.
+            pane.terminal_ctx.set_ssh_state(
+                crate::ssh::reconnect::SshState::Reconnecting {
+                    attempt: 0,
+                    next_retry: std::time::Instant::now(),
+                },
+            );
+            params
+        };
+
+        // ssh_manager is guaranteed Some (the pane is SSH → a prior connect
+        // lazy-inited it), but guard anyway.
+        if self.ssh_manager.is_none() {
+            let socket_dir = std::env::temp_dir().join("pureterm-ssh");
+            let _ = std::fs::create_dir_all(&socket_dir);
+            self.ssh_manager = Some(Arc::new(SshSessionManager::new(socket_dir, 30)));
+        }
+        let manager = self.ssh_manager.clone().unwrap();
+        self.reconnect_hub.spawn_reconnect(pane_id, manager, params);
+        log::info!("GAP-5.6: SSH pane {:?} dropped → reconnecting", pane_id);
     }
 
     /// P3: create a new Tab wrapping an already-constructed SSH context.
@@ -1458,7 +1578,7 @@ impl PureTermApp {
                 let mut exited_panes = Vec::new();
                 for tab in &self.tabs {
                     for (pane_id, pane) in &tab.panes {
-                        while let Ok(event) = pane.terminal_ctx.event_rx().try_recv() {
+                        while let Some(event) = pane.terminal_ctx.poll_terminal_event() {
                             match event {
                                 TerminalEvent::Wakeup => { /* PTY 有新数据，重绘已在进行 */ }
                                 TerminalEvent::Exit => {
@@ -1537,7 +1657,26 @@ impl PureTermApp {
                                 self.show_ssh_error(error_msg);
                                 return Task::none();
                             } else {
-                                // 最后一个 pane 退出，关闭整个 tab
+                                // 最后一个 pane 退出（已过 grace period）。
+                                #[cfg(unix)]
+                                {
+                                    // GAP-5.6: an established SSH connection
+                                    // (>5s) that exits WITHOUT user intent =
+                                    // network drop / remote reboot → auto-
+                                    // reconnect in place instead of closing.
+                                    let is_reconnect_candidate = tab
+                                        .panes
+                                        .get(&pane_id)
+                                        .map_or(false, |p| {
+                                            p.terminal_ctx.is_ssh()
+                                                && !p.terminal_ctx.is_user_initiated_close()
+                                        });
+                                    if is_reconnect_candidate {
+                                        self.trigger_ssh_reconnect(tab_id, pane_id);
+                                        return Task::none();
+                                    }
+                                }
+                                // 非 SSH，或用户主动断开 → 关闭整个 tab
                                 return Task::done(Message::CloseTab(tab_id));
                             }
                         } else {
@@ -1791,6 +1930,11 @@ impl PureTermApp {
                     if let Some(manager) = self.ssh_manager.as_ref() {
                         if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
                             for pane in tab.panes.values() {
+                                // GAP-5.6: this is a user-initiated close —
+                                // flag it so the exit handler doesn't auto-
+                                // reconnect, and cancel any in-flight worker.
+                                pane.terminal_ctx.mark_user_initiated_close();
+                                self.reconnect_hub.cancel(pane.id);
                                 if let Some((host, user, port)) = pane.terminal_ctx.ssh_release_key() {
                                     manager.release(host, user, port);
                                 }
@@ -1976,6 +2120,76 @@ impl PureTermApp {
                 // Execute side effect (write operation) after responding.
                 if let Some(fx) = side_effect {
                     return self.execute_ipc_side_effect(fx);
+                }
+            }
+            #[cfg(unix)]
+            Message::SshReconnect(update) => {
+                use crate::ssh::reconnect::ReconnectUpdate;
+                match update {
+                    ReconnectUpdate::Progress {
+                        pane_id,
+                        attempt,
+                        next_retry_in,
+                    } => {
+                        // Update the pane's state so the status bar reflects
+                        // the retry. `next_retry` is approximate (now + delay).
+                        if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
+                            ctx.set_ssh_state(
+                                crate::ssh::reconnect::SshState::Reconnecting {
+                                    attempt,
+                                    next_retry: std::time::Instant::now() + next_retry_in,
+                                },
+                            );
+                        }
+                    }
+                    ReconnectUpdate::Success { pane_id } => {
+                        // Claim the spawned PTY and reattach. If the pane is
+                        // gone (closed meanwhile), the hub already drained it.
+                        let claimed = self.reconnect_hub.take_success(pane_id);
+                        let Some((ssh_pty, stderr)) = claimed else {
+                            // Already drained by cancel(); nothing to do.
+                            return Task::none();
+                        };
+                        let Some(ctx) = self.pane_terminal_ctx(pane_id) else {
+                            // Pane closed after success: balance the pool and
+                            // drop the child. Derive release key from params
+                            // captured in the PTY's own session is not
+                            // available here; rely on idle cleanup instead.
+                            drop(ssh_pty);
+                            return Task::none();
+                        };
+                        match ctx.reattach(*ssh_pty, stderr) {
+                            Ok(()) => {
+                                ctx.set_ssh_state(
+                                    crate::ssh::reconnect::SshState::Connected,
+                                );
+                                // Re-apply the current pane size to the fresh PTY.
+                                let gs = self.glyph_state.borrow();
+                                let terminal_height =
+                                    terminal_content_height(self.viewport_size.height);
+                                let cols = (self.viewport_size.width / gs.cell_width)
+                                    .floor()
+                                    .max(1.0) as usize;
+                                let rows = (terminal_height / gs.cell_height)
+                                    .floor()
+                                    .max(1.0) as usize;
+                                ctx.resize(cols, rows, gs.cell_width as u16, gs.cell_height as u16);
+                                drop(gs);
+                                log::info!("GAP-5.6: SSH pane {:?} reconnected", pane_id);
+                            }
+                            Err(e) => {
+                                log::error!("GAP-5.6: reattach failed for pane {:?}: {}", pane_id, e);
+                                ctx.set_ssh_state(crate::ssh::reconnect::SshState::Failed {
+                                    reason: format!("reattach failed: {e}"),
+                                });
+                            }
+                        }
+                    }
+                    ReconnectUpdate::Failed { pane_id, reason } => {
+                        if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
+                            ctx.set_ssh_state(crate::ssh::reconnect::SshState::Failed { reason });
+                        }
+                    }
                 }
             }
             Message::PtyExited(tab_id) => {
@@ -2937,6 +3151,9 @@ impl PureTermApp {
                     #[cfg(unix)]
                     if let Some(manager) = self.ssh_manager.as_ref() {
                         if let Some(pane) = tab.panes.get(&pane_id) {
+                            // GAP-5.6: user-initiated pane close — flag + cancel.
+                            pane.terminal_ctx.mark_user_initiated_close();
+                            self.reconnect_hub.cancel(pane_id);
                             if let Some((host, user, port)) = pane.terminal_ctx.ssh_release_key() {
                                 manager.release(host, user, port);
                             }
@@ -3618,6 +3835,24 @@ impl PureTermApp {
                 self.connect_ssh_tab(profile_index);
                 Task::none()
             }
+            #[cfg(unix)]
+            Fx::SshDisconnect { pane_id } => {
+                // GAP-5.6: flag the pane user-initiated-close BEFORE writing
+                // exit\r (order is load-bearing: the exit handler checks the
+                // flag to decide whether to auto-reconnect), then ask the
+                // remote shell to exit cleanly. None ⇒ active pane.
+                let ctx = match pane_id {
+                    Some(id) => self.pane_terminal_ctx(PaneId(id)),
+                    None => self.active_terminal_ctx(),
+                };
+                if let Some(ctx) = ctx {
+                    if ctx.is_ssh() {
+                        ctx.mark_user_initiated_close();
+                        ctx.write_to_pty(b"exit\r");
+                    }
+                }
+                Task::none()
+            }
         }
     }
 
@@ -4075,7 +4310,41 @@ impl PureTermApp {
             );
         }
 
-        // SSH indicator
+        // SSH indicator (GAP-5.6: reconnect-state-aware)
+        #[cfg(unix)]
+        {
+            use crate::ssh::reconnect::SshStateSnapshot;
+            if let Some(tab) = self.active_tab_ref() {
+                if let Some(pane) = tab.panes.get(&tab.active_pane) {
+                    if let Some(snap) = pane.terminal_ctx.ssh_state_snapshot() {
+                        let (label, color): (String, Color) = match snap {
+                            SshStateSnapshot::Connected => (
+                                "  SSH".to_string(),
+                                Color::from_rgba(0.9, 0.5, 0.5, 1.0),
+                            ),
+                            SshStateSnapshot::Reconnecting { attempt } => (
+                                format!("  SSH ↻ {}", attempt),
+                                Color::from_rgba(0.95, 0.75, 0.3, 1.0),
+                            ),
+                            SshStateSnapshot::Failed => (
+                                "  SSH ✗".to_string(),
+                                Color::from_rgba(0.6, 0.6, 0.6, 1.0),
+                            ),
+                            SshStateSnapshot::Disconnected => (
+                                "  SSH ⏻".to_string(),
+                                Color::from_rgba(0.6, 0.6, 0.6, 1.0),
+                            ),
+                            SshStateSnapshot::Connecting => (
+                                "  SSH …".to_string(),
+                                Color::from_rgba(0.9, 0.5, 0.5, 1.0),
+                            ),
+                        };
+                        bar = bar.push(text(label).size(11).color(color));
+                    }
+                }
+            }
+        }
+        #[cfg(not(unix))]
         if let Some(tab) = self.active_tab_ref() {
             if let Some(pane) = tab.panes.get(&tab.active_pane) {
                 if pane.terminal_ctx.is_ssh() {
@@ -5278,6 +5547,24 @@ impl PureTermApp {
             ipc_stream_builder,
         );
 
+        // GAP-5.6: reconnect worker → main loop. Claims the hub's updates
+        // receiver once and forwards ReconnectUpdates as Messages.
+        #[cfg(unix)]
+        let reconnect_sub = Subscription::run_with(
+            ReconnectKey(self.reconnect_hub.clone()),
+            reconnect_stream_builder,
+        );
+
+        #[cfg(unix)]
+        let subs = vec![
+            keyboard_sub,
+            wakeup_sub,
+            resize_sub,
+            config_sub,
+            ipc_sub,
+            reconnect_sub,
+        ];
+        #[cfg(not(unix))]
         let subs = vec![keyboard_sub, wakeup_sub, resize_sub, config_sub, ipc_sub];
 
         Subscription::batch(subs)

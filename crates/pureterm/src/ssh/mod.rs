@@ -21,6 +21,8 @@ pub mod credential;
 #[cfg(unix)]
 pub mod pty;
 #[cfg(unix)]
+pub mod reconnect;
+#[cfg(unix)]
 pub mod session;
 pub mod ssh_config_reader;
 

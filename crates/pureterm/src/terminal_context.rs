@@ -6,6 +6,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 #[cfg(unix)]
+use std::sync::atomic::AtomicBool;
+#[cfg(unix)]
+use std::sync::Mutex;
+
+#[cfg(unix)]
 use alacritty_terminal::tty::EventedPty as _;
 use alacritty_terminal::event::{EventListener, Notify, WindowSize};
 use alacritty_terminal::event_loop::{EventLoop as PtyEventLoop, Msg, Notifier};
@@ -20,6 +25,8 @@ use crossbeam_channel::{bounded, Receiver, Sender};
 use crate::ssh::config::SshProfile;
 #[cfg(unix)]
 use crate::ssh::pty::SshPty;
+#[cfg(unix)]
+use crate::ssh::reconnect::{ReconnectParams, SshState, SshStateSnapshot};
 
 /// Terminal event types sent from PTY thread to Iced.
 #[derive(Debug, Clone)]
@@ -68,21 +75,68 @@ struct LocalCtx {
 #[cfg(unix)]
 struct SshCtx {
     terminal: Arc<FairMutex<Term<ChannelEventListener>>>,
-    notifier: Notifier,
-    event_rx: Receiver<TerminalEvent>,
+    /// Swappable per-connection runtime (notifier channel + IO thread +
+    /// stderr). Wrapped in `RefCell` because `TerminalContext` lives behind
+    /// an `Arc` shared with the render path, so `reattach` mutates it through
+    /// interior mutability.
+    runtime: RefCell<SshRuntime>,
     size: TermSize,
-    /// Human-readable profile (kept for the tab title in P3).
+    /// Human-readable profile (kept for the tab title).
     profile_display: String,
-    /// Optional credentials used to authenticate (decrypted password).
-    credentials: Option<zeroize::Zeroizing<Vec<u8>>>,
-    /// Connection key fields for pool release on close.
+    /// Connection key fields for pool release on close + reconnect.
     ssh_host: String,
     ssh_user: Option<String>,
     ssh_port: Option<u16>,
-    /// Non-blocking stderr pipe from the ssh child process.
-    /// Used to read error messages after a quick connection failure.
-    /// Wrapped in RefCell for interior mutability (read needs &mut self).
-    stderr_file: RefCell<Option<File>>,
+    /// Identity file (-i) used to authenticate; replayed on reconnect.
+    ssh_key_path: Option<String>,
+    /// Resolved password (CredentialStore > TOML plaintext) replayed on
+    /// reconnect. Held as a plain `String` for the pragmatic subset; a
+    /// future hardening pass can wrap it in `Zeroizing`.
+    ssh_password: Option<String>,
+    /// GAP-5.6 reconnect state machine. `Arc<Mutex<..>>` so the iced loop
+    /// (UI reads) and the reconnect worker (writes Progress/Failed) can both
+    /// touch it.
+    reconnect_state: Arc<Mutex<SshState>>,
+    /// Set to `true` before any user-initiated close path (manual disconnect
+    /// / tab close) writes `exit\r`. The exit handler reads this to decide
+    /// whether to auto-reconnect: a user-intended exit never reconnects.
+    user_initiated_close: Arc<AtomicBool>,
+}
+
+/// The swappable per-connection runtime inside [`SshCtx`].
+#[cfg(unix)]
+struct SshRuntime {
+    notifier: Notifier,
+    event_rx: Receiver<TerminalEvent>,
+    /// Handle to the `PtyEventLoop` thread, type-erased so we can name it
+    /// without importing alacritty's private `State`. Joined on `reattach`.
+    io_thread: Option<ThreadJoiner>,
+    /// Non-blocking stderr pipe from the ssh child process; read for error
+    /// messages after a quick connection failure.
+    stderr_file: Option<File>,
+}
+
+/// Owns a `JoinHandle` with its type parameter erased, so [`SshCtx`] does not
+/// have to name alacritty_terminal's private `State` type. [`Self::join`]
+/// waits for the thread; dropping detaches it (matching the previous
+/// `let _io_thread = pty_loop.spawn()` behaviour).
+#[cfg(unix)]
+struct ThreadJoiner(Option<Box<dyn FnOnce() + Send + 'static>>);
+
+#[cfg(unix)]
+impl ThreadJoiner {
+    fn new<T: Send + 'static>(handle: std::thread::JoinHandle<T>) -> Self {
+        Self(Some(Box::new(move || {
+            let _ = handle.join();
+        })))
+    }
+
+    /// Wait for the wrapped thread to finish (no-op after the first call).
+    fn join(&mut self) {
+        if let Some(f) = self.0.take() {
+            f();
+        }
+    }
 }
 
 /// P2 of GAP-5.7/5.8/5.9: TerminalContext is now an enum with two
@@ -204,7 +258,7 @@ _pt_osc7
         profile: &SshProfile,
         ssh_pty: SshPty,
         socket_path: PathBuf,
-        credentials: Option<zeroize::Zeroizing<Vec<u8>>>,
+        password: Option<String>,
         stderr: Option<File>,
     ) -> io::Result<Self> {
         use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
@@ -222,9 +276,9 @@ _pt_osc7
         let terminal = Term::new(term_config, &size, event_listener.clone());
         let terminal = Arc::new(FairMutex::new(terminal));
 
-        // Hand the concrete SshPty to PtyEventLoop. P3 introduces a
-        // separate `Arc<Mutex<SshPty>>` for graceful_close; for the P2
-        // internal refactor, the loop owns the pty for its full lifetime.
+        // Hand the concrete SshPty to PtyEventLoop. The loop thread owns the
+        // pty by value for its full lifetime; the `ThreadJoiner` lets a later
+        // `reattach` wait for this thread before spinning a replacement loop.
         let pty_loop = PtyEventLoop::new(
             Arc::clone(&terminal),
             event_listener,
@@ -234,30 +288,28 @@ _pt_osc7
         )?;
 
         let loop_tx = pty_loop.channel();
-        let _io_thread = pty_loop.spawn();
+        let io_thread = ThreadJoiner::new(pty_loop.spawn());
 
-        // Note: SshCtx keeps a `Box<dyn EventedPty + Send>` mirror, but
-        // the PtyEventLoop is what drives it. The mirror here is for
-        // future resize/close paths (P3). socket_path is recorded in the
-        // manager's pool and also stored here for release-on-close.
+        // socket_path is recorded in the SshSessionManager pool already.
         let _ = socket_path;
 
-        // P2 note: the PtyEventLoop owns the actual SshPty for now. P3
-        // will introduce a richer wrapper struct (with Arc<Mutex<SshPty>>)
-        // once graceful_close is wired into the Tab close path; for the
-        // P2 internal-refactor milestone we just track the profile name
-        // and credentials.
         Ok(TerminalContext::Ssh(SshCtx {
             terminal,
-            notifier: Notifier(loop_tx),
-            event_rx,
+            runtime: RefCell::new(SshRuntime {
+                notifier: Notifier(loop_tx),
+                event_rx,
+                io_thread: Some(io_thread),
+                stderr_file: stderr,
+            }),
             size,
             profile_display: profile.name.clone(),
-            credentials,
             ssh_host: profile.host.clone(),
             ssh_user: profile.user.clone(),
             ssh_port: profile.port,
-            stderr_file: RefCell::new(stderr),
+            ssh_key_path: profile.key_path.clone(),
+            ssh_password: password,
+            reconnect_state: Arc::new(Mutex::new(SshState::Connected)),
+            user_initiated_close: Arc::new(AtomicBool::new(false)),
         }))
     }
 
@@ -276,7 +328,7 @@ _pt_osc7
         match self {
             TerminalContext::Local(ctx) => ctx.notifier.notify(bytes.to_vec()),
             #[cfg(unix)]
-            TerminalContext::Ssh(ctx) => ctx.notifier.notify(bytes.to_vec()),
+            TerminalContext::Ssh(ctx) => ctx.runtime.borrow().notifier.notify(bytes.to_vec()),
         }
     }
 
@@ -304,17 +356,20 @@ _pt_osc7
                     cell_width: cell_w,
                     cell_height: cell_h,
                 };
-                let _ = ctx.notifier.0.send(Msg::Resize(window_size));
+                let _ = ctx.runtime.borrow().notifier.0.send(Msg::Resize(window_size));
             },
         }
     }
 
-    /// Event receiver for the iced loop to poll.
-    pub fn event_rx(&self) -> &Receiver<TerminalEvent> {
+    /// Poll for one pending terminal event (drained by the iced loop each
+    /// wakeup). Replaces the old `event_rx()` accessor: because the SSH
+    /// receiver now lives behind the swappable `runtime` `RefCell`, there is
+    /// no stable `&Receiver` to hand out.
+    pub fn poll_terminal_event(&self) -> Option<TerminalEvent> {
         match self {
-            TerminalContext::Local(ctx) => &ctx.event_rx,
+            TerminalContext::Local(ctx) => ctx.event_rx.try_recv().ok(),
             #[cfg(unix)]
-            TerminalContext::Ssh(ctx) => &ctx.event_rx,
+            TerminalContext::Ssh(ctx) => ctx.runtime.borrow().event_rx.try_recv().ok(),
         }
     }
 
@@ -367,8 +422,8 @@ _pt_osc7
         match self {
             TerminalContext::Local(_) => None,
             TerminalContext::Ssh(ctx) => {
-                let mut file_ref = ctx.stderr_file.borrow_mut();
-                let file = file_ref.as_mut()?;
+                let mut rt = ctx.runtime.borrow_mut();
+                let file = rt.stderr_file.as_mut()?;
                 let mut buf = vec![0u8; 4096];
                 let mut accumulated = Vec::new();
                 // The pipe is non-blocking; read until WouldBlock.
@@ -386,5 +441,116 @@ _pt_osc7
                 Some(String::from_utf8_lossy(&accumulated).into_owned())
             },
         }
+    }
+
+    // ── GAP-5.6 reconnect support ──────────────────────────────────────────
+
+    /// Snapshot the SSH reconnect state for UI rendering. `None` for local.
+    #[cfg(unix)]
+    pub fn ssh_state_snapshot(&self) -> Option<SshStateSnapshot> {
+        match self {
+            TerminalContext::Local(_) => None,
+            TerminalContext::Ssh(ctx) => {
+                Some(SshStateSnapshot::from(&*ctx.reconnect_state.lock().unwrap()))
+            },
+        }
+    }
+
+    /// Set the SSH reconnect state (called from the iced loop on
+    /// [`crate::ssh::reconnect::ReconnectUpdate`] Progress/Failed, or on
+    /// `reattach`). No-op for local contexts.
+    #[cfg(unix)]
+    pub fn set_ssh_state(&self, state: SshState) {
+        if let TerminalContext::Ssh(ctx) = self {
+            *ctx.reconnect_state.lock().unwrap() = state;
+        }
+    }
+
+    /// Mark this SSH pane as closing by user intent (manual disconnect / tab
+    /// close). MUST be set before writing `exit\r` so the exit handler does
+    /// not auto-reconnect. No-op for local contexts.
+    #[cfg(unix)]
+    pub fn mark_user_initiated_close(&self) {
+        if let TerminalContext::Ssh(ctx) = self {
+            ctx.user_initiated_close.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// True iff a user-initiated close was flagged for this SSH pane.
+    #[cfg(unix)]
+    pub fn is_user_initiated_close(&self) -> bool {
+        match self {
+            TerminalContext::Local(_) => false,
+            TerminalContext::Ssh(ctx) => ctx.user_initiated_close.load(std::sync::atomic::Ordering::SeqCst),
+        }
+    }
+
+    /// Clone out the parameters needed to re-spawn this SSH connection.
+    /// `None` for local contexts.
+    #[cfg(unix)]
+    pub fn ssh_reconnect_params(&self) -> Option<ReconnectParams> {
+        match self {
+            TerminalContext::Local(_) => None,
+            TerminalContext::Ssh(ctx) => Some(ReconnectParams {
+                host: ctx.ssh_host.clone(),
+                user: ctx.ssh_user.clone(),
+                port: ctx.ssh_port,
+                key_path: ctx.ssh_key_path.clone(),
+                password: ctx.ssh_password.clone(),
+            }),
+        }
+    }
+
+    /// GAP-5.6: reattach a freshly-spawned `SshPty` to this context after a
+    /// reconnect. Joins the old (dead) loop thread, builds a new
+    /// `PtyEventLoop` against the SAME terminal `Arc` (so scrollback is
+    /// preserved), and swaps the notifier / event receiver / io thread /
+    /// stderr.
+    ///
+    /// Soundness relies on alacritty's `Term::exit` (term/mod.rs) NOT setting
+    /// a sticky "exited" flag — it only emits `Event::Exit`. The `PtyEventLoop`
+    /// owns its own `Poller` (loop-local), so the old dead loop leaves no
+    /// registrations on the terminal. If a future alacritty fork adds a
+    /// sticky exited flag, reattach will silently break (no input processed)
+    /// — re-audit then.
+    #[cfg(unix)]
+    pub fn reattach(&self, ssh_pty: SshPty, stderr: Option<File>) -> io::Result<()> {
+        use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
+
+        let TerminalContext::Ssh(ctx) = self else {
+            return Ok(());
+        };
+
+        let mut rt = ctx.runtime.borrow_mut();
+
+        // 1. Join the old loop thread. It has already exited (the child exit
+        //    is what triggered the reconnect), but joining closes the small
+        //    window between "Exit event delivered" and "thread fully torn
+        //    down".
+        if let Some(mut joiner) = rt.io_thread.take() {
+            joiner.join();
+        }
+
+        // 2. Fresh channel pair + listener for the new loop.
+        let (event_tx, event_rx) = bounded(64);
+        let event_listener = ChannelEventListener::new(event_tx);
+
+        // 3. New loop against the same terminal Arc (scrollback preserved).
+        let pty_loop = PtyEventLoop::new(
+            Arc::clone(&ctx.terminal),
+            event_listener,
+            ssh_pty,
+            false,
+            false,
+        )?;
+        let loop_tx = pty_loop.channel();
+        let io_thread = ThreadJoiner::new(pty_loop.spawn());
+
+        // 4. Swap the swappable runtime state.
+        rt.notifier = Notifier(loop_tx);
+        rt.event_rx = event_rx;
+        rt.io_thread = Some(io_thread);
+        rt.stderr_file = stderr;
+        Ok(())
     }
 }

@@ -100,8 +100,7 @@ action = { Ssh = "ListProfiles" }
 - `Ssh = "ListProfiles"` — 列出所有 SSH Profile
 
 ### 待实现
-- GAP-5.1 持久 PTY 守护进程(`puretermd` 后台进程)
-- GAP-5.6 完整 reconnect/disconnect 状态机
+- GAP-5.1 持久 PTY 守护进程(`puretermd` 后台进程;完成后 GAP-5.6 升级为 daemon 化跨重启恢复)
 - SSH agent forwarding(GAP-5.4)
 - pureterm:// URL scheme(GAP-5.5)
 
@@ -109,6 +108,9 @@ action = { Ssh = "ListProfiles" }
 - ✅ SSH Tab UI(GAP-5.7):`crates/pureterm/src/ssh/` + iced UI 串通;`⌘⇧S` 弹 SSH 对话框;异步 ssh spawn;PtyEventLoop 集成;`🔒 SSH: <name>` 标题;Tab 关闭时 `graceful_close` 发 `exit\r` + 500ms 等待 + SIGHUP 兜底
 - ✅ SSH 主 UI 设置 UI(GAP-5.8):右侧栏 `SshSettingsPanelState`;Profile 列表 + 编辑 + 保存到 toml;`CredentialStore` 主密码解锁/设置端到端(AES-256-GCM + Argon2id,Zeroizing 包裹 master_key)
 - ✅ 命令面板(GAP-5.9):`⌘⇧P` 触发;`nucleo-matcher` 模糊搜索;`Mode::Actions` ↔ `Mode::Profiles` 切换,SSH Profile 一跳到底
+
+### 已实现(2026-06-14 闭环)
+- 🚧 SSH reconnect/disconnect 状态机(GAP-5.6 进程内子集):`crates/pureterm/src/ssh/reconnect.rs`(`SshState` 状态机 + `ReconnectHub` std::thread worker + tokio mpsc + 持久 iced Subscription + 按 `ConnectionKey` 防重连风暴)+ `terminal_context.rs::SshCtx::reattach()`(同 terminal `Arc` 重建 `PtyEventLoop`,保留滚动历史);指数退避 3→60s × 8,Condvar 可唤醒;退出按**用户意图**分类(`user_initiated_close` + `>5s` grace);状态栏 `SSH`/`SSH ↻ n`/`SSH ✗`/`SSH ⏻`;`ssh.disconnect` IPC 真实落地(`pureterm ssh disconnect`);daemon 化留 GAP-5.1
 
 ## graphify
 

@@ -99,6 +99,13 @@ PureTerm 由 6 个 crate 组成的工作区:
 ### 标签与分屏
 - 多标签 + 嵌套水平/垂直分屏(`crates/pureterm/src/split_tree.rs`,23.5 KB)
 - 拖拽调整分屏比例(`MIN_RATIO=0.1`,`MAX_RATIO=0.9`)
+- **分屏操作补齐(2026-06-10 GAP-2.2)** — 键盘 + 右键菜单 + 命令面板三入口:
+  - 等分所有分屏 `⌘=`(递归 `equalize_all`)
+  - 交换 Pane `⌘⇧X`(翻转 first/second,ratio 不跳)
+  - 临时最大化 `⌘⇧Enter`(`Tab.zoom_state` 保存原树,再按恢复)
+  - 焦点 Next/Prev Pane `⌘]` / `⌘[` (DFS 先序循环;与 `⌘⌥+方向键` 几何相邻并存)
+  - 移动 Pane 到新 Tab `⌘⇧T` / 新窗口 `⌘⇧N`
+  - 命令面板搜 `split.*` 7 个 builtin
 - 标签关闭策略:本地 Tab 直接关;SSH Tab 走 `graceful_close`(发送 `exit\r` → 等 500ms → SIGHUP 兜底)
 - macOS 原生菜单 + Dock reopen 集成
 
@@ -111,6 +118,7 @@ PureTerm 由 6 个 crate 组成的工作区:
 - **主 UI SSH 设置面板**:右侧栏 `SshSettingsPanelState`,Profile 列表 + 实时编辑 + 保存到 toml
 - **SSH Tab UI**:`⌘⇧S` 弹对话框 → 异步 spawn → `PtyEventLoop` 集成 → 标题显示 `🔒 SSH: <name>`
 - **命令面板集成**:`⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,`Mode::Actions` ↔ `Mode::Profiles` 切换,选 Profile 一跳到底连接
+- **断线重连**(2026-06-14 GAP-5.6 进程内子集):SSH 连接 >5s 后掉线 → 指数退避(3→60s × 8)自动重连,保留滚动历史;状态栏显示 `SSH` / `SSH ↻ n` / `SSH ✗` / `SSH ⏻`;`pureterm ssh disconnect` 手动断开不触发重连
 
 ### Settings UI(独立进程)
 - 独立二进制 `pureterm-settings`,通过 `Cmd+,` 启动
@@ -362,6 +370,12 @@ PureTerm 扩展段:
 | 跳到第 N 标签 | `⌘1` … `⌘9` | |
 | 水平分屏 | `⌘D` | |
 | 垂直分屏 | `⌘⇧D` | |
+| 等分所有分屏 | `⌘=` | 递归等分(GAP-2.2) |
+| 交换 Pane | `⌘⇧X` | first/second 互换 |
+| 临时最大化 Pane | `⌘⇧Enter` | 再按恢复 |
+| 焦点 Next/Prev Pane | `⌘]` / `⌘[` | DFS 先序循环 |
+| 移动 Pane 到新 Tab | `⌘⇧T` | |
+| 移动 Pane 到新窗口 | `⌘⇧N` | |
 | 关闭当前 Pane | `⌘W` | |
 | 命令面板 | `⌘⇧P` | nucleo-matcher 模糊搜索 |
 | SSH 连接 | `⌘⇧S` | 弹 SSH Profile 选择 |
@@ -406,11 +420,11 @@ PureTerm 扩展段:
 - ✅ **GAP-3.7** 快捷键 6 套预设模板(tmux / Vim / iTerm / agent-triage / vscode / custom)
 - ✅ **GAP-4.1** Vi Copy Mode(ViSubMode 状态机 + 18 ViMotion + visual/block/yank + 搜索 + GPU 高亮)
 - ✅ **GAP-5.7/5.8/5.9** SSH 一等公民(Tab UI + 设置面板 + 命令面板集成)
+- 🚧 **GAP-5.6** SSH reconnect/disconnect 状态机(进程内子集:网络中断自动重连 + 指数退避 + 状态栏 + `ssh.disconnect`;daemon 化留 GAP-5.1)
 - ✅ **GAP-6.1** Socket API v2 完整协议(31 method / 8 命名空间 + IpcSideEffect 写操作副作用)
 
 **本季度焦点**(2026 Q2-Q3):
-- **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
-- **GAP-5.6** SSH reconnect/disconnect 完整状态机(网络中断自动重连)
+- **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话;完成后 GAP-5.6 升级为跨重启恢复)
 - **GAP-6.2** CLI 协议(9 大组子命令,基于 GAP-6.1 Socket API 扩展)
 
 **重点未实现领域**(详见路线图):

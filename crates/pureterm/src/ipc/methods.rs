@@ -40,6 +40,11 @@ pub enum IpcSideEffect {
     // SSH
     #[cfg(unix)]
     SshConnect { profile_index: usize },
+    /// GAP-5.6: disconnect the active SSH pane (or a specific one). The iced
+    /// loop flags the pane user-initiated-close (so it won't auto-reconnect)
+    /// and writes `exit\r`.
+    #[cfg(unix)]
+    SshDisconnect { pane_id: Option<u64> },
 }
 
 // ── Handler type ─────────────────────────────────────────────────────────
@@ -438,12 +443,15 @@ impl SocketRouter {
                 )
             });
 
-            router.register("ssh.disconnect", |_params, _snap| {
-                // Disconnect requires identifying which tab's SSH session to close.
-                // For now, close the active tab (which triggers SSH cleanup).
+            router.register("ssh.disconnect", |params, _snap| {
+                // GAP-5.6: real disconnect. Optional { "pane_id": <u64> };
+                // defaults to the active pane. The iced loop flags the pane
+                // user-initiated-close and writes `exit\r`.
+                let pane_id = params
+                    .and_then(|p| p.get("pane_id").and_then(|v| v.as_u64()));
                 (
-                    Ok(serde_json::json!({"note": "ssh.disconnect: close the SSH tab to disconnect; per-surface disconnect not yet implemented"})),
-                    None,
+                    Ok(serde_json::json!({"disconnected": true, "pane_id": pane_id})),
+                    Some(IpcSideEffect::SshDisconnect { pane_id }),
                 )
             });
         }
