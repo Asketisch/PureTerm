@@ -1,11 +1,11 @@
-use iced::widget::{button, canvas, column, container, mouse_area, row, slider, text, text_input};
+use iced::widget::{button, canvas, column, container, row, slider, text, text_input};
 use iced::{Color, Element, Length, Padding, Theme, window};
 
 use crate::app::Message;
 use crate::i18n::I18n;
 use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::widgets::color_field;
 use crate::widgets::color_picker::{self, hsv_to_hex, hex_to_color, WheelProgram};
-use crate::widgets::color_swatch;
 
 #[derive(Debug, Clone)]
 pub enum ColorsMsg {
@@ -17,6 +17,15 @@ pub enum ColorsMsg {
     HueSatChanged(ColorPickerTarget, f32, f32),
     ValueChanged(ColorPickerTarget, f32),
     ColorPickerResult(ColorPickerTarget, String),
+    /// 弹窗内 hex 输入框变更：仅更新 app 层 `picker_preview_hex`（预览），
+    /// 不直接写状态/TOML，确认时由 `ColorPickerResult` 统一提交。
+    ColorPickerHexChanged(String),
+    /// 屏幕吸管（Digital Color Meter 风格）：触发系统 loupe 从桌面取色。
+    /// macOS 上由主进程（iced_app）拦截执行 NSColorSampler，回填走
+    /// `ColorPickerResult`；此处不直接处理。非 macOS 落空。
+    OpenScreenPicker(ColorPickerTarget),
+    /// 屏幕吸管被取消（Esc）时由主进程发回的 no-op。
+    ScreenPickerCancelled,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,6 +34,8 @@ pub enum ColorPickerTarget {
     Background,
     Normal(usize),
     Bright(usize),
+    /// Terminal 页 bell.color，由 app 层解析/提交（ColorsState 不持有该字段）。
+    Bell,
 }
 
 #[derive(Debug, Clone)]
@@ -94,22 +105,33 @@ impl ColorsState {
         match msg {
             ColorsMsg::ForegroundChanged(v) => {
                 self.foreground = v.clone();
-                crate::config_io::set_string(doc, &["colors", "primary"], "foreground", &v);
+                if hex_to_color(&v).is_some() {
+                    crate::config_io::set_string(doc, &["colors", "primary"], "foreground", &v);
+                }
             }
             ColorsMsg::BackgroundChanged(v) => {
                 self.background = v.clone();
-                crate::config_io::set_string(doc, &["colors", "primary"], "background", &v);
+                if hex_to_color(&v).is_some() {
+                    crate::config_io::set_string(doc, &["colors", "primary"], "background", &v);
+                }
             }
             ColorsMsg::NormalColorChanged(i, v) => {
                 self.normal[i] = v.clone();
-                crate::config_io::set_string(doc, &["colors", "normal"], keys[i], &v);
+                if hex_to_color(&v).is_some() {
+                    crate::config_io::set_string(doc, &["colors", "normal"], keys[i], &v);
+                }
             }
             ColorsMsg::BrightColorChanged(i, v) => {
                 self.bright[i] = v.clone();
-                crate::config_io::set_string(doc, &["colors", "bright"], keys[i], &v);
+                if hex_to_color(&v).is_some() {
+                    crate::config_io::set_string(doc, &["colors", "bright"], keys[i], &v);
+                }
             }
             ColorsMsg::OpenColorPicker(_) => {
                 // Handled by app, not directly here
+            }
+            ColorsMsg::ColorPickerHexChanged(_) => {
+                // 由 app 层更新 picker_preview_hex（弹窗内 hex 输入），此处无需处理。
             }
             ColorsMsg::HueSatChanged(target, hue, sat) => {
                 let (_, _, current_v) = hex_to_color(&self.hex_for_target(&target))
@@ -128,6 +150,11 @@ impl ColorsState {
             ColorsMsg::ColorPickerResult(target, hex) => {
                 self.apply_hex(&target, &hex, doc);
             }
+            ColorsMsg::OpenScreenPicker(_) | ColorsMsg::ScreenPickerCancelled => {
+                // 屏幕吸管由主进程（iced_app）拦截处理（macOS NSColorSampler），
+                // 成功回填复用 `ColorPickerResult`。走到这里只可能是非 macOS
+                // 落空或边缘情况，no-op。
+            }
         }
     }
 
@@ -137,6 +164,10 @@ impl ColorsState {
             ColorPickerTarget::Background => self.background.clone(),
             ColorPickerTarget::Normal(i) => self.normal[*i].clone(),
             ColorPickerTarget::Bright(i) => self.bright[*i].clone(),
+            ColorPickerTarget::Bell => {
+                // bell_color 由 app 层从 TerminalState 解析；此分支不应被调用。
+                "#ffffff".to_string()
+            }
         }
     }
 
@@ -159,43 +190,68 @@ impl ColorsState {
                 self.bright[*i] = hex.to_string();
                 crate::config_io::set_string(doc, &["colors", "bright"], keys[*i], hex);
             }
+            ColorPickerTarget::Bell => {
+                // bell_color 由 app 层直接写 TerminalState；此分支不应被调用。
+            }
         }
     }
 
     /// Replay this page's in-memory color state onto `doc`. Used at Save
-    /// time via `mutate_config`.
+    /// time via `mutate_config`. 无效 hex 跳过写盘（保留磁盘旧值），与
+    /// Terminal 页整数字段的「解析失败即跳过」范式一致。
     pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
         let keys = ["black", "red", "green", "yellow", "blue", "magenta", "cyan", "white"];
-        crate::config_io::set_string(doc, &["colors", "primary"], "foreground", &self.foreground);
-        crate::config_io::set_string(doc, &["colors", "primary"], "background", &self.background);
+        if hex_to_color(&self.foreground).is_some() {
+            crate::config_io::set_string(doc, &["colors", "primary"], "foreground", &self.foreground);
+        }
+        if hex_to_color(&self.background).is_some() {
+            crate::config_io::set_string(doc, &["colors", "primary"], "background", &self.background);
+        }
         for (i, key) in keys.iter().enumerate() {
-            crate::config_io::set_string(doc, &["colors", "normal"], key, &self.normal[i]);
-            crate::config_io::set_string(doc, &["colors", "bright"], key, &self.bright[i]);
+            if hex_to_color(&self.normal[i]).is_some() {
+                crate::config_io::set_string(doc, &["colors", "normal"], key, &self.normal[i]);
+            }
+            if hex_to_color(&self.bright[i]).is_some() {
+                crate::config_io::set_string(doc, &["colors", "bright"], key, &self.bright[i]);
+            }
         }
     }
 }
 
 pub fn main_view(state: &ColorsState, i18n: &I18n) -> Element<'static, Message> {
+    let pick = i18n.t("colors.picker_button");
     let content = column![
         section_title(i18n.t("colors.section.primary")),
         color_row(
             i18n.t("colors.foreground"),
             &state.foreground,
             ColorPickerTarget::Foreground,
-            ColorsMsg::ForegroundChanged
+            ColorsMsg::ForegroundChanged,
+            pick.clone(),
         ),
         color_row(
             i18n.t("colors.background"),
             &state.background,
             ColorPickerTarget::Background,
-            ColorsMsg::BackgroundChanged
+            ColorsMsg::BackgroundChanged,
+            pick.clone(),
         ),
         iced::widget::rule::horizontal(1),
         section_title(i18n.t("colors.section.normal")),
-        color_grid(&state.normal, |i, v| ColorsMsg::NormalColorChanged(i, v), ColorPickerTarget::Normal),
+        color_grid(
+            &state.normal,
+            |i, v| ColorsMsg::NormalColorChanged(i, v),
+            ColorPickerTarget::Normal,
+            pick.clone(),
+        ),
         iced::widget::rule::horizontal(1),
         section_title(i18n.t("colors.section.bright")),
-        color_grid(&state.bright, |i, v| ColorsMsg::BrightColorChanged(i, v), ColorPickerTarget::Bright),
+        color_grid(
+            &state.bright,
+            |i, v| ColorsMsg::BrightColorChanged(i, v),
+            ColorPickerTarget::Bright,
+            pick,
+        ),
     ]
     .spacing(SPACING)
     .padding(Padding::from(PADDING as u16));
@@ -203,10 +259,17 @@ pub fn main_view(state: &ColorsState, i18n: &I18n) -> Element<'static, Message> 
     container(content).width(Length::Fill).into()
 }
 
-pub fn color_picker_window_view(target: ColorPickerTarget, hex: &str, window_id: window::Id) -> Element<'static, Message> {
+pub fn color_picker_window_view(
+    target: ColorPickerTarget,
+    hex: &str,
+    original_color: Color,
+    window_id: window::Id,
+) -> Element<'static, Message> {
+    // hex 非法时（如用户输入到一半）色轮/滑块/预览停在 original_color，
+    // 而不是回退到红色 (0,0,1)，避免视觉跳变。
     let (hue, sat, val) = hex_to_color(hex)
         .map(color_picker::color_to_hsv)
-        .unwrap_or((0.0, 0.0, 1.0));
+        .unwrap_or_else(|| color_picker::color_to_hsv(original_color));
 
     let target_clone = target.clone();
     let wheel = canvas(WheelProgram::new(hue, sat, val, move |h, s| {
@@ -228,7 +291,7 @@ pub fn color_picker_window_view(target: ColorPickerTarget, hex: &str, window_id:
     .spacing(SPACING)
     .align_y(iced::Alignment::Center);
 
-    let preview_color = hex_to_color(hex).unwrap_or(Color::BLACK);
+    let preview_color = hex_to_color(hex).unwrap_or(original_color);
     let preview = container(text(""))
         .width(Length::Fill)
         .height(24)
@@ -256,7 +319,12 @@ pub fn color_picker_window_view(target: ColorPickerTarget, hex: &str, window_id:
         ColorPickerTarget::Foreground => "Foreground",
         ColorPickerTarget::Background => "Background",
         ColorPickerTarget::Normal(i) | ColorPickerTarget::Bright(i) => COLOR_NAMES[*i],
+        ColorPickerTarget::Bell => "Bell",
     };
+
+    // 弹窗内 hex 直接可编辑：边输入边驱动色轮/滑块/预览（经 app 的
+    // picker_preview_hex 回流）。非法 hex 显示原文 + 红框，色轮保持上一有效色。
+    let hex_valid = hex_to_color(hex).is_some();
 
     container(
         column![
@@ -266,7 +334,14 @@ pub fn color_picker_window_view(target: ColorPickerTarget, hex: &str, window_id:
             preview,
             row![
                 text("Hex:").size(14).color(TEXT_SECONDARY),
-                text(hex.to_string()).size(14).color(theme::TEXT_PRIMARY),
+                text_input("#rrggbb", hex)
+                    .on_input(|s| Message::Colors(ColorsMsg::ColorPickerHexChanged(s)))
+                    .style(if hex_valid {
+                        theme::text_input::field
+                    } else {
+                        theme::text_input::field_invalid
+                    })
+                    .width(120),
             ]
             .spacing(SPACING)
             .align_y(iced::Alignment::Center),
@@ -290,24 +365,32 @@ fn section_title(title: String) -> Element<'static, Message> {
         .into()
 }
 
-fn color_row<F>(label: String, hex: &str, target: ColorPickerTarget, msg_fn: F) -> Element<'static, Message>
+fn color_row<F>(
+    label: String,
+    hex: &str,
+    target: ColorPickerTarget,
+    msg_fn: F,
+    picker_label: String,
+) -> Element<'static, Message>
 where
     F: 'static + Fn(String) -> ColorsMsg,
 {
-    let color = parse_hex(hex);
-    let target_for_swatch = target.clone();
-    let swatch = mouse_area(color_swatch::view(color, 24.0))
-        .on_press(Message::Colors(ColorsMsg::OpenColorPicker(target_for_swatch)));
+    let target_wheel = target.clone();
+    let target_screen = target;
     row![
         text(label)
             .size(theme::FONT_SIZE)
             .color(TEXT_SECONDARY)
             .width(120),
-        swatch,
-        text_input("#rrggbb", hex)
-            .on_input(move |s| Message::Colors(msg_fn(s)))
-            .style(theme::text_input::field)
-            .width(100),
+        color_field::color_input(
+            hex,
+            24.0,
+            100.0,
+            picker_label,
+            move || Message::Colors(ColorsMsg::OpenColorPicker(target_wheel.clone())),
+            move || Message::Colors(ColorsMsg::OpenScreenPicker(target_screen.clone())),
+            move |s| Message::Colors(msg_fn(s)),
+        ),
     ]
     .spacing(SPACING)
     .align_y(iced::Alignment::Center)
@@ -318,6 +401,7 @@ fn color_grid<F, G>(
     colors: &[String; 8],
     msg_fn: F,
     target_fn: G,
+    picker_label: String,
 ) -> Element<'static, Message>
 where
     F: 'static + Fn(usize, String) -> ColorsMsg + Clone,
@@ -326,13 +410,25 @@ where
     let row1: Vec<Element<Message>> = (0..4)
         .map(|i| {
             let f = msg_fn.clone();
-            color_cell(COLOR_NAMES[i], &colors[i], target_fn(i), move |v| f(i, v))
+            color_cell(
+                COLOR_NAMES[i],
+                &colors[i],
+                target_fn(i),
+                picker_label.clone(),
+                move |v| f(i, v),
+            )
         })
         .collect();
     let row2: Vec<Element<Message>> = (4..8)
         .map(|i| {
             let f = msg_fn.clone();
-            color_cell(COLOR_NAMES[i], &colors[i], target_fn(i), move |v| f(i, v))
+            color_cell(
+                COLOR_NAMES[i],
+                &colors[i],
+                target_fn(i),
+                picker_label.clone(),
+                move |v| f(i, v),
+            )
         })
         .collect();
 
@@ -348,38 +444,26 @@ fn color_cell<F>(
     name: &str,
     hex: &str,
     target: ColorPickerTarget,
+    picker_label: String,
     on_change: F,
 ) -> Element<'static, Message>
 where
     F: 'static + Fn(String) -> ColorsMsg,
 {
-    let color = parse_hex(hex);
-    let target_for_swatch = target.clone();
-    let swatch = mouse_area(color_swatch::view(color, 20.0))
-        .on_press(Message::Colors(ColorsMsg::OpenColorPicker(target_for_swatch)));
+    let target_wheel = target.clone();
+    let target_screen = target;
     column![
         text(name.to_string()).size(11.0).color(TEXT_SECONDARY),
-        row![
-            swatch,
-            text_input("#hex", hex)
-                .on_input(move |s| Message::Colors(on_change(s)))
-                .style(theme::text_input::field)
-                .width(80),
-        ]
-        .spacing(4)
-        .align_y(iced::Alignment::Center),
+        color_field::color_input(
+            hex,
+            20.0,
+            60.0,
+            picker_label,
+            move || Message::Colors(ColorsMsg::OpenColorPicker(target_wheel.clone())),
+            move || Message::Colors(ColorsMsg::OpenScreenPicker(target_screen.clone())),
+            move |s| Message::Colors(on_change(s)),
+        ),
     ]
     .spacing(2)
     .into()
-}
-
-fn parse_hex(hex: &str) -> Color {
-    let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
-        return Color::from_rgb(0.5, 0.5, 0.5);
-    }
-    let r = u8::from_str_radix(&hex[0..2], 16).unwrap_or(128);
-    let g = u8::from_str_radix(&hex[2..4], 16).unwrap_or(128);
-    let b = u8::from_str_radix(&hex[4..6], 16).unwrap_or(128);
-    Color::from_rgb8(r, g, b)
 }

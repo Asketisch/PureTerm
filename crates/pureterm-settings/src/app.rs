@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use iced::widget::{
     button, column, container, image, row, rule, scrollable, space, stack, text,
 };
-use iced::{window, ContentFit, Element, Length, Padding, Task};
+use iced::{Color, window, ContentFit, Element, Length, Padding, Task};
 
 use crate::config_io;
 use crate::i18n::I18n;
@@ -16,6 +16,7 @@ use crate::pages::ssh_profiles::{SshMsg, SshState};
 use crate::pages::terminal::{TerminalMsg, TerminalState};
 use crate::pages::Page;
 use crate::theme;
+use crate::widgets::color_picker::hex_to_color;
 use crate::widgets::sidebar;
 
 enum StatusMessage {
@@ -231,7 +232,10 @@ impl SettingsState {
                 // - HueSatChanged/ValueChanged: only update the preview, never commit
                 // - ColorPickerResult: commit the preview and close the window
                 if let ColorsMsg::OpenColorPicker(target) = &msg {
-                    let current_hex = self.colors.hex_for_target(target);
+                    let current_hex = match target {
+                        ColorPickerTarget::Bell => self.terminal.bell_color.clone(),
+                        other => self.colors.hex_for_target(other),
+                    };
                     self.pending_color_target = Some(target.clone());
                     self.picker_original_hex = Some(current_hex.clone());
                     self.picker_preview_hex = Some(current_hex);
@@ -244,6 +248,13 @@ impl SettingsState {
                         ..Default::default()
                     };
                     return window::open(settings).1.map(|id| Message::ColorPickerOpened(id));
+                }
+
+                if let ColorsMsg::ColorPickerHexChanged(s) = &msg {
+                    // 弹窗内 hex 直接输入：仅更新预览原始文本，确认时统一提交。
+                    // 非法 hex 由弹窗 view 的 unwrap_or(original_color) 兜底，色轮不跳红。
+                    self.picker_preview_hex = Some(s.clone());
+                    return Task::none();
                 }
 
                 if matches!(msg, ColorsMsg::HueSatChanged(..) | ColorsMsg::ValueChanged(..)) {
@@ -274,7 +285,19 @@ impl SettingsState {
                 }
 
                 if let ColorsMsg::ColorPickerResult(target, hex) = &msg {
-                    self.colors.apply_hex(target, hex, &mut self.document);
+                    // 拒绝提交非法 hex（如弹窗里输入到一半点 OK）：不写、不关窗。
+                    if hex_to_color(hex).is_none() {
+                        return Task::none();
+                    }
+                    match target {
+                        ColorPickerTarget::Bell => {
+                            self.terminal.bell_color = hex.clone();
+                            crate::config_io::set_string(&mut self.document, &["bell"], "color", hex);
+                        }
+                        other => {
+                            self.colors.apply_hex(other, hex, &mut self.document);
+                        }
+                    }
                     self.dirty = true;
                     self.status_msg = None;
                     let window_id = self.color_picker_window;
@@ -350,10 +373,20 @@ impl SettingsState {
                     let hex = self
                         .picker_preview_hex
                         .clone()
-                        .unwrap_or_else(|| self.colors.hex_for_target(target));
+                        .unwrap_or_else(|| match target {
+                            ColorPickerTarget::Bell => self.terminal.bell_color.clone(),
+                            other => self.colors.hex_for_target(other),
+                        });
+                    // 弹窗里 hex 非法时色轮回退到的「上一有效色」。
+                    let original_color = self
+                        .picker_original_hex
+                        .as_ref()
+                        .and_then(|h| hex_to_color(h))
+                        .unwrap_or(Color::BLACK);
                     return crate::pages::colors::color_picker_window_view(
                         target.clone(),
                         &hex,
+                        original_color,
                         window,
                     );
                 }

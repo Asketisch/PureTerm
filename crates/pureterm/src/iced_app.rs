@@ -41,6 +41,8 @@ use crate::ssh::pty::SshPty;
 use crate::ssh::session::SshSessionManager;
 use pureterm_settings::app::{Message as SettingsMessage, SettingsState};
 use pureterm_settings::i18n::I18n;
+// PureTerm: 屏幕吸管拦截用到 ColorsMsg（OpenScreenPicker / ColorPickerResult / ScreenPickerCancelled）。
+use pureterm_settings::pages::colors::ColorsMsg;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TabId(u64);
@@ -1918,6 +1920,28 @@ impl PureTermApp {
             }
             Message::Settings(msg) => {
                 let is_save = matches!(&msg, SettingsMessage::Save);
+
+                // PureTerm: 屏幕吸管触发。FFI 必须在主二进制（pureterm-settings 无
+                // Apple 依赖），故在 settings 状态机之前拦截 OpenScreenPicker：在主线程
+                // 启动 NSColorSampler，经 tokio oneshot + Task::perform 回流；成功复用
+                // `ColorPickerResult` 提交路径，取消回 `ScreenPickerCancelled` no-op。
+                #[cfg(target_os = "macos")]
+                if let SettingsMessage::Colors(ColorsMsg::OpenScreenPicker(target)) = &msg {
+                    let target = target.clone();
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    crate::macos_eyedropper::start_sample(tx);
+                    return Task::perform(
+                        async move { rx.await.unwrap_or(None) },
+                        move |hex_opt| match hex_opt {
+                            Some(hex) => Message::Settings(SettingsMessage::Colors(
+                                ColorsMsg::ColorPickerResult(target.clone(), hex),
+                            )),
+                            None => Message::Settings(SettingsMessage::Colors(
+                                ColorsMsg::ScreenPickerCancelled,
+                            )),
+                        },
+                    );
+                }
 
                 // Intercept SavedAt for notify-watcher debounce (kept as
                 // fallback: the standalone settings daemon still relies on it,

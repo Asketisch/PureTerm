@@ -54,10 +54,14 @@ tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.1"
+# PureTerm: screen eyedropper (NSColorSampler) 需要 block2 (0.6，与 objc2-app-kit 0.3.2 一致) 做 ObjC block。
+block2 = "0.6"
 objc2-foundation = { version = "0.3.1", default-features = false, features = ["std", "NSArray", "NSString"] }
 objc2-app-kit = { version = "0.3.1", default-features = false, features = [
     "std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSMenu", "NSMenuItem",
     "objc2-quartz-core",
+    # PureTerm: 屏幕吸管 NSColorSampler + sRGB 分量读取。
+    "NSColorSampler", "NSColor", "NSColorSpace", "block2", "objc2-core-foundation",
 ] }
 objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
     "std", "CALayer", "CAMetalLayer", "objc2-metal",

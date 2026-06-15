@@ -11,6 +11,8 @@ mod status_bar;
 mod macos_menu;
 #[cfg(target_os = "macos")]
 mod macos_reopen;
+#[cfg(target_os = "macos")]
+mod macos_eyedropper;
 #[cfg(unix)]
 mod ssh;
 mod terminal_context;

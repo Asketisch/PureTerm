@@ -3,7 +3,10 @@ use iced::{Element, Length, Padding};
 
 use crate::app::Message;
 use crate::i18n::I18n;
+use crate::pages::colors::{ColorPickerTarget, ColorsMsg};
 use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::widgets::color_field;
+use crate::widgets::color_picker::hex_to_color;
 
 #[derive(Debug, Clone)]
 pub enum TerminalMsg {
@@ -98,7 +101,9 @@ impl TerminalState {
             }
             TerminalMsg::BellColorChanged(v) => {
                 self.bell_color = v.clone();
-                crate::config_io::set_string(doc, &["bell"], "color", &v);
+                if hex_to_color(&v).is_some() {
+                    crate::config_io::set_string(doc, &["bell"], "color", &v);
+                }
             }
         }
     }
@@ -124,7 +129,9 @@ impl TerminalState {
         if let Ok(n) = self.bell_duration.parse::<i64>() {
             crate::config_io::set_integer(doc, &["bell"], "duration", n);
         }
-        crate::config_io::set_string(doc, &["bell"], "color", &self.bell_color);
+        if hex_to_color(&self.bell_color).is_some() {
+            crate::config_io::set_string(doc, &["bell"], "color", &self.bell_color);
+        }
     }
 }
 
@@ -179,11 +186,15 @@ pub fn view(state: &TerminalState, i18n: &I18n) -> Element<'static, Message> {
         ),
         labeled_row(
             i18n.t("terminal.bell_color"),
-            text_input("#ffffff", &state.bell_color)
-                .on_input(|v| Message::Terminal(TerminalMsg::BellColorChanged(v)))
-                .style(theme::text_input::field)
-                .width(100)
-                .into(),
+            color_field::color_input(
+                &state.bell_color,
+                20.0,
+                100.0,
+                i18n.t("colors.picker_button"),
+                || Message::Colors(ColorsMsg::OpenColorPicker(ColorPickerTarget::Bell)),
+                || Message::Colors(ColorsMsg::OpenScreenPicker(ColorPickerTarget::Bell)),
+                |v| Message::Terminal(TerminalMsg::BellColorChanged(v)),
+            ),
         ),
     ]
     .spacing(SPACING)

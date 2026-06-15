@@ -180,6 +180,8 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("colors.background".into(), "Background".into());
     m.insert("colors.section.normal".into(), "Normal Colors (0-7)".into());
     m.insert("colors.section.bright".into(), "Bright Colors (8-15)".into());
+    // PureTerm: 取色器触发按钮文案。
+    m.insert("colors.picker_button".into(), "Pick".into());
 
     // Terminal page
     m.insert("terminal.section.scrolling".into(), "Scrolling".into());
@@ -432,6 +434,8 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("colors.background".into(), "背景色".into());
     m.insert("colors.section.normal".into(), "标准颜色 (0-7)".into());
     m.insert("colors.section.bright".into(), "亮色 (8-15)".into());
+    // PureTerm: 取色器触发按钮文案。
+    m.insert("colors.picker_button".into(), "取色".into());
 
     // Terminal page
     m.insert("terminal.section.scrolling".into(), "滚动".into());

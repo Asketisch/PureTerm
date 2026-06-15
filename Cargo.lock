@@ -3736,6 +3736,7 @@ dependencies = [
  "alacritty_terminal",
  "arboard",
  "argon2",
+ "block2 0.6.2",
  "bytemuck",
  "clap",
  "crossbeam-channel",
