@@ -108,6 +108,10 @@ pub struct PureTermApp {
     // Context menu
     context_menu: Option<ContextMenuState>,
     last_cursor_pos: Point,
+    /// 鼠标的绝对（窗口内容）坐标，来自全局 `Event::Mouse(CursorMoved)`。
+    /// 与 `last_cursor_pos`（widget-local）严格区分：右键菜单按绝对坐标定位，
+    /// 而选区起点 / 鼠标上报（MOUSE_MODE）按 widget-local 坐标使用。
+    last_global_cursor_pos: Point,
     viewport_size: Size,
     /// Device pixel ratio (2.0 on Retina). Used to rasterize glyphs at native resolution.
     scale_factor: f32,
@@ -764,6 +768,7 @@ impl PureTermApp {
             ssh_credential_store: None,
             context_menu: None,
             last_cursor_pos: Point::default(),
+            last_global_cursor_pos: Point::default(),
             viewport_size: Size::new(1024.0, 768.0),
             scale_factor: 1.0,
             // Initialize atomic to 1.0 (not 0) so that the first frame's
@@ -2284,7 +2289,7 @@ impl PureTermApp {
             Message::TabRightClick(tab_id) => {
                 self.context_menu = Some(ContextMenuState {
                     tab_id,
-                    position: self.last_cursor_pos,
+                    position: self.last_global_cursor_pos,
                     hovered_item: None,
                 });
                 self.color_picker_tab = None;
@@ -2747,7 +2752,7 @@ impl PureTermApp {
                     }
                     self.context_menu = Some(ContextMenuState {
                         tab_id,
-                        position: self.last_cursor_pos,
+                        position: self.last_global_cursor_pos,
                         hovered_item: None,
                     });
                     // 关闭其他可能冲突的覆盖层
@@ -3147,6 +3152,13 @@ impl PureTermApp {
                 // 实际拖动现在由 GlobalCursorMoved 处理。
             }
             Message::GlobalCursorMoved(pos) => {
+                // `pos` 来自全局 `Event::Mouse(CursorMoved)`，是窗口内容绝对坐标。
+                // 记录到绝对坐标字段，供右键菜单等需要绝对坐标的消费者使用。
+                // ⚠️ 绝不能写进 `last_cursor_pos`：那是 widget-local 坐标，选区起点
+                // （PaneMousePressed）和鼠标上报（MOUSE_MODE）都按 local 用。之前
+                // 这里 `self.last_cursor_pos = pos` 会让选区 anchor 整体偏低约一个
+                // tab bar 高度（≈ TAB_BAR_HEIGHT / cell_height 行）。
+                self.last_global_cursor_pos = pos;
                 if let Some(ref drag) = self.drag_state {
                     let current_pos = match drag.direction {
                         SplitDirection::Horizontal => pos.x,
@@ -3173,9 +3185,6 @@ impl PureTermApp {
                         // 同步 resize PTY，让 term 网格与视觉 bounds 同步，避免拖动时字体变形
                         Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
                     }
-                } else {
-                    // 没有拖拽时只更新 last_cursor_pos
-                    self.last_cursor_pos = pos;
                 }
             }
             Message::GlobalMouseRelease => {
