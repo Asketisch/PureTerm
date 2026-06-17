@@ -11,6 +11,7 @@ mod iced_app;
 mod ime_widget;
 mod ipc;
 mod keymap;
+mod session_restore;
 mod split_tree;
 mod status_bar;
 #[cfg(target_os = "macos")]

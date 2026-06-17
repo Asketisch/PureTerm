@@ -27,7 +27,7 @@ pub const MIN_RATIO: f32 = 0.1;
 pub const MAX_RATIO: f32 = 0.9;
 
 /// 终端面板的唯一标识符。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PaneId(pub u64);
 
 impl PaneId {
@@ -47,7 +47,7 @@ pub struct Pane {
 }
 
 /// 分割方向。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SplitDirection {
     /// 左右分割（垂直分割线）。
     Horizontal,
@@ -65,7 +65,7 @@ impl SplitDirection {
 }
 
 /// 分割树节点。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SplitNode {
     /// 叶子节点：持有单个面板 ID。
     Leaf(PaneId),
@@ -330,6 +330,37 @@ impl SplitNode {
         match self {
             SplitNode::Leaf(_) => 1,
             SplitNode::Split { first, second, .. } => first.pane_count() + second.pane_count(),
+        }
+    }
+
+    /// GAP-5.6 跨重启恢复：把叶节点的 PaneId 按映射替换为「新分配」的 id。
+    /// 持久化树里的 id 来自上一个进程，必须重映射到本进程新分配的 id，
+    /// 否则会与本进程的全局自增计数器冲突。映射里没有的叶节点保持原 id。
+    pub fn remap_pane_ids(&mut self, mapping: &HashMap<PaneId, PaneId>) {
+        match self {
+            SplitNode::Leaf(id) => {
+                if let Some(new_id) = mapping.get(id) {
+                    *id = *new_id;
+                }
+            }
+            SplitNode::Split { first, second, .. } => {
+                first.remap_pane_ids(mapping);
+                second.remap_pane_ids(mapping);
+            }
+        }
+    }
+
+    /// GAP-5.6 跨重启恢复：重新分配每个 Split 节点的 `split_id`。
+    /// 反序列化得到的 split_id 来自上一个进程，可能与本进程的全局计数器冲突，
+    /// 故全部用 `next_split_id()` 重发。
+    pub fn regenerate_split_ids(&mut self) {
+        match self {
+            SplitNode::Leaf(_) => {}
+            SplitNode::Split { split_id, first, second, .. } => {
+                *split_id = next_split_id();
+                first.regenerate_split_ids();
+                second.regenerate_split_ids();
+            }
         }
     }
 
@@ -901,5 +932,53 @@ mod tests {
         let p = PaneId(1);
         let mut tree = SplitNode::Leaf(p);
         assert_eq!(tree.remove(p), None);
+    }
+
+    /// GAP-5.6: remap rewrites leaf ids while preserving tree shape + ratios.
+    #[test]
+    fn remap_pane_ids_rewrites_leaves() {
+        let (mut tree, ids) = build_nested();
+        let before = tree.pane_ids();
+        let mut mapping = std::collections::HashMap::new();
+        // Shift every id by +1000.
+        for id in &before {
+            mapping.insert(*id, PaneId(id.0 + 1000));
+        }
+        tree.remap_pane_ids(&mapping);
+        let after = tree.pane_ids();
+        assert_eq!(after.len(), before.len());
+        for (b, a) in before.iter().zip(after.iter()) {
+            assert_eq!(a.0, b.0 + 1000);
+        }
+        // Original ids must be gone.
+        for id in &ids {
+            assert!(!after.contains(id));
+        }
+    }
+
+    /// GAP-5.6: regenerate_split_ids must not disturb pane layout.
+    #[test]
+    fn regenerate_split_ids_preserves_panes() {
+        let (mut tree, _ids) = build_nested();
+        let before = tree.pane_ids();
+        tree.regenerate_split_ids();
+        let after = tree.pane_ids();
+        assert_eq!(before, after);
+    }
+
+    /// GAP-5.6: serialize → deserialize must reconstruct the same leaf order
+    /// and a representative ratio (the persistence path for cross-restart
+    /// recovery).
+    #[test]
+    fn serde_round_trip_preserves_structure() {
+        let (tree, _ids) = build_nested();
+        let json = serde_json::to_string(&tree).expect("serialize");
+        let back: SplitNode = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.pane_ids(), tree.pane_ids());
+        // Root ratio (0.2) survives.
+        match &back {
+            SplitNode::Split { ratio, .. } => assert!((ratio - 0.2).abs() < 1e-6),
+            _ => panic!("root must be a Split"),
+        }
     }
 }

@@ -100,7 +100,6 @@ action = { Ssh = "ListProfiles" }
 - `Ssh = "ListProfiles"` — 列出所有 SSH Profile
 
 ### 待实现
-- GAP-5.1 持久 PTY 守护进程(`puretermd` 后台进程;完成后 GAP-5.6 升级为 daemon 化跨重启恢复)
 - SSH agent forwarding(GAP-5.4)
 - pureterm:// URL scheme(GAP-5.5)
 
@@ -110,7 +109,11 @@ action = { Ssh = "ListProfiles" }
 - ✅ 命令面板(GAP-5.9):`⌘⇧P` 触发;`nucleo-matcher` 模糊搜索;`Mode::Actions` ↔ `Mode::Profiles` 切换,SSH Profile 一跳到底
 
 ### 已实现(2026-06-14 闭环)
-- 🚧 SSH reconnect/disconnect 状态机(GAP-5.6 进程内子集):`crates/pureterm/src/ssh/reconnect.rs`(`SshState` 状态机 + `ReconnectHub` std::thread worker + tokio mpsc + 持久 iced Subscription + 按 `ConnectionKey` 防重连风暴)+ `terminal_context.rs::SshCtx::reattach()`(同 terminal `Arc` 重建 `PtyEventLoop`,保留滚动历史);指数退避 3→60s × 8,Condvar 可唤醒;退出按**用户意图**分类(`user_initiated_close` + `>5s` grace);状态栏 `SSH`/`SSH ↻ n`/`SSH ✗`/`SSH ⏻`;`ssh.disconnect` IPC 真实落地(`pureterm ssh disconnect`);daemon 化留 GAP-5.1
+- 🚧 SSH reconnect/disconnect 状态机(GAP-5.6 进程内子集):`crates/pureterm/src/ssh/reconnect.rs`(`SshState` 状态机 + `ReconnectHub` std::thread worker + tokio mpsc + 持久 iced Subscription + 按 `ConnectionKey` 防重连风暴)+ `terminal_context.rs::SshCtx::reattach()`(同 terminal `Arc` 重建 `PtyEventLoop`,保留滚动历史);指数退避 3→60s × 8,Condvar 可唤醒;退出按**用户意图**分类(`user_initiated_close` + `>5s` grace);状态栏 `SSH`/`SSH ↻ n`/`SSH ✗`/`SSH ⏻`;`ssh.disconnect` IPC 真实落地(`pureterm ssh disconnect`);daemon 化跨重启恢复已实现(见下方 2026-06-17 闭环)
+
+### 已实现(2026-06-17 闭环)
+- ✅ 持久 PTY 守护进程(GAP-5.1):`puretermd` 单例(flock)+ `setsid` 脱离 GUI 进程组,GUI 关闭后 PTY master fd 由 pump 线程持有,子 shell 不死;`crates/pureterm-daemon/`(control JSON-RPC + per-session 数据 socket + `RingBuffer` 1 MiB scrollback + 多 subscriber 扇出);`SessionManager::create_local/create_ssh` + `run_pump` 回放 `SCROLLBACK` 帧;`LocalCtx`/`SshCtx` 持 `session_id`(`None` = 直接 PTY,不可恢复)
+- ✅ daemon 化跨重启恢复(GAP-5.6):GUI 重启后自动重连 daemon 存活会话 + 重建 tabs/分屏布局。`crates/pureterm/src/session_restore.rs`(`LayoutSnapshot` 持久化 → `data_dir()/gui-sessions.json`,`NamedTempFile::persist` 原子写,变更去抖 `time::every(250ms)` + ≥500ms 空闲落盘 + 关窗 flush);`iced_app::new()` 启动 `load → session.list 校验存活 → attach_existing 重连 → scrollback 回放重建 grid`;孤儿会话(daemon 有/快照无)作额外 tab 接回;窗口尺寸按上次快照重开;`SplitNode` serde + `remap_pane_ids`/`regenerate_split_ids`(进程本地 id 重映射)。daemon 零改动;SSH 重连到存活 `ssh -tt` child 无需重新认证。**关闭语义**:`⌘W` 关 tab/pane → `kill_pane_session` 调 `session.kill` 结束该 daemon 会话(下次不再恢复);退出 app(`⌘Q`/关窗/杀进程)→ 不 kill,保留存活会话供下次恢复(`daemon_client::kill_session` + `iced_app::{CloseTab else 分支, close_active_pane}`)
 
 ## graphify
 

@@ -99,6 +99,10 @@ pub struct PureTermApp {
     settings_state: Option<SettingsState>,
     settings_window: Option<window::Id>,
     last_resize_time: Option<Instant>,
+    /// GAP-5.6: layout snapshot has changed since the last flush to disk.
+    layout_dirty: bool,
+    /// GAP-5.6: instant of the most recent layout change (debounce reference).
+    last_layout_change_at: Option<Instant>,
     #[cfg(target_os = "macos")]
     metal_layer_configured: bool,
     #[cfg(target_os = "macos")]
@@ -165,6 +169,9 @@ pub struct PureTermApp {
     last_self_write: Option<std::time::SystemTime>,
     // Status bar (GAP-3.4)
     status_bar_cwd: Option<String>,
+    /// Last-known cwd per pane, reported via OSC 7. Drives cwd inheritance
+    /// for new tabs/panes and status-bar restoration on tab/pane switch.
+    pane_cwds: HashMap<PaneId, String>,
     status_bar_git_branch: Option<String>,
     status_bar_process_name: Option<String>,
     status_bar_last_poll: Instant,
@@ -394,6 +401,10 @@ struct ClickTracker {
 pub enum Message {
     MainWindowOpened(window::Id),
     TerminalWakeup,
+    /// GAP-5.6: periodic tick (~4 Hz) from a `time::every` subscription that
+    /// flushes the layout snapshot to disk if it has been dirty for ≥500 ms
+    /// (debounced on-change persistence — crash-safe).
+    LayoutSaveTick,
     Keyboard(iced::keyboard::Event),
     /// IME event (Chinese/Japanese/Korean input method composition & commit).
     InputMethod(iced::advanced::input_method::Event),
@@ -712,8 +723,28 @@ impl PureTermApp {
         // GAP-6.4: load user-defined [[commands]] before building the keymap.
         let custom_commands = AppConfig::load_custom_commands(&config_path);
 
+        // GAP-5.6: peek the saved layout so the window reopens at its last
+        // size (unix-only — recovery depends on the daemon path). The same
+        // snapshot is passed to `try_restore_layout` below (single disk read).
+        #[cfg(unix)]
+        let saved_layout = crate::session_restore::load();
+        let win_size = {
+            #[cfg(unix)]
+            {
+                saved_layout
+                    .as_ref()
+                    .filter(|s| s.viewport.w > 0.0 && s.viewport.h > 0.0)
+                    .map(|s| Size::new(s.viewport.w, s.viewport.h))
+                    .unwrap_or_else(|| Size::new(1024.0, 768.0))
+            }
+            #[cfg(not(unix))]
+            {
+                Size::new(1024.0, 768.0)
+            }
+        };
+
         let settings = window::Settings {
-            size: Size::new(1024.0, 768.0),
+            size: win_size,
             decorations: true,
             resizable: true,
             closeable: true,
@@ -749,6 +780,8 @@ impl PureTermApp {
             settings_state: None,
             settings_window: None,
             last_resize_time: None,
+            layout_dirty: false,
+            last_layout_change_at: None,
             #[cfg(target_os = "macos")]
             metal_layer_configured: false,
             #[cfg(target_os = "macos")]
@@ -769,7 +802,7 @@ impl PureTermApp {
             context_menu: None,
             last_cursor_pos: Point::default(),
             last_global_cursor_pos: Point::default(),
-            viewport_size: Size::new(1024.0, 768.0),
+            viewport_size: win_size,
             scale_factor: 1.0,
             // Initialize atomic to 1.0 (not 0) so that the first frame's
             // draw() reads a valid scale factor and the atlas reconfigures
@@ -788,6 +821,7 @@ impl PureTermApp {
             last_self_write: None,
             // Status bar (GAP-3.4)
             status_bar_cwd: None,
+            pane_cwds: HashMap::new(),
             status_bar_git_branch: None,
             status_bar_process_name: None,
             status_bar_last_poll: Instant::now(),
@@ -801,8 +835,18 @@ impl PureTermApp {
             }),
         };
 
-        let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
-        app.active_tab = first_id;
+        // GAP-5.6: try to restore the previous tab/pane layout by re-attaching
+        // to daemon sessions that survived the GUI restart. Falls back to a
+        // single fresh tab when there's nothing to restore. The daemon path
+        // (and therefore recovery) is unix-only.
+        #[cfg(unix)]
+        let restored = app.try_restore_layout(saved_layout);
+        #[cfg(not(unix))]
+        let restored = false;
+        if !restored {
+            let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
+            app.active_tab = first_id;
+        }
 
         (app, task.map(Message::MainWindowOpened))
     }
@@ -812,9 +856,12 @@ impl PureTermApp {
         self.next_tab_id += 1;
 
         let pane_id = PaneId::next();
+        // Inherit the active pane's cwd so the new tab opens in the directory
+        // the user is currently working in.
+        let cwd = self.active_pane_cwd();
         // GAP-5.1 M1: route through persistent daemon; falls back to a direct
         // local PTY when puretermd is unavailable.
-        let terminal_ctx = Arc::new(TerminalContext::new_local_auto());
+        let terminal_ctx = Arc::new(TerminalContext::new_local_auto(cwd.as_deref()));
 
         let terminal_height = terminal_content_height(viewport_height);
 
@@ -846,7 +893,208 @@ impl PureTermApp {
             zoom_state: None,
             vi_sub_mode: None,
         });
+        self.mark_layout_dirty();
         id
+    }
+
+    /// GAP-5.6: re-attach to daemon sessions that survived the previous GUI run
+    /// and rebuild the tab/pane layout. Returns `true` if at least one tab was
+    /// restored (so `new()` skips the default fresh-tab creation). Scrollback is
+    /// replayed by the daemon on attach, so each pane's grid rebuilds itself.
+    /// `snapshot` is the layout already loaded at the top of `new()` (also used
+    /// to size the window).
+    #[cfg(unix)]
+    fn try_restore_layout(
+        &mut self,
+        snapshot: Option<crate::session_restore::LayoutSnapshot>,
+    ) -> bool {
+        use crate::session_restore::{LayoutSnapshot, ViewportSnapshot, SNAPSHOT_VERSION};
+
+        // No persisted layout — still try to recover orphan daemon sessions
+        // (e.g. sessions from before this feature shipped, or after the state
+        // file was deleted). An empty snapshot makes `restore` skip the tab
+        // loop and attach every alive session as a fresh single-pane tab.
+        let snapshot = snapshot.unwrap_or_else(|| LayoutSnapshot {
+            version: SNAPSHOT_VERSION,
+            viewport: ViewportSnapshot { w: 0.0, h: 0.0 },
+            active_tab: 0,
+            tabs: Vec::new(),
+        });
+        let Some(outcome) = crate::session_restore::restore(&snapshot, &self.ssh_profiles) else {
+            return false;
+        };
+
+        for (idx, rtab) in outcome.tabs.into_iter().enumerate() {
+            let tab_id = TabId(self.next_tab_id);
+            self.next_tab_id += 1;
+
+            let leaf_ids = rtab.split_tree.pane_ids();
+            let active_pane_id = leaf_ids
+                .get(rtab.active_pane_index)
+                .copied()
+                .or_else(|| leaf_ids.first().copied())
+                .unwrap_or_else(PaneId::next);
+
+            let mut panes = HashMap::new();
+            let rtab_panes = rtab.panes;
+            for (pane_idx, rpane) in rtab_panes.into_iter().enumerate() {
+                let pane_id = leaf_ids
+                    .get(pane_idx)
+                    .copied()
+                    .unwrap_or_else(PaneId::next);
+                panes.insert(
+                    pane_id,
+                    Pane {
+                        id: pane_id,
+                        terminal_ctx: rpane.ctx,
+                        title: rpane.title,
+                    },
+                );
+            }
+
+            if idx == outcome.active_tab_index {
+                self.active_tab = tab_id;
+            }
+            self.tabs.push(Tab {
+                id: tab_id,
+                title: rtab.title,
+                panes,
+                split_tree: rtab.split_tree,
+                active_pane: active_pane_id,
+                tab_color: None,
+                created_at: Instant::now(),
+                zoom_state: None,
+                vi_sub_mode: None,
+            });
+        }
+
+        // Resize every restored pane to the real window geometry. The daemon
+        // PTY was attached at a placeholder 80×24; resize now so the live shell
+        // draws at the correct size instead of waiting for the first
+        // WindowResized event.
+        let cw = self.glyph_state.borrow().cell_width as u16;
+        let ch = self.glyph_state.borrow().cell_height as u16;
+        let terminal_height = terminal_content_height(self.viewport_size.height);
+        for tab in &mut self.tabs {
+            Self::resize_panes_in_tab(tab, self.viewport_size.width, terminal_height, cw, ch);
+        }
+
+        log::info!(
+            "GAP-5.6: restored {} tab(s) from previous session",
+            self.tabs.len()
+        );
+        true
+    }
+
+    /// GAP-5.6: snapshot the current tab/pane layout for cross-restart
+    /// recovery. Panes whose terminal context has no daemon `session_id`
+    /// (direct PTY fallback) are recorded with `session_id = None` and pruned
+    /// on restore (they cannot survive a GUI restart).
+    #[cfg(unix)]
+    fn capture_layout(&self) -> crate::session_restore::LayoutSnapshot {
+        use crate::session_restore::{LayoutSnapshot, PaneSnapshot, TabSnapshot, ViewportSnapshot};
+
+        let tabs = self
+            .tabs
+            .iter()
+            .map(|tab| {
+                let leaf_ids = tab.split_tree.pane_ids();
+                let active_pane_leaf_index = leaf_ids
+                    .iter()
+                    .position(|p| *p == tab.active_pane)
+                    .unwrap_or(0);
+                let panes = leaf_ids
+                    .iter()
+                    .map(|pid| {
+                        let (session_id, kind, ssh_profile, title) = match tab.panes.get(pid) {
+                            Some(p) => {
+                                let sid = p.terminal_ctx.session_id().map(|s| s.to_string());
+                                let kind = if p.terminal_ctx.is_ssh() {
+                                    "ssh"
+                                } else {
+                                    "local"
+                                };
+                                let prof = p.terminal_ctx.profile_display().map(|s| s.to_string());
+                                (sid, kind.to_string(), prof, p.title.clone())
+                            }
+                            None => (None, "local".to_string(), None, String::new()),
+                        };
+                        PaneSnapshot {
+                            session_id,
+                            kind,
+                            ssh_profile,
+                            title,
+                        }
+                    })
+                    .collect();
+                TabSnapshot {
+                    title: tab.title.clone(),
+                    active_pane_leaf_index,
+                    split_tree: tab.split_tree.clone(),
+                    panes,
+                }
+            })
+            .collect();
+
+        let active_tab = self
+            .tabs
+            .iter()
+            .position(|t| t.id == self.active_tab)
+            .unwrap_or(0);
+
+        LayoutSnapshot {
+            version: crate::session_restore::SNAPSHOT_VERSION,
+            viewport: ViewportSnapshot {
+                w: self.viewport_size.width,
+                h: self.viewport_size.height,
+            },
+            active_tab,
+            tabs,
+        }
+    }
+
+    /// GAP-5.6: mark the layout as changed; the debounced `LayoutSaveTick`
+    /// handler flushes it to disk after ~500 ms of inactivity.
+    fn mark_layout_dirty(&mut self) {
+        self.layout_dirty = true;
+        self.last_layout_change_at = Some(Instant::now());
+    }
+
+    /// GAP-5.6: called from the `LayoutSaveTick` handler. Writes the snapshot
+    /// only if it has been dirty for ≥500 ms, then clears the dirty flag.
+    #[cfg(unix)]
+    fn flush_layout_if_dirty(&mut self) {
+        if !self.layout_dirty {
+            return;
+        }
+        let ready = match self.last_layout_change_at {
+            Some(t) => t.elapsed() >= Duration::from_millis(500),
+            None => true,
+        };
+        if !ready {
+            return;
+        }
+        let snapshot = self.capture_layout();
+        crate::session_restore::save_atomic(&snapshot);
+        self.layout_dirty = false;
+    }
+
+    /// GAP-5.6: end the daemon session backing a pane on a user-initiated
+    /// tab/pane close, so it is NOT restored on the next launch. (App quit /
+    /// window close deliberately does NOT call this — quitting preserves
+    /// sessions for recovery.) Best-effort; non-daemon (direct PTY) panes have
+    /// `session_id == None` and are skipped (they die with the GUI pane).
+    #[cfg(unix)]
+    fn kill_pane_session(&self, ctx: &TerminalContext) {
+        let Some(sid) = ctx.session_id() else {
+            return;
+        };
+        let socket = pureterm_daemon::discovery::socket_path();
+        match crate::daemon_client::kill_session(&socket, sid) {
+            Ok(true) => log::debug!("GAP-5.6: killed daemon session {sid} on close"),
+            Ok(false) => log::debug!("GAP-5.6: daemon session {sid} already gone"),
+            Err(e) => log::warn!("GAP-5.6: kill daemon session {sid} failed: {e}"),
+        }
     }
 
     fn active_tab_ref(&self) -> Option<&Tab> {
@@ -861,6 +1109,36 @@ impl PureTermApp {
         self.active_tab_ref()
             .and_then(|tab| tab.panes.get(&tab.active_pane))
             .map(|pane| pane.terminal_ctx.clone())
+    }
+
+    /// The cwd to inherit when spawning a new local tab/pane: the active
+    /// tab's active pane cwd, provided that pane is local (an SSH pane's
+    /// remote cwd is unusable for a local shell) and the path still exists.
+    fn active_pane_cwd(&self) -> Option<PathBuf> {
+        let tab = self.active_tab_ref()?;
+        let pane_id = tab.active_pane;
+        let pane = tab.panes.get(&pane_id)?;
+        if pane.terminal_ctx.is_ssh() {
+            return None;
+        }
+        let path = PathBuf::from(self.pane_cwds.get(&pane_id)?);
+        if path.is_dir() { Some(path) } else { None }
+    }
+
+    /// Re-derive the status-bar cwd (and git branch) from the now-active
+    /// pane. Call after switching tabs/panes or closing a pane so the status
+    /// bar doesn't show a stale directory until the next OSC 7 arrives.
+    fn refresh_status_bar_cwd(&mut self) {
+        match self.active_pane_cwd() {
+            Some(path) => {
+                self.status_bar_cwd = Some(path.to_string_lossy().into_owned());
+                self.status_bar_git_branch = crate::status_bar::read_git_branch(&path);
+            }
+            None => {
+                self.status_bar_cwd = None;
+                self.status_bar_git_branch = None;
+            }
+        }
     }
 
     /// GAP-5.6: find a pane's terminal context by id, searching all tabs.
@@ -1129,6 +1407,7 @@ impl PureTermApp {
             zoom_state: None,
             vi_sub_mode: None,
         });
+        self.mark_layout_dirty();
         id
     }
 
@@ -1644,6 +1923,10 @@ impl PureTermApp {
                                     exited_panes.push((tab.id, *pane_id, tab.created_at, tab.panes.len()));
                                 }
                                 TerminalEvent::CwdChanged(path) => {
+                                    // Record every pane's cwd so it can be inherited
+                                    // by new tabs/panes and restored when this pane
+                                    // becomes active again.
+                                    self.pane_cwds.insert(*pane_id, path.clone());
                                     if *pane_id == tab.active_pane && tab.id == self.active_tab {
                                         self.status_bar_cwd = Some(path);
                                         // Immediately refresh git branch on CWD change.
@@ -1759,6 +2042,12 @@ impl PureTermApp {
                         .and_then(crate::status_bar::get_foreground_process);
                 }
             }
+            Message::LayoutSaveTick => {
+                // GAP-5.6: debounced on-change persistence — flush the layout
+                // snapshot to disk if it has been dirty for ≥500 ms.
+                #[cfg(unix)]
+                self.flush_layout_if_dirty();
+            }
             Message::Keyboard(event) => {
                 return self.handle_keyboard(event);
             }
@@ -1803,6 +2092,7 @@ impl PureTermApp {
                     return Task::none();
                 }
                 self.viewport_size = size;
+                self.mark_layout_dirty();
 
                 // 时间防抖：跳过 16ms 内的重复事件
                 if let Some(last) = self.last_resize_time {
@@ -1868,6 +2158,14 @@ impl PureTermApp {
                 // Clean up detached windows
                 self.detached_windows.retain(|dw| dw.window_id != win_id);
                 if Some(win_id) == self.main_window {
+                    // GAP-5.6: persist the layout before tearing down so the
+                    // next launch recovers the very last state (the debounced
+                    // tick may not have fired for the most recent change).
+                    #[cfg(unix)]
+                    {
+                        let snapshot = self.capture_layout();
+                        crate::session_restore::save_atomic(&snapshot);
+                    }
                     self.main_window = None;
                     self.tabs.clear();
                 }
@@ -2006,6 +2304,16 @@ impl PureTermApp {
                         return window::close(win_id);
                     }
                 } else {
+                    // GAP-5.6: a user-initiated tab close ENDS the daemon
+                    // sessions of its panes so they are NOT restored on the
+                    // next launch (only an app quit / window close preserves
+                    // sessions). Kill before we drop the GUI handles.
+                    #[cfg(unix)]
+                    if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
+                        for pane in tab.panes.values() {
+                            self.kill_pane_session(&pane.terminal_ctx);
+                        }
+                    }
                     // SSH cleanup: release pool entries for all panes in the tab
                     #[cfg(unix)]
                     if let Some(manager) = self.ssh_manager.as_ref() {
@@ -2029,28 +2337,33 @@ impl PureTermApp {
                         let new_idx = idx.min(self.tabs.len() - 1);
                         self.active_tab = self.tabs[new_idx].id;
                     }
+                    self.mark_layout_dirty();
                 }
             }
             Message::ActivateTab(tab_id) => {
                 if self.tabs.iter().any(|t| t.id == tab_id) {
                     self.active_tab = tab_id;
+                    self.refresh_status_bar_cwd();
                 }
             }
             Message::NextTab => {
                 if let Some(idx) = self.tabs.iter().position(|t| t.id == self.active_tab) {
                     let next = (idx + 1) % self.tabs.len();
                     self.active_tab = self.tabs[next].id;
+                    self.refresh_status_bar_cwd();
                 }
             }
             Message::PrevTab => {
                 if let Some(idx) = self.tabs.iter().position(|t| t.id == self.active_tab) {
                     let prev = if idx == 0 { self.tabs.len() - 1 } else { idx - 1 };
                     self.active_tab = self.tabs[prev].id;
+                    self.refresh_status_bar_cwd();
                 }
             }
             Message::ActivateTabByIndex(i) => {
                 if i < self.tabs.len() {
                     self.active_tab = self.tabs[i].id;
+                    self.refresh_status_bar_cwd();
                 }
             }
             Message::ClipboardPaste(text) => {
@@ -2642,6 +2955,10 @@ impl PureTermApp {
                         tab.active_pane = pane_id;
                     }
                 }
+                // Active pane changed; refresh the status bar. zsh only
+                // reports cwd on `cd` (not every prompt), so switching panes
+                // wouldn't otherwise update the cwd/branch shown.
+                self.refresh_status_bar_cwd();
             }
             Message::PaneMousePressed(pane_id) => {
                 // 1) 把 pane 设为活跃(原 PaneFocused 副作用)。
@@ -2650,6 +2967,8 @@ impl PureTermApp {
                     self.active_tab = tab.id;
                     tab.active_pane = pane_id;
                 }
+                // Active pane changed; refresh the status bar (see PaneFocused).
+                self.refresh_status_bar_cwd();
                 // 2) 拿到 pane 的 TerminalContext。
                 let ctx = self
                     .tabs
@@ -3245,6 +3564,7 @@ impl PureTermApp {
                         }
                     }
                     tab.panes.remove(&pane_id);
+                    self.pane_cwds.remove(&pane_id);
                     tab.active_pane = new_active;
                     // Resize remaining panes
                     let terminal_height = terminal_content_height(self.viewport_size.height);
@@ -4005,9 +4325,12 @@ impl PureTermApp {
         let Some(active_pane_id) = active_pane_id else { return };
         let new_pane_id = PaneId::next();
 
+        // Inherit the active pane's cwd so the split opens in the directory
+        // the user is currently working in.
+        let cwd = self.active_pane_cwd();
         // GAP-5.1 M1: route through persistent daemon; falls back to a direct
         // local PTY when puretermd is unavailable.
-        let terminal_ctx = Arc::new(TerminalContext::new_local_auto());
+        let terminal_ctx = Arc::new(TerminalContext::new_local_auto(cwd.as_deref()));
 
         // Find the tab and perform the split
         let tab = match self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
@@ -4063,6 +4386,7 @@ impl PureTermApp {
             },
         );
         tab.active_pane = new_pane_id;
+        self.mark_layout_dirty();
     }
 
     /// Close the active pane. If it's the last pane, close the tab.
@@ -4094,6 +4418,14 @@ impl PureTermApp {
         };
 
         if let Some(new_active) = new_active {
+            // GAP-5.6: end the daemon session for this pane on close (immutable
+            // borrows only — done before the mut borrow that removes the pane).
+            #[cfg(unix)]
+            if let Some(tab) = self.tabs.iter().find(|t| t.id == active_tab_id) {
+                if let Some(pane) = tab.panes.get(&active_pane_id) {
+                    self.kill_pane_session(&pane.terminal_ctx);
+                }
+            }
             let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id).unwrap();
             // SSH cleanup: release pool entry for this pane
             #[cfg(unix)]
@@ -4105,6 +4437,7 @@ impl PureTermApp {
                 }
             }
             tab.panes.remove(&active_pane_id);
+            self.pane_cwds.remove(&active_pane_id);
             tab.active_pane = new_active;
             // Resize remaining panes
             let terminal_height = terminal_content_height(self.viewport_size.height);
@@ -4123,6 +4456,11 @@ impl PureTermApp {
                 }
             }
         }
+
+        // The active pane may have changed; refresh the status bar so it
+        // reflects the new active pane's cwd rather than the closed one's.
+        self.refresh_status_bar_cwd();
+        self.mark_layout_dirty();
     }
 
     // ---- GAP-2.2 嵌套分屏补齐:helper ----
@@ -5604,6 +5942,10 @@ impl PureTermApp {
     pub fn subscription(&self) -> Subscription<Message> {
         let keyboard_sub = iced::keyboard::listen().map(Message::Keyboard);
         let wakeup_sub = time::every(Duration::from_millis(16)).map(|_| Message::TerminalWakeup);
+        // GAP-5.6: ~4 Hz tick that flushes the layout snapshot if it's been
+        // dirty for ≥500 ms (debounced on-change persistence).
+        let layout_save_sub =
+            time::every(Duration::from_millis(250)).map(|_| Message::LayoutSaveTick);
 
         // 注意：event::listen_with 要求 fn 指针（无捕获），所以全局鼠标事件
         // 不在闭包里过滤主窗口。GlobalCursorMoved / GlobalMouseRelease
@@ -5675,13 +6017,21 @@ impl PureTermApp {
         let subs = vec![
             keyboard_sub,
             wakeup_sub,
+            layout_save_sub,
             resize_sub,
             config_sub,
             ipc_sub,
             reconnect_sub,
         ];
         #[cfg(not(unix))]
-        let subs = vec![keyboard_sub, wakeup_sub, resize_sub, config_sub, ipc_sub];
+        let subs = vec![
+            keyboard_sub,
+            wakeup_sub,
+            layout_save_sub,
+            resize_sub,
+            config_sub,
+            ipc_sub,
+        ];
 
         Subscription::batch(subs)
     }

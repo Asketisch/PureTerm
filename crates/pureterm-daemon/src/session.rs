@@ -97,12 +97,26 @@ pub struct SessionInfo {
 
 impl SessionManager {
     /// Spawn a new local-PTY session. Returns its id.
-    pub fn create_local(&self, cols: u16, rows: u16) -> io::Result<String> {
+    ///
+    /// `cwd`, when `Some`, becomes the shell's startup directory (via
+    /// `tty::Options::working_directory`). The OSC 7 cwd-reporting hook is
+    /// always injected so the GUI can inherit this shell's working directory
+    /// when spawning new tabs/panes. Tagged with the session id so concurrent
+    /// sessions get distinct temp zdotdirs.
+    pub fn create_local(
+        &self,
+        cols: u16,
+        rows: u16,
+        cwd: Option<PathBuf>,
+    ) -> io::Result<String> {
         let id = new_session_id();
         let window_size =
             WindowSize { num_lines: rows, num_cols: cols, cell_width: 8, cell_height: 16 };
         tty::setup_env();
-        let pty = tty::new(&tty::Options::default(), window_size, 0)?;
+        let mut options = tty::Options::default();
+        options.env.extend(crate::osc7::prepare_osc7_env(&id));
+        options.working_directory = cwd;
+        let pty = tty::new(&options, window_size, 0)?;
         let child_pid = pty.child().id();
 
         discovery::ensure_dirs()?;
@@ -661,7 +675,7 @@ mod tests {
         assert!(mgr.list().is_empty());
         // create_local spawns a real shell; skip shape-assertions if it fails
         // (e.g. minimal CI without a usable login shell).
-        if let Ok(id) = mgr.create_local(80, 24) {
+        if let Ok(id) = mgr.create_local(80, 24, None) {
             let infos = mgr.list();
             assert_eq!(infos.len(), 1);
             assert_eq!(infos[0].id, id);
@@ -679,7 +693,7 @@ mod tests {
     #[test]
     fn local_session_child_survives_subscriber_drop() {
         let mgr = SessionManager::default();
-        let id = match mgr.create_local(80, 24) {
+        let id = match mgr.create_local(80, 24, None) {
             Ok(id) => id,
             Err(_) => return, // no usable login shell in this environment
         };

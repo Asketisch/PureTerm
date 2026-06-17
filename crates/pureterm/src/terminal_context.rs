@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::fs::File;
 use std::io;
 use std::io::Read as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 #[cfg(unix)]
@@ -69,6 +69,11 @@ struct LocalCtx {
     event_rx: Receiver<TerminalEvent>,
     size: TermSize,
     child_pid: u32,
+    /// GAP-5.6: the daemon session id when this context is a thin mirror over
+    /// a `puretermd`-owned PTY (set by the daemon paths). `None` for a direct
+    /// local PTY (the `new_local` fallback), which cannot survive GUI restart
+    /// and is therefore not persisted/restored.
+    session_id: Option<String>,
 }
 
 /// SSH PTY context: owns a remote ssh -tt child.
@@ -101,6 +106,10 @@ struct SshCtx {
     /// / tab close) writes `exit\r`. The exit handler reads this to decide
     /// whether to auto-reconnect: a user-intended exit never reconnects.
     user_initiated_close: Arc<AtomicBool>,
+    /// GAP-5.6: the daemon session id when this context mirrors a
+    /// `puretermd`-owned `ssh -tt` child (set by the daemon paths). `None` for
+    /// a direct (non-daemon) SSH context, which cannot survive GUI restart.
+    session_id: Option<String>,
 }
 
 /// The swappable per-connection runtime inside [`SshCtx`].
@@ -150,10 +159,111 @@ pub enum TerminalContext {
     Ssh(SshCtx),
 }
 
+/// GAP-5.1/5.6 shared wiring: build a `LocalCtx` that mirrors a daemon PTY
+/// over `data_path`. Used by both the create path (fresh session, after
+/// `create_local`) and the attach path (recovery of an existing session, after
+/// `attach_existing`). `child_pid` is 0 — the child is owned by the daemon.
+#[cfg(unix)]
+fn wire_local_daemon(
+    data_path: &Path,
+    size: TermSize,
+    session_id: String,
+) -> io::Result<LocalCtx> {
+    use crate::daemon_pty::DaemonPty;
+
+    let daemon_pty = DaemonPty::connect(data_path)?;
+
+    let (event_tx, event_rx) = bounded(64);
+    let event_listener = ChannelEventListener::new(event_tx);
+
+    let term_config = TermConfig::default();
+    let terminal = Term::new(term_config, &size, event_listener.clone());
+    let terminal = Arc::new(FairMutex::new(terminal));
+
+    let pty_loop = PtyEventLoop::new(
+        Arc::clone(&terminal),
+        event_listener,
+        daemon_pty,
+        false,
+        false,
+    )?;
+
+    let loop_tx = pty_loop.channel();
+    let _io_thread = pty_loop.spawn();
+
+    Ok(LocalCtx {
+        terminal,
+        notifier: Notifier(loop_tx),
+        event_rx,
+        size,
+        child_pid: 0, // child is owned by the daemon; pid not meaningful here
+        session_id: Some(session_id),
+    })
+}
+
+/// GAP-5.1/5.6 shared wiring: build an `SshCtx` that mirrors a daemon-owned
+/// `ssh -tt` child over `data_path`. Used by both the create path (after
+/// `create_ssh`) and the attach path (recovery). `password` is `None` on the
+/// attach path: the live ssh child is already authenticated, and the password
+/// is not persisted across GUI restart (auto-reconnect after a later network
+/// drop on a restored session is therefore best-effort).
+#[cfg(unix)]
+fn wire_ssh_daemon(
+    data_path: &Path,
+    size: TermSize,
+    profile: &SshProfile,
+    password: Option<String>,
+    session_id: String,
+) -> io::Result<SshCtx> {
+    use crate::daemon_pty::DaemonPty;
+
+    let daemon_pty = DaemonPty::connect(data_path)?;
+
+    let (event_tx, event_rx) = bounded(64);
+    let event_listener = ChannelEventListener::new(event_tx);
+
+    let term_config = TermConfig::default();
+    let terminal = Term::new(term_config, &size, event_listener.clone());
+    let terminal = Arc::new(FairMutex::new(terminal));
+
+    let pty_loop = PtyEventLoop::new(
+        Arc::clone(&terminal),
+        event_listener,
+        daemon_pty,
+        false,
+        false,
+    )?;
+    let loop_tx = pty_loop.channel();
+    let io_thread = ThreadJoiner::new(pty_loop.spawn());
+
+    Ok(SshCtx {
+        terminal,
+        runtime: RefCell::new(SshRuntime {
+            notifier: Notifier(loop_tx),
+            event_rx,
+            io_thread: Some(io_thread),
+            stderr_file: None,
+        }),
+        size,
+        profile_display: profile.name.clone(),
+        ssh_host: profile.host.clone(),
+        ssh_user: profile.user.clone(),
+        ssh_port: profile.port,
+        ssh_key_path: profile.key_path.clone(),
+        ssh_password: password,
+        reconnect_state: Arc::new(Mutex::new(SshState::Connected)),
+        user_initiated_close: Arc::new(AtomicBool::new(false)),
+        session_id: Some(session_id),
+    })
+}
+
 impl TerminalContext {
     /// Create a new local-pty terminal context. Equivalent to the
     /// pre-P2 `TerminalContext::new()`.
-    pub fn new_local() -> io::Result<Self> {
+    ///
+    /// `cwd`, when `Some`, becomes the shell's startup directory so a new
+    /// tab/pane can inherit the current working directory.
+    pub fn new_local(cwd: Option<&Path>) -> io::Result<Self> {
         let (event_tx, event_rx) = bounded(64);
         let event_listener = ChannelEventListener::new(event_tx);
 
@@ -167,7 +277,6 @@ impl TerminalContext {
         let terminal = Term::new(term_config, &size, event_listener.clone());
         let terminal = Arc::new(FairMutex::new(terminal));
 
-        let pty_options = PtyOptions::default();
         let window_size = WindowSize {
             num_lines,
             num_cols,
@@ -176,54 +285,24 @@ impl TerminalContext {
         };
         tty::setup_env();
 
-        // --- OSC 7 CWD hook via environment (no PTY stdin injection) ---
+        // Build PTY options: set the startup directory to the inherited cwd,
+        // and inject the OSC 7 cwd-reporting hook into the child environment
+        // (shared with the daemon path) so this shell reports its working
+        // directory — which is what lets new tabs/panes inherit it.
         //
-        // For zsh: set ZDOTDIR to a temp dir containing a .zshenv that
-        // restores the original ZDOTDIR, sources the user's real .zshenv,
-        // then loads our OSC 7 hook.  Inspired by cmux's shell integration.
-        //
-        // For bash: set PROMPT_COMMAND env var with the hook.
-        //
-        // This avoids sending bytes via Msg::Input which can block the PTY
-        // IO thread on macOS .app bundles when the payload exceeds ~80 bytes.
-
-        let osc7_func = r#"_pt_osc7() { printf '\e]7;file://%s%s\e\\' "$HOST" "$PWD"; }"#;
-        let pid = std::process::id();
-
-        // -- zsh: ZDOTDIR bootstrap --
-        let zdot_dir = format!("/tmp/.pureterm-zdotdir-{}", pid);
-        let _ = std::fs::create_dir_all(&zdot_dir);
-        let real_zdotdir = std::env::var("ZDOTDIR")
-            .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
-        let zshenv_content = format!(
-            r#"# PureTerm zsh bootstrap — restores original ZDOTDIR and loads OSC 7 hook.
-ZDOTDIR="{real_zdotdir}"
-if [ -f "$ZDOTDIR/.zshenv" ]; then . "$ZDOTDIR/.zshenv"; fi
-{osc7_func}
-autoload -Uz add-zsh-hook 2>/dev/null && add-zsh-hook chpwd _pt_osc7
-_pt_osc7
-"#,
-            real_zdotdir = real_zdotdir.replace('"', "\\\""),
-            osc7_func = osc7_func,
-        );
-        let _ = std::fs::write(format!("{}/.zshenv", zdot_dir), zshenv_content);
-        std::env::set_var("ZDOTDIR", &zdot_dir);
-
-        // -- bash: PROMPT_COMMAND env var --
-        // The function def + initial call must be in PROMPT_COMMAND because
-        // bash reads this env var on startup.
-        std::env::set_var(
-            "PROMPT_COMMAND",
-            format!(
-                "{func}; _pt_osc7; __pt_pc=$PROMPT_COMMAND; PROMPT_COMMAND=\"_pt_osc7${{PROMPT_COMMAND:+;$PROMPT_COMMAND}}\"",
-                func = osc7_func,
-            ),
-        );
+        // Using `Options::env` instead of `std::env::set_var` on this process
+        // avoids two problems the previous approach had: (1) racing concurrent
+        // PTY spawns on the same temp ZDOTDIR, and (2) leaking the temp
+        // ZDOTDIR into unrelated spawns. It also keeps the hook injection
+        // out of `Msg::Input`, which can block the PTY IO thread on macOS
+        // .app bundles when the payload exceeds ~80 bytes.
+        let mut pty_options = PtyOptions::default();
+        pty_options.working_directory = cwd.map(PathBuf::from);
+        pty_options
+            .env
+            .extend(pureterm_daemon::osc7::prepare_osc7_env(&std::process::id().to_string()));
 
         let pty = tty::new(&pty_options, window_size, 0)?;
-
-        // Restore ZDOTDIR so subsequent PTY spawns aren't affected.
-        std::env::set_var("ZDOTDIR", &real_zdotdir);
 
         let child_pid = pty.child().id();
 
@@ -244,6 +323,7 @@ _pt_osc7
             event_rx,
             size,
             child_pid,
+            session_id: None,
         }))
     }
 
@@ -256,9 +336,8 @@ _pt_osc7
     /// perspective — returns a `TerminalContext::Local` with a working
     /// terminal, notifier, and event channel.
     #[cfg(unix)]
-    pub fn new_local_via_daemon() -> io::Result<Self> {
+    pub fn new_local_via_daemon(cwd: Option<&Path>) -> io::Result<Self> {
         use crate::daemon_client;
-        use crate::daemon_pty::DaemonPty;
 
         let daemon_socket = daemon_client::ensure_daemon()?;
 
@@ -266,36 +345,30 @@ _pt_osc7
         let num_lines: u16 = 24;
         let size = TermSize::new(num_cols as usize, num_lines as usize);
 
-        let (session_id, data_path) =
-            daemon_client::create_local(&daemon_socket, num_cols, num_lines)?;
-
-        let daemon_pty = DaemonPty::connect(&data_path)?;
-
-        let (event_tx, event_rx) = bounded(64);
-        let event_listener = ChannelEventListener::new(event_tx);
-
-        let term_config = TermConfig::default();
-        let terminal = Term::new(term_config, &size, event_listener.clone());
-        let terminal = Arc::new(FairMutex::new(terminal));
-
-        let pty_loop = PtyEventLoop::new(
-            Arc::clone(&terminal),
-            event_listener,
-            daemon_pty,
-            false,
-            false,
+        let (session_id, data_path) = daemon_client::create_local(
+            &daemon_socket,
+            num_cols,
+            num_lines,
+            cwd.and_then(|p| p.to_str()),
         )?;
 
-        let loop_tx = pty_loop.channel();
-        let _io_thread = pty_loop.spawn();
+        let ctx = wire_local_daemon(&data_path, size, session_id)?;
+        Ok(TerminalContext::Local(ctx))
+    }
 
-        Ok(TerminalContext::Local(LocalCtx {
-            terminal,
-            notifier: Notifier(loop_tx),
-            event_rx,
-            size,
-            child_pid: 0, // child is owned by the daemon; pid not meaningful here
-        }))
+    /// GAP-5.6 cross-restart recovery: re-attach to a daemon session that was
+    /// created in a previous GUI run and is still alive. The daemon replays the
+    /// session's scrollback as `SCROLLBACK` frames, so the freshly-built `Term`
+    /// + `vte::ansi::Processor` rebuilds the visible grid + scrollback. The
+    /// shell continues running uninterrupted (no re-spawn).
+    #[cfg(unix)]
+    pub fn attach_local_via_daemon(session_id: &str, size: TermSize) -> io::Result<Self> {
+        use crate::daemon_client;
+
+        let daemon_socket = daemon_client::ensure_daemon()?;
+        let data_path = daemon_client::attach_existing(&daemon_socket, session_id)?;
+        let ctx = wire_local_daemon(&data_path, size, session_id.to_string())?;
+        Ok(TerminalContext::Local(ctx))
     }
 
     /// GAP-5.1 M1: route new local terminals through the persistent daemon so
@@ -304,10 +377,13 @@ _pt_osc7
     /// running binary), so the terminal always works — at the cost of losing
     /// session-survival until the daemon is available. This is the entry point
     /// the GUI tab/split creation should use.
-    pub fn new_local_auto() -> Self {
+    ///
+    /// `cwd`, when `Some`, is forwarded to whichever path spawns the shell so
+    /// a new tab/pane can inherit the current working directory.
+    pub fn new_local_auto(cwd: Option<&Path>) -> Self {
         #[cfg(unix)]
         {
-            match Self::new_local_via_daemon() {
+            match Self::new_local_via_daemon(cwd) {
                 Ok(ctx) => return ctx,
                 Err(e) => log::warn!(
                     "puretermd unavailable ({e}); using direct local PTY \
@@ -319,7 +395,7 @@ _pt_osc7
         {
             log::debug!("daemon PTY path is unix-only; using direct local PTY");
         }
-        Self::new_local().expect("Failed to create terminal context")
+        Self::new_local(cwd).expect("Failed to create terminal context")
     }
 
     /// Create a new SSH-backed terminal context. The SSH child is spawned
@@ -385,6 +461,7 @@ _pt_osc7
             ssh_password: password,
             reconnect_state: Arc::new(Mutex::new(SshState::Connected)),
             user_initiated_close: Arc::new(AtomicBool::new(false)),
+            session_id: None,
         }))
     }
 
@@ -401,14 +478,13 @@ _pt_osc7
     #[cfg(unix)]
     pub fn new_ssh_via_daemon(profile: &SshProfile, password: Option<String>) -> io::Result<Self> {
         use crate::daemon_client;
-        use crate::daemon_pty::DaemonPty;
 
         let daemon_socket = daemon_client::ensure_daemon()?;
         let num_cols: u16 = 80;
         let num_lines: u16 = 24;
         let size = TermSize::new(num_cols as usize, num_lines as usize);
 
-        let (_session_id, data_path) = daemon_client::create_ssh(
+        let (session_id, data_path) = daemon_client::create_ssh(
             &daemon_socket,
             &profile.host,
             profile.user.as_deref(),
@@ -419,43 +495,29 @@ _pt_osc7
             num_lines,
         )?;
 
-        let daemon_pty = DaemonPty::connect(&data_path)?;
+        let ctx = wire_ssh_daemon(&data_path, size, profile, password, session_id)?;
+        Ok(TerminalContext::Ssh(ctx))
+    }
 
-        let (event_tx, event_rx) = bounded(64);
-        let event_listener = ChannelEventListener::new(event_tx);
+    /// GAP-5.6 cross-restart recovery: re-attach to a daemon-owned SSH session
+    /// that is still alive (the `ssh -tt` child survived GUI restart in the
+    /// daemon). No re-authentication is needed — the remote shell continues.
+    /// `profile` supplies the display name / connection metadata (looked up by
+    /// name from the GUI's persisted profile list at restore time; if the
+    /// profile was deleted, the caller passes a synthetic placeholder and
+    /// auto-reconnect after a later drop is best-effort).
+    #[cfg(unix)]
+    pub fn attach_ssh_via_daemon(
+        session_id: &str,
+        profile: &SshProfile,
+        size: TermSize,
+    ) -> io::Result<Self> {
+        use crate::daemon_client;
 
-        let term_config = TermConfig::default();
-        let terminal = Term::new(term_config, &size, event_listener.clone());
-        let terminal = Arc::new(FairMutex::new(terminal));
-
-        let pty_loop = PtyEventLoop::new(
-            Arc::clone(&terminal),
-            event_listener,
-            daemon_pty,
-            false,
-            false,
-        )?;
-        let loop_tx = pty_loop.channel();
-        let io_thread = ThreadJoiner::new(pty_loop.spawn());
-
-        Ok(TerminalContext::Ssh(SshCtx {
-            terminal,
-            runtime: RefCell::new(SshRuntime {
-                notifier: Notifier(loop_tx),
-                event_rx,
-                io_thread: Some(io_thread),
-                stderr_file: None,
-            }),
-            size,
-            profile_display: profile.name.clone(),
-            ssh_host: profile.host.clone(),
-            ssh_user: profile.user.clone(),
-            ssh_port: profile.port,
-            ssh_key_path: profile.key_path.clone(),
-            ssh_password: password,
-            reconnect_state: Arc::new(Mutex::new(SshState::Connected)),
-            user_initiated_close: Arc::new(AtomicBool::new(false)),
-        }))
+        let daemon_socket = daemon_client::ensure_daemon()?;
+        let data_path = daemon_client::attach_existing(&daemon_socket, session_id)?;
+        let ctx = wire_ssh_daemon(&data_path, size, profile, None, session_id.to_string())?;
+        Ok(TerminalContext::Ssh(ctx))
     }
 
     /// Access the underlying `Term` grid. The shader uses this to read
@@ -533,6 +595,17 @@ _pt_osc7
             TerminalContext::Local(ctx) => Some(ctx.child_pid),
             #[cfg(unix)]
             TerminalContext::Ssh(_) => None,
+        }
+    }
+
+    /// GAP-5.6: the daemon session id if this context mirrors a `puretermd`-
+    /// owned PTY (local or ssh). `None` for a direct PTY, which cannot survive
+    /// GUI restart and is therefore not persisted/restored.
+    pub fn session_id(&self) -> Option<&str> {
+        match self {
+            TerminalContext::Local(ctx) => ctx.session_id.as_deref(),
+            #[cfg(unix)]
+            TerminalContext::Ssh(ctx) => ctx.session_id.as_deref(),
         }
     }
 

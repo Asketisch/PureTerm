@@ -20,11 +20,23 @@ use crate::session::SessionManager;
 pub struct ControlState {
     pub manager: SessionManager,
     pub started: Instant,
+    /// mtime (Unix epoch secs) of the `puretermd` executable captured at
+    /// startup. Lets the GUI detect a stale daemon (older binary still
+    /// running after a repackage) and restart it so new code actually runs.
+    /// 0 if the exe path/mtime couldn't be read.
+    pub exe_mtime: u64,
 }
 
 impl ControlState {
     pub fn new(manager: SessionManager) -> Self {
-        Self { manager, started: Instant::now() }
+        let exe_mtime = std::env::current_exe()
+            .and_then(|p| p.metadata())
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        Self { manager, started: Instant::now(), exe_mtime }
     }
 }
 
@@ -90,6 +102,7 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
             "pid": std::process::id(),
             "uptime_s": state.started.elapsed().as_secs(),
             "sessions": state.manager.list().len(),
+            "exe_mtime": state.exe_mtime,
         })),
         "session.create" => {
             let cols = uparam(request, "cols").unwrap_or(80);
@@ -119,7 +132,8 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                     rows,
                 )
             } else {
-                state.manager.create_local(cols, rows)
+                let cwd = sparam(request, "working_directory").map(PathBuf::from);
+                state.manager.create_local(cols, rows, cwd)
             };
             match sid {
                 Ok(s) => Ok(serde_json::json!({ "session_id": s })),

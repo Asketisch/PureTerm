@@ -67,8 +67,8 @@
 ### 1.2 本季度焦点(P0 优先)
 
 1. **GAP-2.3** Socket API v2 协议设计(method 分类骨架) ✅(2026-06-13 协议+完整 method 闭环:JSON-RPC 2.0 + 31 method + CLI `pureterm msg`,见 GAP-6.1)
-2. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话)
-3. **GAP-5.6** SSH reconnect/disconnect 状态机 🚧(2026-06-14 进程内子集闭环:状态机 + 指数退避 + UI + ssh.disconnect 真实落地;daemon 化留 GAP-5.1)
+2. **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话) ✅(2026-06-17 M1-M5 全里程碑闭环)
+3. **GAP-5.6** SSH reconnect/disconnect 状态机 🚧(2026-06-14 进程内子集闭环:状态机 + 指数退避 + UI + ssh.disconnect 真实落地;**daemon 化跨重启恢复已实现 2026-06-17,待 GUI E2E**,见 [§GAP-5.6](#gap-5-6))
 4. **GAP-3.7** 快捷键 6 套模板 + live reload(tmux/Vim/iTerm/agent-triage/vscode) ✅(2026-06-12)
 5. **GAP-6.1** Socket API v2 完整协议(30+ method) ✅(2026-06-13:31 method / 8 命名空间 + IpcSideEffect 写操作)
 
@@ -317,11 +317,11 @@
 - **对标**: cmux `daemon/remote/cmuxd-remote`
 
 #### GAP-5.6 完整 reconnect/disconnect 状态机 {#gap-5-6}
-- **状态**: 🚧(2026-06-14 进程内子集闭环;daemon 化跨重启恢复留 GAP-5.1)— 已实现部分详见 [README §已实现特性 → SSH 断线重连](../README.md#已实现特性)
+- **状态**: 🚧(2026-06-14 进程内子集闭环;**daemon 化跨重启恢复已实现 2026-06-17,待 GUI E2E**;剩余打磨见下)— 已实现部分详见 [README §已实现特性 → SSH 断线重连](../README.md#已实现特性)
 - **优先级**: P0
 - **实现位置**: `crates/pureterm/src/ssh/reconnect.rs` + `terminal_context.rs::SshCtx::reattach()`
+- **daemon 化跨重启恢复(2026-06-17 代码闭环,待 E2E)**:`crates/pureterm/src/session_restore.rs`(`LayoutSnapshot` 持久化 `data_dir()/gui-sessions.json`,`NamedTempFile::persist` 原子写,变更去抖 `time::every(250ms)` + ≥500ms 空闲 + 关窗 flush)+ `iced_app.rs::{try_restore_layout,capture_layout,mark_layout_dirty,flush_layout_if_dirty}`(启动 `load → session.list 校验 → attach_existing 重连 → scrollback 回放重建 grid`;恢复 tabs/分屏/窗口尺寸/active;孤儿会话作额外 tab;SSH 重连存活 child 免重认证)+ `terminal_context.rs::{attach_local_via_daemon,attach_ssh_via_daemon,wire_local_daemon,wire_ssh_daemon,session_id}` + `daemon_client.rs::{attach_existing,list_sessions,kill_session}` + `split_tree.rs::{serde 派生,remap_pane_ids,regenerate_split_ids}`;**关闭语义**(刻意区分):`⌘W` 关 tab/pane → `iced_app.rs::{kill_pane_session,CloseTab 非末 tab 分支,close_active_pane}` 调 `daemon_client.rs::kill_session`(`session.kill`)结束该 daemon 会话,下次不再恢复;退出 app(`⌘Q`/关窗/杀进程)→ 不 kill,保留存活会话供下次恢复。**daemon 侧零改动**。单测:`split_tree`(remap/regenerate/serde round-trip)+ `session_restore`(snapshot round-trip/version gate)
 - **未做(留后续迭代)**:
-  - daemon 化跨重启恢复(GAP-5.1)
   - `Authenticating` 独立状态(当前并入 Connecting)
   - Socket API event `SshStateChanged { profile, state }`(需 GAP-6.7 事件流)
   - 多 pane tab 中 SSH pane 退出重连(当前仅 last-pane 触发)
@@ -627,7 +627,7 @@
 | GAP-5.3 | smallest-screen-wins resize | D | P2 | ❌ | - | - |
 | GAP-5.4 | SSH agent forwarding | D | P1 | ❌ | - | - |
 | GAP-5.5 | pureterm:// URL scheme | D | P1 | ❌ | - | - |
-| GAP-5.6 | reconnect/disconnect 状态机 | D | P0 | 🚧 | 2026-06-14 | 进程内子集闭环:SshState 状态机 + 指数退避(3→60s×8)+ Condvar 可唤醒 + ReconnectHub(std::thread+tokio mpsc+持久 Subscription)+ ConnectionKey 防风暴 + 状态栏(SSH ↻/✗/⏻)+ ssh.disconnect IPC 真实落地 + reattach(同 terminal Arc 重建 loop,保留滚动历史);10 单测;daemon 化留 GAP-5.1 |
+| GAP-5.6 | reconnect/disconnect 状态机 | D | P0 | 🚧 | 2026-06-17 | 进程内子集闭环(2026-06-14):SshState 状态机 + 指数退避(3→60s×8)+ Condvar 可唤醒 + ReconnectHub(std::thread+tokio mpsc+持久 Subscription)+ ConnectionKey 防风暴 + 状态栏(SSH ↻/✗/⏻)+ ssh.disconnect IPC 真实落地 + reattach(同 terminal Arc 重建 loop,保留滚动历史);10 单测。**daemon 化跨重启恢复代码闭环(2026-06-17,待 GUI E2E)**:`session_restore.rs`(LayoutSnapshot 持久化 + 原子去抖写)+ `iced_app` 启动 load→session.list→attach_existing 重连 + 孤儿接回 + `attach_local/ssh_via_daemon` + `split_tree` serde/remap;daemon 零改动;5 新单测。 |
 | GAP-5.7 | SSH Tab UI 串通 | D | P0 | ✅ | 2026-06-08 | ⌘⇧S + graceful_close |
 | GAP-5.8 | SSH 主 UI 设置 UI | D | P0 | ✅ | 2026-06-08 | 右侧栏 + CredentialStore |
 | GAP-5.9 | SSH 命令面板集成 | D | P0 | ✅ | 2026-06-08 | Profiles mode 一跳到底 |

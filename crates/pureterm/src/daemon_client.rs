@@ -56,14 +56,26 @@ pub fn ping(socket: &Path) -> bool {
 /// Ensure the daemon is running (spawn-on-demand).
 ///
 /// Returns the daemon socket path on success. If the daemon is already
-/// reachable, returns immediately. Otherwise spawns `puretermd` as a
-/// detached child and polls until the socket becomes reachable (up to ~5s).
+/// reachable, first checks whether it is a *stale* binary (older than the
+/// local `puretermd`, i.e. the bundle was repackaged) and restarts it so new
+/// code actually runs. Otherwise spawns `puretermd` as a detached child and
+/// polls until the socket becomes reachable (up to ~5s).
 pub fn ensure_daemon() -> io::Result<PathBuf> {
     let socket = pureterm_daemon::discovery::socket_path();
     if ping(&socket) {
+        // Reachable, but possibly a stale binary from before a repackage.
+        // Restart when safe so new code runs; a failure here is non-fatal.
+        if let Err(e) = restart_if_stale(&socket) {
+            log::warn!("daemon staleness check failed: {e}");
+        }
         return Ok(socket);
     }
+    spawn_daemon(&socket)
+}
 
+/// Spawn `puretermd` as a detached child and poll until its socket becomes
+/// reachable (up to ~5s).
+fn spawn_daemon(socket: &Path) -> io::Result<PathBuf> {
     // Find the puretermd binary. In a .app bundle it lives beside the main
     // binary; otherwise look on PATH.
     let puretermd = find_puretermd();
@@ -86,23 +98,116 @@ pub fn ensure_daemon() -> io::Result<PathBuf> {
     cmd.spawn()?;
 
     // Poll-connect with backoff up to ~5s.
-    for attempt in 0..25 {
+    for _attempt in 0..25 {
         std::thread::sleep(Duration::from_millis(200));
-        if ping(&socket) {
-            return Ok(socket);
+        if ping(socket) {
+            return Ok(socket.to_path_buf());
         }
     }
 
     Err(io::Error::new(io::ErrorKind::TimedOut, "puretermd did not become reachable"))
 }
 
+/// If the running daemon is a stale binary (its `exe_mtime` differs from the
+/// local `puretermd` mtime, i.e. the bundle was repackaged), terminate it and
+/// spawn a fresh daemon so the new code runs. No-op when the daemon is current
+/// or when either mtime is unknown.
+///
+/// Note: a restart terminates the old daemon's PTY sessions. This is only
+/// reached right after `ping`, and the mtime check guarantees it only fires
+/// when the binary genuinely changed (a repackage), so losing the old sessions
+/// is the intended "switch to new code" semantics.
+fn restart_if_stale(socket: &Path) -> io::Result<()> {
+    let local_mtime = match local_puretermd_mtime() {
+        Some(m) => m,
+        None => return Ok(()), // can't read local exe mtime → can't judge staleness
+    };
+
+    let status = rpc(socket, "daemon.status", None)?;
+    let result = status
+        .result
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no daemon.status result"))?;
+    let sessions = result.get("sessions").and_then(|v| v.as_u64()).unwrap_or(0);
+    let pid = result.get("pid").and_then(|v| v.as_u64());
+
+    // Determine staleness. A new daemon always reports `exe_mtime` (even 0 if
+    // it couldn't stat its own exe), so an ABSENT field means the running
+    // daemon is an older binary → stale. `exe_mtime == 0` (new daemon, stat
+    // failed) can't be compared reliably → treat as not-stale to avoid a
+    // restart loop.
+    let stale_reason = match result.get("exe_mtime") {
+        None => Some("predates staleness tracking"),
+        Some(v) => match v.as_u64() {
+            None | Some(0) => None,
+            Some(dm) if dm != local_mtime => Some("binary updated"),
+            Some(_) => None,
+        },
+    };
+
+    let Some(reason) = stale_reason else {
+        return Ok(());
+    };
+
+    // Stale daemon — but don't destroy live sessions automatically. A repackage
+    // is not consent to discard the user's running shells. Only restart when
+    // nothing is at stake; otherwise log so the user can restart deliberately
+    // (e.g. `pkill puretermd` then relaunch the app).
+    if sessions > 0 {
+        log::warn!(
+            "puretermd is stale ({}) but holds {} live session(s); not auto-restarting \
+             to avoid losing them. Restart manually when ready.",
+            reason,
+            sessions
+        );
+        return Ok(());
+    }
+
+    log::warn!("puretermd is stale ({}); restarting daemon", reason);
+    terminate_and_respawn(socket, pid)
+}
+
+/// SIGTERM the daemon (so its flock releases), wait for it to drop the socket,
+/// then spawn a fresh daemon. `pid` is the old daemon's pid from `daemon.status`.
+fn terminate_and_respawn(socket: &Path, pid: Option<u64>) -> io::Result<()> {
+    if let Some(pid) = pid {
+        // SIGTERM → daemon exits → flock releases → fresh daemon can acquire it.
+        unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+    }
+
+    // Wait for the old daemon to release the socket/lock (up to ~5s).
+    for _ in 0..25 {
+        std::thread::sleep(Duration::from_millis(200));
+        if !ping(socket) {
+            break;
+        }
+    }
+
+    spawn_daemon(socket).map(|_| ())
+}
+
+/// mtime (Unix epoch secs) of the `puretermd` binary the GUI would spawn, or
+/// `None` if it can't be read.
+fn local_puretermd_mtime() -> Option<u64> {
+    let exe = find_puretermd();
+    let modified = std::fs::metadata(&exe).ok()?.modified().ok()?;
+    modified.duration_since(std::time::UNIX_EPOCH).ok().map(|d| d.as_secs())
+}
+
 /// Create a new local session via the daemon and return `(session_id, data_path)`.
-pub fn create_local(socket: &Path, cols: u16, rows: u16) -> io::Result<(String, PathBuf)> {
-    let resp = rpc(
-        socket,
-        "session.create",
-        Some(serde_json::json!({ "cols": cols, "rows": rows })),
-    )?;
+///
+/// `cwd`, when `Some`, is forwarded to the daemon as the shell's startup
+/// directory (so new tabs/panes inherit the current working directory).
+pub fn create_local(
+    socket: &Path,
+    cols: u16,
+    rows: u16,
+    cwd: Option<&str>,
+) -> io::Result<(String, PathBuf)> {
+    let mut params = serde_json::json!({ "cols": cols, "rows": rows });
+    if let Some(c) = cwd {
+        params["working_directory"] = serde_json::Value::String(c.to_string());
+    }
+    let resp = rpc(socket, "session.create", Some(params))?;
     if let Some(err) = &resp.error {
         return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
     }
@@ -113,20 +218,9 @@ pub fn create_local(socket: &Path, cols: u16, rows: u16) -> io::Result<(String, 
         .to_string();
 
     // Attach to get the data path.
-    let attach_resp = rpc(
-        socket,
-        "session.attach",
-        Some(serde_json::json!({ "session_id": sid })),
-    )?;
-    if let Some(err) = &attach_resp.error {
-        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
-    }
-    let attach_result = attach_resp.result.ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no attach result"))?;
-    let data_path = attach_result["data_path"]
-        .as_str()
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing data_path"))?;
+    let data_path = attach_existing(socket, &sid)?;
 
-    Ok((sid, PathBuf::from(data_path)))
+    Ok((sid, data_path))
 }
 
 /// Create a new SSH session via the daemon (GAP-5.1 M3) and return
@@ -173,10 +267,24 @@ pub fn create_ssh(
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing session_id"))?
         .to_string();
 
+    let data_path = attach_existing(socket, &sid)?;
+
+    Ok((sid, data_path))
+}
+
+/// Attach to an *existing* daemon session and return its data-socket path.
+///
+/// Shared by the create flow (which attaches right after `session.create`)
+/// and by GAP-5.6 cross-restart recovery, which attaches to a session that
+/// was created in a previous GUI run and is still alive in the daemon. The
+/// daemon replays the session's scrollback as `SCROLLBACK` frames to the new
+/// subscriber, so the caller's `Term` + `vte::ansi::Processor` rebuilds the
+/// grid naturally.
+pub fn attach_existing(socket: &Path, session_id: &str) -> io::Result<PathBuf> {
     let attach_resp = rpc(
         socket,
         "session.attach",
-        Some(serde_json::json!({ "session_id": sid })),
+        Some(serde_json::json!({ "session_id": session_id })),
     )?;
     if let Some(err) = &attach_resp.error {
         return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
@@ -187,8 +295,44 @@ pub fn create_ssh(
     let data_path = attach_result["data_path"]
         .as_str()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing data_path"))?;
+    Ok(PathBuf::from(data_path))
+}
 
-    Ok((sid, PathBuf::from(data_path)))
+/// List all live sessions in the daemon (GAP-5.6 recovery discovery). Each
+/// element is the raw JSON `{ id, kind, child_pid, data_path }` object from
+/// `session.list`.
+pub fn list_sessions(socket: &Path) -> io::Result<Vec<serde_json::Value>> {
+    let resp = rpc(socket, "session.list", None)?;
+    if let Some(err) = &resp.error {
+        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
+    }
+    let result = resp
+        .result
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no result"))?;
+    let sessions = result
+        .get("sessions")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing sessions array"))?;
+    Ok(sessions.clone())
+}
+
+/// Kill a daemon session (SIGHUP child + tear down). GAP-5.6: a user-initiated
+/// tab/pane close ends the underlying session so it is NOT restored on the next
+/// launch — only an app quit / process kill preserves sessions. Returns the
+/// daemon's `killed` flag (`false` if the session was already gone).
+pub fn kill_session(socket: &Path, session_id: &str) -> io::Result<bool> {
+    let resp = rpc(
+        socket,
+        "session.kill",
+        Some(serde_json::json!({ "session_id": session_id })),
+    )?;
+    if let Some(err) = &resp.error {
+        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
+    }
+    Ok(resp
+        .result
+        .and_then(|r| r.get("killed").and_then(|v| v.as_bool()))
+        .unwrap_or(false))
 }
 
 /// Locate the `puretermd` binary.

@@ -18,6 +18,7 @@ pub mod autostart;
 pub mod control;
 pub mod discovery;
 pub mod frame;
+pub mod osc7;
 pub mod ring_buffer;
 pub mod runtime;
 pub mod session;

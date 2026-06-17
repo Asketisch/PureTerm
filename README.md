@@ -24,6 +24,7 @@
 
 - **GPU 加速渲染** — Iced 0.14 + 自定义 wgpu shader,跨平台 Metal / Vulkan / DX12 后端
 - **多标签嵌套分屏** — 水平/垂直递归分屏,拖拽调整比例
+- **会话持久化 + 跨重启恢复** — `puretermd` 守护进程持有 PTY master fd,关 GUI/崩溃不丢会话;重开自动恢复上次的 tabs/分屏布局/窗口尺寸(含 SSH,重连到存活 child 无需重新认证)(2026-06-17 GAP-5.1 ✅ + GAP-5.6 daemon 化 🚧)
 - **SSH 一等公民** — 完整后端 + Profile + 加密凭证 + 主 UI 设置 + 命令面板一跳到底(2026-06-08 GAP-5.7/5.8/5.9 闭环)
 - **独立设置 UI 进程** — Iced 0.14 daemon,`Cmd+,` 启动,6 个分类页面
 - **命令面板** — `⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,Actions / Profiles 双模式
@@ -106,7 +107,7 @@ PureTerm 由 6 个 crate 组成的工作区:
   - 焦点 Next/Prev Pane `⌘]` / `⌘[` (DFS 先序循环;与 `⌘⌥+方向键` 几何相邻并存)
   - 移动 Pane 到新 Tab `⌘⇧T` / 新窗口 `⌘⇧N`
   - 命令面板搜 `split.*` 7 个 builtin
-- 标签关闭策略:本地 Tab 直接关;SSH Tab 走 `graceful_close`(发送 `exit\r` → 等 500ms → SIGHUP 兜底)
+- 标签关闭策略:本地 Tab 直接关;SSH Tab 走 `graceful_close`(发送 `exit\r` → 等 500ms → SIGHUP 兜底);关 tab/pane 同步 `session.kill` 结束其 daemon 会话(语义见下「会话持久化与跨重启恢复」)
 - macOS 原生菜单 + Dock reopen 集成
 
 ### SSH 一等公民(2026-06-08 GAP-5.7/5.8/5.9 闭环)
@@ -119,6 +120,13 @@ PureTerm 由 6 个 crate 组成的工作区:
 - **SSH Tab UI**:`⌘⇧S` 弹对话框 → 异步 spawn → `PtyEventLoop` 集成 → 标题显示 `🔒 SSH: <name>`
 - **命令面板集成**:`⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,`Mode::Actions` ↔ `Mode::Profiles` 切换,选 Profile 一跳到底连接
 - **断线重连**(2026-06-14 GAP-5.6 进程内子集):SSH 连接 >5s 后掉线 → 指数退避(3→60s × 8)自动重连,保留滚动历史;状态栏显示 `SSH` / `SSH ↻ n` / `SSH ✗` / `SSH ⏻`;`pureterm ssh disconnect` 手动断开不触发重连
+
+### 会话持久化与跨重启恢复(2026-06-17 GAP-5.1 ✅ + GAP-5.6 daemon 化 🚧)
+- **持久守护进程 `puretermd`**:单例(flock)+ `setsid` 脱离 GUI 进程组,PTY master fd 由 pump 线程持有 → GUI 关闭/崩溃后子 shell 不死;每会话 1 MiB `RingBuffer` 原始字节,新 attach 回放为 `SCROLLBACK` 帧重建 grid;多 GUI 客户端可共享同一会话(多 attach 扇出)
+- **跨重启恢复**:GUI 重启时读 `gui-sessions.json` → `session.list` 校验存活会话 → `attach_existing` 重连(本地 + SSH)→ scrollback 回放重建可见区;恢复 tabs 顺序/标题/分屏树(SplitNode 方向 + 比例)/窗口尺寸/active tab;孤儿会话(daemon 有 / 快照无)作额外 tab 接回;SSH 重连到存活 `ssh -tt` child 无需重新认证
+- **持久化策略**:布局变更去抖(`time::every(250ms)` + ≥500ms 空闲)`NamedTempFile::persist` 原子写 + 关窗 flush;daemon 不可用 / 无存活会话时回落单新 tab(零回归)
+- **状态文件**:`~/Library/Application Support/pureterm/daemon/gui-sessions.json`(owner-only 0700)
+- **关闭语义**(刻意区分):`⌘W` 关闭 tab / pane → 结束其 daemon 会话(`session.kill`),下次**不再**恢复;退出 app(`⌘Q` / 关窗 / 杀进程)→ **保留**所有存活会话,下次恢复。即「关 tab = 不要这个会话;退出 = 暂时离开」
 
 ### Settings UI(独立进程)
 - 独立二进制 `pureterm-settings`,通过 `Cmd+,` 启动
@@ -440,15 +448,15 @@ PureTerm 扩展段:
 - ✅ **GAP-3.7** 快捷键 6 套预设模板(tmux / Vim / iTerm / agent-triage / vscode / custom)
 - ✅ **GAP-4.1** Vi Copy Mode(ViSubMode 状态机 + 18 ViMotion + visual/block/yank + 搜索 + GPU 高亮)
 - ✅ **GAP-5.7/5.8/5.9** SSH 一等公民(Tab UI + 设置面板 + 命令面板集成)
-- 🚧 **GAP-5.6** SSH reconnect/disconnect 状态机(进程内子集:网络中断自动重连 + 指数退避 + 状态栏 + `ssh.disconnect`;daemon 化留 GAP-5.1)
+- ✅ **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话:PTY master fd 由 pump 线程持有,1 MiB scrollback 回放,多 attach 扇出)
+- 🚧 **GAP-5.6 daemon 化跨重启恢复**(2026-06-17 代码闭环,待 GUI E2E):GUI 重启后自动重连 daemon 存活会话 + 重建 tabs/分屏布局/窗口尺寸;`gui-sessions.json` 变更去抖原子写 + 关窗 flush;孤儿会话作额外 tab 接回;SSH 重连到存活 `ssh -tt` child 无需重新认证
+- 🚧 **GAP-5.6** SSH reconnect/disconnect 状态机(进程内子集:网络中断自动重连 + 指数退避 + 状态栏 + `ssh.disconnect`;daemon 化跨重启恢复已实现,见上)
 - ✅ **GAP-6.1** Socket API v2 完整协议(31 method / 8 命名空间 + IpcSideEffect 写操作副作用)
 
 **本季度焦点**(2026 Q2-Q3):
-- **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话;完成后 GAP-5.6 升级为跨重启恢复)
 - **GAP-6.2** CLI 协议(9 大组子命令,基于 GAP-6.1 Socket API 扩展)
 
 **重点未实现领域**(详见路线图):
-- 持久 PTY 守护进程(架构升级)
 - AI Agent 集成(hooks 框架 + Claude Code adapter + Feed 审批面板)
 - Browser 面板(WebView + SOCKS5 隧道)
 - 双侧边栏 + Workspace 抽象层
