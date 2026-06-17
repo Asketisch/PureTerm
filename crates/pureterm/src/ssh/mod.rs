@@ -6,25 +6,25 @@
 //!
 //! ## Platform support
 //!
-//! The SSH child-process side (`pty`, `session`, `command`) is **Unix-only**.
+//! The SSH child-process side (`pty`, `session`, `command`) is **Unix-only** and
+//! now lives in the shared `pureterm-ssh` crate (GAP-5.1 M3) so the `puretermd`
+//! daemon can spawn SSH PTYs too. It is re-exported here so existing
+//! `crate::ssh::{pty,session,command}` paths keep resolving unchanged.
 //! On Windows the SSH UI surface is wired in P3+ but the actual connection
 //! falls back to a stub (P3 work). The cross-platform bits (config,
 //! credential store, ssh config reader) compile on every platform.
 //!
 //! Migration: extracted from `archive/pureterm-display-path/alacritty/ssh/`
-//! on 2026-06-08 (P1 of the GAP-5.7/5.8/5.9 plan).
+//! on 2026-06-08 (P1 of the GAP-5.7/5.8/5.9 plan). Spawn machinery moved to
+//! `pureterm-ssh` on 2026-06-17 (GAP-5.1 M3).
 
 #[cfg(unix)]
-pub mod command;
+pub use pureterm_ssh::{command, pty, session};
 pub mod config;
 pub mod credential;
 #[cfg(unix)]
-pub mod pty;
-#[cfg(unix)]
 pub mod reconnect;
-#[cfg(unix)]
-pub mod session;
 pub mod ssh_config_reader;
 
 #[cfg(unix)]
-pub use session::SshSessionManager;
+pub use pureterm_ssh::session::SshSessionManager;

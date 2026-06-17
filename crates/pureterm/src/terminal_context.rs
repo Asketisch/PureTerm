@@ -247,6 +247,81 @@ _pt_osc7
         }))
     }
 
+    /// Create a new local-PTY terminal context routed through the persistent
+    /// daemon (`puretermd`). The daemon owns the real PTY (so the child
+    /// survives GUI close); this side holds a `DaemonPty` that mirrors bytes
+    /// over a socketpair.
+    ///
+    /// GAP-5.1 M1: same contract as `new_local()` from the caller's
+    /// perspective — returns a `TerminalContext::Local` with a working
+    /// terminal, notifier, and event channel.
+    #[cfg(unix)]
+    pub fn new_local_via_daemon() -> io::Result<Self> {
+        use crate::daemon_client;
+        use crate::daemon_pty::DaemonPty;
+
+        let daemon_socket = daemon_client::ensure_daemon()?;
+
+        let num_cols: u16 = 80;
+        let num_lines: u16 = 24;
+        let size = TermSize::new(num_cols as usize, num_lines as usize);
+
+        let (session_id, data_path) =
+            daemon_client::create_local(&daemon_socket, num_cols, num_lines)?;
+
+        let daemon_pty = DaemonPty::connect(&data_path)?;
+
+        let (event_tx, event_rx) = bounded(64);
+        let event_listener = ChannelEventListener::new(event_tx);
+
+        let term_config = TermConfig::default();
+        let terminal = Term::new(term_config, &size, event_listener.clone());
+        let terminal = Arc::new(FairMutex::new(terminal));
+
+        let pty_loop = PtyEventLoop::new(
+            Arc::clone(&terminal),
+            event_listener,
+            daemon_pty,
+            false,
+            false,
+        )?;
+
+        let loop_tx = pty_loop.channel();
+        let _io_thread = pty_loop.spawn();
+
+        Ok(TerminalContext::Local(LocalCtx {
+            terminal,
+            notifier: Notifier(loop_tx),
+            event_rx,
+            size,
+            child_pid: 0, // child is owned by the daemon; pid not meaningful here
+        }))
+    }
+
+    /// GAP-5.1 M1: route new local terminals through the persistent daemon so
+    /// the PTY survives GUI restart. Falls back to a direct local PTY when the
+    /// daemon is unreachable (e.g. `puretermd` is not packaged alongside the
+    /// running binary), so the terminal always works — at the cost of losing
+    /// session-survival until the daemon is available. This is the entry point
+    /// the GUI tab/split creation should use.
+    pub fn new_local_auto() -> Self {
+        #[cfg(unix)]
+        {
+            match Self::new_local_via_daemon() {
+                Ok(ctx) => return ctx,
+                Err(e) => log::warn!(
+                    "puretermd unavailable ({e}); using direct local PTY \
+                     (session will not survive GUI restart)"
+                ),
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            log::debug!("daemon PTY path is unix-only; using direct local PTY");
+        }
+        Self::new_local().expect("Failed to create terminal context")
+    }
+
     /// Create a new SSH-backed terminal context. The SSH child is spawned
     /// via `SshSessionManager::spawn_pty`, then wired into the same
     /// alacritty `PtyEventLoop` the local path uses.
@@ -300,6 +375,76 @@ _pt_osc7
                 event_rx,
                 io_thread: Some(io_thread),
                 stderr_file: stderr,
+            }),
+            size,
+            profile_display: profile.name.clone(),
+            ssh_host: profile.host.clone(),
+            ssh_user: profile.user.clone(),
+            ssh_port: profile.port,
+            ssh_key_path: profile.key_path.clone(),
+            ssh_password: password,
+            reconnect_state: Arc::new(Mutex::new(SshState::Connected)),
+            user_initiated_close: Arc::new(AtomicBool::new(false)),
+        }))
+    }
+
+    /// GAP-5.1 M3: open an SSH session owned by the persistent daemon so the
+    /// remote shell survives GUI restart. The GUI side is the same `DaemonPty`
+    /// mirror the local path uses — only the daemon spawns `ssh` instead of a
+    /// local shell. `password` must already be resolved (CredentialStore /
+    /// profile) by the caller; it is forwarded to the daemon for `SSH_ASKPASS`.
+    ///
+    /// Auto-reconnect (GAP-5.6) is intentionally NOT wired here: the daemon
+    /// keeps the existing ssh child alive across GUI restart, and re-attach
+    /// rebuilds scrollback. If the network itself drops, the user reconnects via
+    /// the SSH dialog (daemon-side reconnect is a later refinement).
+    #[cfg(unix)]
+    pub fn new_ssh_via_daemon(profile: &SshProfile, password: Option<String>) -> io::Result<Self> {
+        use crate::daemon_client;
+        use crate::daemon_pty::DaemonPty;
+
+        let daemon_socket = daemon_client::ensure_daemon()?;
+        let num_cols: u16 = 80;
+        let num_lines: u16 = 24;
+        let size = TermSize::new(num_cols as usize, num_lines as usize);
+
+        let (_session_id, data_path) = daemon_client::create_ssh(
+            &daemon_socket,
+            &profile.host,
+            profile.user.as_deref(),
+            profile.port,
+            profile.key_path.as_deref(),
+            password.as_deref(),
+            num_cols,
+            num_lines,
+        )?;
+
+        let daemon_pty = DaemonPty::connect(&data_path)?;
+
+        let (event_tx, event_rx) = bounded(64);
+        let event_listener = ChannelEventListener::new(event_tx);
+
+        let term_config = TermConfig::default();
+        let terminal = Term::new(term_config, &size, event_listener.clone());
+        let terminal = Arc::new(FairMutex::new(terminal));
+
+        let pty_loop = PtyEventLoop::new(
+            Arc::clone(&terminal),
+            event_listener,
+            daemon_pty,
+            false,
+            false,
+        )?;
+        let loop_tx = pty_loop.channel();
+        let io_thread = ThreadJoiner::new(pty_loop.spawn());
+
+        Ok(TerminalContext::Ssh(SshCtx {
+            terminal,
+            runtime: RefCell::new(SshRuntime {
+                notifier: Notifier(loop_tx),
+                event_rx,
+                io_thread: Some(io_thread),
+                stderr_file: None,
             }),
             size,
             profile_display: profile.name.clone(),

@@ -7,6 +7,9 @@ description = "PureTerm - Alacritty-based terminal emulator"
 [dependencies]
 pureterm-alacritty-runtime = { workspace = true }
 pureterm-settings = { path = "../pureterm-settings" }
+pureterm-jsonrpc = { workspace = true }
+pureterm-daemon = { path = "../pureterm-daemon" }
+pureterm-ssh = { workspace = true }
 alacritty_terminal = { path = "../alacritty_terminal" }
 dirs = "6.0.0"
 iced = { version = "0.14", features = ["advanced", "canvas", "tokio"] }

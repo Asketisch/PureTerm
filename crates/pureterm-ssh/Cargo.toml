@@ -1,0 +1,17 @@
+[package]
+name = "pureterm-ssh"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+alacritty_terminal = { path = "../alacritty_terminal" }
+polling = "3"
+rustix-openpty = "0.2"
+signal-hook = "0.3"
+libc = "0.2"
+tempfile = "3"
+log = "0.4"

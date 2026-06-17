@@ -79,6 +79,12 @@ pub enum Command {
         #[command(subcommand)]
         cmd: SshSub,
     },
+    /// Manage the persistent puretermd daemon + login autostart (Unix only)
+    #[cfg(unix)]
+    Daemon {
+        #[command(subcommand)]
+        cmd: DaemonSub,
+    },
     /// Debug / diagnostics
     Debug {
         #[command(subcommand)]
@@ -282,8 +288,19 @@ pub enum SshSub {
     ListProfiles,
     /// Connect to an SSH profile by index
     Connect {
+        /// `[user@]host` — daemon-direct: opens a persistent puretermd session
+        /// and attaches the current terminal (GAP-5.1 M3 DoD). Omit and pass
+        /// `--index` instead to ask the running GUI to open a tab.
+        target: Option<String>,
+        /// Profile index for the GUI-IPC path (opens a tab in the running GUI).
         #[arg(long)]
-        index: usize,
+        index: Option<usize>,
+        /// SSH port (daemon-direct path only).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Identity file / private key path (daemon-direct path only).
+        #[arg(long)]
+        identity: Option<String>,
     },
     /// Disconnect (close the SSH tab)
     Disconnect,
@@ -294,10 +311,24 @@ impl SshSub {
     fn method_and_params(&self) -> (&'static str, Option<Value>) {
         match self {
             SshSub::ListProfiles => ("ssh.list_profiles", None),
-            SshSub::Connect { index } => ("ssh.connect", Some(json!({ "index": index }))),
+            SshSub::Connect { index: Some(i), .. } => {
+                ("ssh.connect", Some(json!({ "index": i })))
+            }
+            SshSub::Connect { .. } => ("ssh.connect", None),
             SshSub::Disconnect => ("ssh.disconnect", None),
         }
     }
+}
+
+/// Manage the persistent puretermd daemon + login autostart (GAP-5.1 M4).
+#[derive(Subcommand)]
+pub enum DaemonSub {
+    /// Show daemon status (installed/loaded/running) + ping it
+    Status,
+    /// Install the login autostart (macOS LaunchAgent / systemd user service)
+    Install,
+    /// Remove the login autostart
+    Uninstall,
 }
 
 #[derive(Subcommand)]
@@ -347,7 +378,15 @@ pub fn run(cli: Cli) {
         Command::Surface { cmd } => send(&socket, json, cmd.method_and_params()),
         Command::Config { cmd } => send(&socket, json, cmd.method_and_params()),
         #[cfg(unix)]
-        Command::Ssh { cmd } => send(&socket, json, cmd.method_and_params()),
+        Command::Ssh { cmd } => match &cmd {
+            // Daemon-direct interactive client (GAP-5.1 M3 DoD).
+            SshSub::Connect { target: Some(t), port, identity, .. } => {
+                crate::ssh_cli::connect(t, *port, identity.clone());
+            }
+            _ => send(&socket, json, cmd.method_and_params()),
+        },
+        #[cfg(unix)]
+        Command::Daemon { cmd } => crate::daemon_cli::dispatch(cmd),
         Command::Debug { cmd } => send(&socket, json, cmd.method_and_params()),
         Command::Shortcuts { cmd } => match cmd {
             ShortcutsSub::List => crate::shortcuts_list(),
@@ -504,6 +543,20 @@ mod tests {
             panic!("expected Ssh");
         };
         assert_eq!(cmd.method_and_params(), ("ssh.connect", Some(json!({ "index": 0 }))));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ssh_connect_positional_target_is_daemon_direct() {
+        // `pureterm ssh connect user@host` -> daemon-direct (target set, no GUI-IPC index).
+        let cli = parse(&["ssh", "connect", "admin@10.0.0.5", "--port", "2222"]);
+        let Command::Ssh { cmd: SshSub::Connect { target, index, port, identity } } = cli.command
+        else {
+            panic!("expected Ssh Connect");
+        };
+        assert_eq!(target.as_deref(), Some("admin@10.0.0.5"));
+        assert_eq!(port, Some(2222));
+        assert!(index.is_none() && identity.is_none());
     }
 
     #[test]

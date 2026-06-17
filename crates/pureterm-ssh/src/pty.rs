@@ -92,6 +92,18 @@ unsafe fn set_nonblocking(fd: libc::c_int) {
 }
 
 impl SshPty {
+    /// The PTY master `File` (bidirectional). The daemon uses this to poll,
+    /// read remote output, and `ioctl(TIOCSWINSZ)` for resize — it does not
+    /// need the `EventedPty` trait impls, only the raw master fd.
+    pub fn master_file(&self) -> &File {
+        &self.master
+    }
+
+    /// The ssh child's pid.
+    pub fn child_pid(&self) -> u32 {
+        self.child.id()
+    }
+
     /// Spawn a new SSH session with a real kernel PTY.
     ///
     /// Uses `openpty()` to create a PTY master/slave pair. The ssh child

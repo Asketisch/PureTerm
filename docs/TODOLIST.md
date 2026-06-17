@@ -306,13 +306,14 @@
 ### D.P0
 
 #### GAP-5.1 持久 PTY 守护进程 {#gap-5-1}
-- **状态**: ❌
+- **状态**: ✅(2026-06-17 M1+M2+M3+M4+M5 全里程碑闭环:本地 + SSH PTY 均由独立 `puretermd` 守护进程拥有,关 GUI 不丢会话 + 滚动历史回放;`pureterm ssh connect` CLI 是真 interactive client;登录自启动(macOS LaunchAgent / Linux systemd);多 attach 扇出 + 有界背压 + socket 0600。经真 sshd + launchd + 多客户端二进制 E2E 验证。剩余打磨:daemon 侧自动重连 / watchdog)
 - **优先级**: P0
-- **PureTerm 现状**: SSH PTY 由 `crates/pureterm/src/ssh/pty.rs` 在主进程内管理,**关 GUI 会话即死**
+- **PureTerm 现状**: 新 crate `pureterm-daemon`(`src/bin/puretermd.rs` multi-thread tokio 守护进程)拥有真 PTY(本地 + SSH),master fd 不随 GUI 退出而关;GUI 端 `DaemonPty: EventedPty`(`crates/pureterm/src/daemon_pty.rs`)包 socketpair 一端,`PtyEventLoop`/`event_loop.rs` 完全不动。本地 tab/split 走 `new_local_via_daemon()`、SSH 对话框(`connect_ssh_tab`)走 `new_ssh_via_daemon()`(均 daemon 优先、失败回退直接 spawn)。SSH spawn 机器(`SshPty`/`SshCommandBuilder`/`SshSessionManager`)抽到共享 crate `pureterm-ssh`,GUI 与 daemon 共依赖
 - **目标**: 引入 `puretermd-ssh` 子进程(可与 GAP-2.4 合并),接收 SSH 连接 + 分配 slot 目录(`~/.local/share/pureterm/daemon/<slot>/`);持久 PTY 写入 slot;Socket API v2 `ssh.attach/detach/input/output`;考虑迁移到 `russh` crate(替换当前 `ssh` 子进程方案)
 - **依赖**: GAP-2.4(daemon)、GAP-2.3(Socket API)
 - **风险点**: SSH 私钥管理、reconnect 状态、`russh` 与 ControlMaster 共存策略
-- **DoD**: `pureterm ssh connect user@host`,关 GUI 重启,session 仍可 attach
+- **实现位置(M1+M2+M3+M4+M5)**: `crates/pureterm-daemon/`(daemon,含 `ring_buffer.rs` 滚动回放、`PumpablePty` 本地/SSH 统一 pump、`SessionManager::create_ssh`、`autostart.rs` 登录自启动、多 attach 扇出 pump + 有界背压、`discovery::restrict_socket` 0600)+ `crates/pureterm-ssh/`(共享 SSH spawn)+ `crates/pureterm-jsonrpc/`(共享 JSON-RPC 类型)+ `crates/pureterm/src/{daemon_pty.rs,daemon_client.rs,daemon_cli.rs,ssh_cli.rs}`(GUI 端 + `pureterm ssh connect`/`pureterm daemon install` CLI)+ `terminal_context.rs::{new_local_via_daemon,new_local_auto,new_ssh_via_daemon}` + `iced_app.rs::connect_ssh_tab`(daemon 优先)+ `build.sh`(打包 puretermd 进 `Contents/MacOS/`)。里程碑 M0(socketpair 满足 EventedPty)✅ / M1(本地存活)✅ / M2(滚动回放)✅ / M3(SSH 经 daemon + `pureterm ssh connect` CLI = 完整 DoD)✅ / M4(登录自启动 macOS LaunchAgent / Linux systemd)✅ / M5(多 attach 扇出 + 有界背压 + socket 0600)✅
+- **DoD**: `pureterm ssh connect user@host`,关 GUI 重启,session 仍可 attach ✅(完整闭环:`pureterm ssh connect [user@]host` CLI 是真 interactive client,经 PTY 驱动真 sshd 验证——退出 CLI 后 ssh 会话仍存活于 puretermd;GUI SSH 对话框亦走 daemon。剩余打磨:daemon 侧自动重连 / M4 自启动 / M5 加固)
 - **对标**: cmux `daemon/remote/cmuxd-remote`
 
 #### GAP-5.6 完整 reconnect/disconnect 状态机 {#gap-5-6}
@@ -621,7 +622,7 @@
 | GAP-4.2 | 智能选择 hover preview | C | P1 | 🚧 | - | 9 规则已有,缺 hover |
 | GAP-4.3 | Tail-Find 自动滚动搜索 | C | P1 | ❌ | - | - |
 | GAP-4.6 | Touch Bar / VoiceOver | C | P3 | ❌ | - | - |
-| GAP-5.1 | 持久 PTY 守护进程 | D | P0 | ❌ | - | - |
+| GAP-5.1 | 持久 PTY 守护进程 | D | P0 | ✅ | 2026-06-17 | 全里程碑 M1-M5 闭环:本地 + SSH PTY 均由独立 `puretermd` 守护进程拥有(本地 `tty::new`,SSH 用共享 `pureterm-ssh` crate 的 `SshPty::spawn`/`SshCommandBuilder`/`SshSessionManager`,daemon `PumpablePty` trait 统一 pump);GUI `DaemonPty: EventedPty` 包 socketpair,`PtyEventLoop` 不动;`connect_ssh_tab` daemon 优先;`pureterm ssh connect [user@]host` 真 interactive client;滚动回放 1MiB ring→SCROLLBACK;登录自启动(macOS LaunchAgent RunAtLoad+KeepAlive{SuccessfulExit:false} / Linux systemd);多 attach 扇出(Vec<Subscriber> 广播)+ 有界背压(drop >2MiB 滞后客户端)+ control/data socket 0600;经真 sshd + launchd + 多客户端二进制 E2E 验证。剩余打磨:daemon 侧自动重连(网络断)/ watchdog |
 | GAP-5.2 | SOCKS5/HTTP CONNECT Tunnel | D | P1 | ❌ | - | - |
 | GAP-5.3 | smallest-screen-wins resize | D | P2 | ❌ | - | - |
 | GAP-5.4 | SSH agent forwarding | D | P1 | ❌ | - | - |

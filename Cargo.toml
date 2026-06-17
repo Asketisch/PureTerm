@@ -7,10 +7,15 @@ members = [
     "crates/alacritty_terminal",
     "crates/alacritty_config",
     "crates/alacritty_config_derive",
+    "crates/pureterm-jsonrpc",
+    "crates/pureterm-daemon",
+    "crates/pureterm-ssh",
 ]
 
 [workspace.dependencies]
 pureterm-alacritty-runtime = { path = "crates/pureterm-alacritty-runtime" }
+pureterm-jsonrpc = { path = "crates/pureterm-jsonrpc" }
+pureterm-ssh = { path = "crates/pureterm-ssh" }
 
 [profile.release]
 opt-level = 3

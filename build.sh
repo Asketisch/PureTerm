@@ -199,6 +199,15 @@ build_app() {
         warn "pureterm-settings 构建失败，Settings UI 将不可用"
     fi
 
+    step "构建 puretermd (GAP-5.1 持久 PTY 守护进程)..."
+    local daemon_cmd="cargo build --release --bin puretermd"
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        daemon_cmd="${daemon_cmd} --target ${TARGET_TRIPLE}"
+    fi
+    if ! $daemon_cmd; then
+        warn "puretermd 构建失败，会话将无法在 GUI 关闭后存活（回退为直接本地 PTY）"
+    fi
+
     local bin
     bin="$(get_binary_path release)"
 
@@ -259,6 +268,21 @@ bundle_macos() {
         cp "$settings_bin" "${contents_dir}/MacOS/pureterm-settings"
         chmod +x "${contents_dir}/MacOS/pureterm-settings"
         step "已复制 pureterm-settings"
+    fi
+
+    # 复制 puretermd（GAP-5.1 持久 PTY 守护进程；GUI spawn-on-demand 从同目录定位它）
+    local daemon_bin
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        daemon_bin="target/${TARGET_TRIPLE}/release/puretermd"
+    else
+        daemon_bin="target/release/puretermd"
+    fi
+    if [ -f "$daemon_bin" ]; then
+        cp "$daemon_bin" "${contents_dir}/MacOS/puretermd"
+        chmod +x "${contents_dir}/MacOS/puretermd"
+        step "已复制 puretermd"
+    else
+        warn "未找到 puretermd，会话将无法在 GUI 关闭后存活"
     fi
 
     # 生成 Info.plist

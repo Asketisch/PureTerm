@@ -1,6 +1,12 @@
 mod app_config;
 mod cli;
 mod config_watcher;
+#[cfg(unix)]
+mod daemon_client;
+#[cfg(unix)]
+mod daemon_cli;
+#[cfg(unix)]
+mod daemon_pty;
 mod iced_app;
 mod ime_widget;
 mod ipc;
@@ -15,6 +21,8 @@ mod macos_reopen;
 mod macos_eyedropper;
 #[cfg(unix)]
 mod ssh;
+#[cfg(unix)]
+mod ssh_cli;
 mod terminal_context;
 mod terminal_shader;
 mod vi_mode_handler;

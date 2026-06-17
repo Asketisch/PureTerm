@@ -807,9 +807,9 @@ impl PureTermApp {
         self.next_tab_id += 1;
 
         let pane_id = PaneId::next();
-        let terminal_ctx = Arc::new(
-            TerminalContext::new_local().expect("Failed to create terminal context"),
-        );
+        // GAP-5.1 M1: route through persistent daemon; falls back to a direct
+        // local PTY when puretermd is unavailable.
+        let terminal_ctx = Arc::new(TerminalContext::new_local_auto());
 
         let terminal_height = terminal_content_height(viewport_height);
 
@@ -947,11 +947,6 @@ impl PureTermApp {
             return;
         };
 
-        let Some(manager) = self.ssh_manager.clone() else {
-            self.show_ssh_error(self.i18n.t("ssh.error.manager_not_init"));
-            return;
-        };
-
         let host = profile.host.clone();
         let user = profile.user.clone();
         let port = profile.port;
@@ -975,6 +970,27 @@ impl PureTermApp {
             })
             .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
             .or(profile.password.clone());
+
+        // GAP-5.1 M3: prefer the persistent daemon so the SSH session survives
+        // GUI restart. On any failure (daemon missing / unreachable / spawn
+        // error) fall through to the direct in-process spawn below.
+        match TerminalContext::new_ssh_via_daemon(&profile, password.clone()) {
+            Ok(ctx) => {
+                let id = self.push_ssh_tab(profile_name.clone(), ctx);
+                self.ssh_dialog = None;
+                self.active_tab = id;
+                return;
+            }
+            Err(e) => log::warn!(
+                "puretermd SSH route unavailable ({e}); falling back to direct spawn"
+            ),
+        }
+
+        // Fallback: direct in-process spawn (requires the session manager).
+        let Some(manager) = self.ssh_manager.clone() else {
+            self.show_ssh_error(self.i18n.t("ssh.error.manager_not_init"));
+            return;
+        };
 
         // P3: do the spawn on the calling thread. This is OK for the
         // first connection (cheap). P5 will move this to a worker thread
@@ -3980,9 +3996,9 @@ impl PureTermApp {
         let Some(active_pane_id) = active_pane_id else { return };
         let new_pane_id = PaneId::next();
 
-        let terminal_ctx = Arc::new(
-            TerminalContext::new_local().expect("Failed to create terminal context"),
-        );
+        // GAP-5.1 M1: route through persistent daemon; falls back to a direct
+        // local PTY when puretermd is unavailable.
+        let terminal_ctx = Arc::new(TerminalContext::new_local_auto());
 
         // Find the tab and perform the split
         let tab = match self.tabs.iter_mut().find(|t| t.id == active_tab_id) {

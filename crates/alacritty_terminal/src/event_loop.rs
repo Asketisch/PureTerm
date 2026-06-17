@@ -772,3 +772,214 @@ fn hex_val(b: u8) -> Option<u8> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests_evented_socketpair {
+    //! M0 spike (GAP-5.1): prove `EventLoop` is fd-agnostic.
+    //!
+    //! A bidirectional Unix stream socketpair (NOT a kernel PTY) satisfies the
+    //! `EventedPty` contract, so the future `DaemonPty` — which mirrors a
+    //! daemon-owned PTY's bytes over a socket into the GUI — can plug into
+    //! `PtyEventLoop` WITHOUT touching `event_loop.rs`. If this test fails, the
+    //! daemon architecture must fall back to the daemon owning the `Term` grid
+    //! (the much larger option a).
+
+    use super::*;
+    use crate::event::OnResize;
+    use crate::index::{Column, Line};
+    use crate::term::test::TermSize;
+    use crate::term::Config as TermConfig;
+    use crate::tty::{ChildEvent, EventedPty, EventedReadWrite};
+
+    use std::fs::File;
+    use std::os::unix::io::{FromRawFd, IntoRawFd};
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    /// An `EventedPty` backed by a Unix stream socketpair (the read/write
+    /// channel) plus a self-pipe (child-exit notification), instead of a kernel
+    /// PTY. The trait impls mirror `tty::unix::Pty` byte-for-byte.
+    struct SocketPairPty {
+        file: File,
+        signals: UnixStream,
+        resize_count: Arc<AtomicUsize>,
+    }
+
+    impl EventedReadWrite for SocketPairPty {
+        type Reader = File;
+        type Writer = File;
+
+        unsafe fn register(
+            &mut self,
+            poll: &Arc<Poller>,
+            mut interest: PollingEvent,
+            poll_opts: PollMode,
+        ) -> io::Result<()> {
+            interest.key = tty::PTY_READ_WRITE_TOKEN;
+            unsafe {
+                poll.add_with_mode(&self.file, interest, poll_opts)?;
+            }
+            unsafe {
+                poll.add_with_mode(
+                    &self.signals,
+                    PollingEvent::readable(tty::PTY_CHILD_EVENT_TOKEN),
+                    PollMode::Level,
+                )?;
+            }
+            Ok(())
+        }
+
+        fn reregister(
+            &mut self,
+            poll: &Arc<Poller>,
+            mut interest: PollingEvent,
+            poll_opts: PollMode,
+        ) -> io::Result<()> {
+            interest.key = tty::PTY_READ_WRITE_TOKEN;
+            poll.modify_with_mode(&self.file, interest, poll_opts)?;
+            poll.modify_with_mode(
+                &self.signals,
+                PollingEvent::readable(tty::PTY_CHILD_EVENT_TOKEN),
+                PollMode::Level,
+            )?;
+            Ok(())
+        }
+
+        fn deregister(&mut self, poll: &Arc<Poller>) -> io::Result<()> {
+            poll.delete(&self.file)?;
+            poll.delete(&self.signals)?;
+            Ok(())
+        }
+
+        fn reader(&mut self) -> &mut File {
+            &mut self.file
+        }
+
+        fn writer(&mut self) -> &mut File {
+            &mut self.file
+        }
+    }
+
+    impl EventedPty for SocketPairPty {
+        fn next_child_event(&mut self) -> Option<ChildEvent> {
+            let mut buf = [0u8; 1];
+            match self.signals.read(&mut buf) {
+                Err(err) if err.kind() == ErrorKind::WouldBlock => None,
+                Err(err) => {
+                    error!("SocketPairPty signal read error: {err}");
+                    None
+                },
+                Ok(0) => None,
+                Ok(_) => Some(ChildEvent::Exited(None)),
+            }
+        }
+    }
+
+    impl OnResize for SocketPairPty {
+        fn on_resize(&mut self, _window_size: WindowSize) {
+            // The future DaemonPty forwards a RESIZE frame over the data plane
+            // instead of ioctl-ing a real PTY fd. For this spike we only record
+            // that the path is exercised without a real PTY fd.
+            self.resize_count.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Event listener that records every event into a shared buffer.
+    #[derive(Clone)]
+    struct RecordingListener(Arc<Mutex<Vec<Event>>>);
+
+    impl EventListener for RecordingListener {
+        fn send_event(&self, event: Event) {
+            self.0.lock().unwrap().push(event);
+        }
+    }
+
+    #[test]
+    fn event_loop_socketpair_satisfies_evented_pty() {
+        // Read/write channel: the test writes PTY bytes into `feed`; the loop
+        // reads them off `file` (the other socketpair end).
+        let (mut feed, ours) = UnixStream::pair().expect("socketpair");
+        ours.set_nonblocking(true).expect("set_nonblocking");
+
+        // SAFETY: `ours` owns a valid fd; ownership transfers to the `File`.
+        let file = unsafe { File::from_raw_fd(ours.into_raw_fd()) };
+
+        // Child-exit self-pipe: the test writes 1 byte into `sig_send` to
+        // signal exit; the loop reads it via `next_child_event`.
+        let (signals, mut sig_send) = UnixStream::pair().expect("signal pair");
+        signals.set_nonblocking(true).expect("signals nonblocking");
+
+        let resize_count = Arc::new(AtomicUsize::new(0));
+        let pty = SocketPairPty { file, signals, resize_count: resize_count.clone() };
+
+        let recorded = Arc::new(Mutex::new(Vec::<Event>::new()));
+        let listener = RecordingListener(recorded.clone());
+
+        let size = TermSize::new(80, 24);
+        let terminal: Arc<FairMutex<Term<RecordingListener>>> =
+            Arc::new(FairMutex::new(Term::new(TermConfig::default(), &size, listener.clone())));
+
+        let event_loop = EventLoop::new(Arc::clone(&terminal), listener, pty, false, false)
+            .expect("EventLoop::new");
+        let sender = event_loop.channel();
+        let handle = event_loop.spawn();
+
+        // Exercise the resize path (Msg::Resize -> on_resize). It must NOT
+        // require a real PTY fd; the no-op impl above just counts.
+        sender
+            .send(Msg::Resize(WindowSize {
+                num_lines: 24,
+                num_cols: 80,
+                cell_width: 8,
+                cell_height: 16,
+            }))
+            .expect("send resize");
+
+        // Let the loop enter its poller and process the resize.
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Feed PTY output bytes through the socket.
+        feed.write_all(b"hello world\r\n").expect("write output");
+        feed.flush().expect("flush");
+
+        // Give the loop time to read + parse the bytes into the grid.
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Signal child exit via the self-pipe -> next_child_event -> Exited.
+        sig_send.write_all(&[1u8]).expect("write exit byte");
+
+        // The loop breaks after terminal.exit(); join waits for full teardown.
+        let (loop_back, _state) = handle.join().expect("event loop thread panicked");
+        drop(loop_back);
+
+        // Assert the parse path fired.
+        let recorded = recorded.lock().unwrap();
+        assert!(
+            recorded.iter().any(|e| matches!(e, Event::Wakeup)),
+            "expected a Wakeup event from parsing PTY output, got: {recorded:?}",
+        );
+        assert!(
+            recorded.iter().any(|e| matches!(e, Event::Exit)),
+            "expected an Exit event from child exit, got: {recorded:?}",
+        );
+        drop(recorded);
+
+        // Assert the parsed bytes actually landed in the terminal grid.
+        let term = terminal.lock();
+        let grid = term.grid();
+        let mut text = String::new();
+        for row in 0..24 {
+            for col in 0..80 {
+                text.push(grid[Line(row)][Column(col)].c);
+            }
+        }
+        assert!(text.contains("hello world"), "grid should contain parsed output");
+        drop(term);
+
+        // Assert on_resize was exercised without a real PTY fd.
+        assert_eq!(resize_count.load(Ordering::Relaxed), 1, "resize should fire once");
+    }
+}

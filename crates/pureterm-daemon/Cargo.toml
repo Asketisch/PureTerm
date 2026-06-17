@@ -1,0 +1,29 @@
+[package]
+name = "pureterm-daemon"
+version = "0.1.0"
+edition = "2021"
+description = "puretermd — persistent PTY daemon so terminal/SSH sessions survive GUI close (GAP-5.1)"
+
+[lib]
+name = "pureterm_daemon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "puretermd"
+path = "src/bin/puretermd.rs"
+
+[dependencies]
+pureterm-jsonrpc = { workspace = true }
+pureterm-ssh = { workspace = true }
+alacritty_terminal = { path = "../alacritty_terminal" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+polling = "3"
+libc = "0.2"
+log = "0.4"
+dirs = "6.0"
+env_logger = "0.11"
+
+[dev-dependencies]
+tempfile = "3"
