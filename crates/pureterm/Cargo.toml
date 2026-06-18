@@ -13,6 +13,8 @@ pureterm-ssh = { workspace = true }
 alacritty_terminal = { path = "../alacritty_terminal" }
 dirs = "6.0.0"
 iced = { version = "0.14", features = ["advanced", "canvas", "tokio"] }
+# GAP-7.1: agent-hook matcher / deny_pattern regex evaluation.
+regex = "1"
 iced_wgpu = "0.14"
 wgpu = { version = "27", features = ["webgpu"] }
 bytemuck = { version = "1", features = ["derive"] }

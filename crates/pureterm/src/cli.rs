@@ -102,6 +102,15 @@ pub enum Command {
         /// Raw JSON params, e.g. '{"index":1}'
         params: Option<String>,
     },
+    /// GAP-7.1: agent hook shim. Reads the agent's hook-event JSON on stdin,
+    /// applies PureTerm's `[[agent.hook]]` policy, prints a Claude-Code-protocol
+    /// decision. Registered in the agent's own hook config (e.g.
+    /// `~/.claude/settings.json`); no GUI/IPC involved.
+    Hook {
+        /// Event name, e.g. PreToolUse. If omitted, taken from stdin JSON's
+        /// `hook_event_name`.
+        event: Option<String>,
+    },
 }
 
 // ── Group subcommands ────────────────────────────────────────────────────
@@ -397,6 +406,8 @@ pub fn run(cli: Cli) {
             let parsed = params.and_then(|s| serde_json::from_str(&s).ok());
             send(&socket, json, (&method, parsed));
         }
+        // GAP-7.1: never returns (exits with the hook decision). Local only.
+        Command::Hook { event } => crate::agent_hooks::run_hook_shim(event),
     }
 }
 

@@ -184,6 +184,34 @@ PureTerm 由 6 个 crate 组成的工作区:
 - **热重载**:存盘即生效(`apply_config_reload` 重新加载 + 重新注册绑定)
 - 实现:`crates/pureterm/src/keymap.rs`(`CustomCommand` + `Action::CustomCommand` + `split_mods_and_key` + `register_custom_commands`)+ `app_config.rs`(`load_custom_commands`)+ `iced_app.rs`(dispatch + 面板);13 单测
 
+### Agent Hooks 通用框架(2026-06-18 GAP-7.1 ✅)
+- PureTerm 充当 Claude Code / 其它 agent 的 hook 中转:agent 把 hook 事件 JSON 经 stdin 喂给 `pureterm hook <event>`,PureTerm 按 `[[agent.hook]]` 策略评估,输出 Claude Code hooks 协议决策(stdout JSON / 退出码)。是整个 AI-Agent 类(F)的地基
+- **Standalone**:不依赖 daemon / GUI,直接读 `pureterm.toml` + 本地评估 + 起子进程;每次工具调用零 IPC 往返
+- **双规则模型**:
+  - 内置 `deny_pattern`(正则,无需写脚本)—— 主体优先级:`tool_input.command`(Bash)→ `tool_input.file_path`(Write/Edit)→ `UserPromptSubmit.prompt` → `Notification.message`
+  - 外部 `command`(通用机制)—— 经 `sh -c` 执行,stdin 喂事件 JSON,stdout JSON / exit code = 决策;带超时(默认 60s,超时 kill 且不阻断工具)
+- 配置示例:
+  ```toml
+  [[agent.hook]]
+  event = "PreToolUse"
+  matcher = "Bash"               # 正则匹配 tool_name(仅 Pre/PostToolUse)
+  deny_pattern = "\\brm\\s+-rf"  # 命中 → deny
+  deny_reason = "rm -rf blocked by policy"
+
+  [[agent.hook]]
+  event = "PostToolUse"
+  matcher = "Write|Edit"
+  command = "/abs/path/lint.sh"  # 外部命令,经 sh -c 执行
+  timeout = 30
+  ```
+- **Claude Code 接入**(手动登记;自动安装器见 GAP-7.2):在 `~/.claude/settings.json` 加
+  ```json
+  {"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/abs/pureterm hook PreToolUse"}]}]}}
+  ```
+  之后 Claude Code 调 Bash 前会调用 PureTerm;`rm -rf` 命中即按协议返回 `permissionDecision:"deny"`,`ls` 等放行
+- 事件对齐官方协议:`PreToolUse` / `PostToolUse` / `Notification` / `UserPromptSubmit` / `Stop` / `SubagentStop` / `PreCompact` / `SessionStart` / `SessionEnd`;决策输出:PreToolUse 走 `hookSpecificOutput.permissionDecision`,其它阻断型事件走 `{"decision":"block"}`
+- 实现:`crates/pureterm/src/agent_hooks.rs`(框架:`HookEvent` / `HookRule` / `HookInput` / `Decision` + `evaluate` 引擎 + `run_external_command` 子进程+超时 + `run_hook_shim` CLI 入口)+ `app_config.rs`(`load_agent_hooks`)+ `cli.rs`(`Command::Hook`);171 单测含真实子进程/超时验证。**后续**:GAP-7.2 自动安装器、GAP-7.4 Feed 审批面板、GAP-6.7 事件转发
+
 ### 状态栏
 - 底部 24px 状态栏(2026-06-12 GAP-3.4 闭环)
 - 显示:工作目录(OSC 7) · Git 分支(30s 轮询) · SSH 连接指示 · 前台进程名 · 光标位置(row:col)

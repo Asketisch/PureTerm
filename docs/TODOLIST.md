@@ -58,11 +58,11 @@
 | C. 终端交互 | 1 | 0 | 6 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
 | E. 集成与可编程 | 3 | 0 | 5 | 0 | 8 |
-| F. AI Agent | 0 | 0 | 8 | 0 | 8 |
+| F. AI Agent | 1 | 0 | 7 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **14** | **1** | **31** | **3** | **49** |
+| **总计** | **15** | **1** | **30** | **3** | **49** |
 
-整体进度:✅ 14/49 ≈ 29% · 🚧 1
+整体进度:✅ 15/49 ≈ 31% · 🚧 1
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -93,6 +93,7 @@
 | GAP-6.1 | Socket API v2 完整协议(31 method) | E | 2026-06-13 | `ipc/methods.rs` 31 method/8 命名空间 + `IpcSideEffect` 写操作副作用回写 iced 主循环;45 测试;`pureterm msg` 端到端验证 |
 | GAP-6.2 | CLI 协议(clap 命令组) | E | 2026-06-13 | `cli.rs`(clap derive 8 命令组 + Msg/Shortcuts + leaf→method 映射)+ `main.rs`(clap dispatch)+ `ipc/client.rs`(`send_rpc` 返回 Value 供 `--json`);14 单测 |
 | GAP-6.4 | 自定义命令注册([[commands]]) | E | 2026-06-15 | `keymap.rs`(`CustomCommand` + `Action::CustomCommand` + `split_mods_and_key` +/- 分隔 + `register_custom_commands` macOS shift 字母双形态)+ `app_config.rs`(`load_custom_commands` 容错+id 去重)+ `iced_app.rs`(字段 + `dispatch_action` 写 PTY + `CommandEntry::Custom` 面板);触发=写 `command+\r` 进当前 pane PTY;13 单测 |
+| GAP-7.1 | Agent Hooks 通用框架 | F | 2026-06-18 | `agent_hooks.rs`(`HookEvent`/`HookRule`/`HookInput`/`Decision` + `evaluate` 引擎 + `run_external_command` 子进程+超时 + `run_hook_shim` CLI)+ `app_config.rs`(`load_agent_hooks`)+ `cli.rs`(`Command::Hook`);对齐 Claude Code hooks 协议;standalone 无 daemon/GUI 依赖;双规则(deny_pattern 内置 + command 外部);171 单测含真实子进程/超时 |
 
 ---
 
@@ -473,13 +474,17 @@
 ### F.P0
 
 #### GAP-7.1 Agent Hooks 通用框架 {#gap-7-1}
-- **状态**: ❌
+- **状态**: ✅(2026-06-18 闭环)— 详见 [README §已实现特性 → Agent Hooks](../README.md#已实现特性)
 - **优先级**: P0
-- **PureTerm 现状**: 无
-- **目标**: JSONL over stdin/stdout 协议;hook 事件 `PreToolUse / PostToolUse / Notification / Stop / PermissionRequest / AskUserQuestion / ExitPlanMode`;`tokio::process::Command` 子进程;与 Claude Code hook 协议对齐(https://docs.claude.com/en/docs/claude-code/hooks);TOML 配置 `[[agent.hook]] command = "..." event = "PreToolUse"`
-- **依赖**: 无
-- **风险点**: 进程崩溃、超时
-- **DoD**: 配置 hook 拦截 `Bash` tool,自动拒绝 `rm -rf` 命令
+- **PureTerm 现状**: `pureterm hook <event>` CLI shim + `[[agent.hook]]` 配置 + 评估引擎。Standalone:直接读 `pureterm.toml`、本地评估、起子进程,**不依赖 daemon / GUI**(每次工具调用零 IPC 往返)
+- **实现位置**: `crates/pureterm/src/agent_hooks.rs`(整个框架:`HookEvent`/`HookRule`/`HookInput`/`Decision` + `evaluate` 引擎 + `deny_subject` + `run_external_command` 子进程+超时+drain 线程 + `format_decision_output`/`evaluate_shim` 纯核心 + `run_hook_shim` CLI 入口)+ `app_config.rs::load_agent_hooks`(镜像 `load_custom_commands`)+ `cli.rs`(`Command::Hook { event }` → `agent_hooks::run_hook_shim`,无 IPC)+ `main.rs`(`mod agent_hooks;`)+ `Cargo.toml`(`regex = "1"`)
+- **协议对齐**:官方事件 `PreToolUse`/`PostToolUse`/`Notification`/`UserPromptSubmit`/`Stop`/`SubagentStop`/`PreCompact`/`SessionStart`/`SessionEnd`;决策输出 PreToolUse 走 `hookSpecificOutput.permissionDecision`,其它阻断型走 `{"decision":"block"}`;exit 2=block
+- **双规则模型**:内置 `deny_pattern`(主体优先级 `tool_input.command`→`file_path`→`UserPromptSubmit.prompt`→`Notification.message`)无需写脚本;外部 `command`(经 `sh -c`,stdin 喂事件 JSON,stdout JSON/exit=决策,默认 60s 超时 kill 且不阻断);聚合 `Deny>Ask>Allow>Passthrough`,首个 Deny 短路
+- **依赖**: 无(严格遵守,未启用 tokio process;子进程用 `std::process::Command`)
+- **风险点**: 进程崩溃、超时 → 均降级为 Passthrough(CC 协议:hook 自身故障不阻断工具)
+- **单元测试**: `agent_hooks::tests` 30+(含真实子进程 exit-2 / stdout JSON / 超时 kill 验证)+ `app_config::tests` 5 个 = 35 个;整套 171 全绿
+- **DoD 验证**:release 二进制端到端 — 配 `[[agent.hook]] event=PreToolUse matcher=Bash deny_pattern=\brm\s+-rf\b`,`echo '{...rm -rf...}' | pureterm hook PreToolUse` 输出 `{"hookSpecificOutput":{"permissionDecision":"deny",...}}`;`ls` 放行;UserPromptSubmit 含 secret → `decision:block`;invalid stdin → exit 2。✅(shim 侧;真 Claude Code 往返需用户手动登记 `~/.claude/settings.json`——自动安装器归 GAP-7.2)
+- **留后续迭代**:`pureterm agents install claude-code` 自动安装器(GAP-7.2)、Feed 审批面板(GAP-7.4,依赖 GAP-3.1 + GAP-6.7)、事件转发到 daemon/JSONL(GAP-6.7)、`ask_pattern`/`allow_pattern`/`field` 覆盖/多规则并行
 - **对标**: cmux `Sources/AgentHook/`
 
 #### GAP-7.2 16+ agent adapter(Claude Code 优先) {#gap-7-2}
@@ -639,7 +644,7 @@
 | GAP-6.6 | tmux 兼容子集 | E | P2 | ❌ | - | - |
 | GAP-6.7 | 事件流 + JSONL 日志 | E | P1 | ❌ | - | - |
 | GAP-6.8 | 可编程 Sidebar 解释器 | E | P2 | ❌ | - | - |
-| GAP-7.1 | Agent Hooks 通用框架 | F | P0 | ❌ | - | - |
+| GAP-7.1 | Agent Hooks 通用框架 | F | P0 | ✅ | 2026-06-18 | standalone shim(`pureterm hook`);双规则 deny_pattern(command/file_path/prompt/message)+ 外部 command(超时 kill);对齐 CC hooks 协议(9 事件 / permissionDecision / decision:block / exit 2);35 直接单测 + 整套 171 全绿;release 二进制 DoD(shim 对 rm -rf 输出 permissionDecision:deny)。真 CC 往返待手动登记 settings.json(自动安装器=GAP-7.2) |
 | GAP-7.2 | 16+ agent adapter | F | P0 | ❌ | - | Claude Code 优先 |
 | GAP-7.3 | Agent Hibernation | F | P1 | ❌ | - | - |
 | GAP-7.4 | Feed 审批面板 | F | P0 | ❌ | - | - |

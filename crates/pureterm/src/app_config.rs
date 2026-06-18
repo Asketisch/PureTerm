@@ -294,6 +294,101 @@ impl AppConfig {
         }
         result
     }
+
+    /// GAP-7.1: Load the user's `[[agent.hook]]` array from the toml config.
+    ///
+    /// Each entry is `{ event, matcher?, command? | deny_pattern?, deny_reason?, timeout? }`:
+    /// ```toml
+    /// [[agent.hook]]
+    /// event = "PreToolUse"
+    /// matcher = "Bash"               # regex on tool_name (Pre/PostToolUse only)
+    /// deny_pattern = "\\brm\\s+-rf"  # built-in regex → deny
+    /// deny_reason = "rm -rf blocked"
+    ///
+    /// [[agent.hook]]
+    /// event = "PostToolUse"
+    /// command = "/abs/lint.sh"       # external command (general mechanism)
+    /// timeout = 30
+    /// ```
+    ///
+    /// Failure-tolerant, mirroring `load_custom_commands`: a missing file or
+    /// `agent.hook` table returns an empty Vec; entries missing `event`, or
+    /// missing BOTH `command` and `deny_pattern`, are skipped (with a `warn`).
+    pub fn load_agent_hooks(path: &Path) -> Vec<crate::agent_hooks::HookRule> {
+        use crate::agent_hooks::HookRule;
+
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::debug!("load_agent_hooks: cannot read {:?}: {}", path, e);
+                return Vec::new();
+            },
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("load_agent_hooks: parse {:?} failed: {}", path, e);
+                return Vec::new();
+            },
+        };
+        // 嵌套数组 agent.hook(镜像 load_ssh_profiles 的 ssh.profiles 走法)。
+        let Some(arr) = value
+            .get("agent")
+            .and_then(|a| a.get("hook"))
+            .and_then(|h| h.as_array())
+        else {
+            return Vec::new();
+        };
+        let mut result: Vec<HookRule> = Vec::new();
+        for entry in arr {
+            let table = match entry.as_table() {
+                Some(t) => t,
+                None => continue,
+            };
+            let event = match table.get("event").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => {
+                    log::warn!("load_agent_hooks: entry missing 'event', skipped");
+                    continue;
+                },
+            };
+            let command = table
+                .get("command")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let deny_pattern = table
+                .get("deny_pattern")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            // 必须至少有一个动作,否则这条规则是 no-op,跳过。
+            if command.is_none() && deny_pattern.is_none() {
+                log::warn!(
+                    "load_agent_hooks: entry '{}' has neither 'command' nor 'deny_pattern', skipped",
+                    event
+                );
+                continue;
+            }
+            let rule = HookRule {
+                event,
+                matcher: table
+                    .get("matcher")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                command,
+                timeout: table.get("timeout").and_then(|v| v.as_integer()).map(|n| n as u64),
+                deny_pattern,
+                deny_reason: table
+                    .get("deny_reason")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            };
+            result.push(rule);
+        }
+        if !result.is_empty() {
+            log::info!("load_agent_hooks: loaded {} rules", result.len());
+        }
+        result
+    }
 }
 
 fn parse_hex_color(hex: &str) -> Option<[f32; 4]> {
@@ -442,5 +537,89 @@ key = "Ctrl+B"
             r,
             ResolveResult::Action(Action::CustomCommand("deploy".into()))
         );
+    }
+
+    // ── GAP-7.1 [[agent.hook]] ────────────────────────────────────────────
+
+    #[test]
+    fn test_load_agent_hooks_basic() {
+        let toml = r#"
+[[agent.hook]]
+event = "PreToolUse"
+matcher = "Bash"
+deny_pattern = "\\brm\\s+-rf"
+deny_reason = "rm -rf blocked"
+
+[[agent.hook]]
+event = "PostToolUse"
+matcher = "Write|Edit"
+command = "/abs/lint.sh"
+timeout = 30
+"#;
+        let path = write_temp_toml("pureterm_test_hooks_basic.toml", toml);
+        let hooks = AppConfig::load_agent_hooks(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(hooks.len(), 2);
+        assert_eq!(hooks[0].event, "PreToolUse");
+        assert_eq!(hooks[0].matcher.as_deref(), Some("Bash"));
+        assert_eq!(hooks[0].deny_pattern.as_deref(), Some("\\brm\\s+-rf"));
+        assert_eq!(hooks[0].deny_reason.as_deref(), Some("rm -rf blocked"));
+        assert!(hooks[0].command.is_none());
+        assert!(hooks[0].timeout.is_none());
+        assert_eq!(hooks[1].event, "PostToolUse");
+        assert_eq!(hooks[1].matcher.as_deref(), Some("Write|Edit"));
+        assert_eq!(hooks[1].command.as_deref(), Some("/abs/lint.sh"));
+        assert_eq!(hooks[1].timeout, Some(30));
+        assert!(hooks[1].deny_pattern.is_none());
+    }
+
+    #[test]
+    fn test_load_agent_hooks_missing_file() {
+        let hooks = AppConfig::load_agent_hooks(Path::new(
+            "/nonexistent/pureterm_hooks_does_not_exist_7a1.toml",
+        ));
+        assert!(hooks.is_empty());
+    }
+
+    #[test]
+    fn test_load_agent_hooks_no_table() {
+        let toml = r#"
+font = { size = 14.0 }
+"#;
+        let path = write_temp_toml("pureterm_test_hooks_notable.toml", toml);
+        let hooks = AppConfig::load_agent_hooks(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(hooks.is_empty());
+    }
+
+    #[test]
+    fn test_load_agent_hooks_skips_entry_without_action() {
+        // An entry needs at least one of `command` / `deny_pattern`.
+        let toml = r#"
+[[agent.hook]]
+event = "PreToolUse"
+matcher = "Bash"
+
+[[agent.hook]]
+event = "Stop"
+deny_pattern = "x"
+"#;
+        let path = write_temp_toml("pureterm_test_hooks_noaction.toml", toml);
+        let hooks = AppConfig::load_agent_hooks(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(hooks.len(), 1, "entry without command+deny_pattern skipped");
+        assert_eq!(hooks[0].event, "Stop");
+    }
+
+    #[test]
+    fn test_load_agent_hooks_skips_entry_without_event() {
+        let toml = r#"
+[[agent.hook]]
+deny_pattern = "x"
+"#;
+        let path = write_temp_toml("pureterm_test_hooks_noevent.toml", toml);
+        let hooks = AppConfig::load_agent_hooks(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(hooks.is_empty(), "entry without event skipped");
     }
 }
