@@ -98,7 +98,12 @@ pub struct PureTermApp {
     custom_commands: Vec<crate::keymap::CustomCommand>,
     settings_state: Option<SettingsState>,
     settings_window: Option<window::Id>,
-    last_resize_time: Option<Instant>,
+    /// Pending window resize: set by `WindowResized`, applied (grid resize
+    /// + PTY notify) on the next unconditional 16ms `TerminalWakeup` tick.
+    /// Coalesces a drag's burst of resize events into ≤60Hz grid resizes
+    /// while guaranteeing the *final* size is always applied (the old
+    /// time-based debounce dropped it entirely within 16ms).
+    resize_pending: bool,
     /// GAP-5.6: layout snapshot has changed since the last flush to disk.
     layout_dirty: bool,
     /// GAP-5.6: instant of the most recent layout change (debounce reference).
@@ -779,7 +784,7 @@ impl PureTermApp {
             custom_commands,
             settings_state: None,
             settings_window: None,
-            last_resize_time: None,
+            resize_pending: false,
             layout_dirty: false,
             last_layout_change_at: None,
             #[cfg(target_os = "macos")]
@@ -1912,6 +1917,14 @@ impl PureTermApp {
                     }
                 }
 
+                // 应用待处理的窗口 resize：把 grid cols/rows 调整到当前 viewport_size。
+                // 由 WindowResized 置位、在此 16ms tick 合并执行，保证拖拽的最终尺寸
+                // 一定会被应用（旧的时间防抖会在 16ms 内整体丢弃 resize）。
+                if self.resize_pending {
+                    self.resize_pending = false;
+                    self.apply_viewport_resize();
+                }
+
                 // 消费所有 tab 中所有 pane 的 PTY 事件（Wakeup / Exit）
                 let mut exited_panes = Vec::new();
                 for tab in &self.tabs {
@@ -2093,36 +2106,9 @@ impl PureTermApp {
                 }
                 self.viewport_size = size;
                 self.mark_layout_dirty();
-
-                // 时间防抖：跳过 16ms 内的重复事件
-                if let Some(last) = self.last_resize_time {
-                    if last.elapsed() < Duration::from_millis(16) {
-                        return Task::none();
-                    }
-                }
-                self.last_resize_time = Some(Instant::now());
-
-                // 取出 self 数据后，再 mut 借用 tabs
-                // 兜底：如果 GlyphState 还没按真实 scale 对齐（首帧 / 跨屏移动），
-                // 先 reconfigure 再读 cell,避免 cell 物理尺寸与 glyph 物理尺寸失配
-                {
-                    let gs_scale = self.glyph_state.borrow().scale_factor;
-                    if (gs_scale - self.scale_factor).abs() > 0.01 {
-                        self.glyph_state.borrow_mut().reconfigure_scaled(
-                            &self.config.font_family,
-                            self.config.font_size,
-                            self.scale_factor,
-                        );
-                    }
-                }
-                let cw: u16 = self.glyph_state.borrow().cell_width as u16;
-                let ch: u16 = self.glyph_state.borrow().cell_height as u16;
-                let terminal_height = terminal_content_height(size.height);
-
-                // Resize all panes in all tabs based on their layout
-                for tab in &mut self.tabs {
-                    Self::resize_panes_in_tab(tab, size.width, terminal_height, cw, ch);
-                }
+                // 真正的 grid resize 交给无条件 16ms TerminalWakeup tick 合并执行，
+                // 避免旧的"16ms 内丢弃"防抖把拖拽的最终尺寸永久丢掉。
+                self.resize_pending = true;
             }
             Message::ScaleFactorChanged(win_id, scale) => {
                 if Some(win_id) != self.main_window {
@@ -4313,6 +4299,32 @@ impl PureTermApp {
                 let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
                 pane.terminal_ctx.resize(cols, rows, cw, ch);
             }
+        }
+    }
+
+    /// Coalesced/trailing resize: apply `viewport_size` to every pane's grid
+    /// in every tab. Called from the 16ms `TerminalWakeup` tick when
+    /// `resize_pending` is set, so a drag's burst of `WindowResized` events
+    /// is throttled to ≤60Hz grid resizes while the *final* size is always
+    /// applied (fixing the "rendered area stuck at pre-resize size" bug).
+    fn apply_viewport_resize(&mut self) {
+        // 兜底：如果 GlyphState 还没按真实 scale 对齐（首帧 / 跨屏移动），
+        // 先 reconfigure 再读 cell,避免 cell 物理尺寸与 glyph 物理尺寸失配
+        {
+            let gs_scale = self.glyph_state.borrow().scale_factor;
+            if (gs_scale - self.scale_factor).abs() > 0.01 {
+                self.glyph_state.borrow_mut().reconfigure_scaled(
+                    &self.config.font_family,
+                    self.config.font_size,
+                    self.scale_factor,
+                );
+            }
+        }
+        let cw: u16 = self.glyph_state.borrow().cell_width as u16;
+        let ch: u16 = self.glyph_state.borrow().cell_height as u16;
+        let terminal_height = terminal_content_height(self.viewport_size.height);
+        for tab in &mut self.tabs {
+            Self::resize_panes_in_tab(tab, self.viewport_size.width, terminal_height, cw, ch);
         }
     }
 
