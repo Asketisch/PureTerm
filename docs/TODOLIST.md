@@ -58,11 +58,11 @@
 | C. 终端交互 | 1 | 0 | 6 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
 | E. 集成与可编程 | 3 | 0 | 5 | 0 | 8 |
-| F. AI Agent | 1 | 0 | 7 | 0 | 8 |
+| F. AI Agent | 2 | 0 | 6 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **15** | **1** | **30** | **3** | **49** |
+| **总计** | **16** | **1** | **29** | **3** | **49** |
 
-整体进度:✅ 15/49 ≈ 31% · 🚧 1
+整体进度:✅ 16/49 ≈ 33% · 🚧 1
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -94,6 +94,7 @@
 | GAP-6.2 | CLI 协议(clap 命令组) | E | 2026-06-13 | `cli.rs`(clap derive 8 命令组 + Msg/Shortcuts + leaf→method 映射)+ `main.rs`(clap dispatch)+ `ipc/client.rs`(`send_rpc` 返回 Value 供 `--json`);14 单测 |
 | GAP-6.4 | 自定义命令注册([[commands]]) | E | 2026-06-15 | `keymap.rs`(`CustomCommand` + `Action::CustomCommand` + `split_mods_and_key` +/- 分隔 + `register_custom_commands` macOS shift 字母双形态)+ `app_config.rs`(`load_custom_commands` 容错+id 去重)+ `iced_app.rs`(字段 + `dispatch_action` 写 PTY + `CommandEntry::Custom` 面板);触发=写 `command+\r` 进当前 pane PTY;13 单测 |
 | GAP-7.1 | Agent Hooks 通用框架 | F | 2026-06-18 | `agent_hooks.rs`(`HookEvent`/`HookRule`/`HookInput`/`Decision` + `evaluate` 引擎 + `run_external_command` 子进程+超时 + `run_hook_shim` CLI)+ `app_config.rs`(`load_agent_hooks`)+ `cli.rs`(`Command::Hook`);对齐 Claude Code hooks 协议;standalone 无 daemon/GUI 依赖;双规则(deny_pattern 内置 + command 外部);171 单测含真实子进程/超时 |
+| GAP-7.2 | Claude Code Agent 适配器 + 安装框架 | F | 2026-06-18 | `agent_adapters.rs`(`AgentAdapter` trait + `ClaudeCodeAdapter` + `registry` + `dispatch` + 加锁 JSON RMW + 命令哨兵幂等/精准卸载)+ `cli.rs`(`Command::Agents`/`AgentsSub`)+ `main.rs`(`mod`);`pureterm agents install/list/uninstall`;写 `~/.claude/settings.json` 保留既有内容;默认仅注册已配规则事件,`--all-events`/`--dry-run`;10 单测 + 181 全绿 |
 
 ---
 
@@ -488,18 +489,21 @@
 - **对标**: cmux `Sources/AgentHook/`
 
 #### GAP-7.2 16+ agent adapter(Claude Code 优先) {#gap-7-2}
-- **状态**: ❌
+- **状态**: ✅(2026-06-18 闭环:Claude Code 适配器 + 安装框架)— 详见 [README §已实现特性 → Agent 适配器](../README.md#已实现特性)
 - **优先级**: P0
-- **PureTerm 现状**: 无
+- **PureTerm 现状**: `crates/pureterm/src/agent_adapters.rs`(`AgentAdapter` trait + `registry()` + `ClaudeCodeAdapter` + `dispatch` + 加锁 JSON RMW + `pureterm_bin` 解析);`cli.rs`(`Command::Agents` + `AgentsSub{Install/List/Uninstall}` + `run()` 分派);`main.rs`(`mod agent_adapters`);`Cargo.toml`(`fs2`/`tempfile`)
 - **目标**:
   - 优先级:Claude Code → Codex → OpenCode → Grok → Pi → 其他
   - 每个 adapter:识别进程 + 注入 hook + 显示状态
-  - `pureterm agents` 列出已注册,`pureterm agents install claude-code` 安装 hook
-  - Claude Code:写 `.claude/hooks.json`
-  - Codex:`~/.codex/config.toml::notify`
-- **依赖**: GAP-7.1
+  - `pureterm agents list` 列出已注册 + installed 状态,`pureterm agents install claude-code` 安装 hook
+  - Claude Code:写 `~/.claude/settings.json` 的 `hooks` 键(订正:TODOLIST 旧文案 `.claude/hooks.json` 有误,实际 CC 协议 = settings.json `hooks`,见 `agent_hooks.rs:10` 官方文档)
+  - Codex:`~/.codex/config.toml::notify`(留后续)
+- **依赖**: GAP-7.1 ✅
 - **风险点**: agent 协议变化快
-- **DoD**: 安装 Claude Code hook,PreToolUse 事件被 PureTerm 拦截
+- **实现要点**:CLI 本地无 IPC(镜像 `daemon_cli::dispatch`);`~/.claude/settings.json` 走**加锁读-改-写**(镜像 `config_io::mutate_config`,fs2 排他锁 + `NamedTempFile::persist` 原子写),保留 `enabledPlugins`/`env`/`permissions` 等既有内容;自有条目靠命令路径哨兵(`<pureterm bin> hook `)识别 → 安装幂等(去重)、卸载精准(只删我们的组 + 清空事件数组 + 移除空 hooks 键);默认仅注册 `pureterm.toml` 中已配 `[[agent.hook]]` 规则的事件(零多余 spawn),`--all-events` 注册全 9 事件,`--dry-run` 预览不落盘;框架化 trait 使 Codex/OpenCode 成为机械后续(JSON 配置直接复用 provided 的 RMW 引擎,TOML 配置覆盖 install/uninstall 即可)
+- **DoD**: 安装 Claude Code hook,PreToolUse 事件被 PureTerm 拦截 ✅(`pureterm agents install claude-code` 写入 settings.json;真 CC 往返由 `pureterm hook` shim(2026-06-18 GAP-7.1 验证)承担)
+- **单元测试**: `agent_adapters::tests` 10 个(保留外部内容 / 幂等无重复 / 同事件多 matcher / 卸载只删自身+清空 / has_ours / 非 object root 拒写 / 注册表 / 全事件派生);整套 181 全绿
+- **留后续迭代**:Codex/OpenCode/Grok/Pi 适配器实现、识别运行中 agent 进程、`--scope project|local`、`ask_pattern`/`allow_pattern`
 - **对标**: cmux `Sources/AgentHook/Adapters/`
 
 #### GAP-7.4 Feed 审批面板 {#gap-7-4}
@@ -645,7 +649,7 @@
 | GAP-6.7 | 事件流 + JSONL 日志 | E | P1 | ❌ | - | - |
 | GAP-6.8 | 可编程 Sidebar 解释器 | E | P2 | ❌ | - | - |
 | GAP-7.1 | Agent Hooks 通用框架 | F | P0 | ✅ | 2026-06-18 | standalone shim(`pureterm hook`);双规则 deny_pattern(command/file_path/prompt/message)+ 外部 command(超时 kill);对齐 CC hooks 协议(9 事件 / permissionDecision / decision:block / exit 2);35 直接单测 + 整套 171 全绿;release 二进制 DoD(shim 对 rm -rf 输出 permissionDecision:deny)。真 CC 往返待手动登记 settings.json(自动安装器=GAP-7.2) |
-| GAP-7.2 | 16+ agent adapter | F | P0 | ❌ | - | Claude Code 优先 |
+| GAP-7.2 | 16+ agent adapter | F | P0 | ✅ | 2026-06-18 | `AgentAdapter` trait + `ClaudeCodeAdapter`;`pureterm agents install/list/uninstall`;加锁 RMW 写 `~/.claude/settings.json`(保留既有内容,命令哨兵幂等/精准卸载);默认仅注册已配规则事件,`--all-events`/`--dry-run`;10 单测 + 181 全绿 |
 | GAP-7.3 | Agent Hibernation | F | P1 | ❌ | - | - |
 | GAP-7.4 | Feed 审批面板 | F | P0 | ❌ | - | - |
 | GAP-7.5 | Agent Session Restore | F | P1 | ❌ | - | - |

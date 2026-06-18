@@ -204,13 +204,27 @@ PureTerm 由 6 个 crate 组成的工作区:
   command = "/abs/path/lint.sh"  # 外部命令,经 sh -c 执行
   timeout = 30
   ```
-- **Claude Code 接入**(手动登记;自动安装器见 GAP-7.2):在 `~/.claude/settings.json` 加
+- **Claude Code 接入**:推荐用下方 GAP-7.2 的自动安装器(`pureterm agents install claude-code`);手动登记则把下面这段写进 `~/.claude/settings.json`:
   ```json
   {"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"/abs/pureterm hook PreToolUse"}]}]}}
   ```
   之后 Claude Code 调 Bash 前会调用 PureTerm;`rm -rf` 命中即按协议返回 `permissionDecision:"deny"`,`ls` 等放行
 - 事件对齐官方协议:`PreToolUse` / `PostToolUse` / `Notification` / `UserPromptSubmit` / `Stop` / `SubagentStop` / `PreCompact` / `SessionStart` / `SessionEnd`;决策输出:PreToolUse 走 `hookSpecificOutput.permissionDecision`,其它阻断型事件走 `{"decision":"block"}`
-- 实现:`crates/pureterm/src/agent_hooks.rs`(框架:`HookEvent` / `HookRule` / `HookInput` / `Decision` + `evaluate` 引擎 + `run_external_command` 子进程+超时 + `run_hook_shim` CLI 入口)+ `app_config.rs`(`load_agent_hooks`)+ `cli.rs`(`Command::Hook`);171 单测含真实子进程/超时验证。**后续**:GAP-7.2 自动安装器、GAP-7.4 Feed 审批面板、GAP-6.7 事件转发
+- 实现:`crates/pureterm/src/agent_hooks.rs`(框架:`HookEvent` / `HookRule` / `HookInput` / `Decision` + `evaluate` 引擎 + `run_external_command` 子进程+超时 + `run_hook_shim` CLI 入口)+ `app_config.rs`(`load_agent_hooks`)+ `cli.rs`(`Command::Hook`);171 单测含真实子进程/超时验证。**后续**:GAP-7.4 Feed 审批面板、GAP-6.7 事件转发
+
+### Agent 适配器自动安装(2026-06-18 GAP-7.2 ✅)
+- 在 GAP-7.1 的 `pureterm hook` shim 之上,一键把它注册进外部 agent 的配置 —— 免去手编 `~/.claude/settings.json`。框架化(`AgentAdapter` trait)使 Codex / OpenCode / Grok / Pi 成为机械式后续,v1 实现 Claude Code
+- **CLI**(本地无 IPC):
+  ```bash
+  pureterm agents install claude-code              # 只注册 pureterm.toml 里已配 [[agent.hook]] 规则的事件
+  pureterm agents install claude-code --all-events # 注册全 9 个 Claude Code 事件
+  pureterm agents install claude-code --dry-run    # 预览将写入的 JSON,不落盘
+  pureterm agents list                             # 列出已知 adapter + installed 状态
+  pureterm agents uninstall claude-code            # 移除 PureTerm 写入的钩子
+  ```
+- **安全写配置**:对 `~/.claude/settings.json` 走**加锁读-改-写**(fs2 排他锁 + `NamedTempFile::persist` 原子写,镜像 `config_io::mutate_config`),完整保留 `enabledPlugins` / `env` / `permissions` 等既有内容;自有条目靠命令路径哨兵(`<pureterm bin> hook `)识别 → 安装幂等(去重)、卸载精准(只删自己的组,清空事件数组与空 hooks 键)
+- **默认事件策略**:仅注册 `pureterm.toml` 中已配 `[[agent.hook]]` 规则的事件(Claude Code 不会在未配策略的事件上无谓 spawn pureterm);零规则时警告退出不写;`--all-events` 注册全量(之后新增规则无需重装,PureTerm `evaluate()` 内部按 matcher 过滤)
+- 实现:`crates/pureterm/src/agent_adapters.rs`(`AgentAdapter` trait + provided 加锁 RMW 引擎 + `ClaudeCodeAdapter` + `registry` + `dispatch` + `pureterm_bin` 解析)+ `cli.rs`(`Command::Agents` / `AgentsSub`)+ `main.rs`(`mod agent_adapters`)+ `Cargo.toml`(`fs2`/`tempfile`);10 单测(保留外部内容 / 幂等 / 同事件多 matcher / 精准卸载 / 非 object root 拒写 等),整套 181 全绿
 
 ### 状态栏
 - 底部 24px 状态栏(2026-06-12 GAP-3.4 闭环)

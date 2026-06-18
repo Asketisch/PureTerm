@@ -1,3 +1,4 @@
+mod agent_adapters;
 mod agent_hooks;
 mod app_config;
 mod cli;

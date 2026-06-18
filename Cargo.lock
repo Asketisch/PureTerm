@@ -3743,6 +3743,7 @@ dependencies = [
  "crossfont",
  "dirs",
  "env_logger",
+ "fs2",
  "iced",
  "iced_wgpu",
  "libc",

@@ -111,6 +111,13 @@ pub enum Command {
         /// `hook_event_name`.
         event: Option<String>,
     },
+    /// GAP-7.2: install/uninstall PureTerm hook shims into external agent
+    /// configs (Claude Code first). No IPC — writes the agent's config file
+    /// directly (e.g. `~/.claude/settings.json`).
+    Agents {
+        #[command(subcommand)]
+        cmd: AgentsSub,
+    },
 }
 
 // ── Group subcommands ────────────────────────────────────────────────────
@@ -367,6 +374,30 @@ pub enum ShortcutsSub {
     Reset,
 }
 
+/// GAP-7.2: install PureTerm hook shims into external agent configs.
+#[derive(Subcommand)]
+pub enum AgentsSub {
+    /// Install PureTerm hooks for an agent (e.g. `claude-code`)
+    Install {
+        /// Agent id, e.g. `claude-code`
+        adapter: String,
+        /// Register all 9 Claude Code events (default: only events with
+        /// configured `[[agent.hook]]` rules)
+        #[arg(long)]
+        all_events: bool,
+        /// Preview the merged config without writing
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// List known agent adapters + install status
+    List,
+    /// Remove PureTerm hooks from an agent config
+    Uninstall {
+        /// Agent id, e.g. `claude-code`
+        adapter: String,
+    },
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────
 
 /// Parse the CLI from `std::env::args()` (keeps the clap import local to this
@@ -408,6 +439,8 @@ pub fn run(cli: Cli) {
         }
         // GAP-7.1: never returns (exits with the hook decision). Local only.
         Command::Hook { event } => crate::agent_hooks::run_hook_shim(event),
+        // GAP-7.2: writes the agent's hook config directly. Local only.
+        Command::Agents { cmd } => crate::agent_adapters::dispatch(cmd),
     }
 }
 
