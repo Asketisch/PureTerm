@@ -69,6 +69,26 @@ pub enum Action {
     /// being forwarded to the PTY.
     ToggleViMode,
 
+    // ── Search (GAP-3.8 / GAP-4.3) ───────────────────────────────────
+    /// ⌘F — open the current-surface search overlay on the active pane.
+    SearchForward,
+    /// ⌘⇧F — open the working-directory (ripgrep) search overlay.
+    SearchInDirectory,
+    /// F3 / ⌘G — jump to the next match (or next ripgrep result).
+    SearchNext,
+    /// ⇧F3 / ⌘⇧G — jump to the previous match.
+    SearchPrev,
+    /// Escape / ⌘F again — close the active search overlay.
+    SearchClose,
+    /// Toggle case-sensitive flag.
+    SearchToggleCase,
+    /// Toggle regex mode flag.
+    SearchToggleRegex,
+    /// Toggle whole-word flag.
+    SearchToggleWholeWord,
+    /// GAP-4.3: toggle follow-tail (auto-scroll on new output).
+    SearchToggleFollow,
+
     // ── User-defined commands (GAP-6.4) ───────────────────────────
     /// Run a user-defined `[[commands]]` entry by id. Resolved to a command
     /// string at dispatch time and written into the active pane's PTY
@@ -327,6 +347,40 @@ impl Keymap {
         bindings.insert(
             (ctrl_shift, BindingKey::Named(BindingNamedKey::Space)),
             Action::ToggleViMode,
+        );
+
+        // ── Search (GAP-3.8 / GAP-4.3) ──────────────────────────────
+        // ⌘F → open current-surface search overlay.
+        bindings.insert(
+            (cmd, BindingKey::Character("f".into())),
+            Action::SearchForward,
+        );
+        // ⌘⇧F → working-directory (ripgrep) search. macOS dual-form.
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("f".into())),
+            Action::SearchInDirectory,
+        );
+        bindings.insert(
+            (cmd, BindingKey::Character("F".into())),
+            Action::SearchInDirectory,
+        );
+        // F3 → next match, ⇧F3 → prev (iced delivers F-keys as Character).
+        bindings.insert(
+            (Modifiers::empty(), BindingKey::Character("F3".into())),
+            Action::SearchNext,
+        );
+        bindings.insert(
+            (Modifiers::SHIFT, BindingKey::Character("F3".into())),
+            Action::SearchPrev,
+        );
+        // ⌘G / ⌘⇧G → next / prev match (macOS alternative to F3).
+        bindings.insert(
+            (cmd, BindingKey::Character("g".into())),
+            Action::SearchNext,
+        );
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("g".into())),
+            Action::SearchPrev,
         );
 
         // ── Cmd+Option+Arrow → PaneFocusAdjacent ────────────────────
@@ -690,6 +744,17 @@ fn parse_action(s: &str) -> Result<Action, String> {
         // Vi / Copy mode
         "ToggleViMode" | "ViMode" | "CopyMode" => Ok(Action::ToggleViMode),
 
+        // Search (GAP-3.8 / GAP-4.3)
+        "SearchForward" | "Find" => Ok(Action::SearchForward),
+        "SearchInDirectory" | "FindInDirectory" => Ok(Action::SearchInDirectory),
+        "SearchNext" | "FindNext" => Ok(Action::SearchNext),
+        "SearchPrev" | "FindPrevious" | "FindPrev" => Ok(Action::SearchPrev),
+        "SearchClose" => Ok(Action::SearchClose),
+        "SearchToggleCase" => Ok(Action::SearchToggleCase),
+        "SearchToggleRegex" => Ok(Action::SearchToggleRegex),
+        "SearchToggleWholeWord" => Ok(Action::SearchToggleWholeWord),
+        "SearchToggleFollow" => Ok(Action::SearchToggleFollow),
+
         _ => Err(format!("unknown action: {s}")),
     }
 }
@@ -844,6 +909,67 @@ mod tests {
             Instant::now(),
         );
         assert_eq!(result, ResolveResult::Action(Action::EqualizeSplits));
+    }
+
+    // ── GAP-3.8 / GAP-4.3: search action parsing + bindings ──────────
+
+    #[test]
+    fn test_parse_search_actions() {
+        // Canonical names
+        assert_eq!(parse_action("SearchForward"), Ok(Action::SearchForward));
+        assert_eq!(parse_action("SearchInDirectory"), Ok(Action::SearchInDirectory));
+        assert_eq!(parse_action("SearchNext"), Ok(Action::SearchNext));
+        assert_eq!(parse_action("SearchPrev"), Ok(Action::SearchPrev));
+        assert_eq!(parse_action("SearchClose"), Ok(Action::SearchClose));
+        assert_eq!(parse_action("SearchToggleCase"), Ok(Action::SearchToggleCase));
+        assert_eq!(parse_action("SearchToggleRegex"), Ok(Action::SearchToggleRegex));
+        assert_eq!(parse_action("SearchToggleWholeWord"), Ok(Action::SearchToggleWholeWord));
+        assert_eq!(parse_action("SearchToggleFollow"), Ok(Action::SearchToggleFollow));
+        // iTerm2/Alacritty-style aliases
+        assert_eq!(parse_action("Find"), Ok(Action::SearchForward));
+        assert_eq!(parse_action("FindInDirectory"), Ok(Action::SearchInDirectory));
+        assert_eq!(parse_action("FindNext"), Ok(Action::SearchNext));
+        assert_eq!(parse_action("FindPrevious"), Ok(Action::SearchPrev));
+    }
+
+    #[test]
+    fn test_default_search_bindings() {
+        let mut km = make_keymap();
+        let cmd = Modifiers::COMMAND;
+        let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+
+        // ⌘F → SearchForward
+        assert_eq!(
+            km.resolve(&Key::Character("f".into()), cmd, Instant::now()),
+            ResolveResult::Action(Action::SearchForward),
+        );
+        // ⌘⇧F → SearchInDirectory (macOS dual-form: "f" with shift, or "F" without)
+        assert_eq!(
+            km.resolve(&Key::Character("f".into()), cmd_shift, Instant::now()),
+            ResolveResult::Action(Action::SearchInDirectory),
+        );
+        assert_eq!(
+            km.resolve(&Key::Character("F".into()), cmd, Instant::now()),
+            ResolveResult::Action(Action::SearchInDirectory),
+        );
+        // F3 → SearchNext, ⇧F3 → SearchPrev (iced delivers F-keys as Character("F3"))
+        assert_eq!(
+            km.resolve(&Key::Character("F3".into()), Modifiers::empty(), Instant::now()),
+            ResolveResult::Action(Action::SearchNext),
+        );
+        assert_eq!(
+            km.resolve(&Key::Character("F3".into()), Modifiers::SHIFT, Instant::now()),
+            ResolveResult::Action(Action::SearchPrev),
+        );
+        // ⌘G → SearchNext, ⌘⇧G → SearchPrev
+        assert_eq!(
+            km.resolve(&Key::Character("g".into()), cmd, Instant::now()),
+            ResolveResult::Action(Action::SearchNext),
+        );
+        assert_eq!(
+            km.resolve(&Key::Character("g".into()), cmd_shift, Instant::now()),
+            ResolveResult::Action(Action::SearchPrev),
+        );
     }
 
     #[test]

@@ -92,3 +92,33 @@ action = "OpenSshDialog"
 key = "P"
 mods = "Command"
 action = "OpenCommandPalette"
+
+# Search (GAP-3.8 / GAP-4.3)
+[[keyboard.bindings]]
+key = "f"
+mods = "Command"
+action = "SearchForward"
+
+[[keyboard.bindings]]
+key = "F"
+mods = "Command|Shift"
+action = "SearchInDirectory"
+
+[[keyboard.bindings]]
+key = "F3"
+action = "SearchNext"
+
+[[keyboard.bindings]]
+key = "F3"
+mods = "Shift"
+action = "SearchPrev"
+
+[[keyboard.bindings]]
+key = "g"
+mods = "Command"
+action = "SearchNext"
+
+[[keyboard.bindings]]
+key = "g"
+mods = "Command|Shift"
+action = "SearchPrev"

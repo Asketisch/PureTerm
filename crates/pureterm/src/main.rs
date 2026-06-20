@@ -13,6 +13,7 @@ mod iced_app;
 mod ime_widget;
 mod ipc;
 mod keymap;
+mod search;
 mod session_restore;
 mod split_tree;
 mod status_bar;
@@ -185,6 +186,15 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::ToggleFullscreen => "Fullscreen".into(),
         keymap::Action::SpawnNewInstance => "New Instance".into(),
         keymap::Action::ToggleViMode => "Toggle Vi/Copy Mode".into(),
+        keymap::Action::SearchForward => "Find".into(),
+        keymap::Action::SearchInDirectory => "Find in Directory".into(),
+        keymap::Action::SearchNext => "Find Next".into(),
+        keymap::Action::SearchPrev => "Find Previous".into(),
+        keymap::Action::SearchClose => "Close Find".into(),
+        keymap::Action::SearchToggleCase => "Toggle Case-Sensitive".into(),
+        keymap::Action::SearchToggleRegex => "Toggle Regex".into(),
+        keymap::Action::SearchToggleWholeWord => "Toggle Whole Word".into(),
+        keymap::Action::SearchToggleFollow => "Toggle Follow Tail".into(),
         // GAP-6.4: user-defined commands aren't part of the preset set,
         // but the match must be exhaustive for the `shortcuts` CLI.
         keymap::Action::CustomCommand(id) => format!("Custom: {id}"),

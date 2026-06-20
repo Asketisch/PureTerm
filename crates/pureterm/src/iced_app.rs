@@ -182,9 +182,24 @@ pub struct PureTermApp {
     status_bar_last_poll: Instant,
     // GAP-4.1 Vi search
     vi_search: Option<ViSearchState>,
+    /// GAP-3.8 / GAP-4.3: standalone ⌘F surface-search overlay state.
+    /// `None` = overlay closed. When `Some`, the renderer highlights matches
+    /// via the shared `vi_search_pattern` (the overlay writes its transformed
+    /// pattern there so it reuses the cached `RegexSearch` from Phase 0).
+    surface_search: Option<SearchState>,
+    /// GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay state.
+    dir_search: Option<DirectorySearchState>,
     /// Shared search pattern between app and GPU shader.
     /// The shader reads this during draw() for match highlighting.
     vi_search_pattern: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// GAP-3.8/4.3: Renderer-side cache of the built `RegexSearch`, keyed on
+    /// the pattern string. Owned here so it survives the per-frame
+    /// `TerminalProgram` rebuild; the renderer reads it during `draw()`.
+    cached_search: std::sync::Arc<
+        std::sync::Mutex<
+            Option<(String, alacritty_terminal::term::search::RegexSearch)>,
+        >,
+    >,
     // GAP-2.3 Socket API IPC
     ipc_router: std::sync::Arc<crate::ipc::SocketRouter>,
     ipc_handle: Option<crate::ipc::IpcHandle>,
@@ -549,6 +564,27 @@ pub enum Message {
     ViSearchQuery(String),
     ViSearchConfirm,
     ViSearchClose,
+    // GAP-3.8 / GAP-4.3: standalone ⌘F surface-search overlay
+    SurfaceSearchOpen,
+    SurfaceSearchQuery(String),
+    SurfaceSearchConfirm,
+    SurfaceSearchClose,
+    SurfaceSearchNext,
+    SurfaceSearchPrev,
+    SurfaceSearchToggleCase,
+    SurfaceSearchToggleRegex,
+    SurfaceSearchToggleWholeWord,
+    SurfaceSearchToggleFollow,
+    // GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay
+    DirSearchOpen,
+    DirSearchQuery(String),
+    /// `query` is echoed back so we can drop stale results from an older query.
+    DirSearchResultReady {
+        query: String,
+        result: Result<Vec<crate::search::RgMatch>, String>,
+    },
+    DirSearchSelect(usize),
+    DirSearchClose,
     // GAP-2.3 Socket API IPC
     Ipc(crate::ipc::IpcRequest),
     // GAP-5.6 SSH reconnect worker → main loop
@@ -610,6 +646,133 @@ enum CommandEntry {
 struct ViSearchState {
     query: String,
     direction: alacritty_terminal::index::Direction,
+}
+
+/// GAP-3.8 / GAP-4.3: State for the standalone ⌘F surface-search overlay.
+///
+/// Unlike [`ViSearchState`] (which is entered from vi copy-mode and reuses the
+/// vi cursor as its anchor), this overlay is independent of vi mode and drives
+/// the shared cached `RegexSearch` via the user-facing [`SearchFlags`] (case /
+/// whole-word / regex). `follow_tail` + `anchor` power tail-find (GAP-4.3).
+struct SearchState {
+    query: String,
+    direction: alacritty_terminal::index::Direction,
+    flags: crate::search::SearchFlags,
+    /// GAP-4.3: when true, new PTY output re-anchors the current match and
+    /// scrolls to follow it. Cleared on manual user scroll.
+    follow_tail: bool,
+    /// Rotation-safe current-match anchor (see `search::SearchAnchor`).
+    anchor: crate::search::SearchAnchor,
+    /// GAP-4.3: bottom-most grid line observed on the last tail-follow tick.
+    /// Used to detect that new output arrived (so we only re-anchor on growth,
+    /// not scan pre-existing matches).
+    last_tail_bottom: Option<alacritty_terminal::index::Line>,
+}
+
+impl SearchState {
+    fn new(direction: alacritty_terminal::index::Direction, at_bottom: bool) -> Self {
+        Self {
+            query: String::new(),
+            direction,
+            flags: crate::search::SearchFlags::default(),
+            // Arm follow only if the viewport was already pinned to live output.
+            follow_tail: at_bottom,
+            anchor: crate::search::SearchAnchor::None,
+            last_tail_bottom: None,
+        }
+    }
+}
+
+/// GAP-3.8: State for the ⌘⇧F working-directory (ripgrep) search overlay.
+struct DirectorySearchState {
+    query: String,
+    flags: crate::search::SearchFlags,
+    cwd: std::path::PathBuf,
+    results: Vec<crate::search::RgMatch>,
+    selected: usize,
+    running: bool,
+    error: Option<String>,
+}
+
+/// GAP-3.8: run `rg --json <query> .` in `cwd`, returning parsed matches or an
+/// error string (e.g. "ripgrep not found"). Bounded with `--max-count`/
+/// `--max-filesize` so huge repos don't drown the result list. Blocking —
+/// always called from `spawn_blocking` (see `spawn_ripgrep`).
+fn run_ripgrep(
+    cwd: &std::path::Path,
+    query: &str,
+    flags: &crate::search::SearchFlags,
+) -> Result<Vec<crate::search::RgMatch>, String> {
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new("rg");
+    cmd.current_dir(cwd)
+        .arg("--json")
+        .arg("--max-count")
+        .arg("200")
+        .arg("--max-filesize")
+        .arg("5M")
+        .arg("--no-heading");
+    if flags.case_sensitive {
+        cmd.arg("--case-sensitive");
+    } else {
+        cmd.arg("--ignore-case");
+    }
+    if flags.whole_word {
+        cmd.arg("--word-regexp");
+    }
+    if !flags.regex_mode {
+        cmd.arg("--fixed-strings");
+    }
+    cmd.arg(query).arg(".");
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = cmd.output().map_err(|e| format!("ripgrep not available: {e}"))?;
+    // rg exits 1 for "no matches" (stdout empty) — treat as success.
+    if !output.status.success() && output.stdout.is_empty() {
+        if output.status.code() == Some(1) {
+            return Ok(Vec::new());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(stderr.trim().to_string());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(crate::search::parse_rg_json(&stdout))
+}
+
+/// GAP-3.8: spawn ripgrep off the main thread; results land as
+/// `DirSearchResultReady`. `query` is echoed back so stale results from an
+/// older query can be dropped.
+fn spawn_ripgrep(
+    cwd: std::path::PathBuf,
+    query: String,
+    flags: crate::search::SearchFlags,
+) -> Task<Message> {
+    let query_echo = query.clone();
+    Task::perform(
+        async move {
+            let res = tokio::task::spawn_blocking(move || run_ripgrep(&cwd, &query, &flags))
+                .await
+                .map_err(|e| format!("search task panicked: {e}"))
+                .and_then(|inner| inner);
+            (query_echo, res)
+        },
+        |(query, result)| Message::DirSearchResultReady { query, result },
+    )
+}
+
+/// GAP-3.8: open a file:line in the user's `$EDITOR` (default `vim`), detached
+/// so the GUI never blocks. TUI editors without a controlling terminal won't
+/// display — this respects the user's configured EDITOR as-is.
+fn open_in_editor(path: &std::path::Path, line: u64) {
+    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
+    let line_arg = format!("+{line}");
+    match std::process::Command::new(&editor)
+        .arg(&line_arg)
+        .arg(path)
+        .spawn()
+    {
+        Ok(_) => {}
+        Err(e) => log::warn!("could not launch EDITOR '{editor}': {e}"),
+    }
 }
 
 // GAP-2.3: IPC stream builder.
@@ -831,7 +994,10 @@ impl PureTermApp {
             status_bar_process_name: None,
             status_bar_last_poll: Instant::now(),
             vi_search: None,
+            surface_search: None,
+            dir_search: None,
             vi_search_pattern: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            cached_search: std::sync::Arc::new(std::sync::Mutex::new(None)),
             // GAP-2.3: IPC router is Arc so it can be shared with the async listener task.
             ipc_router: crate::ipc::SocketRouter::new(),
             ipc_handle: None,
@@ -1143,6 +1309,149 @@ impl PureTermApp {
                 self.status_bar_cwd = None;
                 self.status_bar_git_branch = None;
             }
+        }
+    }
+
+    // ── GAP-3.8 / GAP-4.3: surface search helpers ───────────────────────
+
+    /// Push the surface-search pattern (query transformed by `SearchFlags`)
+    /// into the shared `vi_search_pattern` slot. The renderer reads that slot
+    /// and the Phase-0 cache rebuilds the `RegexSearch` only when the string
+    /// changes — so this is the single write point for both highlight + the
+    /// cache. Empty query clears the slot (no highlights).
+    fn refresh_surface_search_pattern(&self) {
+        let new_pattern = self
+            .surface_search
+            .as_ref()
+            .and_then(|s| crate::search::build_search_pattern(&s.query, &s.flags));
+        if let Ok(mut pat) = self.vi_search_pattern.lock() {
+            *pat = new_pattern;
+        }
+    }
+
+    /// Close the surface-search overlay and clear the shared highlight slot.
+    fn close_surface_search(&mut self) {
+        if let Ok(mut pat) = self.vi_search_pattern.lock() {
+            *pat = None;
+        }
+        self.surface_search = None;
+    }
+
+    /// Run `search_next` from the current anchor, scroll the match into view,
+    /// and record a rotation-safe anchor so the next invocation advances.
+    ///
+    /// Origin policy: if no match has been found yet (`anchor == None`), start
+    /// from the top of the scrollback so the first forward search lands on the
+    /// earliest match; otherwise advance from the last match (tracked via the
+    /// vi cursor, which `vi_goto_point` moved onto it — rotation-safe, exactly
+    /// like the vi-search path at `Message::ViSearchConfirm`).
+    fn surface_search_step(&mut self, direction: alacritty_terminal::index::Direction) {
+        let (query, flags, had_match) = match &self.surface_search {
+            Some(s) if !s.query.is_empty() => {
+                (s.query.clone(), s.flags, matches!(s.anchor, crate::search::SearchAnchor::Current(..)))
+            }
+            _ => return,
+        };
+        let Some(pattern) = crate::search::build_search_pattern(&query, &flags) else {
+            return;
+        };
+        let Ok(mut regex) = alacritty_terminal::term::search::RegexSearch::new(&pattern) else {
+            return;
+        };
+        let Some(ctx) = self.active_terminal_ctx() else {
+            return;
+        };
+        let mut term = ctx.terminal().lock();
+        let origin = if had_match {
+            term.vi_mode_cursor.point
+        } else {
+            alacritty_terminal::index::Point::new(
+                term.topmost_line(),
+                alacritty_terminal::index::Column(0),
+            )
+        };
+        let side = alacritty_terminal::index::Side::Right;
+        if let Some(mat) = term.search_next(&mut regex, origin, direction, side, None) {
+            let target = match direction {
+                alacritty_terminal::index::Direction::Right => *mat.end(),
+                alacritty_terminal::index::Direction::Left => *mat.start(),
+            };
+            // Move the vi cursor onto the match + scroll it into view. This is
+            // the rotation-safe anchor reused for the next search.
+            term.vi_goto_point(target);
+            if let Some(ref mut s) = self.surface_search {
+                // Mark "matched" so the next search advances from the cursor.
+                // (Phase 2 fills in real text/offset for the emphasis quad.)
+                if matches!(s.anchor, crate::search::SearchAnchor::None) {
+                    s.anchor = crate::search::SearchAnchor::Current(String::new(), 0);
+                }
+            }
+        }
+    }
+
+    /// GAP-4.3: tail-find re-anchor. Called on a periodic tick. When
+    /// `follow_tail` is armed, the viewport is at the live bottom, and new
+    /// output has arrived since the last tick (detected via the bottom-most
+    /// grid line moving), search forward from the *previous* bottom for any
+    /// match in the newly-arrived output and scroll to it. This follows the
+    /// stream of new matches without scanning pre-existing ones.
+    fn surface_search_tail_follow(&mut self) {
+        use alacritty_terminal::grid::Dimensions;
+
+        let (query, flags, prev_bottom) = match &self.surface_search {
+            Some(s) if s.follow_tail && !s.query.is_empty() => {
+                (s.query.clone(), s.flags, s.last_tail_bottom)
+            }
+            _ => return,
+        };
+        let Some(ctx) = self.active_terminal_ctx() else {
+            return;
+        };
+        let mut term = ctx.terminal().lock();
+        // Only follow when the viewport is pinned to live output. If the user
+        // scrolled up (follow_tail would already be cleared, but double-guard),
+        // do nothing.
+        if term.grid().display_offset() != 0 {
+            return;
+        }
+        let cur_bottom = term.bottommost_line();
+        // First tick after arming seeds the baseline without jumping.
+        let prev_bottom = match prev_bottom {
+            Some(b) => b,
+            None => {
+                if let Some(ref mut s) = self.surface_search {
+                    s.last_tail_bottom = Some(cur_bottom);
+                }
+                return;
+            }
+        };
+        if cur_bottom == prev_bottom {
+            return; // no new output
+        }
+        // New output arrived. Search forward from the previous bottom line for
+        // a match inside the freshly-added region.
+        let Some(pattern) = crate::search::build_search_pattern(&query, &flags) else {
+            return;
+        };
+        let Ok(mut regex) = alacritty_terminal::term::search::RegexSearch::new(&pattern) else {
+            return;
+        };
+        let origin = alacritty_terminal::index::Point::new(
+            prev_bottom,
+            alacritty_terminal::index::Column(0),
+        );
+        if let Some(mat) = term.search_next(
+            &mut regex,
+            origin,
+            alacritty_terminal::index::Direction::Right,
+            alacritty_terminal::index::Side::Right,
+            None,
+        ) {
+            term.vi_goto_point(*mat.end());
+        }
+        // Advance the baseline regardless of whether a match was found.
+        if let Some(ref mut s) = self.surface_search {
+            s.last_tail_bottom = Some(term.bottommost_line());
         }
     }
 
@@ -2056,6 +2365,8 @@ impl PureTermApp {
                 }
             }
             Message::LayoutSaveTick => {
+                // GAP-4.3: tail-find re-anchor on new output (~4 Hz cadence).
+                self.surface_search_tail_follow();
                 // GAP-5.6: debounced on-change persistence — flush the layout
                 // snapshot to disk if it has been dirty for ≥500 ms.
                 #[cfg(unix)]
@@ -2456,6 +2767,145 @@ impl PureTermApp {
                     *pat = None;
                 }
                 self.vi_search = None;
+            }
+            // GAP-3.8 / GAP-4.3: surface search overlay
+            Message::SurfaceSearchOpen => {
+                // ⌘F toggles: if already open, close (iTerm2/VS Code behavior).
+                if self.surface_search.is_some() {
+                    self.close_surface_search();
+                    return Task::none();
+                }
+                let at_bottom = self
+                    .active_terminal_ctx()
+                    .map(|ctx| ctx.terminal().lock().grid().display_offset() == 0)
+                    .unwrap_or(true);
+                self.surface_search =
+                    Some(SearchState::new(alacritty_terminal::index::Direction::Right, at_bottom));
+                self.refresh_surface_search_pattern();
+            }
+            Message::SurfaceSearchQuery(q) => {
+                if let Some(ref mut s) = self.surface_search {
+                    s.query = q;
+                    // A new query invalidates the current match.
+                    s.anchor = crate::search::SearchAnchor::None;
+                    self.refresh_surface_search_pattern();
+                }
+            }
+            Message::SurfaceSearchConfirm => {
+                self.surface_search_step(alacritty_terminal::index::Direction::Right);
+            }
+            Message::SurfaceSearchNext => {
+                self.surface_search_step(alacritty_terminal::index::Direction::Right);
+            }
+            Message::SurfaceSearchPrev => {
+                self.surface_search_step(alacritty_terminal::index::Direction::Left);
+            }
+            Message::SurfaceSearchClose => {
+                self.close_surface_search();
+            }
+            Message::SurfaceSearchToggleCase => {
+                if let Some(ref mut s) = self.surface_search {
+                    s.flags.case_sensitive = !s.flags.case_sensitive;
+                    self.refresh_surface_search_pattern();
+                }
+            }
+            Message::SurfaceSearchToggleRegex => {
+                if let Some(ref mut s) = self.surface_search {
+                    s.flags.regex_mode = !s.flags.regex_mode;
+                    self.refresh_surface_search_pattern();
+                }
+            }
+            Message::SurfaceSearchToggleWholeWord => {
+                if let Some(ref mut s) = self.surface_search {
+                    s.flags.whole_word = !s.flags.whole_word;
+                    self.refresh_surface_search_pattern();
+                }
+            }
+            Message::SurfaceSearchToggleFollow => {
+                if let Some(ref mut s) = self.surface_search {
+                    s.follow_tail = !s.follow_tail;
+                    // Re-seed the tail baseline so the next tick detects growth
+                    // from the arming moment, not a stale earlier bottom.
+                    s.last_tail_bottom = None;
+                }
+            }
+            // GAP-3.8: ⌘⇧F working-directory (ripgrep) search
+            Message::DirSearchOpen => {
+                // Toggle: if already open, close.
+                if self.dir_search.is_some() {
+                    self.dir_search = None;
+                    return Task::none();
+                }
+                let (cwd, error) = match self.active_pane_cwd() {
+                    Some(cwd) => (cwd, None),
+                    None => (
+                        std::path::PathBuf::new(),
+                        Some("No local working directory for this pane.".into()),
+                    ),
+                };
+                self.dir_search = Some(DirectorySearchState {
+                    query: String::new(),
+                    flags: crate::search::SearchFlags::default(),
+                    cwd,
+                    results: Vec::new(),
+                    selected: 0,
+                    running: false,
+                    error,
+                });
+            }
+            Message::DirSearchQuery(q) => {
+                let spawn = if let Some(state) = self.dir_search.as_mut() {
+                    state.query = q.clone();
+                    state.error = None;
+                    if q.trim().is_empty() {
+                        state.results.clear();
+                        state.running = false;
+                        false
+                    } else {
+                        state.running = true;
+                        true
+                    }
+                } else {
+                    false
+                };
+                if spawn {
+                    let state = self.dir_search.as_ref().unwrap();
+                    return spawn_ripgrep(state.cwd.clone(), q, state.flags);
+                }
+            }
+            Message::DirSearchResultReady { query, result } => {
+                if let Some(state) = self.dir_search.as_mut() {
+                    // Drop stale results from an older query.
+                    if state.query == query {
+                        state.running = false;
+                        match result {
+                            Ok(matches) => {
+                                state.results = matches;
+                                state.selected = 0;
+                                state.error = None;
+                            }
+                            Err(e) => {
+                                state.results.clear();
+                                state.error = Some(e);
+                            }
+                        }
+                    }
+                }
+            }
+            Message::DirSearchSelect(idx) => {
+                if let Some(state) = self.dir_search.as_ref() {
+                    if let Some(m) = state.results.get(idx) {
+                        let path = if state.cwd.as_os_str().is_empty() {
+                            std::path::PathBuf::from(&m.path)
+                        } else {
+                            state.cwd.join(&m.path)
+                        };
+                        open_in_editor(&path, m.line);
+                    }
+                }
+            }
+            Message::DirSearchClose => {
+                self.dir_search = None;
             }
             // GAP-2.3 / GAP-6.1: Dispatch IPC request from the socket listener.
             Message::Ipc(ipc_req) => {
@@ -3605,6 +4055,16 @@ impl PureTermApp {
                 if self.vi_search.is_some() {
                     return Task::done(Message::ViSearchClose);
                 }
+                // GAP-3.8: Escape closes the ⌘F surface-search overlay.
+                if self.surface_search.is_some() {
+                    self.close_surface_search();
+                    return Task::none();
+                }
+                // GAP-3.8: Escape closes the ⌘⇧F directory-search overlay.
+                if self.dir_search.is_some() {
+                    self.dir_search = None;
+                    return Task::none();
+                }
                 if self.is_vi_mode_active() {
                     // Collect vi sub-mode snapshot and terminal ctx first
                     let vi_sub = self.active_tab_ref().and_then(|t| t.vi_sub_mode);
@@ -3746,7 +4206,9 @@ impl PureTermApp {
                         || self.context_menu.is_some()
                         || self.renaming_tab.is_some()
                         || self.tab_list.is_some()
-                        || self.vi_search.is_some())
+                        || self.vi_search.is_some()
+                        || self.surface_search.is_some()
+                        || self.dir_search.is_some())
                 {
                     // GAP-4.1: Forward printable text to vi search bar
                     if self.vi_search.is_some() {
@@ -3932,6 +4394,18 @@ impl PureTermApp {
             // GAP-4.1 Vi / Copy mode
             Action::ToggleViMode => Task::done(Message::ToggleViMode),
 
+            // GAP-3.8 / GAP-4.3: surface search overlay
+            Action::SearchForward => Task::done(Message::SurfaceSearchOpen),
+            // ⌘⇧F ripgrep directory search (GAP-3.8).
+            Action::SearchInDirectory => Task::done(Message::DirSearchOpen),
+            Action::SearchNext => Task::done(Message::SurfaceSearchNext),
+            Action::SearchPrev => Task::done(Message::SurfaceSearchPrev),
+            Action::SearchClose => Task::done(Message::SurfaceSearchClose),
+            Action::SearchToggleCase => Task::done(Message::SurfaceSearchToggleCase),
+            Action::SearchToggleRegex => Task::done(Message::SurfaceSearchToggleRegex),
+            Action::SearchToggleWholeWord => Task::done(Message::SurfaceSearchToggleWholeWord),
+            Action::SearchToggleFollow => Task::done(Message::SurfaceSearchToggleFollow),
+
             // GAP-6.4: write `command + Enter` into the active pane's PTY.
             // Runs in the pane's shell/CWD (like iTerm2 snippets / tmux
             // send-keys); output is visible. No new process management.
@@ -4095,6 +4569,10 @@ impl PureTermApp {
             ctx.write_to_pty(&content);
         } else if lines != 0 {
             // Path 3: scroll the display offset (history) on the primary screen.
+            // GAP-4.3: a user-initiated scroll cancels tail-follow.
+            if let Some(ref mut s) = self.surface_search {
+                s.follow_tail = false;
+            }
             let delta = if is_scroll_up { lines as i32 } else { -(lines as i32) };
             let mut term = ctx.terminal().lock_unfair();
             term.grid_mut().scroll_display(Scroll::Delta(delta));
@@ -4610,6 +5088,10 @@ impl PureTermApp {
             ctx.write_to_pty(&content);
         } else if lines != 0 {
             let delta = if is_scroll_up { lines as i32 } else { -(lines as i32) };
+            // GAP-4.3: a user-initiated scroll cancels tail-follow.
+            if let Some(ref mut s) = self.surface_search {
+                s.follow_tail = false;
+            }
             let mut term = ctx.terminal().lock_unfair();
             term.grid_mut().scroll_display(Scroll::Delta(delta));
         }
@@ -5511,6 +5993,123 @@ impl PureTermApp {
         )
     }
 
+    /// GAP-3.8: ⌘F surface-search overlay — a find bar pinned to the
+    /// bottom-center (same slot as the vi search bar; the two are mutually
+    /// exclusive). Editable input + flag toggles (case / regex / whole-word /
+    /// follow-tail) + close button.
+    fn view_surface_search(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, container, row, text, text_input};
+        use iced::Alignment;
+        use iced::Length;
+
+        let s = self.surface_search.as_ref()?;
+
+        let input = text_input("Find…", &s.query)
+            .on_input(Message::SurfaceSearchQuery)
+            .on_submit(Message::SurfaceSearchConfirm)
+            .width(Length::Fill);
+
+        // Flag toggle buttons: a leading "●" marks the active flag.
+        let toggle = |label: &str, active: bool, msg: Message| {
+            let caption = if active { format!("●{label}") } else { label.to_string() };
+            button(text(caption).size(12)).on_press(msg)
+        };
+
+        let toggles = row![
+            toggle("Aa", s.flags.case_sensitive, Message::SurfaceSearchToggleCase),
+            toggle(".*", s.flags.regex_mode, Message::SurfaceSearchToggleRegex),
+            toggle(r#""""#, s.flags.whole_word, Message::SurfaceSearchToggleWholeWord),
+            toggle("↻", s.follow_tail, Message::SurfaceSearchToggleFollow),
+        ]
+        .spacing(4);
+
+        let close = button(text("×").size(14)).on_press(Message::SurfaceSearchClose);
+
+        let bar = container(
+            row![input, toggles, close]
+                .spacing(6)
+                .align_y(Alignment::Center),
+        )
+        .padding([6, 10])
+        .width(Length::Fixed(520.0))
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.15, 0.15, 0.18, 0.95))),
+            border: Border {
+                color: Color::from_rgba(0.2, 0.8, 0.7, 0.6),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        });
+
+        // Bottom-center, same slot as the vi search bar.
+        let terminal_h = terminal_content_height(self.viewport_size.height);
+        let y = terminal_h - 36.0;
+        let cx = (self.viewport_size.width - 520.0).max(0.0) / 2.0;
+
+        Some(iced::widget::pin(bar).x(cx).y(y).into())
+    }
+
+    /// GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay. A centered
+    /// dialog with a query input + scrollable result list; clicking a result
+    /// opens it in `$EDITOR` at the line.
+    fn view_dir_search(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, scrollable, text, text_input};
+        use iced::Length;
+
+        let s = self.dir_search.as_ref()?;
+
+        let mut body = column![text("Find in Directory").size(16)]
+            .spacing(6)
+            .padding(12);
+
+        let input = text_input("Search in working directory…", &s.query)
+            .on_input(Message::DirSearchQuery)
+            .width(Length::Fill);
+        body = body.push(input);
+
+        if s.running {
+            body = body.push(text("searching…").size(12));
+        }
+        if let Some(ref err) = s.error {
+            body = body.push(text(err).size(12).color(Color::from_rgb(0.9, 0.5, 0.4)));
+        }
+
+        if !s.results.is_empty() {
+            let mut list = column![].spacing(2);
+            for (idx, m) in s.results.iter().take(200).enumerate() {
+                let label = format!("{}:{}  {}", m.path, m.line, m.text.trim());
+                list = list.push(
+                    button(text(label).size(12))
+                        .on_press(Message::DirSearchSelect(idx))
+                        .width(Length::Fill),
+                );
+            }
+            body = body.push(scrollable(list).height(Length::Fill));
+        }
+
+        let close = button(text("×").size(14)).on_press(Message::DirSearchClose);
+        body = body.push(close);
+
+        let dialog = container(body)
+            .width(Length::Fixed(640.0))
+            .height(Length::Fixed(420.0))
+            .style(|_theme: &Theme| container::Style {
+                background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.15, 0.97))),
+                border: Border {
+                    color: Color::from_rgba(0.2, 0.8, 0.7, 0.6),
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            });
+
+        let cx = (self.viewport_size.width - 640.0).max(0.0) / 2.0;
+        let cy = (self.viewport_size.height - 420.0).max(0.0) / 2.0;
+
+        Some(iced::widget::pin(dialog).x(cx).y(cy).into())
+    }
+
     fn view_tab_list(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         let state = self.tab_list.as_ref()?;
 
@@ -5630,6 +6229,7 @@ impl PureTermApp {
                     opacity: self.config.opacity,
                     viewport_scale_factor: self.viewport_scale_factor.clone(),
                     vi_search_pattern: self.vi_search_pattern.clone(),
+                    cached_search: self.cached_search.clone(),
                 })
                 .width(Length::Fill)
                 .height(Length::Fill);
@@ -5680,7 +6280,9 @@ impl PureTermApp {
             || self.ssh_dialog.is_some()
             || self.ssh_settings.is_some()
             || self.command_palette.is_some()
-            || self.vi_search.is_some();
+            || self.vi_search.is_some()
+            || self.surface_search.is_some()
+            || self.dir_search.is_some();
 
         if has_overlay {
             // No full-screen `dismiss` overlay here. The previous design
@@ -5732,6 +6334,16 @@ impl PureTermApp {
 
             // GAP-4.1: Vi search bar overlay
             if let Some(search_el) = self.view_vi_search() {
+                layers.push(search_el);
+            }
+
+            // GAP-3.8: ⌘F surface-search overlay
+            if let Some(search_el) = self.view_surface_search() {
+                layers.push(search_el);
+            }
+
+            // GAP-3.8: ⌘⇧F directory (ripgrep) search overlay
+            if let Some(search_el) = self.view_dir_search() {
                 layers.push(search_el);
             }
 
@@ -5835,6 +6447,7 @@ impl PureTermApp {
             opacity: self.config.opacity,
             viewport_scale_factor: self.viewport_scale_factor.clone(),
             vi_search_pattern: self.vi_search_pattern.clone(),
+            cached_search: self.cached_search.clone(),
         })
         .width(Length::Fill)
         .height(Length::Fill);

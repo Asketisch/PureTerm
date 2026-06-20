@@ -774,10 +774,17 @@ pub struct TerminalProgram {
     /// `prepare()` each frame. `draw()` reads it and reconfigures the
     /// glyph atlas when the value changes.
     pub viewport_scale_factor: Arc<AtomicU32>,
-    /// GAP-4.1: Shared vi search pattern for match highlighting.
+    /// GAP-4.1: Shared vi search pattern for match highlights.
     /// The app sets this when the user types in the search bar;
     /// the shader reads it during `draw()` to highlight matches.
     pub vi_search_pattern: Arc<std::sync::Mutex<Option<String>>>,
+    /// GAP-3.8/4.3: Cached built `RegexSearch` keyed on the pattern string.
+    /// Without this, `draw()` rebuilt 4 lazy DFAs every frame (terminal_shader
+    /// ran `RegexSearch::new` per frame). The app owns the `Arc` and clones it
+    /// into each per-frame `TerminalProgram`; the cache therefore persists
+    /// across frames. Rebuilt only when the pattern string changes.
+    pub cached_search:
+        Arc<std::sync::Mutex<Option<(String, alacritty_terminal::term::search::RegexSearch)>>>,
 }
 
 #[derive(Default)]
@@ -899,21 +906,41 @@ impl<M> shader::Program<M> for TerminalProgram {
             match pattern {
                 Some(pat) if !pat.is_empty() => {
                     let term = self.ctx.terminal().lock();
-                    match alacritty_terminal::term::search::RegexSearch::new(&pat) {
-                        Ok(mut regex) => {
+                    // Cache the built RegexSearch keyed on the pattern string so
+                    // we don't rebuild 4 lazy DFAs every frame. The guard is held
+                    // for the lifetime of the borrowed regex (RegexIter needs
+                    // `&mut RegexSearch`).
+                    let mut cache = match self.cached_search.lock() {
+                        Ok(g) => g,
+                        // Poisoned mutex — recover the inner guard rather than
+                        // dropping matches entirely.
+                        Err(e) => e.into_inner(),
+                    };
+                    let stale = cache.as_ref().map_or(true, |(p, _)| *p != pat);
+                    if stale {
+                        *cache = alacritty_terminal::term::search::RegexSearch::new(&pat)
+                            .ok()
+                            .map(|r| (pat.clone(), r));
+                    }
+                    match cache.as_mut() {
+                        Some((_, regex)) => {
                             let top = term.topmost_line();
                             let screen = term.screen_lines() as i32;
                             let start = TermPoint::new(top, Column(0));
-                            let end = TermPoint::new(Line(-(display_offset as i32) + screen - 1), term.last_column());
+                            let end = TermPoint::new(
+                                Line(-(display_offset as i32) + screen - 1),
+                                term.last_column(),
+                            );
                             let iter = alacritty_terminal::term::search::RegexIter::new(
-                                start, end,
+                                start,
+                                end,
                                 alacritty_terminal::index::Direction::Right,
                                 &*term,
-                                &mut regex,
+                                regex,
                             );
                             iter.collect()
                         }
-                        Err(_) => Vec::new(),
+                        None => Vec::new(),
                     }
                 }
                 _ => Vec::new(),

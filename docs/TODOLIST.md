@@ -54,15 +54,15 @@
 | 类别 | ✅ | 🚧 | ❌ | ⛔ | 小计 |
 |---|---|---|---|---|---|
 | A. 核心架构 | 3 | 0 | 2 | 0 | 5 |
-| B. UI/UX | 3 | 0 | 4 | 0 | 7 |
-| C. 终端交互 | 1 | 0 | 6 | 0 | 7 |
+| B. UI/UX | 4 | 0 | 3 | 0 | 7 |
+| C. 终端交互 | 2 | 1 | 4 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
 | E. 集成与可编程 | 3 | 0 | 5 | 0 | 8 |
 | F. AI Agent | 2 | 0 | 6 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **16** | **1** | **29** | **3** | **49** |
+| **总计** | **18** | **2** | **26** | **3** | **49** |
 
-整体进度:✅ 16/49 ≈ 33% · 🚧 1
+整体进度:✅ 18/49 ≈ 37% · 🚧 2
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -193,7 +193,7 @@
 - **对标**: cmux `Sources/BrowserWindowPortal.swift`(173 KB)
 
 #### GAP-3.8 搜索体系 {#gap-3-8}
-- **状态**: 🚧
+- **状态**: ✅(2026-06-21 代码闭环 + 196 测试绿 + dist .app 重打包;**待手动 GUI E2E**)
 - **优先级**: P1
 - **PureTerm 现状**: `Action::SearchForward / SearchBackward` 实现基础正则搜索,**无目录搜索、无全局搜索**
 - **目标**:
@@ -253,7 +253,7 @@
 - **对标**: cmux `Sources/SemanticHistory.swift` + iTerm2 `iTermSemanticHistoryController.m`(45KB)
 
 #### GAP-4.3 Tail-Find 自动滚动搜索 {#gap-4-3}
-- **状态**: ❌
+- **状态**: ✅(2026-06-21 代码闭环 + 196 测试绿 + dist .app 重打包;**待手动 GUI E2E**)
 - **优先级**: P1
 - **PureTerm 现状**: 基础搜索已有,无 tail-find
 - **目标**: 搜索匹配高亮 + 自动跟随;手动滚到底 → 取消跟随;`Ctrl+Shift+F` 进入 / `F3` 下一个;Alacritty `search` 模块加 `SearchState::follow_tail: bool` 字段
@@ -626,10 +626,10 @@
 | GAP-3.5 | 内置 Browser 面板 | B | P1 | ❌ | - | wry crate |
 | GAP-3.6 | macOS Glass 效果 | B | P3 | ❌ | - | - |
 | GAP-3.7 | 完整快捷键自定义 + 模板 | B | P0 | ✅ | 2026-06-12 | Action 30 变体 + Keymap HashMap + TOML 解析 + CLI shortcuts + 6 套预设;chord 留后续 |
-| GAP-3.8 | 搜索体系 | B | P1 | 🚧 | - | 基础搜索已有,缺目录/全局 |
+| GAP-3.8 | 搜索体系 | B | P1 | ✅ | 2026-06-21 | ⌘F surface 搜索浮层 + ⌘⇧F ripgrep 目录搜索 + flag(case/regex/whole-word);旧"TODOLIST 高估进度"已订正(此前无 ⌘F,仅 vi 模式 /)。**全局跨 surface 搜索延后**(需多 pane 扇出);当前匹配强调 quad 待补 |
 | GAP-4.1 | Vim 复制模式 | C | P1 | ✅ | 2026-06-12 | ViSubMode + 18 ViMotion + visual/block/yank + 搜索 + GPU 高亮 + 状态栏指示 |
 | GAP-4.2 | 智能选择 hover preview | C | P1 | 🚧 | - | 9 规则已有,缺 hover |
-| GAP-4.3 | Tail-Find 自动滚动搜索 | C | P1 | ❌ | - | - |
+| GAP-4.3 | Tail-Find 自动滚动搜索 | C | P1 | ✅ | 2026-06-21 | follow_tail(开时若在底部自动 arm)+ 新输出重锚(LayoutSaveTick 250ms 检测 bottommost 增长)+ 用户滚动取消(两 scroll handler)+ toggle;rotation-safe vi cursor 复用为锚;当前匹配强调 quad 待补 |
 | GAP-4.6 | Touch Bar / VoiceOver | C | P3 | ❌ | - | - |
 | GAP-5.1 | 持久 PTY 守护进程 | D | P0 | ✅ | 2026-06-17 | 全里程碑 M1-M5 闭环:本地 + SSH PTY 均由独立 `puretermd` 守护进程拥有(本地 `tty::new`,SSH 用共享 `pureterm-ssh` crate 的 `SshPty::spawn`/`SshCommandBuilder`/`SshSessionManager`,daemon `PumpablePty` trait 统一 pump);GUI `DaemonPty: EventedPty` 包 socketpair,`PtyEventLoop` 不动;`connect_ssh_tab` daemon 优先;`pureterm ssh connect [user@]host` 真 interactive client;滚动回放 1MiB ring→SCROLLBACK;登录自启动(macOS LaunchAgent RunAtLoad+KeepAlive{SuccessfulExit:false} / Linux systemd);多 attach 扇出(Vec<Subscriber> 广播)+ 有界背压(drop >2MiB 滞后客户端)+ control/data socket 0600;经真 sshd + launchd + 多客户端二进制 E2E 验证。剩余打磨:daemon 侧自动重连(网络断)/ watchdog |
 | GAP-5.2 | SOCKS5/HTTP CONNECT Tunnel | D | P1 | ❌ | - | - |
