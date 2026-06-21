@@ -151,6 +151,9 @@ pub struct PureTermApp {
     // SSH settings panel (P4 GAP-5.8)
     #[cfg(unix)]
     ssh_settings: Option<SshSettingsPanelState>,
+    // GAP-7.4 Feed 审批面板。始终 live(记忆常驻);可见性 = focused.is_some()。
+    #[cfg(unix)]
+    feed_panel: Box<crate::feed_panel::FeedPanelState>,
     #[cfg(unix)]
     ssh_credential_store: Option<crate::ssh::credential::CredentialStore>,
     // Command palette (P5 GAP-5.9)
@@ -547,6 +550,18 @@ pub enum Message {
     /// `on_press` fires.
     #[cfg(unix)]
     CloseSshDialogIfOutside(Point),
+    // GAP-7.4 Feed 审批面板
+    #[cfg(unix)]
+    FeedResolve { id: u64, choice: crate::feed_client::FeedChoice },
+    #[cfg(unix)]
+    FeedDismiss,
+    #[cfg(unix)]
+    FeedFocusNext,
+    /// GAP-7.4: ~2Hz tick —— 扫描 120s 软超时自动 Deny + 刷新倒计时 UI。
+    #[cfg(unix)]
+    FeedTick,
+    #[cfg(unix)]
+    FeedClearSession { session_id: String },
     // Command palette (P5 GAP-5.9)
     OpenCommandPalette,
     CloseCommandPalette,
@@ -965,6 +980,8 @@ impl PureTermApp {
             reconnect_hub: Arc::new(crate::ssh::reconnect::ReconnectHub::new()),
             #[cfg(unix)]
             ssh_settings: None,
+            #[cfg(unix)]
+            feed_panel: Box::new(crate::feed_panel::FeedPanelState::default()),
             #[cfg(unix)]
             ssh_credential_store: None,
             context_menu: None,
@@ -2909,6 +2926,13 @@ impl PureTermApp {
             }
             // GAP-2.3 / GAP-6.1: Dispatch IPC request from the socket listener.
             Message::Ipc(ipc_req) => {
+                // GAP-7.4: `feed.request_approval` 用 DEFERRED reply —— 不立即
+                // 回复,把 reply 句柄暂存,等人在 Feed 面板点按钮(或 120s 超时)
+                // 再回复。见 `handle_feed_request_approval`。
+                #[cfg(unix)]
+                if ipc_req.method == "feed.request_approval" {
+                    return self.handle_feed_request_approval(ipc_req);
+                }
                 // Build a rich snapshot from live app state.
                 let snap = crate::ipc::methods::AppSnapshot {
                     window_count: if self.main_window.is_some() { 1 } else { 0 },
@@ -2951,6 +2975,31 @@ impl PureTermApp {
                 if let Some(fx) = side_effect {
                     return self.execute_ipc_side_effect(fx);
                 }
+            }
+            // ── GAP-7.4 Feed 审批面板 ──────────────────────────────────────
+            #[cfg(unix)]
+            Message::FeedResolve { id, choice } => {
+                self.feed_panel.resolve(id, choice, crate::feed_panel::ResolveSource::User);
+            }
+            #[cfg(unix)]
+            Message::FeedDismiss => {
+                // 关面板(不清 pending —— 用户可重新聚焦/仍在倒计时)。
+                self.feed_panel.focused = None;
+            }
+            #[cfg(unix)]
+            Message::FeedFocusNext => {
+                self.feed_panel.focus_next();
+            }
+            #[cfg(unix)]
+            Message::FeedTick => {
+                // 120s 软超时 → 自动 Deny。
+                for id in self.feed_panel.expire_timeouts() {
+                    self.feed_panel.resolve(id, crate::feed_client::FeedChoice::Deny, crate::feed_panel::ResolveSource::Timeout);
+                }
+            }
+            #[cfg(unix)]
+            Message::FeedClearSession { session_id } => {
+                self.feed_panel.clear_session(&session_id);
             }
             #[cfg(unix)]
             Message::SshReconnect(update) => {
@@ -4751,7 +4800,65 @@ impl PureTermApp {
                 }
                 Task::none()
             }
+            #[cfg(unix)]
+            Fx::FeedClearSession { session_id } => {
+                // GAP-7.4: SessionEnd hook fired → drop that agent's Feed memory.
+                self.feed_panel.clear_session(&session_id);
+                Task::none()
+            }
         }
+    }
+
+    /// GAP-7.4: Feed 面板可见性(view 的 has_overlay / layers 用;跨平台守卫)。
+    #[cfg(unix)]
+    fn feed_panel_visible(&self) -> bool {
+        self.feed_panel.is_visible()
+    }
+    #[cfg(not(unix))]
+    fn feed_panel_visible(&self) -> bool {
+        false
+    }
+
+    /// GAP-7.4: 处理 `feed.request_approval` 的 deferred-reply。先入 pending
+    /// 队列;记忆命中则立即回复(不弹面板),否则聚焦到面板等用户决定。
+    /// 回复统一由 `FeedPanelState::resolve` 发出(发 oneshot → 解锁 shim 阻塞)。
+    #[cfg(unix)]
+    fn handle_feed_request_approval(&mut self, ipc_req: crate::ipc::IpcRequest) -> Task<Message> {
+        use crate::feed_panel::{FeedPanelState, PendingRequest, ResolveSource};
+        use crate::ipc::protocol::JsonRpcResponse;
+
+        let id = ipc_req.id;
+        let reply = ipc_req.reply_tx.clone();
+
+        // 解析 params(必填 session_id + event)。
+        let Some(params) = ipc_req.params.as_ref() else {
+            let resp = JsonRpcResponse::err(id, -32602, "feed.request_approval requires params");
+            if let Some(tx) = reply.lock().unwrap().take() {
+                let _ = tx.send(resp);
+            }
+            return Task::none();
+        };
+        let Some(payload) = FeedPanelState::parse_payload(id, params) else {
+            let resp =
+                JsonRpcResponse::err(id, -32602, "feed.request_approval requires session_id + event");
+            if let Some(tx) = reply.lock().unwrap().take() {
+                let _ = tx.send(resp);
+            }
+            return Task::none();
+        };
+
+        // 记忆命中(Always/All/Bypass)→ 入队后立即 resolve(source=Memory),
+        // 不弹面板。否则入队 + 聚焦,等用户点按钮(或 120s 超时)。
+        let memory_choice = self
+            .feed_panel
+            .consult_memory(&payload.session_id, payload.tool_name.as_deref().unwrap_or(""));
+        self.feed_panel.pending.insert(id, PendingRequest { req: payload, reply });
+        if let Some(choice) = memory_choice {
+            self.feed_panel.resolve(id, choice, ResolveSource::Memory);
+        } else {
+            self.feed_panel.focused = Some(id);
+        }
+        Task::none()
     }
 
     /// 根据当前 split_tree 布局，重新 resize tab 中所有 pane 的 PTY。
@@ -5832,6 +5939,96 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(x).y(0.0).into())
     }
 
+    /// GAP-7.4: render the right-side Feed 审批面板。聚焦展示一条 pending 请求,
+    /// 5 个决策按钮(Once/Always/All/Bypass/Deny)+ 120s 倒计时。多 pending 时
+    /// 页脚显示计数 + 循环。
+    #[cfg(unix)]
+    fn view_feed_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use crate::feed_client::FeedChoice;
+        use iced::widget::{button, column, container, row, scrollable, space, text};
+        use iced::Length;
+
+        let req = self.feed_panel.focused_request()?;
+        let id = req.ipc_id;
+
+        // 决策按钮工厂。
+        let choice_btn = |label: &'static str, choice: FeedChoice, style: fn(&Theme, button::Status) -> button::Style| {
+            button(text(label).size(13))
+                .on_press(Message::FeedResolve { id, choice })
+                .width(Length::Fill)
+                .padding([6, 8])
+                .style(style)
+        };
+
+        // 主体内容(command / file_path / prompt)。
+        let subject_line = req.subject().unwrap_or_else(|| "(no preview)".into());
+        let truncated: String = subject_line.chars().take(500).collect();
+        let subject_el: Element<'_, Message, Theme, iced::Renderer> =
+            scrollable(text(truncated).size(12)).height(Length::FillPortion(1)).into();
+
+        // 倒计时(120s 软超时 → 自动 Deny)。
+        let remaining = self.feed_panel.focused_remaining_secs().unwrap_or(0);
+        let countdown = text(format!("⏱ 超时自动 Deny:{}s", remaining)).size(11);
+
+        let mut body_col = column![
+            // Header
+            row![
+                text("Feed 审批").size(16),
+                space().width(Length::Fill),
+                button(text("×").size(16))
+                    .on_press(Message::FeedDismiss)
+                    .padding([2, 8])
+                    .style(button::secondary),
+            ]
+            .spacing(4),
+            // 事件 + 工具
+            text(format!("事件:{}", req.event)).size(12),
+            text(format!(
+                "工具:{}",
+                req.tool_name.as_deref().unwrap_or("-")
+            ))
+            .size(12),
+            // 理由
+            text(format!("理由:{}", if req.reason.is_empty() { "-" } else { &req.reason })).size(12),
+            // 主体
+            text("内容:").size(12),
+            subject_el,
+            // 决策按钮
+            choice_btn("Once(仅本次)", FeedChoice::Once, button::primary),
+            choice_btn("Always(此会话·此工具)", FeedChoice::Always, button::secondary),
+            choice_btn("All(此会话·所有工具)", FeedChoice::All, button::secondary),
+            choice_btn("Bypass(临时 5min)", FeedChoice::Bypass, button::secondary),
+            choice_btn("Deny(拒绝)", FeedChoice::Deny, button::danger),
+            countdown,
+        ]
+        .spacing(6)
+        .padding(8);
+
+        // 页脚:多 pending 计数 + 循环。
+        let pending = self.feed_panel.pending_count();
+        if pending > 1 {
+            body_col = body_col.push(
+                row![
+                    text(format!("还有 {} 条 pending", pending - 1)).size(11),
+                    space().width(Length::Fill),
+                    button(text("下一条 →").size(11))
+                        .on_press(Message::FeedFocusNext)
+                        .padding([2, 6])
+                        .style(button::secondary),
+                ]
+                .spacing(4),
+            );
+        }
+
+        let panel = container(body_col)
+            .width(Length::Fixed(360.0))
+            .height(Length::Fill)
+            .style(container::bordered_box);
+
+        let x = (self.viewport_size.width - 360.0).max(0.0);
+        Some(iced::widget::pin(panel).x(x).y(0.0).into())
+    }
+
     /// P5 GAP-5.9: render the command palette as a centered overlay.
     /// Two modes:
     /// - `Mode::Actions` — fuzzy-searchable list of registered actions.
@@ -6282,7 +6479,8 @@ impl PureTermApp {
             || self.command_palette.is_some()
             || self.vi_search.is_some()
             || self.surface_search.is_some()
-            || self.dir_search.is_some();
+            || self.dir_search.is_some()
+            || self.feed_panel_visible();
 
         if has_overlay {
             // No full-screen `dismiss` overlay here. The previous design
@@ -6327,6 +6525,10 @@ impl PureTermApp {
             #[cfg(unix)]
             if let Some(ssh_settings_el) = self.view_ssh_settings_panel() {
                 layers.push(ssh_settings_el);
+            }
+            #[cfg(unix)]
+            if let Some(feed_el) = self.view_feed_panel() {
+                layers.push(feed_el);
             }
             if let Some(palette_el) = self.view_command_palette() {
                 layers.push(palette_el);
@@ -6571,6 +6773,9 @@ impl PureTermApp {
         // dirty for ≥500 ms (debounced on-change persistence).
         let layout_save_sub =
             time::every(Duration::from_millis(250)).map(|_| Message::LayoutSaveTick);
+        // GAP-7.4: ~2Hz tick —— 扫描 120s 软超时自动 Deny + 刷新 Feed 面板倒计时。
+        #[cfg(unix)]
+        let feed_tick_sub = time::every(Duration::from_millis(500)).map(|_| Message::FeedTick);
 
         // 注意：event::listen_with 要求 fn 指针（无捕获），所以全局鼠标事件
         // 不在闭包里过滤主窗口。GlobalCursorMoved / GlobalMouseRelease
@@ -6647,6 +6852,7 @@ impl PureTermApp {
             config_sub,
             ipc_sub,
             reconnect_sub,
+            feed_tick_sub,
         ];
         #[cfg(not(unix))]
         let subs = vec![

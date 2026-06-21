@@ -297,7 +297,7 @@ impl AppConfig {
 
     /// GAP-7.1: Load the user's `[[agent.hook]]` array from the toml config.
     ///
-    /// Each entry is `{ event, matcher?, command? | deny_pattern?, deny_reason?, timeout? }`:
+    /// Each entry is `{ event, matcher?, command? | deny_pattern? | ask_pattern?, *_reason?, timeout? }`:
     /// ```toml
     /// [[agent.hook]]
     /// event = "PreToolUse"
@@ -309,11 +309,17 @@ impl AppConfig {
     /// event = "PostToolUse"
     /// command = "/abs/lint.sh"       # external command (general mechanism)
     /// timeout = 30
+    ///
+    /// [[agent.hook]]                 # GAP-7.4: route to Feed approval panel
+    /// event = "PreToolUse"
+    /// matcher = "Bash"
+    /// ask_pattern = "."              # built-in regex → ask (human approval)
+    /// ask_reason = "confirm before run"
     /// ```
     ///
     /// Failure-tolerant, mirroring `load_custom_commands`: a missing file or
     /// `agent.hook` table returns an empty Vec; entries missing `event`, or
-    /// missing BOTH `command` and `deny_pattern`, are skipped (with a `warn`).
+    /// missing all of `command`/`deny_pattern`/`ask_pattern`, are skipped (warn).
     pub fn load_agent_hooks(path: &Path) -> Vec<crate::agent_hooks::HookRule> {
         use crate::agent_hooks::HookRule;
 
@@ -360,10 +366,14 @@ impl AppConfig {
                 .get("deny_pattern")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
+            let ask_pattern = table
+                .get("ask_pattern")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             // 必须至少有一个动作,否则这条规则是 no-op,跳过。
-            if command.is_none() && deny_pattern.is_none() {
+            if command.is_none() && deny_pattern.is_none() && ask_pattern.is_none() {
                 log::warn!(
-                    "load_agent_hooks: entry '{}' has neither 'command' nor 'deny_pattern', skipped",
+                    "load_agent_hooks: entry '{}' has none of 'command'/'deny_pattern'/'ask_pattern', skipped",
                     event
                 );
                 continue;
@@ -379,6 +389,11 @@ impl AppConfig {
                 deny_pattern,
                 deny_reason: table
                     .get("deny_reason")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                ask_pattern,
+                ask_reason: table
+                    .get("ask_reason")
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string()),
             };
@@ -594,7 +609,7 @@ font = { size = 14.0 }
 
     #[test]
     fn test_load_agent_hooks_skips_entry_without_action() {
-        // An entry needs at least one of `command` / `deny_pattern`.
+        // An entry needs at least one of `command` / `deny_pattern` / `ask_pattern`.
         let toml = r#"
 [[agent.hook]]
 event = "PreToolUse"
@@ -607,8 +622,28 @@ deny_pattern = "x"
         let path = write_temp_toml("pureterm_test_hooks_noaction.toml", toml);
         let hooks = AppConfig::load_agent_hooks(&path);
         let _ = std::fs::remove_file(&path);
-        assert_eq!(hooks.len(), 1, "entry without command+deny_pattern skipped");
+        assert_eq!(hooks.len(), 1, "entry without command+deny_pattern+ask_pattern skipped");
         assert_eq!(hooks[0].event, "Stop");
+    }
+
+    #[test]
+    fn test_load_agent_hooks_ask_pattern() {
+        // GAP-7.4: ask_pattern is a valid action (route to Feed panel).
+        let toml = r#"
+[[agent.hook]]
+event = "PreToolUse"
+matcher = "Bash"
+ask_pattern = "."
+ask_reason = "confirm before run"
+"#;
+        let path = write_temp_toml("pureterm_test_hooks_ask.toml", toml);
+        let hooks = AppConfig::load_agent_hooks(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(hooks.len(), 1, "ask_pattern alone is a valid action");
+        assert_eq!(hooks[0].ask_pattern.as_deref(), Some("."));
+        assert_eq!(hooks[0].ask_reason.as_deref(), Some("confirm before run"));
+        assert!(hooks[0].command.is_none());
+        assert!(hooks[0].deny_pattern.is_none());
     }
 
     #[test]

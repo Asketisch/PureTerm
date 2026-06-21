@@ -45,6 +45,11 @@ pub enum IpcSideEffect {
     /// and writes `exit\r`.
     #[cfg(unix)]
     SshDisconnect { pane_id: Option<u64> },
+    /// GAP-7.4: a `[[agent.hook]]` SessionEnd rule fired → clear that agent
+    /// session's Feed approval memory (Always/All/Bypass). Fire-and-forget;
+    /// the request itself is replied to immediately with `{"ok": true}`.
+    #[cfg(unix)]
+    FeedClearSession { session_id: String },
 }
 
 // ── Handler type ─────────────────────────────────────────────────────────
@@ -483,6 +488,34 @@ impl SocketRouter {
                 None,
             )
         });
+
+        // ── feed.* (GAP-7.4, 2 methods) ───────────────────────────────
+        // `feed.request_approval`: 正常路径在 `Message::Ipc` 的 deferred-reply
+        // 预判分支里(不立即回复,等人在 Feed 面板点按钮)。这里仅作注册,让
+        // `system.methods` 列出它,并提供兜底(若被绕过预判直接 dispatch)。
+        #[cfg(unix)]
+        {
+            router.register("feed.request_approval", |_params, _snap| {
+                (Ok(serde_json::json!({"queued": true})), None)
+            });
+            // `feed.clear_session`: 立即回复 + 副作用(SessionEnd 清记忆)。
+            router.register("feed.clear_session", |params, _snap| {
+                let session_id = params
+                    .as_ref()
+                    .and_then(|p| p.get("session_id").and_then(|v| v.as_str()))
+                    .unwrap_or("")
+                    .to_string();
+                (
+                    Ok(serde_json::json!({"ok": true, "session_id": session_id})),
+                    Some(IpcSideEffect::FeedClearSession { session_id }),
+                )
+            });
+        }
+        #[cfg(not(unix))]
+        {
+            router.register_noop("feed.request_approval", "Feed not available on this platform");
+            router.register_noop("feed.clear_session", "Feed not available on this platform");
+        }
 
         Arc::new(router)
     }

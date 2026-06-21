@@ -64,10 +64,15 @@ pub struct HookRule {
     pub command: Option<String>,
     /// 可选:外部命令超时(秒),默认 60。
     pub timeout: Option<u64>,
-    /// 可选:内置正则;命中 → deny。与 `command` 至少一个。
+    /// 可选:内置正则;命中 → deny。与 `command`/`ask_pattern` 至少一个。
     pub deny_pattern: Option<String>,
     /// 可选:deny 时的理由(反馈给 agent)。
     pub deny_reason: Option<String>,
+    /// 可选(GAP-7.4):内置正则;命中 → 转人工审批(Feed 面板)。与 `command`/
+    /// `deny_pattern` 至少一个。主体优先级同 `deny_pattern`(command/file_path/...)。
+    pub ask_pattern: Option<String>,
+    /// 可选(GAP-7.4):ask 时的理由(展示在 Feed 面板)。
+    pub ask_reason: Option<String>,
 }
 
 /// agent 经 stdin 发来的 hook 事件信封。所有字段 lenient(缺省 / 忽略未知字段)。
@@ -184,12 +189,32 @@ pub fn evaluate(input: &HookInput, rules: &[HookRule]) -> Decision {
                 }
             }
         }
+        // 内置 ask_pattern(GAP-7.4):命中 → 聚合为 Ask(转人工审批)。
+        // 注意:不立即短路——后续规则的 deny_pattern / 外部 command 仍有机会,
+        // 因为 deny 永远赢过 ask(只有 Deny 才短路)。同一条规则里 deny_pattern
+        // 在上面已先行返回,故同规则 deny 优先。
+        if let Some(pat) = &rule.ask_pattern {
+            if let Some(subject) = deny_subject(input) {
+                if let Ok(re) = Regex::new(pat) {
+                    if re.is_match(&subject) {
+                        let reason = rule
+                            .ask_reason
+                            .clone()
+                            .unwrap_or_else(|| DEFAULT_ASK_REASON.into());
+                        acc = acc.merge(Decision::Ask(reason));
+                    }
+                } else {
+                    log::warn!("agent hook: bad ask_pattern regex {:?}, skipping rule", pat);
+                }
+            }
+        }
         // 外部 command。
         if rule.command.is_some() {
             let input_json = serde_json::to_vec(input).unwrap_or_default();
             let d = run_external_command(rule, &input_json);
             acc = acc.merge(d);
-            if matches!(acc, Decision::Deny(_) | Decision::Ask(_)) {
+            // 仅 Deny 短路(保证 deny 永远赢过 ask);Ask 累积,留给后续 deny 规则机会。
+            if matches!(acc, Decision::Deny(_)) {
                 return acc;
             }
         }
@@ -199,6 +224,9 @@ pub fn evaluate(input: &HookInput, rules: &[HookRule]) -> Decision {
 
 /// deny 时缺省理由。
 const DEFAULT_DENY_REASON: &str = "denied by PureTerm hook policy";
+
+/// ask(转人工审批)时缺省理由。
+const DEFAULT_ASK_REASON: &str = "approval required via PureTerm Feed";
 
 /// 运行外部 `command` 规则:经 shell 执行,stdin 喂事件 JSON,带超时 kill,
 /// 映射 stdout JSON / exit code → Decision。超时 / spawn 失败 → Passthrough
@@ -361,32 +389,38 @@ pub fn format_decision_output(event: &str, decision: &Decision) -> DecisionOutpu
             };
             DecisionOutput { stdout: Some(stdout), exit_code: 0 }
         }
-        Decision::Ask(reason) => {
-            // ask 仅对 PreToolUse 的 permission 流有意义;其它事件降级为放行。
-            if event == "PreToolUse" {
-                let stdout = serde_json::json!({
-                    "hookSpecificOutput": {
-                        "hookEventName": "PreToolUse",
-                        "permissionDecision": "ask",
-                        "permissionDecisionReason": reason,
-                    }
-                })
-                .to_string();
-                DecisionOutput { stdout: Some(stdout), exit_code: 0 }
-            } else {
-                DecisionOutput { stdout: None, exit_code: 0 }
-            }
-        }
+        Decision::Ask(reason) => format_ask_output(event, reason),
     }
 }
 
-/// shim 纯核心:给定原始 stdin 字节 + 可选事件 override + 规则,产出输出或
-/// (exit_code, message) 错误(无 I/O、无进程退出,便于测试)。
-fn evaluate_shim(
+/// 渲染 `Decision::Ask` 的协议输出(纯函数)。ask 仅对 PreToolUse 的 permission 流
+/// 有意义;其它事件降级为放行。GAP-7.4 把它作为「无 GUI / Feed 超时」的回退路径:
+/// PureTerm 接管不了审批时,把 `ask` 交还给 Claude Code 原生 prompt。
+pub fn format_ask_output(event: &str, reason: &str) -> DecisionOutput {
+    // ask 仅对 PreToolUse 的 permission 流有意义;其它事件降级为放行。
+    if event == "PreToolUse" {
+        let stdout = serde_json::json!({
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "ask",
+                "permissionDecisionReason": reason,
+            }
+        })
+        .to_string();
+        DecisionOutput { stdout: Some(stdout), exit_code: 0 }
+    } else {
+        DecisionOutput { stdout: None, exit_code: 0 }
+    }
+}
+
+/// shim 纯核心(无 I/O、无格式化、无进程退出):解析 stdin → 评估规则 → 返回
+/// `(HookInput, Decision)`。供 `run_hook_shim` 在 `Ask` 时拦截做 Feed 往返,
+/// 也供 `evaluate_shim`(格式化包装)复用。
+fn evaluate_shim_core(
     stdin_bytes: &[u8],
     event_override: Option<&str>,
     rules: &[HookRule],
-) -> Result<DecisionOutput, (i32, String)> {
+) -> Result<(HookInput, Decision), (i32, String)> {
     let mut input: HookInput = serde_json::from_slice(stdin_bytes)
         .map_err(|e| (2, format!("pureterm hook: invalid stdin JSON: {e}")))?;
     let event = match event_override {
@@ -398,11 +432,75 @@ fn evaluate_shim(
         input.hook_event_name = event;
     }
     let decision = evaluate(&input, rules);
+    Ok((input, decision))
+}
+
+/// shim 纯核心 + 格式化:给定原始 stdin 字节 + 可选事件 override + 规则,产出
+/// `DecisionOutput` 或 (exit_code, message) 错误(无 I/O、无进程退出,便于测试)。
+/// 注意:这里**不**做 Feed 往返 —— `Ask` 直接走 `format_ask_output`(无 GUI 回退)。
+/// 真正的 Feed 往返发生在 `run_hook_shim` 里(经 `resolve_ask_via_feed`)。
+fn evaluate_shim(
+    stdin_bytes: &[u8],
+    event_override: Option<&str>,
+    rules: &[HookRule],
+) -> Result<DecisionOutput, (i32, String)> {
+    let (input, decision) = evaluate_shim_core(stdin_bytes, event_override, rules)?;
     Ok(format_decision_output(&input.hook_event_name, &decision))
 }
 
+/// GAP-7.4:若决策是 `Ask`,联系运行中的 PureTerm GUI Feed 面板阻塞等人的决定,
+/// 把 `FeedChoice` 翻译回 `Decision`(放行类 → `Allow`;`Deny` → `Deny`)。
+/// 无 GUI / 超时 / 错误 → 保留原 `Ask`(交还 CC 原生 prompt,不阻断)。非 Ask 原样返回。
+#[cfg(unix)]
+fn resolve_ask_via_feed(input: &HookInput, decision: Decision) -> Decision {
+    use crate::feed_client::{request_approval, FeedOutcome, FeedApprovalRequest};
+
+    let Decision::Ask(reason) = decision else {
+        return decision;
+    };
+    let req = FeedApprovalRequest {
+        session_id: &input.session_id,
+        event: &input.hook_event_name,
+        tool_name: input.tool_name.as_deref(),
+        tool_input: input.tool_input.as_ref(),
+        prompt: input.prompt.as_deref(),
+        message: input.message.as_deref(),
+        reason: &reason,
+        cwd: &input.cwd,
+    };
+    // 125s 硬上限(GUI 120s 软超时 + 5s 余量);超时 / 无 GUI → 回退 ask。
+    match request_approval(&req, Duration::from_secs(125), None) {
+        FeedOutcome::Resolved(choice) => {
+            if choice.is_allow() {
+                Decision::Allow
+            } else {
+                Decision::Deny(reason)
+            }
+        }
+        FeedOutcome::NoGui => {
+            log::debug!("hook: no PureTerm GUI for Feed; falling back to native ask");
+            Decision::Ask(reason)
+        }
+        FeedOutcome::Timeout => {
+            log::warn!("hook: Feed approval timed out; falling back to native ask");
+            Decision::Ask(reason)
+        }
+        FeedOutcome::Error(e) => {
+            log::warn!("hook: Feed approval error ({e}); falling back to native ask");
+            Decision::Ask(reason)
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn resolve_ask_via_feed(_input: &HookInput, decision: Decision) -> Decision {
+    // 非 unix:无 Unix socket Feed 通道,Ask 原样返回(走 format_ask_output 回退)。
+    decision
+}
+
 /// `pureterm hook <event>` CLI 入口:读 stdin → 加载 `[[agent.hook]]` → 评估
-/// → 打印决策 JSON / 设置退出码。永不返回(`-> !`)。
+/// → (GAP-7.4) Ask 时联系 GUI Feed 面板阻塞等审批 → 打印决策 JSON / 设置退出码。
+/// 永不返回(`-> !`)。
 pub fn run_hook_shim(event_override: Option<String>) -> ! {
     let mut buf = Vec::new();
     if std::io::stdin().read_to_end(&mut buf).is_err() {
@@ -411,18 +509,26 @@ pub fn run_hook_shim(event_override: Option<String>) -> ! {
     }
     let path = crate::app_config::AppConfig::config_path();
     let rules = crate::app_config::AppConfig::load_agent_hooks(&path);
-    match evaluate_shim(&buf, event_override.as_deref(), &rules) {
-        Ok(out) => {
-            if let Some(s) = out.stdout {
-                println!("{s}");
-            }
-            std::process::exit(out.exit_code);
-        }
+    let (input, decision) = match evaluate_shim_core(&buf, event_override.as_deref(), &rules) {
+        Ok(v) => v,
         Err((code, msg)) => {
             eprintln!("{msg}");
             std::process::exit(code);
         }
+    };
+    // GAP-7.4:Ask → 联系 GUI Feed 面板阻塞等人的决定;无 GUI / 超时 → 回退 ask。
+    let decision = resolve_ask_via_feed(&input, decision);
+    // GAP-7.4:SessionEnd → fire-and-forget 通知 GUI 清掉该会话的 Feed 记忆
+    //(Always/All/Bypass)。best-effort,GUI 未运行则静默忽略。
+    #[cfg(unix)]
+    if input.hook_event_name == "SessionEnd" && !input.session_id.is_empty() {
+        crate::feed_client::notify_session_end(&input.session_id);
     }
+    let out = format_decision_output(&input.hook_event_name, &decision);
+    if let Some(s) = out.stdout {
+        println!("{s}");
+    }
+    std::process::exit(out.exit_code);
 }
 
 #[cfg(test)]
@@ -647,6 +753,118 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(evaluate(&write_input, &[r]), Decision::Deny("denied by PureTerm hook policy".into()));
+    }
+
+    // ── ask_pattern (GAP-7.4) ─────────────────────────────────────────────
+
+    #[test]
+    fn evaluate_ask_pattern_match_asks() {
+        let r = HookRule {
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            ask_pattern: Some(r"rm\s+-rf".into()),
+            ask_reason: Some("confirm destructive".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            evaluate(&bash_input("rm -rf /tmp/x"), &[r]),
+            Decision::Ask("confirm destructive".into())
+        );
+    }
+
+    #[test]
+    fn evaluate_ask_pattern_no_match_passthrough() {
+        let r = HookRule {
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            ask_pattern: Some(r"rm\s+-rf".into()),
+            ..Default::default()
+        };
+        assert_eq!(evaluate(&bash_input("ls -la"), &[r]), Decision::Passthrough);
+    }
+
+    #[test]
+    fn evaluate_ask_default_reason_when_absent() {
+        let r = HookRule {
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            ask_pattern: Some(".".into()),
+            ..Default::default()
+        };
+        match evaluate(&bash_input("ls"), &[r]) {
+            Decision::Ask(reason) => assert!(!reason.is_empty(), "default ask reason must be non-empty"),
+            other => panic!("expected Ask, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_deny_wins_over_ask_in_same_rule() {
+        // 同一条规则里 deny_pattern 与 ask_pattern 都命中 → Deny 优先短路。
+        let r = HookRule {
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            deny_pattern: Some(r"rm\s+-rf".into()),
+            deny_reason: Some("hard block".into()),
+            ask_pattern: Some(".".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            evaluate(&bash_input("rm -rf /tmp"), &[r]),
+            Decision::Deny("hard block".into())
+        );
+    }
+
+    #[test]
+    fn evaluate_deny_rule_overrides_ask_rule() {
+        // 规则 1 ask(命中),规则 2 deny(命中)→ 聚合 Deny 赢。
+        let rules = [
+            HookRule {
+                event: "PreToolUse".into(),
+                matcher: Some("Bash".into()),
+                ask_pattern: Some(".".into()),
+                ..Default::default()
+            },
+            HookRule {
+                event: "PreToolUse".into(),
+                matcher: Some("Bash".into()),
+                deny_pattern: Some(r"rm\s+-rf".into()),
+                deny_reason: Some("deny rule".into()),
+                ..Default::default()
+            },
+        ];
+        assert_eq!(
+            evaluate(&bash_input("rm -rf /tmp"), &rules),
+            Decision::Deny("deny rule".into())
+        );
+    }
+
+    #[test]
+    fn evaluate_ask_uses_subject_priority_like_deny() {
+        // ask_pattern 命中主体优先级同 deny_pattern:command → file_path。
+        let r = HookRule {
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            ask_pattern: Some(r"\brm\b".into()),
+            ..Default::default()
+        };
+        // tool_input 含 "rm" 命令 → Ask;不含则 Passthrough。
+        assert!(matches!(evaluate(&bash_input("rm x"), &[r]), Decision::Ask(_)));
+    }
+
+    #[test]
+    fn format_ask_output_pretooluse_emits_permission_ask() {
+        let out = format_ask_output("PreToolUse", "please confirm");
+        assert_eq!(out.exit_code, 0);
+        let s = out.stdout.expect("PreToolUse ask must emit stdout");
+        assert!(s.contains(r#""permissionDecision":"ask""#), "got: {s}");
+        assert!(s.contains("please confirm"), "got: {s}");
+    }
+
+    #[test]
+    fn format_ask_output_non_pretooluse_silent() {
+        let out = format_ask_output("Notification", "x");
+        assert_eq!(out.exit_code, 0);
+        assert!(out.stdout.is_none(), "non-PreToolUse ask downgrades to silent allow");
     }
 
     // ── parse_stdout_decision ──────────────────────────────────────────────

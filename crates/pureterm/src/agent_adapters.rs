@@ -362,11 +362,21 @@ fn build_registration(all_events: bool) -> HookRegistration {
         let rules = crate::app_config::AppConfig::load_agent_hooks(&path);
         let mut seen: BTreeSet<(String, Option<String>)> = BTreeSet::new();
         let mut out: Vec<(String, Option<String>)> = Vec::new();
+        let mut feed_enabled = false;
         for r in &rules {
+            // GAP-7.4:任一规则含 ask_pattern → 启用 Feed 审批。
+            if r.ask_pattern.is_some() {
+                feed_enabled = true;
+            }
             let matcher = if event_uses_matcher(&r.event) { r.matcher.clone() } else { None };
             if seen.insert((r.event.clone(), matcher.clone())) {
                 out.push((r.event.clone(), matcher));
             }
+        }
+        // GAP-7.4:Feed 启用时自动注册 SessionEnd(无 matcher),让 shim 在会话
+        // 结束时 fire-and-forget 通知 GUI 清掉 Always/All/Bypass 记忆。
+        if feed_enabled && seen.insert(("SessionEnd".to_string(), None)) {
+            out.push(("SessionEnd".to_string(), None));
         }
         out
     };

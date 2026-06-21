@@ -58,11 +58,11 @@
 | C. 终端交互 | 2 | 1 | 4 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
 | E. 集成与可编程 | 3 | 0 | 5 | 0 | 8 |
-| F. AI Agent | 2 | 0 | 6 | 0 | 8 |
+| F. AI Agent | 2 | 1 | 5 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **18** | **2** | **26** | **3** | **49** |
+| **总计** | **18** | **3** | **25** | **3** | **49** |
 
-整体进度:✅ 18/49 ≈ 37% · 🚧 2
+整体进度:✅ 18/49 ≈ 37% · 🚧 3
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -507,13 +507,22 @@
 - **对标**: cmux `Sources/AgentHook/Adapters/`
 
 #### GAP-7.4 Feed 审批面板 {#gap-7-4}
-- **状态**: ❌
+- **状态**: 🚧(2026-06-22 代码闭环 + 220 单测全绿 + release 二进制编译通过 + shim 端到端冒烟通过;**待 dist .app 重打包 + 手动 GUI E2E**)
 - **优先级**: P0
-- **PureTerm 现状**: 无
-- **目标**: 右侧栏 Feed mode;Permission / ExitPlanMode / AskUserQuestion;Once / Always(此会话) / All tools(此 agent) / Bypass(临时) / Deny;120s 软等待(超时默认 deny);审计日志 `~/.local/share/pureterm/feed.jsonl`;agent → hook → 事件总线 → Feed
-- **依赖**: GAP-7.1、GAP-3.1
-- **风险点**: 同步阻塞 hook 的超时
-- **DoD**: Claude Code 请求 `Bash` 权限,Feed 弹 4 选项,选 Once 后命令执行
+- **设计要点**:
+  - **延迟回复(承重墙)**:shim 与 GUI 是单连接单请求(写行→`shutdown(WRITE)`→阻塞 `read_line`)。`feed.request_approval` **绝不能**像普通 method 那样立刻回 `{"queued":true}`。`Message::Ipc`(`iced_app.rs`)dispatch 前预判该方法 → 不 reply,把整个 `IpcRequest`(其 `reply_tx` 已是 `Arc<Mutex<Option<oneshot::Sender>>>`,因 `Message: Clone` 而 Arc 包裹)暂存进 `FeedPanelState::pending`;用户点按钮时 `FeedResolve` → `reply_tx.send(JsonRpcResponse::ok(id,{"choice":..}))` → 解锁 listener 的 `reply_rx.await` → 写回 socket → shim 的阻塞 read_line 返回。**零新包装类型**。
+  - **触发**:`HookRule` 加 `ask_pattern`/`ask_reason`(镜像 `deny_pattern`);`evaluate` 在 deny 后聚合 Ask(**不短路**,deny 跨规则永远赢过 ask)。
+  - **shim 传输**:`feed_client.rs` std-only(无 tokio,`set_read_timeout` 阻塞,复用 `ipc::listener::find_socket`)。Ask → 联系 GUI 阻塞 ≤125s;**无 GUI/超时/错误 → 回退 `permissionDecision:"ask"`**(交还 CC 原生 prompt,不阻断)。
+  - **作用域记忆**:GUI 侧(shim 每次新进程无状态)—— Always `(session_id,tool_name)` / All `session_id` / Bypass `session_id`+5min 过期;命中即自动放行不弹面板(审计 `source:memory`)。
+  - **120s 软超时**:`FeedTick`(500ms)扫描 → 自动 Deny(`source:timeout`)。shim 125s 硬上限兜底。
+  - **SessionEnd 清记忆**:shim fire-and-forget `feed.clear_session`;`build_registration` 在 Feed 启用时自动注册 SessionEnd 事件。
+- **实现位置**:`crates/pureterm/src/feed_client.rs`(新建:std-only `request_approval`/`notify_session_end` + `FeedChoice`/`FeedOutcome`/`FeedApprovalRequest`)+ `feed_panel.rs`(新建:`FeedPanelState`/`PendingRequest`/`FeedRequestPayload` + `resolve`/`consult_memory`/`expire_timeouts`/`focus_next`/`clear_session` + `feed.jsonl` 审计)+ `agent_hooks.rs`(`HookRule`+`ask_pattern`/`ask_reason`;`evaluate_shim_core` 拆分;`resolve_ask_via_feed` cfg(unix);`run_hook_shim` Ask→feed→translate + SessionEnd notify)+ `app_config.rs`(解析 ask 字段 + 放宽守卫)+ `agent_adapters.rs`(`build_registration` Feed 启用自动加 SessionEnd)+ `ipc/methods.rs`(`feed.request_approval`/`feed.clear_session` 注册 + `IpcSideEffect::FeedClearSession`)+ `iced_app.rs`(`feed_panel` 字段 + 5 `Message` 变体 + `Message::Ipc` 预判分支 + `handle_feed_request_approval` + `view_feed_panel` 右侧 pinned overlay + `FeedTick` 订阅 + `execute_ipc_side_effect` FeedClearSession)+ `main.rs`(`mod feed_client/feed_panel`)
+- **依赖**: GAP-7.1 ✅;~~GAP-3.1(双侧边栏)~~ —— **不阻塞**:复用既有 `SshSettingsPanelState` 右侧 pinned overlay 范式(`pin(panel).x().y()` + `stack(layers)`),无需完整侧边栏框架
+- **风险点**: 同步阻塞 hook 的超时(GUI 120s 软 + shim 125s 硬);CC 对 hook 子进程自身的等待超时需 > 125s(实现时待查 CC 文档确认)
+- **单元测试**: `feed_client::tests` 6(含真实 UnixListener 假 GUI + ready 通道同步消除 connect-before-bind 死锁)+ `feed_panel::tests` 9(memory 优先级 / resolve 发 oneshot / expire / focus_next / parse)+ `agent_hooks::tests` 39(+ask_pattern 系列)+ `app_config::tests` 12(+ask_pattern 解析);整套 **220 全绿**(原 205 + 新 15)
+- **DoD 验证(代码侧)**:release 二进制 `echo '{...}' | pureterm hook PreToolUse`(无 ask 规则)→ passthrough 静默 exit 0 ✅;Ask→无 GUI→`permissionDecision:"ask"` 回退 由单测覆盖(`evaluate_ask_pattern_match_asks` + `format_ask_output_pretooluse_emits_permission_ask` + feed_client NoGui)
+- **DoD 验证(待手动 GUI E2E)**:`./build.sh release` 重打包 dist .app → 配 `[[agent.hook]] ask_pattern="."` → `pureterm agents install claude-code` → 启 GUI + Claude Code 跑 Bash → 面板弹 5 按钮 → 点 Once 命令执行 / 点 Deny CC 阻断 / 点 Always 下条自动放行 / 等 120s 自动 Deny;`tail ~/Library/Application Support/pureterm/feed.jsonl` 看审计
+- **留后续迭代**:ExitPlanMode/AskUserQuestion 专用 UI(当前统一走 5 按钮)、Feed 面板 ⌘ 快捷键绑定、`pureterm feed` CLI 子命令(list/resolve)、GAP-6.7 事件流集成(Feed 事件转发到 daemon/JSONL)、跨 surface Feed 聚合
 - **对标**: cmux `Sources/Feed/RightSidebar.swift`
 
 ### F.P1
@@ -651,7 +660,7 @@
 | GAP-7.1 | Agent Hooks 通用框架 | F | P0 | ✅ | 2026-06-18 | standalone shim(`pureterm hook`);双规则 deny_pattern(command/file_path/prompt/message)+ 外部 command(超时 kill);对齐 CC hooks 协议(9 事件 / permissionDecision / decision:block / exit 2);35 直接单测 + 整套 171 全绿;release 二进制 DoD(shim 对 rm -rf 输出 permissionDecision:deny)。真 CC 往返待手动登记 settings.json(自动安装器=GAP-7.2) |
 | GAP-7.2 | 16+ agent adapter | F | P0 | ✅ | 2026-06-18 | `AgentAdapter` trait + `ClaudeCodeAdapter`;`pureterm agents install/list/uninstall`;加锁 RMW 写 `~/.claude/settings.json`(保留既有内容,命令哨兵幂等/精准卸载);默认仅注册已配规则事件,`--all-events`/`--dry-run`;10 单测 + 181 全绿 |
 | GAP-7.3 | Agent Hibernation | F | P1 | ❌ | - | - |
-| GAP-7.4 | Feed 审批面板 | F | P0 | ❌ | - | - |
+| GAP-7.4 | Feed 审批面板 | F | P0 | 🚧 | 2026-06-22 | 代码闭环 + 220 单测绿 + release 编译通过;延迟回复(`Message::Ipc` 预判暂存 `IpcRequest`,零新类型)+ `feed_client.rs`/`feed_panel.rs` 新建 + `ask_pattern` 配置 + 5 按钮面板 + 120s 超时 + 作用域记忆 + SessionEnd 清记忆 + feed.jsonl 审计;**待 dist 重打包 + 手动 GUI E2E**(GAP-3.1 不阻塞:复用 pinned overlay 范式) |
 | GAP-7.5 | Agent Session Restore | F | P1 | ❌ | - | - |
 | GAP-7.6 | Vault agent registry | F | P2 | ❌ | - | - |
 | GAP-7.7 | Custom resume bindings | F | P2 | ❌ | - | - |

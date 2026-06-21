@@ -4,6 +4,10 @@ mod app_config;
 mod cli;
 mod config_watcher;
 #[cfg(unix)]
+mod feed_client;
+#[cfg(unix)]
+mod feed_panel;
+#[cfg(unix)]
 mod daemon_client;
 #[cfg(unix)]
 mod daemon_cli;
