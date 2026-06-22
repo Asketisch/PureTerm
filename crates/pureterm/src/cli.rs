@@ -6,9 +6,9 @@
 //! code lives here.
 //!
 //! Eight groups are exposed (`system` / `window` / `tab` / `pane` / `surface`
-//! / `config` / `ssh` / `debug`), each backed by live methods. The remaining
-//! TODOLIST groups — `workspace` (needs GAP-2.1), `feed`/`events` (need
-//! GAP-6.7) — are deferred until their server-side namespaces exist.
+//! / `config` / `ssh` / `debug`), each backed by live methods. `feed`
+//! (GAP-7.4/7.6) and `events` (GAP-6.7) read local JSONL logs — no IPC. The
+//! remaining TODOLIST group `workspace` is deferred until GAP-2.1.
 
 use std::path::PathBuf;
 
@@ -130,6 +130,11 @@ pub enum Command {
     Feed {
         #[command(subcommand)]
         cmd: FeedSub,
+    },
+    /// GAP-6.7: read/follow the unified event log (`events.jsonl`). Local, no IPC.
+    Events {
+        #[command(subcommand)]
+        cmd: EventsSub,
     },
 }
 
@@ -436,6 +441,26 @@ pub enum FeedSub {
     },
 }
 
+/// GAP-6.7: read/follow the unified event log (`events.jsonl`). Local only.
+#[derive(Subcommand)]
+pub enum EventsSub {
+    /// List recent events (newest first)
+    List {
+        /// Max number of events to show (default 50)
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Filter: category (`feed`) or `category.kind` (`feed.resolved`)
+        #[arg(long = "type")]
+        r#type: Option<String>,
+    },
+    /// Follow the event log in real time (tail -f)
+    Tail {
+        /// Filter: category (`feed`) or `category.kind` (`feed.resolved`)
+        #[arg(long = "type")]
+        r#type: Option<String>,
+    },
+}
+
 /// GAP-7.3: hibernate/resume agent sessions via the daemon control plane
 /// (`agent.hibernate` / `agent.resume`). Hits `puretermd` directly (not the
 /// GUI IPC socket).
@@ -585,7 +610,51 @@ pub fn run(cli: Cli) {
                 }
             }
         },
+        // GAP-6.7: read/follow the unified event log (local JSONL, no IPC).
+        Command::Events { cmd } => match cmd {
+            EventsSub::List { limit, r#type } => {
+                let filter = crate::events::TypeFilter::parse(r#type.as_deref());
+                let entries = crate::events_log::read_recent(&filter, limit.unwrap_or(50), None);
+                print_events(&entries);
+            }
+            EventsSub::Tail { r#type } => {
+                let filter = crate::events::TypeFilter::parse(r#type.as_deref());
+                let path = crate::events_log::events_path();
+                println!("tailing {} (Ctrl-C to stop)", path.display());
+                crate::events_log::tail_follow(&path, &filter, |e| {
+                    println!("{}", format_event(e));
+                });
+            }
+        },
     }
+}
+
+/// GAP-6.7: print a table of events (newest first).
+fn print_events(entries: &[crate::events::AppEvent]) {
+    if entries.is_empty() {
+        println!("no events yet");
+        return;
+    }
+    println!("{:<9} {:<13} {:<22} {}", "SEQ", "CATEGORY", "KIND", "DATA");
+    for e in entries {
+        println!("{}", format_event(e));
+    }
+}
+
+/// GAP-6.7: one-line rendering of an event for `events list` / `events tail`.
+fn format_event(e: &crate::events::AppEvent) -> String {
+    let data = if e.data.is_null() {
+        "-".to_string()
+    } else {
+        serde_json::to_string(&e.data).unwrap_or_else(|_| "?".into())
+    };
+    format!(
+        "{:<9} {:<13} {:<22} {}",
+        e.seq,
+        e.cat.as_str(),
+        e.kind,
+        data
+    )
 }
 
 /// Send a `(method, params)` tuple to the running PureTerm instance and print

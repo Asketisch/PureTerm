@@ -5,6 +5,12 @@ mod agent_sessions;
 mod app_config;
 mod cli;
 mod config_watcher;
+/// GAP-6.7: unified event schema (Category + AppEvent).
+mod events;
+/// GAP-6.7: in-process event hub (broadcast + JSONL dual-write).
+mod events_bus;
+/// GAP-6.7: pure file I/O for the event log (append/rotate/read/tail).
+mod events_log;
 #[cfg(unix)]
 mod feed_client;
 /// GAP-7.6: read-only feed audit log viewer (`pureterm feed list`).

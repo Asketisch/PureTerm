@@ -228,6 +228,10 @@ pub struct PureTermApp {
     ipc_handle: Option<crate::ipc::IpcHandle>,
     /// Shared channel state between subscription() and the stream builder.
     ipc_channel_state: std::sync::Arc<IpcChannelState>,
+    /// GAP-6.7: in-process event hub. Every state transition calls
+    /// `self.events.emit(...)`; the bus persists to `events.jsonl` (16 MiB
+    /// rotation) and broadcasts to subscribers. The GUI is the sole writer.
+    events: std::sync::Arc<crate::events_bus::EventBus>,
 }
 
 /// P3 of GAP-5.7: state for the SSH connection dialog shown by ⌘⇧S or
@@ -683,6 +687,10 @@ pub enum Message {
     // GAP-5.6 SSH reconnect worker → main loop
     #[cfg(unix)]
     SshReconnect(crate::ssh::reconnect::ReconnectUpdate),
+    // GAP-6.7: an event arrived on the in-process broadcast bus. v1 has no
+    // consumer (the JSONL log + `pureterm events tail` are the real consumers);
+    // this variant is the foundation for GAP-6.8 (programmable sidebar).
+    Event(crate::events::AppEvent),
 }
 
 /// P4: which `SshProfile` field is being edited in the panel.
@@ -973,6 +981,45 @@ fn reconnect_stream_builder(
     )
 }
 
+// ── GAP-6.7 event subscription ────────────────────────────────────────────
+// Mirrors IpcKey/ipc_stream_builder: a stable id (hashed by Arc pointer) so
+// the subscription survives update() re-evaluations, and a builder that
+// subscribes to the bus's broadcast channel and forwards events as Messages.
+
+#[derive(Clone)]
+struct EventsKey(std::sync::Arc<crate::events_bus::EventBus>);
+
+impl std::hash::Hash for EventsKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (std::sync::Arc::as_ptr(&self.0) as usize).hash(state);
+    }
+}
+
+/// Builder for `Subscription::run_with`: subscribes to the event bus and
+/// forwards each [`crate::events::AppEvent`] as `Message::Event`. A lagging
+/// receiver (events produced faster than consumed, past the 4096 buffer) is
+/// tolerated by skipping — the JSONL log is the source of truth.
+fn events_stream_builder(key: &EventsKey) -> impl iced::futures::Stream<Item = Message> {
+    let mut rx = key.0.subscribe();
+    iced::stream::channel(
+        64,
+        move |mut sender: iced::futures::channel::mpsc::Sender<Message>| async move {
+            loop {
+                match rx.recv().await {
+                    Ok(event) => {
+                        if sender.try_send(Message::Event(event)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+            std::future::pending::<()>().await;
+        },
+    )
+}
+
 impl PureTermApp {
     pub fn new() -> (Self, Task<Message>) {
         let config_path = AppConfig::config_path();
@@ -1112,6 +1159,7 @@ impl PureTermApp {
             ipc_channel_state: std::sync::Arc::new(IpcChannelState {
                 tx: std::sync::Mutex::new(None),
             }),
+            events: crate::events_bus::EventBus::new(crate::events_log::events_path()),
         };
 
         // GAP-5.6: try to restore the previous tab/pane layout by re-attaching
@@ -1172,6 +1220,19 @@ impl PureTermApp {
             zoom_state: None,
             vi_sub_mode: None,
         });
+        // GAP-6.7: a new tab = a new local PTY session.
+        self.events.emit(
+            crate::events::Category::Surface,
+            "tab.created",
+            None,
+            serde_json::json!({ "tab_id": id.0, "pane_id": pane_id.0 }),
+        );
+        self.events.emit(
+            crate::events::Category::Session,
+            "session.spawned",
+            None,
+            serde_json::json!({ "kind": "local", "pane_id": pane_id.0 }),
+        );
         self.mark_layout_dirty();
         id
     }
@@ -1245,6 +1306,14 @@ impl PureTermApp {
                 zoom_state: None,
                 vi_sub_mode: None,
             });
+            // GAP-6.7: reattaching to a surviving daemon session (distinct from
+            // a fresh spawn, so the audit log isn't flooded on every launch).
+            self.events.emit(
+                crate::events::Category::Session,
+                "session.reattached",
+                None,
+                serde_json::json!({ "tab_id": tab_id.0 }),
+            );
         }
 
         // Resize every restored pane to the real window geometry. The daemon
@@ -1391,7 +1460,17 @@ impl PureTermApp {
         };
         let socket = pureterm_daemon::discovery::socket_path();
         match crate::daemon_client::kill_session(&socket, sid) {
-            Ok(true) => log::debug!("GAP-5.6: killed daemon session {sid} on close"),
+            Ok(true) => {
+                log::debug!("GAP-5.6: killed daemon session {sid} on close");
+                // GAP-6.7: user/system killed a daemon session (distinct from
+                // a natural PTY EOF → session.exited).
+                self.events.emit(
+                    crate::events::Category::Session,
+                    "session.killed",
+                    Some(sid.to_string()),
+                    serde_json::json!({}),
+                );
+            }
             Ok(false) => log::debug!("GAP-5.6: daemon session {sid} already gone"),
             Err(e) => log::warn!("GAP-5.6: kill daemon session {sid} failed: {e}"),
         }
@@ -1705,6 +1784,19 @@ impl PureTermApp {
                 let id = self.push_ssh_tab(profile_name.clone(), ctx);
                 self.ssh_dialog = None;
                 self.active_tab = id;
+                // GAP-6.7: SSH tab + daemon session created.
+                self.events.emit(
+                    crate::events::Category::Surface,
+                    "tab.created",
+                    None,
+                    serde_json::json!({ "tab_id": id.0 }),
+                );
+                self.events.emit(
+                    crate::events::Category::Session,
+                    "session.spawned",
+                    None,
+                    serde_json::json!({ "kind": "ssh", "tab_id": id.0 }),
+                );
                 return;
             }
             Err(e) => log::warn!(
@@ -2267,6 +2359,19 @@ impl PureTermApp {
         match message {
             Message::MainWindowOpened(id) => {
                 self.main_window = Some(id);
+                // GAP-6.7: app/window lifecycle.
+                self.events.emit(
+                    crate::events::Category::App,
+                    "app.started",
+                    None,
+                    serde_json::json!({}),
+                );
+                self.events.emit(
+                    crate::events::Category::Window,
+                    "window.opened",
+                    None,
+                    serde_json::json!({}),
+                );
                 // GAP-2.3: Spawn IPC listener now that the app is running.
                 if self.ipc_handle.is_none() {
                     let socket_path = crate::ipc::listener::default_socket_path();
@@ -2392,6 +2497,15 @@ impl PureTermApp {
                             }
                         }
                     }
+                }
+                // GAP-6.7: a PTY reached EOF — emit one session.exited per pane.
+                for (tab_id, pane_id, _, _) in &exited_panes {
+                    self.events.emit(
+                        crate::events::Category::Session,
+                        "session.exited",
+                        None,
+                        serde_json::json!({ "tab_id": tab_id.0, "pane_id": pane_id.0 }),
+                    );
                 }
                 // 处理退出事件：关闭已退出的 pane（如果只有一个 pane 则关闭整个 tab）
                 if let Some((tab_id, pane_id, created_at, pane_count)) = exited_panes.first() {
@@ -2594,6 +2708,13 @@ impl PureTermApp {
                     }
                     self.main_window = None;
                     self.tabs.clear();
+                    // GAP-6.7: main window closed.
+                    self.events.emit(
+                        crate::events::Category::Window,
+                        "window.closed",
+                        None,
+                        serde_json::json!({}),
+                    );
                 }
                 // PureTerm: 全部窗口（主终端 + 设置 + detached）都关闭时退出进程
                 // （Alacritty 上游规范行为）。这样 16ms TerminalWakeup 循环里
@@ -2603,6 +2724,13 @@ impl PureTermApp {
                     && self.settings_window.is_none()
                     && self.detached_windows.is_empty()
                 {
+                    // GAP-6.7: the app is quitting.
+                    self.events.emit(
+                        crate::events::Category::App,
+                        "app.quit",
+                        None,
+                        serde_json::json!({}),
+                    );
                     log::info!("All windows closed, exiting");
                     return iced::exit();
                 }
@@ -2770,6 +2898,12 @@ impl PureTermApp {
                 if self.tabs.iter().any(|t| t.id == tab_id) {
                     self.active_tab = tab_id;
                     self.refresh_status_bar_cwd();
+                    self.events.emit(
+                        crate::events::Category::Surface,
+                        "tab.switched",
+                        None,
+                        serde_json::json!({ "tab_id": tab_id.0 }),
+                    );
                 }
             }
             Message::NextTab => {
@@ -2777,6 +2911,12 @@ impl PureTermApp {
                     let next = (idx + 1) % self.tabs.len();
                     self.active_tab = self.tabs[next].id;
                     self.refresh_status_bar_cwd();
+                    self.events.emit(
+                        crate::events::Category::Surface,
+                        "tab.switched",
+                        None,
+                        serde_json::json!({ "tab_id": self.active_tab.0 }),
+                    );
                 }
             }
             Message::PrevTab => {
@@ -2784,12 +2924,24 @@ impl PureTermApp {
                     let prev = if idx == 0 { self.tabs.len() - 1 } else { idx - 1 };
                     self.active_tab = self.tabs[prev].id;
                     self.refresh_status_bar_cwd();
+                    self.events.emit(
+                        crate::events::Category::Surface,
+                        "tab.switched",
+                        None,
+                        serde_json::json!({ "tab_id": self.active_tab.0 }),
+                    );
                 }
             }
             Message::ActivateTabByIndex(i) => {
                 if i < self.tabs.len() {
                     self.active_tab = self.tabs[i].id;
                     self.refresh_status_bar_cwd();
+                    self.events.emit(
+                        crate::events::Category::Surface,
+                        "tab.switched",
+                        None,
+                        serde_json::json!({ "tab_id": self.active_tab.0 }),
+                    );
                 }
             }
             Message::ClipboardPaste(text) => {
@@ -3091,7 +3243,19 @@ impl PureTermApp {
             // ── GAP-7.4 Feed 审批面板 ──────────────────────────────────────
             #[cfg(unix)]
             Message::FeedResolve { id, choice } => {
+                // GAP-6.7: capture session_id before resolve drains the pending entry.
+                let session_id = self
+                    .feed_panel
+                    .pending
+                    .get(&id)
+                    .map(|p| p.req.session_id.clone());
                 self.feed_panel.resolve(id, choice, crate::feed_panel::ResolveSource::User);
+                self.events.emit(
+                    crate::events::Category::Feed,
+                    "feed.resolved",
+                    session_id,
+                    serde_json::json!({ "choice": choice.as_str(), "source": "user" }),
+                );
             }
             #[cfg(unix)]
             Message::FeedDismiss => {
@@ -3106,7 +3270,19 @@ impl PureTermApp {
             Message::FeedTick => {
                 // 120s 软超时 → 自动 Deny。
                 for id in self.feed_panel.expire_timeouts() {
+                    // GAP-6.7: capture session_id before resolve drains it.
+                    let session_id = self
+                        .feed_panel
+                        .pending
+                        .get(&id)
+                        .map(|p| p.req.session_id.clone());
                     self.feed_panel.resolve(id, crate::feed_client::FeedChoice::Deny, crate::feed_panel::ResolveSource::Timeout);
+                    self.events.emit(
+                        crate::events::Category::Feed,
+                        "feed.resolved",
+                        session_id,
+                        serde_json::json!({ "choice": "deny", "source": "timeout" }),
+                    );
                 }
             }
             #[cfg(unix)]
@@ -3207,6 +3383,13 @@ impl PureTermApp {
                         }
                     }
                 }
+            }
+            // GAP-6.7: in-process event bus subscriber. v1 has no consumer —
+            // events are persisted in `emit()` and consumed via the JSONL log /
+            // `pureterm events tail`. This arm is the hook for GAP-6.8.
+            Message::Event(_event) => {
+                #[cfg(debug_assertions)]
+                log::trace!("events: {} (seq {})", _event.kind, _event.seq);
             }
             Message::PtyExited(tab_id) => {
                 // 子进程退出，关闭对应 tab
@@ -3581,6 +3764,13 @@ impl PureTermApp {
                 // reports cwd on `cd` (not every prompt), so switching panes
                 // wouldn't otherwise update the cwd/branch shown.
                 self.refresh_status_bar_cwd();
+                // GAP-6.7: focus moved to another pane.
+                self.events.emit(
+                    crate::events::Category::Pane,
+                    "pane.focus_changed",
+                    None,
+                    serde_json::json!({ "pane_id": pane_id.0 }),
+                );
             }
             Message::PaneMousePressed(pane_id) => {
                 // 1) 把 pane 设为活跃(原 PaneFocused 副作用)。
@@ -4804,6 +4994,14 @@ impl PureTermApp {
         }
         self.config = new_config;
 
+        // GAP-6.7: config was reloaded from disk.
+        self.events.emit(
+            crate::events::Category::Config,
+            "config.reloaded",
+            None,
+            serde_json::json!({}),
+        );
+
         // Reload SSH profiles. If the user has the settings
         // panel open and is mid-edit, prefer the panel's
         // drafts (which are local edits) over the file's
@@ -4981,6 +5179,14 @@ impl PureTermApp {
             cwd: cwd.clone(),
             last_seen: now,
         });
+        // GAP-6.7: an agent reported its session id (SessionStart hook).
+        // Emitted before `session_id`/`kind` are moved into the pane map below.
+        self.events.emit(
+            crate::events::Category::Agent,
+            "agent.session_started",
+            Some(session_id.clone()),
+            serde_json::json!({ "kind": kind.clone() }),
+        );
         // Associate with the active pane (heuristic: the agent most recently
         // launched is the focused pane). `capture_layout` reads this map to
         // persist agent_session_id into PaneSnapshot for cold resume.
@@ -5078,7 +5284,16 @@ impl PureTermApp {
         match crate::daemon_client::ensure_daemon()
             .and_then(|s| crate::daemon_client::hibernate_session(&s, session_id))
         {
-            Ok(true) => log::info!("hibernated session {session_id}"),
+            Ok(true) => {
+                log::info!("hibernated session {session_id}");
+                // GAP-6.7: SIGSTOP applied to a daemon session.
+                self.events.emit(
+                    crate::events::Category::Session,
+                    "session.hibernated",
+                    Some(session_id.to_string()),
+                    serde_json::json!({}),
+                );
+            }
             Ok(false) => log::warn!("hibernate {session_id}: session unknown to daemon"),
             Err(e) => log::warn!("hibernate {session_id} failed: {e}"),
         }
@@ -5090,7 +5305,16 @@ impl PureTermApp {
         match crate::daemon_client::ensure_daemon()
             .and_then(|s| crate::daemon_client::resume_session(&s, session_id))
         {
-            Ok(true) => log::info!("resumed session {session_id}"),
+            Ok(true) => {
+                log::info!("resumed session {session_id}");
+                // GAP-6.7: SIGCONT applied to a hibernated session.
+                self.events.emit(
+                    crate::events::Category::Session,
+                    "session.resumed",
+                    Some(session_id.to_string()),
+                    serde_json::json!({}),
+                );
+            }
             Ok(false) => log::warn!("resume {session_id}: session unknown to daemon"),
             Err(e) => log::warn!("resume {session_id} failed: {e}"),
         }
@@ -5139,9 +5363,29 @@ impl PureTermApp {
         let memory_choice = self
             .feed_panel
             .consult_memory(&payload.session_id, payload.tool_name.as_deref().unwrap_or(""));
+        // GAP-6.7: capture payload fields for the event before moving it.
+        let session_id = payload.session_id.clone();
+        let request_meta = serde_json::json!({
+            "ipc_id": payload.ipc_id,
+            "event": payload.event,
+            "tool_name": payload.tool_name,
+            "subject": payload.subject(),
+        });
         self.feed_panel.pending.insert(id, PendingRequest { req: payload, reply });
+        self.events.emit(
+            crate::events::Category::Feed,
+            "feed.requested",
+            Some(session_id.clone()),
+            request_meta,
+        );
         if let Some(choice) = memory_choice {
             self.feed_panel.resolve(id, choice, ResolveSource::Memory);
+            self.events.emit(
+                crate::events::Category::Feed,
+                "feed.resolved",
+                Some(session_id),
+                serde_json::json!({ "choice": choice.as_str(), "source": "memory" }),
+            );
         } else {
             self.feed_panel.focused = Some(id);
         }
@@ -5271,6 +5515,19 @@ impl PureTermApp {
         );
         tab.active_pane = new_pane_id;
         self.mark_layout_dirty();
+        // GAP-6.7: a split created a new pane + its backing local PTY.
+        self.events.emit(
+            crate::events::Category::Pane,
+            "pane.split",
+            None,
+            serde_json::json!({ "pane_id": new_pane_id.0 }),
+        );
+        self.events.emit(
+            crate::events::Category::Session,
+            "session.spawned",
+            None,
+            serde_json::json!({ "kind": "local", "pane_id": new_pane_id.0 }),
+        );
     }
 
     /// Close the active pane. If it's the last pane, close the tab.
@@ -7227,6 +7484,13 @@ impl PureTermApp {
             reconnect_stream_builder,
         );
 
+        // GAP-6.7: in-process event bus → Message::Event (foundation for
+        // GAP-6.8 programmable sidebar; v1 consumer is the JSONL log + CLI).
+        let events_sub = Subscription::run_with(
+            EventsKey(self.events.clone()),
+            events_stream_builder,
+        );
+
         #[cfg(unix)]
         let subs = vec![
             keyboard_sub,
@@ -7239,6 +7503,7 @@ impl PureTermApp {
             feed_tick_sub,
             hibernation_scan_sub,
             hibernation_countdown_sub,
+            events_sub,
         ];
         #[cfg(not(unix))]
         let subs = vec![
@@ -7248,6 +7513,7 @@ impl PureTermApp {
             resize_sub,
             config_sub,
             ipc_sub,
+            events_sub,
         ];
 
         Subscription::batch(subs)

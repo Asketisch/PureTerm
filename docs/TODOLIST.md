@@ -57,12 +57,12 @@
 | B. UI/UX | 4 | 0 | 3 | 0 | 7 |
 | C. 终端交互 | 2 | 1 | 4 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
-| E. 集成与可编程 | 3 | 0 | 5 | 0 | 8 |
+| E. 集成与可编程 | 3 | 1 | 4 | 0 | 8 |
 | F. AI Agent | 2 | 4 | 2 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **19** | **6** | **21** | **3** | **49** |
+| **总计** | **19** | **7** | **20** | **3** | **49** |
 
-整体进度:✅ 19/49 ≈ 39% · 🚧 6
+整体进度:✅ 19/49 ≈ 39% · 🚧 7
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -417,13 +417,17 @@
 - **对标**: cmux `Sources/CmuxConfig.swift::commands`
 
 #### GAP-6.7 事件流 + 持久 JSONL 日志 {#gap-6-7}
-- **状态**: ❌
+- **状态**: 🚧(2026-06-22 代码闭环 + 270 单测全绿 + release 编译通过 + CLI 冒烟通过;**待 dist .app 重打包 + 手动 GUI E2E**)
 - **优先级**: P1
-- **PureTerm 现状**: 无
-- **目标**: Socket API `events` 命名空间;事件分类(window / workspace / surface / pane / notification / feed / agent / sidebar / browser / app / config);JSONL 持久化 `~/.local/share/pureterm/events.jsonl`,16 MiB rotation;4096 in-memory replay buffer;`tokio::sync::broadcast` channel;CLI `pureterm events --type=feed`
-- **依赖**: GAP-6.1
-- **风险点**: 高频事件性能
-- **DoD**: `pureterm events --type=feed` 实时显示审批请求
+- **架构(GUI 单一事件中枢)**:`EventBus`(`Arc` 字段)`emit(&self)` 双写 —— (1) `events.jsonl` 追加 + 16 MiB rotation(rename→`.jsonl.1`,单 archive);(2) `tokio::sync::broadcast::channel(4096)`(容量即 replay 窗口)。GUI 是唯一写入方(hook shim 是独立进程,feed 请求经 IPC 到 GUI 才 emit);**daemon v1 零改动**。实时消费走**文件 tail**(`pureterm events tail`),不动 wire 协议(IPC listener 一连接一请求);一个 one-shot `events.recent` IPC method 声明命名空间,`events.subscribe` streaming 延后
+- **事件模型(12 类)**:`Window/Workspace/Surface/Pane/Session/Notification/Feed/Agent/Sidebar/Browser/App/Config` —— PTY 生命周期单列 `Session`(避免 GAP-2.1 重命名)。`--type` 过滤:`feed`(类前缀)或 `feed.resolved`(`.kind` 后缀);顶层 `cat`+`kind` 字段免子串解析
+- **实现位置**:`crates/pureterm/src/events.rs`(schema:`Category`+`AppEvent`+`TypeFilter`)+ `events_log.rs`(纯 I/O:`events_path`/`append_to_path`+rotation/`read_recent_from_path`/`tail_follow` poll 75ms + 旋转重开;镜像 `feed_log` path-override 测试分离)+ `events_bus.rs`(`EventBus`:`emit`/`subscribe`;`emit` 为 `&self` 内部可变)+ `iced_app.rs`(`events` 字段 + `Message::Event` + `EventsKey`/`events_stream_builder` iced Subscription + ~20 emit 点:feed.requested/resolved×3、app.started/quit、window.opened/closed、tab.created/switched、pane.split/focus_changed、session.spawned(local/ssh)/exited/killed/reattached/hibernated/resumed、config.reloaded、agent.session_started)+ `cli.rs`(`Events`/`EventsSub::{List,Tail}` 本地读)+ `ipc/methods.rs`(`events.recent`)
+- **依赖**: GAP-6.1 ✅
+- **风险点**: 高频事件性能(进程内 broadcast 容错 `Lagged`;文件 tail poll 75ms)
+- **单元测试**: `events`(6:serde/category/filter)+ `events_log`(6:append/rotation/read_recent 过滤+since_seq+跳坏行/archive path)+ `events_bus`(4:seq 单调/落盘/无订阅者/订阅接收)= 16 新;整套 270 全绿
+- **DoD 验证(代码侧)**:`pureterm events list/tail --type feed` 本地读 JSONL,filter 前缀/`.kind` 双语义 ✅(CLI 冒烟)
+- **DoD 验证(待手动 GUI E2E)**:`./build.sh release` 重打包 → 启 GUI + Claude Code 触发审批 → 另开终端 `pureterm events tail --type feed` 实时见 `feed.requested`/`feed.resolved`(source=user/timeout/memory)
+- **留后续迭代**:`events.subscribe` streaming over IPC(notification wire 类型 + 长连接)、`notification.*` producer(需先加 `TerminalEvent::Bell`)、`workspace/sidebar/browser` producer(待 GAP-2.1/3.1/3.5)、kqueue/inotify tail 优化、Feed 事件转发到 daemon(via 6.7)、tmux 兼容(6.6)/可编程 Sidebar(6.8)消费事件流
 - **对标**: cmux `Sources/EventStream.swift` + `cmux events`
 
 ### E.P2
@@ -673,7 +677,7 @@
 | GAP-6.4 | 自定义命令注册 | E | P1 | ✅ | 2026-06-15 | `[[commands]]` → keymap 绑定 + ⌘⇧P 面板;触发写 `command+\r` 进当前 pane PTY(复用 write_to_pty);split_mods_and_key 支持 +/- 分隔 + macOS shift 字母双形态;13 单测 |
 | GAP-6.5 | Dock 集成 | E | P3 | ❌ | - | - |
 | GAP-6.6 | tmux 兼容子集 | E | P2 | ❌ | - | - |
-| GAP-6.7 | 事件流 + JSONL 日志 | E | P1 | ❌ | - | - |
+| GAP-6.7 | 事件流 + JSONL 日志 | E | P1 | 🚧 | 2026-06-22 | GUI 单一事件中枢(`EventBus` 双写 events.jsonl 16MiB rotation + broadcast 4096);12 类(PTY 单列 Session);实时=文件 tail(不动 wire);`events.recent` IPC + `pureterm events list/tail` CLI + ~20 emit 点(feed/tab/pane/session/config/agent);16 新单测,整套 270 绿;待 dist 重打包 + GUI E2E |
 | GAP-6.8 | 可编程 Sidebar 解释器 | E | P2 | ❌ | - | - |
 | GAP-7.1 | Agent Hooks 通用框架 | F | P0 | ✅ | 2026-06-18 | standalone shim(`pureterm hook`);双规则 deny_pattern(command/file_path/prompt/message)+ 外部 command(超时 kill);对齐 CC hooks 协议(9 事件 / permissionDecision / decision:block / exit 2);35 直接单测 + 整套 171 全绿;release 二进制 DoD(shim 对 rm -rf 输出 permissionDecision:deny)。真 CC 往返待手动登记 settings.json(自动安装器=GAP-7.2) |
 | GAP-7.2 | 16+ agent adapter | F | P0 | ✅ | 2026-06-18 | `AgentAdapter` trait + `ClaudeCodeAdapter`;`pureterm agents install/list/uninstall`;加锁 RMW 写 `~/.claude/settings.json`(保留既有内容,命令哨兵幂等/精准卸载);默认仅注册已配规则事件,`--all-events`/`--dry-run`;10 单测 + 181 全绿 |

@@ -549,6 +549,27 @@ impl SocketRouter {
             router.register_noop("agent.session_started", "Agent sessions not available on this platform");
         }
 
+        // ── events.* (GAP-6.7, 1 method) ─────────────────────────────
+        // `events.recent`: one-shot read of recent events from events.jsonl.
+        // The file is the real-time source (CLI `pureterm events tail` tails
+        // it); this method is the programmatic / `pureterm msg` entry point.
+        // Cross-platform — pure file read, no side effect.
+        router.register("events.recent", |params, _snap| {
+            let g = |key: &str| {
+                params.as_ref().and_then(|p| p.get(key))
+            };
+            let filter_raw = g("type").and_then(|v| v.as_str());
+            let limit = g("limit").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(50);
+            let since_seq = g("since_seq").and_then(|v| v.as_u64());
+            let filter = crate::events::TypeFilter::parse(filter_raw);
+            let entries = crate::events_log::read_recent(&filter, limit, since_seq);
+            let arr: Vec<Value> = entries
+                .into_iter()
+                .map(|e| serde_json::to_value(&e).unwrap_or(Value::Null))
+                .collect();
+            (Ok(serde_json::json!({ "events": arr })), None)
+        });
+
         Arc::new(router)
     }
 
