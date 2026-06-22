@@ -118,6 +118,14 @@ pub enum Command {
         #[command(subcommand)]
         cmd: AgentsSub,
     },
+    /// GAP-7.3: hibernate/resume agent sessions via the daemon (SIGSTOP/
+    /// SIGCONT) + list idle status. Unix only. (Singular `agent` — distinct
+    /// from `agents`, the adapter installer.)
+    #[cfg(unix)]
+    Agent {
+        #[command(subcommand)]
+        cmd: AgentSub,
+    },
 }
 
 // ── Group subcommands ────────────────────────────────────────────────────
@@ -396,6 +404,93 @@ pub enum AgentsSub {
         /// Agent id, e.g. `claude-code`
         adapter: String,
     },
+    /// GAP-7.5: list persisted agent session ids (for cold resume). Reads the
+    /// local `agents/<kind>-sessions.json` store; no IPC.
+    Sessions {
+        /// Filter by agent kind (e.g. `claude-code`); omit to list all kinds
+        #[arg(long)]
+        kind: Option<String>,
+    },
+}
+
+/// GAP-7.3: hibernate/resume agent sessions via the daemon control plane
+/// (`agent.hibernate` / `agent.resume`). Hits `puretermd` directly (not the
+/// GUI IPC socket).
+#[cfg(unix)]
+#[derive(Subcommand)]
+pub enum AgentSub {
+    /// SIGSTOP a live session (hibernate it to free resources)
+    Hibernate {
+        /// Daemon session id (see `agent list`)
+        session_id: String,
+    },
+    /// SIGCONT a hibernated session (resume it)
+    Resume {
+        /// Daemon session id
+        session_id: String,
+    },
+    /// List all daemon sessions with idle/hibernated status
+    List,
+}
+
+/// GAP-7.3: dispatch `agent` subcommands against the daemon.
+#[cfg(unix)]
+fn dispatch_agent(cmd: AgentSub) {
+    use crate::daemon_client;
+    let socket = match daemon_client::ensure_daemon() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("puretermd unavailable: {e}");
+            std::process::exit(1);
+        }
+    };
+    match cmd {
+        AgentSub::Hibernate { session_id } => match daemon_client::hibernate_session(&socket, &session_id) {
+            Ok(true) => println!("hibernated {session_id} (SIGSTOP)"),
+            Ok(false) => {
+                eprintln!("session {session_id} not found");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("hibernate failed: {e}");
+                std::process::exit(1);
+            }
+        },
+        AgentSub::Resume { session_id } => match daemon_client::resume_session(&socket, &session_id) {
+            Ok(true) => println!("resumed {session_id} (SIGCONT)"),
+            Ok(false) => {
+                eprintln!("session {session_id} not found");
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("resume failed: {e}");
+                std::process::exit(1);
+            }
+        },
+        AgentSub::List => match daemon_client::list_sessions(&socket) {
+            Ok(sessions) => {
+                if sessions.is_empty() {
+                    println!("no sessions");
+                }
+                for s in sessions {
+                    let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                    let kind = s.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
+                    let agent = s.get("agent_kind").and_then(|v| v.as_str()).unwrap_or("-");
+                    let hib = s.get("hibernated").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let pty = s.get("pty_idle_secs").and_then(|v| v.as_u64());
+                    let cpu = s.get("cpu_idle_secs").and_then(|v| v.as_u64());
+                    let mark = if hib { "❄" } else { " " };
+                    println!(
+                        "{mark} {id:<28} kind={kind:<6} agent={agent:<12} pty_idle={pty:?} cpu_idle={cpu:?}"
+                    );
+                }
+            }
+            Err(e) => {
+                eprintln!("list failed: {e}");
+                std::process::exit(1);
+            }
+        },
+    }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────
@@ -441,6 +536,9 @@ pub fn run(cli: Cli) {
         Command::Hook { event } => crate::agent_hooks::run_hook_shim(event),
         // GAP-7.2: writes the agent's hook config directly. Local only.
         Command::Agents { cmd } => crate::agent_adapters::dispatch(cmd),
+        // GAP-7.3: hibernate/resume via the daemon control plane.
+        #[cfg(unix)]
+        Command::Agent { cmd } => dispatch_agent(cmd),
     }
 }
 

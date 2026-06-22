@@ -202,10 +202,22 @@ pub fn create_local(
     cols: u16,
     rows: u16,
     cwd: Option<&str>,
+    argv: Option<&[String]>,
+    agent_kind: Option<&str>,
 ) -> io::Result<(String, PathBuf)> {
     let mut params = serde_json::json!({ "cols": cols, "rows": rows });
     if let Some(c) = cwd {
         params["working_directory"] = serde_json::Value::String(c.to_string());
+    }
+    // GAP-7.5: optional explicit argv (cold resume of an agent, e.g.
+    // `claude --resume <id>`) + agent_kind tag for hibernation eligibility.
+    if let Some(argv) = argv {
+        params["argv"] = serde_json::Value::Array(
+            argv.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
+        );
+    }
+    if let Some(k) = agent_kind {
+        params["agent_kind"] = serde_json::Value::String(k.to_string());
     }
     let resp = rpc(socket, "session.create", Some(params))?;
     if let Some(err) = &resp.error {
@@ -332,6 +344,41 @@ pub fn kill_session(socket: &Path, session_id: &str) -> io::Result<bool> {
     Ok(resp
         .result
         .and_then(|r| r.get("killed").and_then(|v| v.as_bool()))
+        .unwrap_or(false))
+}
+
+/// GAP-7.3: SIGSTOP a daemon session's child (hibernate). The PTY stays open,
+/// so `resume_session` can SIGCONT it back to life. Returns the daemon's
+/// `hibernated` flag (`false` if the session was unknown).
+pub fn hibernate_session(socket: &Path, session_id: &str) -> io::Result<bool> {
+    let resp = rpc(
+        socket,
+        "agent.hibernate",
+        Some(serde_json::json!({ "session_id": session_id })),
+    )?;
+    if let Some(err) = &resp.error {
+        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
+    }
+    Ok(resp
+        .result
+        .and_then(|r| r.get("hibernated").and_then(|v| v.as_bool()))
+        .unwrap_or(false))
+}
+
+/// GAP-7.3: SIGCONT a hibernated daemon session's child (resume). Returns the
+/// daemon's `resumed` flag (`false` if the session was unknown).
+pub fn resume_session(socket: &Path, session_id: &str) -> io::Result<bool> {
+    let resp = rpc(
+        socket,
+        "agent.resume",
+        Some(serde_json::json!({ "session_id": session_id })),
+    )?;
+    if let Some(err) = &resp.error {
+        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
+    }
+    Ok(resp
+        .result
+        .and_then(|r| r.get("resumed").and_then(|v| v.as_bool()))
         .unwrap_or(false))
 }
 

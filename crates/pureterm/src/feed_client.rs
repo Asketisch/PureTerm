@@ -189,6 +189,37 @@ pub fn notify_session_end(session_id: &str) {
     // 故意不读回复(fire-and-forget)。
 }
 
+/// GAP-7.5: fire-and-forget 通知 GUI 一个 agent 会话已启动(SessionStart hook),
+/// 以便 GUI 持久化 session id 用于后续冷恢复(`claude --resume <id>`)。
+///
+/// 发送 `agent.session_started { session_id, kind?, cwd? }` 后立即
+/// `shutdown(WRITE)` 不读回复。`kind` 标识 agent 类型(`claude-code`/`codex`),
+/// GUI 侧据此选 resume_command;`cwd` 帮助 GUI 把 session id 关联到正确的 pane。
+/// 任何错误(GUI 未运行等)静默忽略 —— 持久化失败不影响 agent 运行。
+pub fn notify_session_started(session_id: &str, kind: Option<&str>, cwd: Option<&str>) {
+    use std::io::Write;
+    let mut stream = match find_socket(None) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+    static NEXT_STARTED_ID: AtomicU64 = AtomicU64::new(1);
+    let id = NEXT_STARTED_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut params = serde_json::json!({ "session_id": session_id });
+    if let Some(k) = kind {
+        params["kind"] = serde_json::Value::String(k.to_string());
+    }
+    if let Some(c) = cwd {
+        params["cwd"] = serde_json::Value::String(c.to_string());
+    }
+    let request = JsonRpcRequest::with_params(id, "agent.session_started", params);
+    let Ok(mut line) = serde_json::to_string(&request) else { return };
+    line.push('\n');
+    let _ = stream.write_all(line.as_bytes());
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    // 故意不读回复(fire-and-forget)。
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::redundant_closure_call)]

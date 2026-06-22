@@ -26,6 +26,14 @@ pub struct PaneSnapshot {
     /// SSH profile name (for title + reconnect metadata lookup); `None` for local.
     pub ssh_profile: Option<String>,
     pub title: String,
+    /// GAP-7.5: agent session id (Claude Code / Codex) for cold resume via
+    /// `claude --resume <id>`. `None` for plain shells. `#[serde(default)]`
+    /// keeps v1 snapshots loadable (field absent ⇒ `None`).
+    #[serde(default)]
+    pub agent_session_id: Option<String>,
+    /// GAP-7.5: agent kind (`claude-code`/`codex`), pairs with agent_session_id.
+    #[serde(default)]
+    pub agent_kind: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -217,7 +225,29 @@ pub fn restore(
                 continue;
             };
             if !alive_ids.contains(sid.as_str()) {
-                // Session exited while the GUI was closed. Prune.
+                // GAP-7.5: session died while the GUI was closed. If this pane
+                // tracked an agent session id, cold-resume it (e.g.
+                // `claude --resume <id>`) into a fresh daemon session; otherwise
+                // prune (a plain shell can't be revived).
+                if let Some(agent_id) = pane_snap.agent_session_id.as_ref() {
+                    match cold_resume_agent(agent_id, pane_snap.agent_kind.as_deref()) {
+                        Ok(ctx) => {
+                            if Some(*old_id) == active_old_id {
+                                active_survived_old_id = Some(*old_id);
+                            }
+                            alive_panes.push((
+                                *old_id,
+                                RestoredPane { ctx, title: pane_snap.title.clone() },
+                            ));
+                            continue;
+                        }
+                        Err(e) => log::warn!(
+                            "session_restore: cold-resume agent {} failed ({e}); pruning",
+                            agent_id
+                        ),
+                    }
+                }
+                // Plain shell (no agent_session_id), or cold-resume failed: prune.
                 let _ = tree.remove(*old_id);
                 continue;
             }
@@ -321,6 +351,46 @@ pub fn restore(
     }
 }
 
+/// GAP-7.5: cold-resume an agent whose daemon session died while the GUI was
+/// closed. Resolves the agent's `resume_command` from `[[vault.agents]]` (by
+/// kind), substitutes `{session_id}`, spawns it via the daemon (which owns the
+/// new PTY), and attaches. Falls back to `claude --resume <id>` when the kind
+/// isn't configured. Built at 80×24 — the caller resizes after attach.
+#[cfg(unix)]
+fn cold_resume_agent(
+    agent_session_id: &str,
+    agent_kind: Option<&str>,
+) -> std::io::Result<Arc<TerminalContext>> {
+    use alacritty_terminal::term::test::TermSize;
+
+    let kind = agent_kind.unwrap_or("claude-code");
+    let argv = crate::app_config::AppConfig::load_vault_agents(
+        &crate::app_config::AppConfig::config_path(),
+    )
+    .into_iter()
+    .find(|e| e.kind == kind)
+    .map(|e| e.resume_command.clone())
+    .unwrap_or_else(|| {
+        // Default: `claude --resume <id>` (the most common agent).
+        vec!["claude".into(), "--resume".into(), agent_session_id.to_string()]
+    });
+    // Substitute the `{session_id}` placeholder in each argv element.
+    let argv: Vec<String> =
+        argv.iter().map(|a| a.replace("{session_id}", agent_session_id)).collect();
+
+    let daemon_socket = crate::daemon_client::ensure_daemon()?;
+    let (sid, _data_path) = crate::daemon_client::create_local(
+        &daemon_socket,
+        80,
+        24,
+        None,
+        Some(&argv),
+        Some(kind),
+    )?;
+    let ctx = TerminalContext::attach_local_via_daemon(&sid, TermSize::new(80, 24))?;
+    Ok(Arc::new(ctx))
+}
+
 /// Attach one pane's terminal context to a surviving daemon session. Local and
 /// SSH both go through `attach_existing` → `DaemonPty`; SSH reuses the live
 /// `ssh -tt` child (no re-auth). Built at a placeholder 80×24 — the caller
@@ -385,6 +455,8 @@ mod tests {
                     kind: "local".to_string(),
                     ssh_profile: None,
                     title: "zsh".to_string(),
+                    agent_session_id: Some("cc-abc".to_string()),
+                    agent_kind: Some("claude-code".to_string()),
                 }],
             }],
         };
@@ -393,10 +465,24 @@ mod tests {
         assert_eq!(back.version, SNAPSHOT_VERSION);
         assert_eq!(back.tabs.len(), 1);
         assert_eq!(back.tabs[0].panes[0].session_id.as_deref(), Some("daemon-1"));
+        // GAP-7.5: agent fields survive the round-trip (cold-resume persistence).
+        assert_eq!(back.tabs[0].panes[0].agent_session_id.as_deref(), Some("cc-abc"));
+        assert_eq!(back.tabs[0].panes[0].agent_kind.as_deref(), Some("claude-code"));
         assert_eq!(
             back.tabs[0].split_tree.pane_ids(),
             vec![crate::split_tree::PaneId(1)]
         );
+    }
+
+    /// GAP-7.5: a pre-GAP-7.5 (v1) pane has no agent_session_id/agent_kind.
+    /// `#[serde(default)]` must fill them with `None` rather than reject.
+    #[test]
+    fn pane_snapshot_v1_without_agent_fields_loads_with_defaults() {
+        let json = r#"{"session_id":"s","kind":"local","ssh_profile":null,"title":"t"}"#;
+        let p: PaneSnapshot = serde_json::from_str(json).expect("deserialize v1 pane");
+        assert_eq!(p.session_id.as_deref(), Some("s"));
+        assert!(p.agent_session_id.is_none());
+        assert!(p.agent_kind.is_none());
     }
 
     /// A snapshot with the wrong version is rejected by `load`'s version gate.

@@ -1,5 +1,6 @@
 mod agent_adapters;
 mod agent_hooks;
+mod agent_sessions;
 mod app_config;
 mod cli;
 mod config_watcher;
@@ -7,6 +8,8 @@ mod config_watcher;
 mod feed_client;
 #[cfg(unix)]
 mod feed_panel;
+#[cfg(unix)]
+mod hibernate_panel;
 #[cfg(unix)]
 mod daemon_client;
 #[cfg(unix)]

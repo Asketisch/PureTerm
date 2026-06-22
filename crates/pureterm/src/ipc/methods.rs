@@ -50,6 +50,11 @@ pub enum IpcSideEffect {
     /// the request itself is replied to immediately with `{"ok": true}`.
     #[cfg(unix)]
     FeedClearSession { session_id: String },
+    /// GAP-7.5: a `[[agent.hook]]` SessionStart fired → persist the agent
+    /// session id (for cold resume via `claude --resume`) and associate it
+    /// with the owning pane. Fire-and-forget; replied immediately.
+    #[cfg(unix)]
+    AgentSessionStarted { session_id: String, kind: Option<String>, cwd: Option<String> },
 }
 
 // ── Handler type ─────────────────────────────────────────────────────────
@@ -515,6 +520,33 @@ impl SocketRouter {
         {
             router.register_noop("feed.request_approval", "Feed not available on this platform");
             router.register_noop("feed.clear_session", "Feed not available on this platform");
+        }
+
+        // ── agent.* (GAP-7.5, 1 method) ─────────────────────────────
+        // `agent.session_started`: SessionStart hook fire-and-forget 通知
+        // (shim → GUI) → 持久化 session id + 关联 pane(供冷恢复)。立即回复
+        // `{"ok": true}` + 副作用。
+        #[cfg(unix)]
+        {
+            router.register("agent.session_started", |params, _snap| {
+                let g = |key: &str| {
+                    params
+                        .as_ref()
+                        .and_then(|p| p.get(key).and_then(|v| v.as_str()))
+                        .map(|s| s.to_string())
+                };
+                let session_id = g("session_id").unwrap_or_default();
+                let kind = g("kind");
+                let cwd = g("cwd");
+                (
+                    Ok(serde_json::json!({"ok": true, "session_id": session_id})),
+                    Some(IpcSideEffect::AgentSessionStarted { session_id, kind, cwd }),
+                )
+            });
+        }
+        #[cfg(not(unix))]
+        {
+            router.register_noop("agent.session_started", "Agent sessions not available on this platform");
         }
 
         Arc::new(router)

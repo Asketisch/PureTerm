@@ -21,6 +21,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 use alacritty_terminal::event::WindowSize;
 use alacritty_terminal::tty;
@@ -65,6 +66,21 @@ pub struct SessionHandle {
     pub kind: String,
     pub child_pid: u32,
     pub data_socket_path: PathBuf,
+    /// GAP-7.5: agent type when this session backs an AI agent (e.g.
+    /// `claude-code`, `codex`). `None` for plain shells / SSH. Drives
+    /// hibernation eligibility (GAP-7.3) and lets the GUI re-persist the
+    /// session id after a cold resume.
+    pub agent_kind: Option<String>,
+    /// GAP-7.3: last time the PTY produced output. Written by the pump thread
+    /// on every `MasterRead::Data`; read by `list` to compute `pty_idle_secs`.
+    pub last_output_at: Arc<Mutex<Instant>>,
+    /// GAP-7.3: last time the child was seen consuming CPU. Updated by the CPU
+    /// sample tick (`SessionManager::sample_cpu_pass`); read by `list` to
+    /// compute `cpu_idle_secs`.
+    pub last_cpu_active_at: Arc<Mutex<Instant>>,
+    /// GAP-7.3: true while the child is SIGSTOPped (hibernated). Set/cleared by
+    /// `hibernate`/`resume` (M3); idle detection + CPU sampling skip these.
+    pub hibernated: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
@@ -84,6 +100,10 @@ impl Drop for SessionHandle {
 #[derive(Clone, Default)]
 pub struct SessionManager {
     sessions: Arc<Mutex<std::collections::HashMap<String, Arc<Mutex<SessionHandle>>>>>,
+    /// GAP-7.3: last CPU sample per session id, used by `sample_cpu_pass` to
+    /// detect CPU-time advancement (the dual idle condition for hibernation).
+    cpu_samples:
+        Arc<Mutex<std::collections::HashMap<String, crate::idle_probe::SampledCpuTimes>>>,
 }
 
 /// Serializable session descriptor (for `session.list`).
@@ -93,6 +113,18 @@ pub struct SessionInfo {
     pub kind: String,
     pub child_pid: u32,
     pub data_path: String,
+    /// GAP-7.5: agent type (`claude-code`/`codex`) when this session backs an
+    /// agent; `None` for plain shells. Drives hibernation eligibility.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_kind: Option<String>,
+    /// GAP-7.3: seconds since the PTY last produced output. `None` if unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pty_idle_secs: Option<u64>,
+    /// GAP-7.3: seconds since the child last consumed CPU. `None` if unknown.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cpu_idle_secs: Option<u64>,
+    /// GAP-7.3: true while the child is SIGSTOPped (hibernated).
+    pub hibernated: bool,
 }
 
 impl SessionManager {
@@ -108,6 +140,8 @@ impl SessionManager {
         cols: u16,
         rows: u16,
         cwd: Option<PathBuf>,
+        argv: Option<Vec<String>>,
+        agent_kind: Option<String>,
     ) -> io::Result<String> {
         let id = new_session_id();
         let window_size =
@@ -116,6 +150,17 @@ impl SessionManager {
         let mut options = tty::Options::default();
         options.env.extend(crate::osc7::prepare_osc7_env(&id));
         options.working_directory = cwd;
+        // GAP-7.5: when an explicit argv is given (cold resume of an agent via
+        // e.g. `claude --resume <id>`), spawn that command instead of the
+        // default shell. `tty::Options.shell` accepts any program + args, so
+        // no separate fork-and-exec path is needed.
+        if let Some(argv) = &argv {
+            if !argv.is_empty() {
+                let program = argv[0].clone();
+                let args = argv[1..].to_vec();
+                options.shell = Some(tty::Shell::new(program, args));
+            }
+        }
         let pty = tty::new(&options, window_size, 0)?;
         let child_pid = pty.child().id();
 
@@ -129,13 +174,20 @@ impl SessionManager {
         discovery::restrict_socket(&data_socket_path); // GAP-5.1 M5: owner-only
 
         let stop = Arc::new(AtomicBool::new(false));
-        let pump = spawn_pump(pty, listener, stop.clone());
+        let last_output_at = Arc::new(Mutex::new(Instant::now()));
+        let last_cpu_active_at = Arc::new(Mutex::new(Instant::now()));
+        let hibernated = Arc::new(AtomicBool::new(false));
+        let pump = spawn_pump(pty, listener, stop.clone(), last_output_at.clone());
 
         let handle = Arc::new(Mutex::new(SessionHandle {
             id: id.clone(),
             kind: "local".into(),
             child_pid,
             data_socket_path,
+            agent_kind,
+            last_output_at,
+            last_cpu_active_at,
+            hibernated,
             stop,
             join: Some(pump),
         }));
@@ -192,13 +244,20 @@ impl SessionManager {
         discovery::restrict_socket(&data_socket_path); // GAP-5.1 M5: owner-only
 
         let stop = Arc::new(AtomicBool::new(false));
-        let pump = spawn_pump(ssh_pty, listener, stop.clone());
+        let last_output_at = Arc::new(Mutex::new(Instant::now()));
+        let last_cpu_active_at = Arc::new(Mutex::new(Instant::now()));
+        let hibernated = Arc::new(AtomicBool::new(false));
+        let pump = spawn_pump(ssh_pty, listener, stop.clone(), last_output_at.clone());
 
         let handle = Arc::new(Mutex::new(SessionHandle {
             id: id.clone(),
             kind: "ssh".into(),
             child_pid,
             data_socket_path,
+            agent_kind: None,
+            last_output_at,
+            last_cpu_active_at,
+            hibernated,
             stop,
             join: Some(pump),
         }));
@@ -208,17 +267,33 @@ impl SessionManager {
 
     /// Enumerate live sessions as serializable descriptors.
     pub fn list(&self) -> Vec<SessionInfo> {
+        let now = Instant::now();
         self.sessions
             .lock()
             .unwrap()
             .values()
             .map(|h| {
                 let h = h.lock().unwrap();
+                // GAP-7.3: compute idle durations from the pump/CPU-tick timestamps.
+                let pty_idle_secs = h
+                    .last_output_at
+                    .lock()
+                    .ok()
+                    .map(|t| now.duration_since(*t).as_secs());
+                let cpu_idle_secs = h
+                    .last_cpu_active_at
+                    .lock()
+                    .ok()
+                    .map(|t| now.duration_since(*t).as_secs());
                 SessionInfo {
                     id: h.id.clone(),
                     kind: h.kind.clone(),
                     child_pid: h.child_pid,
                     data_path: h.data_socket_path.to_string_lossy().into_owned(),
+                    agent_kind: h.agent_kind.clone(),
+                    pty_idle_secs,
+                    cpu_idle_secs,
+                    hibernated: h.hibernated.load(Ordering::SeqCst),
                 }
             })
             .collect()
@@ -227,6 +302,50 @@ impl SessionManager {
     /// Path of a session's data socket (the GUI connects here after `attach`).
     pub fn data_path(&self, id: &str) -> Option<PathBuf> {
         self.sessions.lock().unwrap().get(id).map(|h| h.lock().unwrap().data_socket_path.clone())
+    }
+
+    /// GAP-7.3: sample every non-hibernated session's child CPU time and, if it
+    /// advanced since the last sample, refresh `last_cpu_active_at` (so
+    /// `cpu_idle_secs` reflects real CPU inactivity). Called by the daemon's
+    /// periodic CPU tick (`runtime::run`). Snapshots the session list, then
+    /// samples outside the session lock so the (blocking) ps/proc read doesn't
+    /// block `list`/`attach`/control traffic.
+    pub fn sample_cpu_pass(&self) {
+        let now = Instant::now();
+        let targets: Vec<(String, u32, Arc<Mutex<Instant>>, Arc<AtomicBool>)> = {
+            let map = self.sessions.lock().unwrap();
+            map.values()
+                .map(|h| {
+                    let h = h.lock().unwrap();
+                    (
+                        h.id.clone(),
+                        h.child_pid,
+                        h.last_cpu_active_at.clone(),
+                        h.hibernated.clone(),
+                    )
+                })
+                .collect()
+        };
+        for (id, pid, last_cpu_active_at, hibernated) in targets {
+            if hibernated.load(Ordering::SeqCst) {
+                continue;
+            }
+            let Some(sample) = crate::idle_probe::sample_cpu_times(pid) else {
+                continue;
+            };
+            let advanced = {
+                let mut samples = self.cpu_samples.lock().unwrap();
+                let prev = samples.insert(id, sample);
+                // First-ever sample counts as "active" (don't let a freshly
+                // created session read as CPU-idle before it has run).
+                prev.map_or(true, |p| p.total() != sample.total())
+            };
+            if advanced {
+                if let Ok(mut t) = last_cpu_active_at.lock() {
+                    *t = now;
+                }
+            }
+        }
     }
 
     /// Kill a session's child and remove it from the registry.
@@ -242,6 +361,48 @@ impl SessionManager {
             false
         }
     }
+
+    /// GAP-7.3: SIGSTOP the session's child (hibernate). The PTY stays open —
+    /// SIGSTOP freezes scheduling but doesn't close fds — so `resume` can
+    /// SIGCONT it back. Idempotent (already-hibernated is a no-op). Returns
+    /// `false` if the session is unknown.
+    pub fn hibernate(&self, id: &str) -> bool {
+        let map = self.sessions.lock().unwrap();
+        let Some(handle) = map.get(id) else { return false };
+        let h = handle.lock().unwrap();
+        if h.hibernated.load(Ordering::SeqCst) {
+            return true;
+        }
+        // SAFETY: SIGSTOP is async-signal-safe; child_pid is our own forked
+        // child (never a recycled foreign pid during this handle's lifetime).
+        unsafe { libc::kill(h.child_pid as i32, libc::SIGSTOP) };
+        h.hibernated.store(true, Ordering::SeqCst);
+        drop(h);
+        drop(map);
+        // Drop the cached CPU sample so the first post-resume sample counts as
+        // "active" (a stale sample would keep cpu_idle_secs high right after resume).
+        self.cpu_samples.lock().unwrap().remove(id);
+        true
+    }
+
+    /// GAP-7.3: SIGCONT a hibernated session's child (resume). Idempotent.
+    /// Refreshes the idle timestamps so a freshly-resumed session isn't
+    /// immediately re-judged idle. Returns `false` if the session is unknown.
+    pub fn resume(&self, id: &str) -> bool {
+        let map = self.sessions.lock().unwrap();
+        let Some(handle) = map.get(id) else { return false };
+        let h = handle.lock().unwrap();
+        unsafe { libc::kill(h.child_pid as i32, libc::SIGCONT) };
+        h.hibernated.store(false, Ordering::SeqCst);
+        let now = Instant::now();
+        if let Ok(mut t) = h.last_output_at.lock() {
+            *t = now;
+        }
+        if let Ok(mut t) = h.last_cpu_active_at.lock() {
+            *t = now;
+        }
+        true
+    }
 }
 
 /// Generate a unique session id (pid + monotonic counter).
@@ -256,10 +417,11 @@ fn spawn_pump<P: PumpablePty + Send + 'static>(
     pty: P,
     listener: UnixListener,
     stop: Arc<AtomicBool>,
+    last_output_at: Arc<Mutex<Instant>>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("puretermd-session".into())
-        .spawn(move || run_pump(pty, listener, stop))
+        .spawn(move || run_pump(pty, listener, stop, last_output_at))
         .expect("spawn session pump")
 }
 
@@ -279,7 +441,12 @@ fn cleanup_pump<P: PumpablePty>(
 }
 
 /// The pump loop. See module docs.
-fn run_pump<P: PumpablePty + Send + 'static>(pty: P, listener: UnixListener, stop: Arc<AtomicBool>) {
+fn run_pump<P: PumpablePty + Send + 'static>(
+    pty: P,
+    listener: UnixListener,
+    stop: Arc<AtomicBool>,
+    last_output_at: Arc<Mutex<Instant>>,
+) {
     let poll = match Poller::new() {
         Ok(p) => p,
         Err(e) => {
@@ -353,6 +520,10 @@ fn run_pump<P: PumpablePty + Send + 'static>(pty: P, listener: UnixListener, sto
                         ring.push(&buf[..n]);
                         broadcast_output(&mut subscribers, &buf[..n]);
                         flush_subscribers(&mut subscribers);
+                        // GAP-7.3: record PTY activity for idle detection.
+                        if let Ok(mut t) = last_output_at.lock() {
+                            *t = Instant::now();
+                        }
                     }
                     MasterRead::Eof => {
                         enqueue_exit_all(&mut subscribers, 0);
@@ -675,7 +846,7 @@ mod tests {
         assert!(mgr.list().is_empty());
         // create_local spawns a real shell; skip shape-assertions if it fails
         // (e.g. minimal CI without a usable login shell).
-        if let Ok(id) = mgr.create_local(80, 24, None) {
+        if let Ok(id) = mgr.create_local(80, 24, None, None, None) {
             let infos = mgr.list();
             assert_eq!(infos.len(), 1);
             assert_eq!(infos[0].id, id);
@@ -693,7 +864,7 @@ mod tests {
     #[test]
     fn local_session_child_survives_subscriber_drop() {
         let mgr = SessionManager::default();
-        let id = match mgr.create_local(80, 24, None) {
+        let id = match mgr.create_local(80, 24, None, None, None) {
             Ok(id) => id,
             Err(_) => return, // no usable login shell in this environment
         };

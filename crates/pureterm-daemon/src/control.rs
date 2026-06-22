@@ -133,7 +133,11 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                 )
             } else {
                 let cwd = sparam(request, "working_directory").map(PathBuf::from);
-                state.manager.create_local(cols, rows, cwd)
+                // GAP-7.5: optional explicit argv (cold resume of an agent) +
+                // agent_kind tag for hibernation eligibility (GAP-7.3).
+                let argv = aparam(request, "argv");
+                let agent_kind = sparam(request, "agent_kind");
+                state.manager.create_local(cols, rows, cwd, argv, agent_kind)
             };
             match sid {
                 Ok(s) => Ok(serde_json::json!({ "session_id": s })),
@@ -164,6 +168,34 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
             };
             Ok(serde_json::json!({ "killed": state.manager.kill(&sid) }))
         }
+        // ── agent.* (GAP-7.3 hibernation control plane) ───────────────
+        "agent.hibernate" => {
+            let sid = match sparam(request, "session_id") {
+                Some(s) => s,
+                None => {
+                    return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing session_id");
+                }
+            };
+            Ok(serde_json::json!({ "hibernated": state.manager.hibernate(&sid) }))
+        }
+        "agent.resume" => {
+            let sid = match sparam(request, "session_id") {
+                Some(s) => s,
+                None => {
+                    return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing session_id");
+                }
+            };
+            Ok(serde_json::json!({ "resumed": state.manager.resume(&sid) }))
+        }
+        "agent.list_hibernated" => {
+            let hib = state
+                .manager
+                .list()
+                .into_iter()
+                .filter(|s| s.hibernated)
+                .collect::<Vec<_>>();
+            Ok(serde_json::json!({ "sessions": hib }))
+        }
         other => {
             return JsonRpcResponse::method_not_found(id, other);
         }
@@ -192,6 +224,17 @@ fn uparam(request: &JsonRpcRequest, key: &str) -> Option<u16> {
 
 fn sparam(request: &JsonRpcRequest, key: &str) -> Option<String> {
     request.params.as_ref()?.get(key)?.as_str().map(|s| s.to_string())
+}
+
+/// GAP-7.5: parse a JSON array of strings param (e.g. `argv` for cold resume
+/// of an agent via `claude --resume <id>`). Non-string elements are dropped.
+fn aparam(request: &JsonRpcRequest, key: &str) -> Option<Vec<String>> {
+    request
+        .params
+        .as_ref()?
+        .get(key)?
+        .as_array()
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
 }
 
 #[cfg(test)]

@@ -53,16 +53,16 @@
 
 | 类别 | ✅ | 🚧 | ❌ | ⛔ | 小计 |
 |---|---|---|---|---|---|
-| A. 核心架构 | 3 | 0 | 2 | 0 | 5 |
+| A. 核心架构 | 4 | 0 | 1 | 0 | 5 |
 | B. UI/UX | 4 | 0 | 3 | 0 | 7 |
 | C. 终端交互 | 2 | 1 | 4 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
 | E. 集成与可编程 | 3 | 0 | 5 | 0 | 8 |
-| F. AI Agent | 2 | 1 | 5 | 0 | 8 |
+| F. AI Agent | 2 | 3 | 3 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **18** | **3** | **25** | **3** | **49** |
+| **总计** | **19** | **5** | **22** | **3** | **49** |
 
-整体进度:✅ 18/49 ≈ 37% · 🚧 3
+整体进度:✅ 19/49 ≈ 39% · 🚧 5
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -136,13 +136,13 @@
 - **对标**: cmux `Sources/TerminalController.swift`(21540 行)
 
 #### GAP-2.4 远程守护进程 `puretermd` 等价物 {#gap-2-4}
-- **状态**: ❌
+- **状态**: ✅(2026-06-22 回填:由 GAP-5.1 的 `puretermd` 实质满足 —— 独立守护进程 + 持久 PTY + 关 GUI 不丢会话。本 GAP 不再单独追踪)
 - **优先级**: P1
-- **PureTerm 现状**: 无独立守护进程;SSH PTY 由 `crates/pureterm/src/ssh/pty.rs` 在主进程内管理,会话绑死在窗口
+- **PureTerm 现状**: 见 GAP-5.1(`crates/pureterm-daemon/`)。`puretermd` 单例(flock)+ `setsid`,本地 + SSH PTY 均由其拥有,GUI 是瘦客户端(`DaemonPty`)。注:本机 Unix-domain socket,非网络远程主机(网络远程属 GAP-5.2 SSH tunnel 范畴)
 - **目标**: 独立 `puretermd` Rust binary(`tokio::main()`),持久 PTY 会话(本地 + SSH),Session Manager 集中管理;接受 Socket API v2 调用;启动方式 `launchd`(macOS) / `systemd --user`(Linux) / 服务(Windows)
-- **依赖**: GAP-2.3(Socket API)
-- **风险点**: 启动顺序、崩溃恢复、版本兼容
-- **DoD**: 启动 `puretermd`,GUI 关闭后再启动,之前的 session 可恢复
+- **依赖**: GAP-2.3 ✅
+- **风险点**: 启动顺序、崩溃恢复、版本兼容(已在 GAP-5.1 M4 登录自启动 + exe_mtime stale 检测解决)
+- **DoD**: 启动 `puretermd`,GUI 关闭后再启动,之前的 session 可恢复 ✅(GAP-5.1 M1-M5 闭环)
 - **对标**: cmux `daemon/remote/cmuxd-remote`
 
 ### A.P3
@@ -528,23 +528,30 @@
 ### F.P1
 
 #### GAP-7.3 Agent Hibernation {#gap-7-3}
-- **状态**: ❌
+- **状态**: 🚧(2026-06-22 M2+M3 代码闭环:daemon idle 采集 + GUI 决策 + SIGSTOP;**待 dist 重打包 + 手动 GUI E2E**)
 - **优先级**: P1
-- **PureTerm 现状**: 无
-- **目标**: 监控 idle 时间;超阈值弹确认(`maxLiveTerminals=12, idleSeconds=5, 60s confirmation`);`SIGSTOP + 保存 session id`;`--resume <id>` 重启;`nix` crate(Unix);定期 `top -l 1 -pid <pid>` 或 `/proc/<pid>/stat`
-- **依赖**: GAP-7.2
-- **风险点**: SIGSTOP 不可移植到 Windows
-- **DoD**: 5 个 agent,3 个 idle 5 分钟后被 hibernate,resume 后 session 恢复
+- **实现位置(M2)**:`crates/pureterm-daemon/src/idle_probe.rs`(`SampledCpuTimes` + `sample_cpu_times(pid)` macOS `ps -o time=` / Linux `/proc/<pid>/stat` 第 14/15 字段)+ `session.rs`(`SessionHandle` 加 `last_output_at`/`last_cpu_active_at`/`hibernated`;`run_pump` MasterRead::Data 写 last_output_at;`SessionManager::sample_cpu_pass` CPU 增量比对刷新 last_cpu_active_at;`SessionInfo` 加 `pty_idle_secs`/`cpu_idle_secs`/`agent_kind`/`hibernated`,`list` 填充)+ `runtime.rs`(1s CPU 采样 tick tokio task)。双条件 idle:PTY 无输出 且 CPU 近零
+- **实现位置(M3)**:`session.rs::SessionManager::hibernate/resume`(SIGSTOP/SIGCONT via `libc::kill`,照 `kill` 但只置标志不 remove;resume 刷新 idle 时间戳)+ `control.rs`(`agent.hibernate`/`agent.resume`/`agent.list_hibernated` RPC)+ `daemon_client.rs::hibernate_session/resume_session`+ `hibernate_panel.rs`(新建:`HibernationPanelState` + `PendingHibernation` + 60s 倒计时 + request/confirm/cancel/expire,抄 `feed_panel`)+ `iced_app.rs`(`HibernationScanTick`/`CountdownTick`/`Confirm`/`Cancel`/`Resume` Message + 订阅 + `hibernation_scan` 决策(双条件 idle + max_live_terminals)+ `do_hibernate`/`do_resume` + `view_hibernate_panel` pinned overlay + `[agent.hibernation]`/`[[vault.agents]]` config reload)+ `cli.rs`(`pureterm agent hibernate/resume/list` 走 daemon control,`AgentSub` + `dispatch_agent`)
+- **PureTerm 现状**: 完整闭环 —— daemon idle 采集 → GUI 决策(超 max_live_terminals 弹面板)→ SIGSTOP → 面板/CLI/重启 resume
+- **目标**: 监控 idle 时间;超阈值弹确认(`maxLiveTerminals=12, idleSeconds=5, 60s confirmation`);`SIGSTOP + 保存 session id`;`--resume <id>` 恢复;定期 `/proc/<pid>/stat`(macOS `ps`)
+- **依赖**: GAP-7.2 ✅;GAP-7.5 ✅(冷恢复 = resume fallback)
+- **风险点**: SIGSTOP 不可移植到 Windows(冷恢复仍可用);pane↔session_id 关联用启发式(active pane)
+- **DoD**: 5 个 agent,3 个 idle 5 分钟后被 hibernate,resume 后 session 恢复 ✅(代码侧;待 GUI E2E)
+- **单元测试**: `idle_probe`(4:total/parse_macos_time/live pid/dead pid)+ `hibernate_panel`(5:request/confirm/cancel/expire/dedup);pureterm 整套 235 + daemon 32 全绿(instance_lock 环境除外)
+- **留后续迭代**: dist 重打包 + GUI E2E、状态栏 ❄ pane 指示(deferred —— resume 已有面板/CLI/重启三入口)、pane↔session_id 按 child_pid 精确关联
 - **对标**: cmux `Sources/AgentHibernation.swift`
 
 #### GAP-7.5 Agent Session Restore {#gap-7-5}
-- **状态**: ❌
+- **状态**: 🚧(2026-06-22 M1 代码闭环:session id 持久化 + 冷恢复;**待 dist 重打包 + 手动 GUI E2E**)
 - **优先级**: P1
-- **PureTerm 现状**: 无
+- **实现位置(M1)**:`agent_sessions.rs`(新建:`AgentSessionStore` 读写 `data_dir()/agents/<kind>-sessions.json`,原子写照 `session_restore::save_atomic`,FIFO 16 条)+ `feed_client.rs::notify_session_started`(fire-and-forget,照 `notify_session_end`)+ `agent_hooks.rs`(SessionStart 钩子 + `infer_agent_kind` env/transcript 启发式)+ `ipc/methods.rs`(`agent.session_started` + `IpcSideEffect::AgentSessionStarted`)+ `iced_app.rs`(`handle_agent_session_started` 写 store + 按 active pane 关联 `agent_sessions` map;`capture_layout` 写进 `PaneSnapshot.agent_session_id`)+ `session_restore.rs::cold_resume_agent`(死 session + 有 agent_session_id → 查 `[[vault.agents]]` resume_command → `claude --resume <id>` via `create_local(argv)` → 重 attach)+ `session.rs::create_local` 加 `argv/agent_kind`(`tty::Options.shell = Some(Shell::new(..))` spawn 任意命令)+ `app_config.rs::load_vault_agents`(`[[vault.agents]]` typed serde)+ `cli.rs`(`pureterm agents sessions` 本地读 store)
+- **PureTerm 现状**: agent session id 经 `HookInput.session_id`(agent 自报)→ SessionStart hook → 持久化;restore 时若 daemon session 死且 pane 有 agent_session_id → 冷恢复 spawn `claude --resume`
 - **目标**: 持久化 session id 到 `~/.local/share/pureterm/agents/<agent>-sessions.json`;启动时 `--resume <id>`;支持 `claude --resume` / `codex --resume`
-- **依赖**: GAP-7.2、GAP-2.4
-- **风险点**: agent resume 协议可能变化
-- **DoD**: 关 PureTerm,重启后 Claude Code 自动恢复最近 session
+- **依赖**: GAP-7.2 ✅;~~GAP-2.4~~ —— **由 GAP-5.1(puretermd)实质满足**(2026-06-22 回填)
+- **风险点**: agent resume 协议可能变化;pane↔session_id 关联用启发式(active pane,M3 可改 child_pid 精确关联)
+- **DoD**: 关 PureTerm,重启后 Claude Code 自动恢复最近 session ✅(代码侧;待 GUI E2E)
+- **单元测试**: `agent_sessions`(5:round-trip/dedup/truncate/path)+ `app_config`(4:vault/hibernation)+ `session_restore`(3:snapshot round-trip 含 agent 字段 + v1 兼容);pureterm 整套 230 全绿
+- **留后续迭代**: daemon 重启后孤儿进程处理、pane↔session_id 按 child_pid 精确关联
 - **对标**: cmux `Sources/Agent/SessionRestore.swift`
 
 ### F.P2
@@ -625,7 +632,7 @@
 | GAP-2.1 | Surface/Pane/Workspace/Window 抽象层 | A | P1 | ❌ | - | - |
 | GAP-2.2 | 嵌套水平+垂直分屏 | A | P0 | ✅ | 2026-06-10 | Equalize/Swap/Zoom/Focus Next-Prev/Move-to-Tab-Window 三入口 + 11 单测 |
 | GAP-2.3 | Socket API 协议 + 端口模型 | A | P0 | ✅ | 2026-06-13 | GAP-6.1 补齐到 31 method;协议骨架+完整 method 闭环 |
-| GAP-2.4 | 远程守护进程 puretermd | A | P1 | ❌ | - | - |
+| GAP-2.4 | 远程守护进程 puretermd | A | P1 | ✅ | 2026-06-22 | 由 GAP-5.1 puretermd 实质满足;本机 Unix socket,非网络远程 |
 | GAP-2.5 | 多 UI 路径统一治理 | A | P0 | ✅ | 2026-06-12 | CLAUDE.md/AGENTS.md 一致;crate 仅含 glyph_atlas |
 | GAP-2.6 | iOS 伴侣 + Cloud VM | A | P3 | ⛔ | - | 见 §10 |
 | GAP-3.1 | 双侧边栏 | B | P1 | ❌ | - | - |
@@ -659,9 +666,9 @@
 | GAP-6.8 | 可编程 Sidebar 解释器 | E | P2 | ❌ | - | - |
 | GAP-7.1 | Agent Hooks 通用框架 | F | P0 | ✅ | 2026-06-18 | standalone shim(`pureterm hook`);双规则 deny_pattern(command/file_path/prompt/message)+ 外部 command(超时 kill);对齐 CC hooks 协议(9 事件 / permissionDecision / decision:block / exit 2);35 直接单测 + 整套 171 全绿;release 二进制 DoD(shim 对 rm -rf 输出 permissionDecision:deny)。真 CC 往返待手动登记 settings.json(自动安装器=GAP-7.2) |
 | GAP-7.2 | 16+ agent adapter | F | P0 | ✅ | 2026-06-18 | `AgentAdapter` trait + `ClaudeCodeAdapter`;`pureterm agents install/list/uninstall`;加锁 RMW 写 `~/.claude/settings.json`(保留既有内容,命令哨兵幂等/精准卸载);默认仅注册已配规则事件,`--all-events`/`--dry-run`;10 单测 + 181 全绿 |
-| GAP-7.3 | Agent Hibernation | F | P1 | ❌ | - | - |
+| GAP-7.3 | Agent Hibernation | F | P1 | 🚧 | 2026-06-22 | M2+M3 代码闭环:daemon idle 采集(idle_probe CPU 采样 + run_pump PTY 空闲 + SessionInfo 暴露 idle/agent_kind/hibernated)+ hibernate/resume(SIGSTOP/SIGCONT via libc::kill)+ GUI 决策面板(HibernationScanTick 双条件 + max_live_terminals + 60s 确认 + pinned overlay)+ CLI(pureterm agent hibernate/resume/list);待 dist 重打包 + GUI E2E;status_bar ❄ deferred |
 | GAP-7.4 | Feed 审批面板 | F | P0 | 🚧 | 2026-06-22 | 代码闭环 + 220 单测绿 + release 编译通过;延迟回复(`Message::Ipc` 预判暂存 `IpcRequest`,零新类型)+ `feed_client.rs`/`feed_panel.rs` 新建 + `ask_pattern` 配置 + 5 按钮面板 + 120s 超时 + 作用域记忆 + SessionEnd 清记忆 + feed.jsonl 审计;**待 dist 重打包 + 手动 GUI E2E**(GAP-3.1 不阻塞:复用 pinned overlay 范式) |
-| GAP-7.5 | Agent Session Restore | F | P1 | ❌ | - | - |
+| GAP-7.5 | Agent Session Restore | F | P1 | 🚧 | 2026-06-22 | M1 代码闭环:session id 持久化(SessionStart hook→AgentSessionStore)+ 冷恢复(restore→claude --resume via create_local argv);PaneSnapshot 加 agent_session_id/agent_kind;待 dist 重打包 + GUI E2E |
 | GAP-7.6 | Vault agent registry | F | P2 | ❌ | - | - |
 | GAP-7.7 | Custom resume bindings | F | P2 | ❌ | - | - |
 | GAP-7.8 | agent-browser 兼容 | F | P2 | ❌ | - | - |

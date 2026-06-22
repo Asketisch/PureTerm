@@ -32,5 +32,16 @@ pub fn run() -> std::io::Result<()> {
         .thread_name("puretermd-worker")
         .build()?;
 
+    // GAP-7.3: periodic CPU sample tick drives `cpu_idle_secs` for every
+    // session — the dual idle condition for hibernation, alongside PTY-output
+    // idle recorded by the pump. Runs concurrently with the control listener.
+    let tick_state = state.clone();
+    runtime.spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            tick_state.manager.sample_cpu_pass();
+        }
+    });
+
     runtime.block_on(control::serve(discovery::socket_path(), state))
 }

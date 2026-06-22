@@ -350,6 +350,8 @@ impl TerminalContext {
             num_cols,
             num_lines,
             cwd.and_then(|p| p.to_str()),
+            None,
+            None,
         )?;
 
         let ctx = wire_local_daemon(&data_path, size, session_id)?;

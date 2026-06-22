@@ -516,6 +516,45 @@ pub fn dispatch(cmd: AgentsSub) {
                 },
             }
         }
+        AgentsSub::Sessions { kind } => {
+            // GAP-7.5: list persisted agent session ids (for cold resume).
+            let kinds: Vec<String> = match &kind {
+                Some(k) => vec![k.clone()],
+                None => {
+                    let dir = pureterm_daemon::discovery::data_dir().join("agents");
+                    std::fs::read_dir(&dir)
+                        .map(|rd| {
+                            rd.filter_map(|e| e.ok())
+                                .filter_map(|e| {
+                                    let name = e.file_name().to_string_lossy().into_owned();
+                                    name.strip_suffix("-sessions.json").map(str::to_string)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default()
+                }
+            };
+            let mut any = false;
+            for k in kinds {
+                let records = crate::agent_sessions::load(&k);
+                if records.is_empty() {
+                    continue;
+                }
+                any = true;
+                println!("[{k}]");
+                for r in records {
+                    println!(
+                        "  {:<24} last_seen={} cwd={}",
+                        r.session_id,
+                        r.last_seen,
+                        r.cwd.as_deref().unwrap_or("?")
+                    );
+                }
+            }
+            if !any {
+                println!("no persisted agent sessions");
+            }
+        }
     }
 }
 

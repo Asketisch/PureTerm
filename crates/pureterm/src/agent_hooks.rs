@@ -498,6 +498,24 @@ fn resolve_ask_via_feed(_input: &HookInput, decision: Decision) -> Decision {
     decision
 }
 
+/// GAP-7.5: 推断当前 hook 调用方的 agent 类型,用于持久化 session id 时标记
+/// (GUI 侧据此选 resume_command)。优先级:
+///   1. 环境变量 `PURETERM_AGENT_KIND`(adapter 安装时可设,最可靠 —— 留 GAP-7.2
+///      后续让 adapter 在 hook 命令前 export 该变量)
+///   2. `transcript_path` 启发式(含 `.claude` → `claude-code`)
+///   3. `None`(无法识别,GUI 侧回退默认 `claude --resume`)
+fn infer_agent_kind(input: &HookInput) -> Option<String> {
+    if let Ok(k) = std::env::var("PURETERM_AGENT_KIND") {
+        if !k.is_empty() {
+            return Some(k);
+        }
+    }
+    if input.transcript_path.contains(".claude") {
+        return Some("claude-code".into());
+    }
+    None
+}
+
 /// `pureterm hook <event>` CLI 入口:读 stdin → 加载 `[[agent.hook]]` → 评估
 /// → (GAP-7.4) Ask 时联系 GUI Feed 面板阻塞等审批 → 打印决策 JSON / 设置退出码。
 /// 永不返回(`-> !`)。
@@ -520,9 +538,22 @@ pub fn run_hook_shim(event_override: Option<String>) -> ! {
     let decision = resolve_ask_via_feed(&input, decision);
     // GAP-7.4:SessionEnd → fire-and-forget 通知 GUI 清掉该会话的 Feed 记忆
     //(Always/All/Bypass)。best-effort,GUI 未运行则静默忽略。
+    // GAP-7.5:SessionStart → fire-and-forget 通知 GUI 持久化 session id
+    //(供冷恢复 `claude --resume <id>`)。best-effort。
     #[cfg(unix)]
-    if input.hook_event_name == "SessionEnd" && !input.session_id.is_empty() {
-        crate::feed_client::notify_session_end(&input.session_id);
+    {
+        if input.hook_event_name == "SessionStart" && !input.session_id.is_empty() {
+            let kind = infer_agent_kind(&input);
+            let cwd = if input.cwd.is_empty() { None } else { Some(input.cwd.as_str()) };
+            crate::feed_client::notify_session_started(
+                &input.session_id,
+                kind.as_deref(),
+                cwd,
+            );
+        }
+        if input.hook_event_name == "SessionEnd" && !input.session_id.is_empty() {
+            crate::feed_client::notify_session_end(&input.session_id);
+        }
     }
     let out = format_decision_output(&input.hook_event_name, &decision);
     if let Some(s) = out.stdout {

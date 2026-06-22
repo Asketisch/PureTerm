@@ -28,6 +28,51 @@ impl Default for AppConfig {
     }
 }
 
+/// GAP-7.6/7.5: a `[[vault.agents]]` entry declaring how to resume an agent.
+/// `resume_command` may contain a `{session_id}` placeholder replaced at
+/// cold-resume time (e.g. `["claude", "--resume", "{session_id}"]`).
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct VaultAgentEntry {
+    pub kind: String,
+    pub resume_command: Vec<String>,
+    /// If true, this agent kind is exempt from hibernation (GAP-7.3).
+    #[serde(default)]
+    pub never_hibernate: bool,
+}
+
+/// GAP-7.3: `[agent.hibernation]` settings. Defaults yield a disabled config,
+/// so a missing/malformed table never breaks startup. The dual idle condition
+/// is `pty_idle_secs` AND `cpu_idle_secs` (both must be satisfied).
+#[derive(Clone, Debug)]
+pub struct AgentHibernationConfig {
+    pub enabled: bool,
+    pub max_live_terminals: u32,
+    /// PTY silent (no output) for this many seconds.
+    pub pty_idle_secs: u64,
+    /// Child CPU near-zero for this many seconds.
+    pub cpu_idle_secs: u64,
+    /// Confirmation panel auto-resolve timeout (seconds).
+    pub confirm_secs: u64,
+    /// GUI hibernation scan interval (seconds).
+    pub scan_interval_secs: u64,
+    /// Daemon CPU sample interval (seconds).
+    pub cpu_sample_interval_secs: u64,
+}
+
+impl Default for AgentHibernationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            max_live_terminals: 12,
+            pty_idle_secs: 300,
+            cpu_idle_secs: 300,
+            confirm_secs: 60,
+            scan_interval_secs: 3,
+            cpu_sample_interval_secs: 1,
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Self {
         let mut config = Self::default();
@@ -138,6 +183,85 @@ impl AppConfig {
                 Vec::new()
             },
         }
+    }
+
+    /// Load the `[[vault.agents]]` array (GAP-7.6/7.5). Failure-tolerant: a
+    /// missing or malformed block returns an empty Vec.
+    ///
+    /// ```toml
+    /// [[vault.agents]]
+    /// kind = "claude-code"
+    /// resume_command = ["claude", "--resume", "{session_id}"]
+    /// ```
+    pub fn load_vault_agents(path: &Path) -> Vec<VaultAgentEntry> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        let Some(arr) = value.get("vault").and_then(|v| v.get("agents")) else {
+            return Vec::new();
+        };
+        match arr.clone().try_into::<Vec<VaultAgentEntry>>() {
+            Ok(entries) => entries,
+            Err(e) => {
+                log::warn!("load_vault_agents: failed to deserialize [[vault.agents]]: {e}");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Load the `[agent.hibernation]` table (GAP-7.3). A missing/malformed
+    /// table yields `Default` (disabled). On non-Unix, `enabled` is
+    /// force-disabled — SIGSTOP is unix-only — though cold resume
+    /// (`claude --resume`) still works.
+    pub fn load_agent_hibernation(path: &Path) -> AgentHibernationConfig {
+        let mut cfg = AgentHibernationConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value
+            .get("agent")
+            .and_then(|a| a.get("hibernation"))
+            .and_then(|h| h.as_table())
+        else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("max_live_terminals").and_then(|v| v.as_integer()) {
+            cfg.max_live_terminals = n.max(0) as u32;
+        }
+        if let Some(n) = table.get("pty_idle_secs").and_then(|v| v.as_integer()) {
+            cfg.pty_idle_secs = n.max(0) as u64;
+        }
+        if let Some(n) = table.get("cpu_idle_secs").and_then(|v| v.as_integer()) {
+            cfg.cpu_idle_secs = n.max(0) as u64;
+        }
+        if let Some(n) = table.get("confirm_secs").and_then(|v| v.as_integer()) {
+            cfg.confirm_secs = n.max(0) as u64;
+        }
+        if let Some(n) = table.get("scan_interval_secs").and_then(|v| v.as_integer()) {
+            cfg.scan_interval_secs = (n.max(1)) as u64;
+        }
+        if let Some(n) = table.get("cpu_sample_interval_secs").and_then(|v| v.as_integer()) {
+            cfg.cpu_sample_interval_secs = (n.max(1)) as u64;
+        }
+        // SIGSTOP is unix-only; on Windows hibernation is force-disabled.
+        #[cfg(not(unix))]
+        {
+            cfg.enabled = false;
+        }
+        cfg
     }
 
     /// Load `[[keyboard.bindings]]` from the TOML config.
@@ -427,6 +551,76 @@ mod tests {
         let path = std::env::temp_dir().join(name);
         std::fs::write(&path, contents).unwrap();
         path
+    }
+
+    #[test]
+    fn test_load_vault_agents_basic() {
+        let toml = r#"
+[[vault.agents]]
+kind = "claude-code"
+resume_command = ["claude", "--resume", "{session_id}"]
+
+[[vault.agents]]
+kind = "codex"
+resume_command = ["codex", "resume", "{session_id}"]
+never_hibernate = true
+"#;
+        let path = write_temp_toml("pureterm_test_vault_basic.toml", toml);
+        let agents = AppConfig::load_vault_agents(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(agents.len(), 2);
+        assert_eq!(agents[0].kind, "claude-code");
+        assert_eq!(agents[0].resume_command, vec!["claude", "--resume", "{session_id}"]);
+        assert!(!agents[0].never_hibernate);
+        assert_eq!(agents[1].kind, "codex");
+        assert!(agents[1].never_hibernate);
+    }
+
+    #[test]
+    fn test_load_vault_agents_missing_is_empty() {
+        let path = write_temp_toml("pureterm_test_vault_missing.toml", "font.normal.family = \"mono\"\n");
+        let agents = AppConfig::load_vault_agents(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(agents.is_empty());
+    }
+
+    #[test]
+    fn test_load_agent_hibernation_parses_fields() {
+        let toml = r#"
+[agent.hibernation]
+enabled = true
+max_live_terminals = 5
+pty_idle_secs = 120
+cpu_idle_secs = 180
+confirm_secs = 30
+scan_interval_secs = 2
+cpu_sample_interval_secs = 5
+"#;
+        let path = write_temp_toml("pureterm_test_hibernation.toml", toml);
+        let cfg = AppConfig::load_agent_hibernation(&path);
+        let _ = std::fs::remove_file(&path);
+        // SIGSTOP is unix-only; on Windows enabled is force-disabled.
+        #[cfg(unix)]
+        assert!(cfg.enabled);
+        #[cfg(not(unix))]
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.max_live_terminals, 5);
+        assert_eq!(cfg.pty_idle_secs, 120);
+        assert_eq!(cfg.cpu_idle_secs, 180);
+        assert_eq!(cfg.confirm_secs, 30);
+        assert_eq!(cfg.scan_interval_secs, 2);
+        assert_eq!(cfg.cpu_sample_interval_secs, 5);
+    }
+
+    #[test]
+    fn test_load_agent_hibernation_missing_is_default_disabled() {
+        let path =
+            write_temp_toml("pureterm_test_hibernation_missing.toml", "font.normal.family = \"mono\"\n");
+        let cfg = AppConfig::load_agent_hibernation(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.max_live_terminals, 12);
+        assert_eq!(cfg.pty_idle_secs, 300);
     }
 
     #[test]

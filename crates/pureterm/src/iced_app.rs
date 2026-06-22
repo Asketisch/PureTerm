@@ -154,6 +154,15 @@ pub struct PureTermApp {
     // GAP-7.4 Feed 审批面板。始终 live(记忆常驻);可见性 = focused.is_some()。
     #[cfg(unix)]
     feed_panel: Box<crate::feed_panel::FeedPanelState>,
+    /// GAP-7.3: hibernation confirmation overlay (idle agent → SIGSTOP).
+    #[cfg(unix)]
+    hibernate_panel: Box<crate::hibernate_panel::HibernationPanelState>,
+    /// GAP-7.3: `[agent.hibernation]` config (idle thresholds, max live, etc.).
+    #[cfg(unix)]
+    hibernation_cfg: crate::app_config::AgentHibernationConfig,
+    /// GAP-7.5: `[[vault.agents]]` entries (resume_command templates).
+    #[cfg(unix)]
+    vault_agents: Vec<crate::app_config::VaultAgentEntry>,
     #[cfg(unix)]
     ssh_credential_store: Option<crate::ssh::credential::CredentialStore>,
     // Command palette (P5 GAP-5.9)
@@ -180,6 +189,12 @@ pub struct PureTermApp {
     /// Last-known cwd per pane, reported via OSC 7. Drives cwd inheritance
     /// for new tabs/panes and status-bar restoration on tab/pane switch.
     pane_cwds: HashMap<PaneId, String>,
+    /// GAP-7.5: agent session id + kind per pane, learned from the agent's
+    /// SessionStart hook (`agent.session_started`). `capture_layout` reads this
+    /// to persist `PaneSnapshot.agent_session_id` for cold resume
+    /// (`claude --resume <id>`). Keyed by PaneId; an entry goes stale when its
+    /// pane closes (harmless).
+    agent_sessions: HashMap<PaneId, (String, String)>,
     status_bar_git_branch: Option<String>,
     status_bar_process_name: Option<String>,
     status_bar_last_poll: Instant,
@@ -562,6 +577,21 @@ pub enum Message {
     FeedTick,
     #[cfg(unix)]
     FeedClearSession { session_id: String },
+    /// GAP-7.3: periodic idle scan → may raise a hibernation confirmation.
+    #[cfg(unix)]
+    HibernationScanTick,
+    /// GAP-7.3: 1Hz countdown refresh + auto-confirm on timeout.
+    #[cfg(unix)]
+    HibernationCountdownTick,
+    /// GAP-7.3: user confirmed hibernation of the pending session.
+    #[cfg(unix)]
+    HibernationConfirm,
+    /// GAP-7.3: user cancelled the pending hibernation.
+    #[cfg(unix)]
+    HibernationCancel,
+    /// GAP-7.3: user clicked a hibernated pane's ❄ to resume (SIGCONT).
+    #[cfg(unix)]
+    HibernationResume { session_id: String },
     // Command palette (P5 GAP-5.9)
     OpenCommandPalette,
     CloseCommandPalette,
@@ -983,6 +1013,16 @@ impl PureTermApp {
             #[cfg(unix)]
             feed_panel: Box::new(crate::feed_panel::FeedPanelState::default()),
             #[cfg(unix)]
+            hibernate_panel: Box::new(crate::hibernate_panel::HibernationPanelState::default()),
+            #[cfg(unix)]
+            hibernation_cfg: crate::app_config::AppConfig::load_agent_hibernation(
+                &crate::app_config::AppConfig::config_path(),
+            ),
+            #[cfg(unix)]
+            vault_agents: crate::app_config::AppConfig::load_vault_agents(
+                &crate::app_config::AppConfig::config_path(),
+            ),
+            #[cfg(unix)]
             ssh_credential_store: None,
             context_menu: None,
             last_cursor_pos: Point::default(),
@@ -1007,6 +1047,7 @@ impl PureTermApp {
             // Status bar (GAP-3.4)
             status_bar_cwd: None,
             pane_cwds: HashMap::new(),
+            agent_sessions: HashMap::new(),
             status_bar_git_branch: None,
             status_bar_process_name: None,
             status_bar_last_poll: Instant::now(),
@@ -1194,24 +1235,45 @@ impl PureTermApp {
                 let panes = leaf_ids
                     .iter()
                     .map(|pid| {
-                        let (session_id, kind, ssh_profile, title) = match tab.panes.get(pid) {
-                            Some(p) => {
-                                let sid = p.terminal_ctx.session_id().map(|s| s.to_string());
-                                let kind = if p.terminal_ctx.is_ssh() {
-                                    "ssh"
-                                } else {
-                                    "local"
-                                };
-                                let prof = p.terminal_ctx.profile_display().map(|s| s.to_string());
-                                (sid, kind.to_string(), prof, p.title.clone())
-                            }
-                            None => (None, "local".to_string(), None, String::new()),
-                        };
+                        let (session_id, kind, ssh_profile, title, agent_session_id, agent_kind) =
+                            match tab.panes.get(pid) {
+                                Some(p) => {
+                                    let sid =
+                                        p.terminal_ctx.session_id().map(|s| s.to_string());
+                                    let kind = if p.terminal_ctx.is_ssh() {
+                                        "ssh"
+                                    } else {
+                                        "local"
+                                    };
+                                    let prof =
+                                        p.terminal_ctx.profile_display().map(|s| s.to_string());
+                                    // GAP-7.5: agent session id + kind learned from
+                                    // the agent's SessionStart hook (see
+                                    // handle_agent_session_started).
+                                    let (a_sid, a_kind) = self
+                                        .agent_sessions
+                                        .get(pid)
+                                        .cloned()
+                                        .map(|(s, k)| (Some(s), Some(k)))
+                                        .unwrap_or((None, None));
+                                    (sid, kind.to_string(), prof, p.title.clone(), a_sid, a_kind)
+                                }
+                                None => (
+                                    None,
+                                    "local".to_string(),
+                                    None,
+                                    String::new(),
+                                    None,
+                                    None,
+                                ),
+                            };
                         PaneSnapshot {
                             session_id,
                             kind,
                             ssh_profile,
                             title,
+                            agent_session_id,
+                            agent_kind,
                         }
                     })
                     .collect();
@@ -3002,6 +3064,31 @@ impl PureTermApp {
                 self.feed_panel.clear_session(&session_id);
             }
             #[cfg(unix)]
+            Message::HibernationScanTick => {
+                self.hibernation_scan();
+            }
+            #[cfg(unix)]
+            Message::HibernationCountdownTick => {
+                // Auto-confirm on timeout (60s default).
+                if let Some(sid) = self.hibernate_panel.expire_timeout() {
+                    self.do_hibernate(&sid);
+                }
+            }
+            #[cfg(unix)]
+            Message::HibernationConfirm => {
+                if let Some(sid) = self.hibernate_panel.confirm() {
+                    self.do_hibernate(&sid);
+                }
+            }
+            #[cfg(unix)]
+            Message::HibernationCancel => {
+                self.hibernate_panel.cancel();
+            }
+            #[cfg(unix)]
+            Message::HibernationResume { session_id } => {
+                self.do_resume(&session_id);
+            }
+            #[cfg(unix)]
             Message::SshReconnect(update) => {
                 use crate::ssh::reconnect::ReconnectUpdate;
                 match update {
@@ -4684,6 +4771,13 @@ impl PureTermApp {
             }
         }
 
+        // GAP-7.3/7.5: reload hibernation thresholds + vault agent registry.
+        #[cfg(unix)]
+        {
+            self.hibernation_cfg = AppConfig::load_agent_hibernation(&self.config_path);
+            self.vault_agents = AppConfig::load_vault_agents(&self.config_path);
+        }
+
         if font_changed {
             let mut gs = self.glyph_state.borrow_mut();
             gs.reconfigure_scaled(
@@ -4806,6 +4900,131 @@ impl PureTermApp {
                 self.feed_panel.clear_session(&session_id);
                 Task::none()
             }
+            #[cfg(unix)]
+            Fx::AgentSessionStarted { session_id, kind, cwd } => {
+                // GAP-7.5: SessionStart hook fired → persist the agent session id
+                // (for cold resume) + associate it with the owning pane.
+                self.handle_agent_session_started(session_id, kind, cwd);
+                Task::none()
+            }
+        }
+    }
+
+    /// GAP-7.5: react to an agent's SessionStart hook. Persist the session id
+    /// (so a later `claude --resume <id>` cold-resume can find it) and tag the
+    /// pane that owns this agent so `capture_layout` re-persists it.
+    #[cfg(unix)]
+    fn handle_agent_session_started(
+        &mut self,
+        session_id: String,
+        kind: Option<String>,
+        cwd: Option<String>,
+    ) {
+        let kind = kind.unwrap_or_else(|| "claude-code".to_string());
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        crate::agent_sessions::append(crate::agent_sessions::AgentSessionRecord {
+            session_id: session_id.clone(),
+            kind: kind.clone(),
+            cwd: cwd.clone(),
+            last_seen: now,
+        });
+        // Associate with the active pane (heuristic: the agent most recently
+        // launched is the focused pane). `capture_layout` reads this map to
+        // persist agent_session_id into PaneSnapshot for cold resume.
+        if let Some(tab) = self.tabs.iter().find(|t| t.id == self.active_tab) {
+            self.agent_sessions.insert(tab.active_pane, (session_id, kind));
+        }
+    }
+
+    /// GAP-7.3: scan live sessions for a hibernation candidate. Raises a
+    /// confirmation when the dual idle condition holds AND live-agent count
+    /// exceeds `max_live_terminals`. No-op if disabled or a confirmation is
+    /// already pending.
+    #[cfg(unix)]
+    fn hibernation_scan(&mut self) {
+        if !self.hibernation_cfg.enabled || self.hibernate_panel.is_visible() {
+            return;
+        }
+        let socket = match crate::daemon_client::ensure_daemon() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let sessions = match crate::daemon_client::list_sessions(&socket) {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let cfg = &self.hibernation_cfg;
+
+        let is_idle = |s: &serde_json::Value| -> bool {
+            if s.get("hibernated").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return false;
+            }
+            let pty = s.get("pty_idle_secs").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
+            let cpu = s.get("cpu_idle_secs").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
+            pty >= cfg.pty_idle_secs && cpu >= cfg.cpu_idle_secs
+        };
+        // A session counts as a "live agent" if it has an agent_kind registered
+        // in [[vault.agents]] (or is the common `claude-code` default).
+        let is_live_agent = |s: &serde_json::Value| {
+            s.get("hibernated").and_then(|v| v.as_bool()) == Some(false)
+                && s.get("agent_kind")
+                    .and_then(|v| v.as_str())
+                    .map(|k| k == "claude-code" || self.vault_agents.iter().any(|v| v.kind == k))
+                    .unwrap_or(false)
+        };
+
+        if sessions.iter().filter(|s| is_live_agent(s)).count() <= cfg.max_live_terminals as usize {
+            return;
+        }
+        // Pick the idle candidate idle longest (max pty_idle_secs).
+        if let Some(best) = sessions
+            .iter()
+            .filter(|s| is_idle(s))
+            .max_by_key(|s| s.get("pty_idle_secs").and_then(|v| v.as_u64()).unwrap_or(0))
+        {
+            let session_id = best.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            if session_id.is_empty() {
+                return;
+            }
+            let kind = best
+                .get("agent_kind")
+                .and_then(|v| v.as_str())
+                .or_else(|| best.get("kind").and_then(|v| v.as_str()))
+                .unwrap_or("local")
+                .to_string();
+            self.hibernate_panel.request(crate::hibernate_panel::PendingHibernation {
+                session_id,
+                kind,
+                started_at: std::time::Instant::now(),
+                confirm_secs: cfg.confirm_secs,
+            });
+        }
+    }
+
+    /// GAP-7.3: SIGSTOP the session via the daemon (user confirmed / timeout).
+    #[cfg(unix)]
+    fn do_hibernate(&mut self, session_id: &str) {
+        match crate::daemon_client::ensure_daemon()
+            .and_then(|s| crate::daemon_client::hibernate_session(&s, session_id))
+        {
+            Ok(true) => log::info!("hibernated session {session_id}"),
+            Ok(false) => log::warn!("hibernate {session_id}: session unknown to daemon"),
+            Err(e) => log::warn!("hibernate {session_id} failed: {e}"),
+        }
+    }
+
+    /// GAP-7.3: SIGCONT a hibernated session (user clicked ❄).
+    #[cfg(unix)]
+    fn do_resume(&mut self, session_id: &str) {
+        match crate::daemon_client::ensure_daemon()
+            .and_then(|s| crate::daemon_client::resume_session(&s, session_id))
+        {
+            Ok(true) => log::info!("resumed session {session_id}"),
+            Ok(false) => log::warn!("resume {session_id}: session unknown to daemon"),
+            Err(e) => log::warn!("resume {session_id} failed: {e}"),
         }
     }
 
@@ -6029,6 +6248,60 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(x).y(0.0).into())
     }
 
+    /// GAP-7.3: render the hibernation confirmation as a right-side pinned
+    /// overlay (mirrors `view_feed_panel`, but simpler: Hibernate / Cancel).
+    /// `None` when no confirmation is pending.
+    #[cfg(unix)]
+    fn view_hibernate_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, row, space, text};
+        use iced::Length;
+
+        let pending = self.hibernate_panel.pending.as_ref()?;
+        let remaining = self.hibernate_panel.remaining_secs().unwrap_or(0);
+
+        let body_col = column![
+            row![
+                text("❄ Hibernation").size(16),
+                space().width(Length::Fill),
+                button(text("×").size(16))
+                    .on_press(Message::HibernationCancel)
+                    .padding([2, 8])
+                    .style(button::secondary),
+            ]
+            .spacing(4),
+            text(format!(
+                "Idle agent「{}」will be SIGSTOPped to free resources.",
+                pending.kind
+            ))
+            .size(12),
+            text(format!("session: {}", pending.session_id)).size(11),
+            text(format!("⏱ auto-confirm in {}s", remaining)).size(11),
+            row![
+                button(text("Hibernate").size(13))
+                    .on_press(Message::HibernationConfirm)
+                    .width(Length::Fill)
+                    .padding([6, 8])
+                    .style(button::primary),
+                button(text("Cancel").size(13))
+                    .on_press(Message::HibernationCancel)
+                    .width(Length::Fill)
+                    .padding([6, 8])
+                    .style(button::secondary),
+            ]
+            .spacing(6),
+        ]
+        .spacing(6)
+        .padding(8);
+
+        let panel = container(body_col)
+            .width(Length::Fixed(320.0))
+            .height(Length::Shrink)
+            .style(container::bordered_box);
+        // Pin to the right edge, below the top status bar.
+        let x = (self.viewport_size.width - 320.0).max(0.0);
+        Some(iced::widget::pin(panel).x(x).y(48.0).into())
+    }
+
     /// P5 GAP-5.9: render the command palette as a centered overlay.
     /// Two modes:
     /// - `Mode::Actions` — fuzzy-searchable list of registered actions.
@@ -6530,6 +6803,10 @@ impl PureTermApp {
             if let Some(feed_el) = self.view_feed_panel() {
                 layers.push(feed_el);
             }
+            #[cfg(unix)]
+            if let Some(hibernate_el) = self.view_hibernate_panel() {
+                layers.push(hibernate_el);
+            }
             if let Some(palette_el) = self.view_command_palette() {
                 layers.push(palette_el);
             }
@@ -6776,6 +7053,17 @@ impl PureTermApp {
         // GAP-7.4: ~2Hz tick —— 扫描 120s 软超时自动 Deny + 刷新 Feed 面板倒计时。
         #[cfg(unix)]
         let feed_tick_sub = time::every(Duration::from_millis(500)).map(|_| Message::FeedTick);
+        // GAP-7.3: hibernation idle scan (cfg scan_interval, default 3s) +
+        // 1Hz countdown refresh for the confirmation panel.
+        #[cfg(unix)]
+        let hibernation_scan_secs = self.hibernation_cfg.scan_interval_secs.max(1);
+        #[cfg(unix)]
+        let hibernation_scan_sub =
+            time::every(Duration::from_secs(hibernation_scan_secs))
+                .map(|_| Message::HibernationScanTick);
+        #[cfg(unix)]
+        let hibernation_countdown_sub =
+            time::every(Duration::from_secs(1)).map(|_| Message::HibernationCountdownTick);
 
         // 注意：event::listen_with 要求 fn 指针（无捕获），所以全局鼠标事件
         // 不在闭包里过滤主窗口。GlobalCursorMoved / GlobalMouseRelease
@@ -6853,6 +7141,8 @@ impl PureTermApp {
             ipc_sub,
             reconnect_sub,
             feed_tick_sub,
+            hibernation_scan_sub,
+            hibernation_countdown_sub,
         ];
         #[cfg(not(unix))]
         let subs = vec![
