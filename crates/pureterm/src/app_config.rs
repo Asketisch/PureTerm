@@ -55,6 +55,28 @@ pub struct VaultAgentEntry {
     pub session_id_source: Option<String>,
 }
 
+/// GAP-7.7: a `[[resume.bindings]]` entry — a named, templated shell command
+/// used to reattach to an external persistent session (tmux/screen/zellij) on
+/// cold-resume, instead of / in addition to the default `claude --resume <id>`.
+/// Keyed by `(kind, checkpoint)`; `shell` is an argv template supporting the
+/// placeholders `{session_id}`, `{checkpoint}`, `{kind}`, `{cwd}` via lightweight
+/// `String::replace` interpolation (no handlebars — consistent with
+/// `VaultAgentEntry.resume_command` at `session_restore.rs:378`). `auto = true`
+/// means cold-resume will attempt this binding (subject to HMAC-token
+/// authorization, see M2).
+///
+/// Note: `docs/TODOLIST.md` GAP-7.7 prose mentions `handlebars`; we deliberately
+/// use lightweight placeholder expansion (YAGNI — the DoD needs no conditionals,
+/// and it matches the existing resume_command interpolation style).
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
+pub struct ResumeBinding {
+    pub kind: String,
+    pub checkpoint: String,
+    pub shell: Vec<String>,
+    #[serde(default)]
+    pub auto: bool,
+}
+
 /// GAP-7.3: `[agent.hibernation]` settings. Defaults yield a disabled config,
 /// so a missing/malformed table never breaks startup. The dual idle condition
 /// is `pty_idle_secs` AND `cpu_idle_secs` (both must be satisfied).
@@ -84,6 +106,30 @@ impl Default for AgentHibernationConfig {
             confirm_secs: 60,
             scan_interval_secs: 3,
             cpu_sample_interval_secs: 1,
+        }
+    }
+}
+
+/// GAP-7.6: `[agent.detect]` settings — drives the detect-resume prompt panel.
+/// Defaults yield an *enabled* config: detection is a non-intrusive hint and
+/// the DoD wants the panel on by default; a missing/malformed table never
+/// breaks startup. With no `[[vault.agents]]` declared, `scan()` early-returns,
+/// so this is a no-op until the user opts in by registering agents.
+#[derive(Clone, Debug)]
+pub struct AgentDetectConfig {
+    pub enabled: bool,
+    /// Periodic scan interval (seconds). Independent of hibernation's tick.
+    pub scan_interval_secs: u64,
+    /// Scan once at startup (in addition to the periodic tick).
+    pub scan_on_startup: bool,
+}
+
+impl Default for AgentDetectConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            scan_interval_secs: 30,
+            scan_on_startup: true,
         }
     }
 }
@@ -229,6 +275,52 @@ impl AppConfig {
         }
     }
 
+    /// Load the `[[resume.bindings]]` array (GAP-7.7). Failure-tolerant: a
+    /// missing or malformed block returns an empty Vec (mirrors
+    /// `load_vault_agents`). Entries are deduplicated by `(kind, checkpoint)`,
+    /// later wins (mirrors `load_custom_commands` id dedup).
+    ///
+    /// ```toml
+    /// [[resume.bindings]]
+    /// kind = "tmux"
+    /// checkpoint = "work"
+    /// shell = ["tmux", "attach", "-t", "{checkpoint}"]
+    /// auto = true
+    /// ```
+    pub fn load_resume_bindings(path: &Path) -> Vec<ResumeBinding> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return Vec::new(),
+        };
+        let Some(arr) = value.get("resume").and_then(|v| v.get("bindings")) else {
+            return Vec::new();
+        };
+        let entries = match arr.clone().try_into::<Vec<ResumeBinding>>() {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("load_resume_bindings: failed to deserialize [[resume.bindings]]: {e}");
+                return Vec::new();
+            }
+        };
+        // Dedup by (kind, checkpoint), later wins (mirrors load_custom_commands).
+        let mut result: Vec<ResumeBinding> = Vec::new();
+        for b in entries {
+            if let Some(existing) = result
+                .iter_mut()
+                .find(|e| e.kind == b.kind && e.checkpoint == b.checkpoint)
+            {
+                *existing = b;
+            } else {
+                result.push(b);
+            }
+        }
+        result
+    }
+
     /// Load the `[agent.hibernation]` table (GAP-7.3). A missing/malformed
     /// table yields `Default` (disabled). On non-Unix, `enabled` is
     /// force-disabled — SIGSTOP is unix-only — though cold resume
@@ -275,6 +367,39 @@ impl AppConfig {
         #[cfg(not(unix))]
         {
             cfg.enabled = false;
+        }
+        cfg
+    }
+
+    /// Load the `[agent.detect]` table (GAP-7.6). A missing/malformed table
+    /// yields `Default` (enabled). Detection shells out to `ps` / reads
+    /// `/proc` which is unix-only, but the config parses on all platforms; the
+    /// GUI gating lives in `#[cfg(unix)]` at the call site.
+    pub fn load_agent_detect(path: &Path) -> AgentDetectConfig {
+        let mut cfg = AgentDetectConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value
+            .get("agent")
+            .and_then(|a| a.get("detect"))
+            .and_then(|d| d.as_table())
+        else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("scan_interval_secs").and_then(|v| v.as_integer()) {
+            cfg.scan_interval_secs = n.max(1) as u64;
+        }
+        if let Some(b) = table.get("scan_on_startup").and_then(|v| v.as_bool()) {
+            cfg.scan_on_startup = b;
         }
         cfg
     }
@@ -592,6 +717,105 @@ never_hibernate = true
     }
 
     #[test]
+    fn test_load_resume_bindings_basic() {
+        let toml = r#"
+[[resume.bindings]]
+kind = "tmux"
+checkpoint = "work"
+shell = ["tmux", "attach", "-t", "{checkpoint}"]
+auto = true
+"#;
+        let path = write_temp_toml("pureterm_test_resume_basic.toml", toml);
+        let bs = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(bs.len(), 1);
+        assert_eq!(bs[0].kind, "tmux");
+        assert_eq!(bs[0].checkpoint, "work");
+        assert_eq!(bs[0].shell, vec!["tmux", "attach", "-t", "{checkpoint}"]);
+        assert!(bs[0].auto);
+    }
+
+    #[test]
+    fn test_load_resume_bindings_auto_defaults_false() {
+        let toml = r#"
+[[resume.bindings]]
+kind = "screen"
+checkpoint = "main"
+shell = ["screen", "-r", "{checkpoint}"]
+"#;
+        let path = write_temp_toml("pureterm_test_resume_default.toml", toml);
+        let bs = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(bs.len(), 1);
+        assert!(!bs[0].auto);
+    }
+
+    #[test]
+    fn test_load_resume_bindings_dedup_later_wins() {
+        let toml = r#"
+[[resume.bindings]]
+kind = "tmux"
+checkpoint = "work"
+shell = ["tmux", "attach", "-t", "old"]
+
+[[resume.bindings]]
+kind = "tmux"
+checkpoint = "work"
+shell = ["tmux", "attach", "-t", "new"]
+"#;
+        let path = write_temp_toml("pureterm_test_resume_dedup.toml", toml);
+        let bs = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(bs.len(), 1);
+        assert_eq!(bs[0].shell, vec!["tmux", "attach", "-t", "new"]);
+    }
+
+    #[test]
+    fn test_load_resume_bindings_distinct_checkpoints_coexist() {
+        let toml = r#"
+[[resume.bindings]]
+kind = "tmux"
+checkpoint = "work"
+shell = ["tmux", "attach", "-t", "work"]
+
+[[resume.bindings]]
+kind = "tmux"
+checkpoint = "side"
+shell = ["tmux", "attach", "-t", "side"]
+"#;
+        let path = write_temp_toml("pureterm_test_resume_coexist.toml", toml);
+        let bs = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(bs.len(), 2);
+    }
+
+    #[test]
+    fn test_load_resume_bindings_missing_section_empty() {
+        let toml = r#"
+[[vault.agents]]
+kind = "claude-code"
+resume_command = ["claude", "--resume", "{session_id}"]
+"#;
+        let path = write_temp_toml("pureterm_test_resume_missing.toml", toml);
+        let bs = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(bs.is_empty());
+    }
+
+    #[test]
+    fn test_load_resume_bindings_malformed_empty() {
+        // serde-style (mirror vault): a malformed entry invalidates the array → empty.
+        let toml = r#"
+[[resume.bindings]]
+checkpoint = "no-kind-no-shell"
+"#;
+        let path = write_temp_toml("pureterm_test_resume_malformed.toml", toml);
+        let bs = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(bs.is_empty());
+    }
+
+    #[test]
     fn test_load_vault_agents_gap76_fields() {
         // GAP-7.6:name/detect/session_id_source 反序列化 + serde default 回退。
         let toml = r#"
@@ -665,6 +889,33 @@ cpu_sample_interval_secs = 5
         assert!(!cfg.enabled);
         assert_eq!(cfg.max_live_terminals, 12);
         assert_eq!(cfg.pty_idle_secs, 300);
+    }
+
+    #[test]
+    fn test_load_agent_detect_parses_fields() {
+        let toml = r#"
+[agent.detect]
+enabled = false
+scan_interval_secs = 15
+scan_on_startup = false
+"#;
+        let path = write_temp_toml("pureterm_test_detect.toml", toml);
+        let cfg = AppConfig::load_agent_detect(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.scan_interval_secs, 15);
+        assert!(!cfg.scan_on_startup);
+    }
+
+    #[test]
+    fn test_load_agent_detect_missing_is_default_enabled() {
+        let path =
+            write_temp_toml("pureterm_test_detect_missing.toml", "font.normal.family = \"mono\"\n");
+        let cfg = AppConfig::load_agent_detect(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(cfg.enabled);
+        assert_eq!(cfg.scan_interval_secs, 30);
+        assert!(cfg.scan_on_startup);
     }
 
     #[test]

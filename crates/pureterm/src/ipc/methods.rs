@@ -515,11 +515,19 @@ impl SocketRouter {
                     Some(IpcSideEffect::FeedClearSession { session_id }),
                 )
             });
+            // GAP-7.7: `resume.request_approval` — like feed.request_approval,
+            // the real work happens in the `Message::Ipc` deferred-reply branch
+            // (token check / Feed panel / spawn). Registered here so
+            // `system.methods` lists it and as a dispatch fallback.
+            router.register("resume.request_approval", |_params, _snap| {
+                (Ok(serde_json::json!({"queued": true})), None)
+            });
         }
         #[cfg(not(unix))]
         {
             router.register_noop("feed.request_approval", "Feed not available on this platform");
             router.register_noop("feed.clear_session", "Feed not available on this platform");
+            router.register_noop("resume.request_approval", "Resume not available on this platform");
         }
 
         // ── agent.* (GAP-7.5, 1 method) ─────────────────────────────

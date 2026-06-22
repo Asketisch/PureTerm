@@ -58,11 +58,11 @@
 | C. 终端交互 | 2 | 1 | 4 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
 | E. 集成与可编程 | 3 | 1 | 4 | 0 | 8 |
-| F. AI Agent | 2 | 4 | 2 | 0 | 8 |
+| F. AI Agent | 2 | 5 | 1 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **19** | **7** | **20** | **3** | **49** |
+| **总计** | **19** | **8** | **19** | **3** | **49** |
 
-整体进度:✅ 19/49 ≈ 39% · 🚧 7
+整体进度:✅ 19/49 ≈ 39% · 🚧 8
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -561,7 +561,7 @@
 ### F.P2
 
 #### GAP-7.6 Vault agent registry {#gap-7-6}
-- **状态**: 🚧(2026-06-22 代码闭环 + 254 单测全绿 + release 编译通过;**GUI 提示 resume 面板待后续**)
+- **状态**: 🚧(2026-06-23 detect-resume GUI 面板代码闭环 + 顺带修复 `has_overlay` 漏判 hibernate 面板的渲染 bug + 12 新单测(整套 305 全绿)+ dist .app 重打包;**待手动 GUI E2E**)
 - **优先级**: P2
 - **DoD 语义重定义**: PureTerm 的 daemon 自持 PTY 模型无法抢占外部 agent 的 TTY —— 原 DoD"启动自动识别并 attach 到现有 session"不可直接落地。重定义为两层:(1) PureTerm **内**启动的 agent:修复 SessionStart 默认注册(见下)后,session id 持久化 + 冷恢复自动闭环;(2) PureTerm **外**启动的 agent:`detect` 扫描识别 + CLI/GUI 提示"N 个 session 可 resume",用户确认后新 pane 里 `claude --resume <id>`(识别 + 提示 resume,**非抢占 TTY**)
 - **PureTerm 现状**: schema + detect 扫描 + registry/CLI + 状态栏/Feed 可观测 全部落地
@@ -581,22 +581,30 @@
   - **registry CLI**:`pureterm agents detect`(扫描打表)/ `pureterm agents registry`(打印解析结果),本地无 IPC
   - **dead field 修复**:`never_hibernate` 接进 `hibernate_scan` 的 `is_live_agent`/`is_idle` 决策(`vault_kind_never_hibernate` 纯函数)
   - **轻可观测**(不依赖完整 GAP-6.7):状态栏 `⚡ kind`(active)/`❄ kind`(hibernated)/`⏳ N`(feed pending)指示(`agent_indicator` 纯函数 + `last_session_list` 缓存,零新 IPC);`pureterm feed list [--limit N]` 读 `feed.jsonl`(`feed_log.rs`)
+  - **detect-resume GUI 面板**(2026-06-23 闭环):`detect_panel.rs`(`DetectPanelState` 聚合批次 + dismissed/resumed 进程内记忆,`refresh` 总是从最新扫描重算);`iced_app.rs`(`DetectScanTick` 独立 subscription 默认 30s + 启动同步扫一次 + `detect_scan`/`detect_resume_one`(vault `resume_command` 模板插值 → `create_resume_tab` spawn 新 pane + emit `session.resumed`)+ `view_detect_panel` 右侧 pinned overlay 聚合 N 条,逐条/全部 Resume/稍后)+ `[agent.detect]` 配置(`AgentDetectConfig` 默认 enabled);复用 `agent_detect::scan`/`with_sessions`/`create_resume_tab` 零改。**顺带修复** `has_overlay` 漏判 `hibernate_panel`/`detect_panel` 导致单独打开时不渲染的隐藏 bug(GAP-7.3 E2E 必撞)
 - **实现位置**:`agent_detect.rs` + `feed_log.rs`(新建)+ `agent_adapters.rs`(`derive_entries` + Detect/Registry dispatch)+ `app_config.rs`(字段)+ `iced_app.rs`(纯函数 + view_bottom_bar + hibernate 闭包 + last_session_list)+ `cli.rs`(FeedSub/Command::Feed)+ `main.rs`(mod)
 - **依赖**: GAP-7.5 ✅
 - **风险点**: detect 子串误报(缓解:排除 self/grep/rg/ps + 建议写具体如 `claude-code`)
 - **DoD**: 配 `[[vault.agents]]` → `pureterm agents detect` 列出运行 agent 进程 + matched session_id ✅(CLI 侧);GUI 提示 resume 面板待后续
 - **单元测试**: `agent_detect`(5 + 1 ignore)+ `feed_log`(4)+ `agent_adapters::derive_entries`(3)+ `app_config::vault_gap76_fields`(1)+ `iced_app`(`vault_kind_never_hibernate` 2 + `agent_indicator` 4);整套 254 全绿
-- **留后续迭代**:GUI "检测到 N 个外部 session,是否 resume" 提示面板、按 child_pid 精确关联 detected 进程↔session_id、`session_id_source` 字段消费(GAP-7.7)
+- **留后续迭代**:按 child_pid 精确关联 detected 进程↔session_id、`session_id_source` 字段消费(GAP-7.7)(detect-resume GUI 面板已于 2026-06-23 闭环,见下方"已实现")
 - **对标**: cmux `Sources/CmuxConfig.swift::vault.agents[]`
 
 #### GAP-7.7 Custom resume bindings {#gap-7-7}
-- **状态**: ❌
+- **状态**: 🚧(2026-06-23 M1+M2 代码闭环 + 23 新单测 + 整套 293 全绿 + release 编译通过 + CLI 冒烟通过;**待 dist .app 重打包 + 手动 GUI E2E**)
 - **优先级**: P2
-- **PureTerm 现状**: 无
-- **目标**: 自定义命令模板 + 签名审批;`pureterm surface resume set --kind tmux --checkpoint work --shell "tmux attach -t work"`;`handlebars` crate + HMAC-SHA256;通过 GAP-7.4 Feed 审批流
-- **依赖**: GAP-7.6
-- **风险点**: 安全性(共享密钥)
-- **DoD**: 配置 `--kind tmux --checkpoint work`,session 关闭时执行 `tmux attach`
+- **实现位置**:`crates/pureterm/src/resume_bindings.rs`(新建:配置 CRUD + 轻量插值 + HMAC 令牌 + `cold_resume_argv` + `dispatch`/`run_binding`)+ `app_config.rs`(`ResumeBinding` + `load_resume_bindings` 嵌套 serde + `(kind,checkpoint)` 去重 later-wins)+ `cli.rs`(`ResumeSub{Set/List/Remove/Run}` + `SurfaceSub::Resume` + Surface 混合派发)+ `feed_client.rs`(`request_resume_approval` + 抽 `rpc_approval` 共享体)+ `feed_panel.rs`(`ResumePayload` + `parse_payload` + `resolve()` Always→`approve_token`)+ `ipc/methods.rs`(`resume.request_approval` stub)+ `iced_app.rs`(early-return 扩展 + token 命中静默 spawn + 用户 Always spawn + `create_resume_tab`)+ `session_restore.rs::cold_resume_agent`(auto 绑定优先)+ `Cargo.toml`(hmac/sha2/hex,unix-gated)
+- **设计要点**:
+  - **轻量插值,非 handlebars**(偏离 TODOLIST 字面要求):`{session_id}/{checkpoint}/{kind}/{cwd}` per-element replace,与 `session_restore.rs:378` 一致(YAGNI)
+  - **HMAC-SHA256 持久令牌**:secret `<data_dir>/resume.key`(0600,幂等)+ 摘要 `<data_dir>/resume-tokens.json`;payload=`kind\0checkpoint\0shell.join('\0')`(稳定,非 JSON);令牌绑定精确 shell(改 shell → 重新审批)
+  - **冷恢复不弹面板**(Plan agent B.3:`restore()` 无 `&mut self`):auto 绑定 + 有效令牌 → 静默 spawn;无令牌 → 跳过回落 `claude --resume`。用户须先 `resume run` mint 一次令牌
+  - **复用 Feed 面板**:`FeedRequestPayload.resume`;resume 审批不走 in-memory `always_remember` map(键 `("","")` 撞)—— 令牌即唯一持久记忆
+  - **`--shell` variadic clap**(非 shell-words):`--shell tmux attach -t {checkpoint}`(末尾多参数,`allow_hyphen_values`)
+- **依赖**: GAP-7.6 ✅
+- **风险点**: 单用户工作站威胁模型(防 drive-by/误改,非对抗本地攻击者);crypto/spawn 全 `#[cfg(unix)]`
+- **DoD**: 配置 `--kind tmux --checkpoint work --auto --shell tmux attach -t work` → `resume run` mint 令牌 → 冷恢复自动 spawn `tmux attach -t work` ✅(代码侧;待 GUI E2E)
+- **单元测试**: `resume_bindings`(17:插值 4 + CRUD round-trip 5 + 跨段保留 + clap variadic + crypto 6)+ `app_config`(6) = 23 新;整套 293 全绿
+- **留后续迭代**:`PaneSnapshot.resume_binding` 来源记忆、dist 重打包 + GUI E2E
 - **对标**: cmux `Sources/ResumeBinding.swift`
 
 #### GAP-7.8 agent-browser 兼容 {#gap-7-8}
@@ -684,8 +692,8 @@
 | GAP-7.3 | Agent Hibernation | F | P1 | 🚧 | 2026-06-22 | M2+M3 代码闭环:daemon idle 采集(idle_probe CPU 采样 + run_pump PTY 空闲 + SessionInfo 暴露 idle/agent_kind/hibernated)+ hibernate/resume(SIGSTOP/SIGCONT via libc::kill)+ GUI 决策面板(HibernationScanTick 双条件 + max_live_terminals + 60s 确认 + pinned overlay)+ CLI(pureterm agent hibernate/resume/list);待 dist 重打包 + GUI E2E;status_bar ❄ deferred |
 | GAP-7.4 | Feed 审批面板 | F | P0 | 🚧 | 2026-06-22 | 代码闭环 + 220 单测绿 + release 编译通过;延迟回复(`Message::Ipc` 预判暂存 `IpcRequest`,零新类型)+ `feed_client.rs`/`feed_panel.rs` 新建 + `ask_pattern` 配置 + 5 按钮面板 + 120s 超时 + 作用域记忆 + SessionEnd 清记忆 + feed.jsonl 审计;**待 dist 重打包 + 手动 GUI E2E**(GAP-3.1 不阻塞:复用 pinned overlay 范式) |
 | GAP-7.5 | Agent Session Restore | F | P1 | 🚧 | 2026-06-22 | M1 代码闭环:session id 持久化(SessionStart hook→AgentSessionStore)+ 冷恢复(restore→claude --resume via create_local argv);PaneSnapshot 加 agent_session_id/agent_kind;待 dist 重打包 + GUI E2E |
-| GAP-7.6 | Vault agent registry | F | P2 | 🚧 | 2026-06-22 | schema 补齐(name/detect/session_id_source + Default)+ `agent_detect.rs` 进程扫描(macOS ps / Linux proc,detect 子串匹配,排除 grep/rg/ps/shell)+ `pureterm agents detect/registry` CLI + SessionStart 默认注册修复(`derive_entries`,`[[vault.agents]]` 非空即注册,打通 7.5 冷恢复)+ never_hibernate 接进 hibernate 决策 + 状态栏 ⚡/❄/⏳ 指示(`agent_indicator` + `last_session_list` 缓存,零新 IPC)+ `pureterm feed list`;DoD 重定义(识别+提示 resume,非抢占 TTY);254 单测绿;待 dist 重打包 + GUI E2E |
-| GAP-7.7 | Custom resume bindings | F | P2 | ❌ | - | - |
+| GAP-7.6 | Vault agent registry | F | P2 | 🚧 | 2026-06-23 | schema 补齐(name/detect/session_id_source + Default)+ `agent_detect.rs` 进程扫描(macOS ps / Linux proc,detect 子串匹配,排除 grep/rg/ps/shell)+ `pureterm agents detect/registry` CLI + SessionStart 默认注册修复(`derive_entries`,`[[vault.agents]]` 非空即注册,打通 7.5 冷恢复)+ never_hibernate 接进 hibernate 决策 + 状态栏 ⚡/❄/⏳ 指示(`agent_indicator` + `last_session_list` 缓存,零新 IPC)+ `pureterm feed list` + **detect-resume GUI 面板**(`detect_panel.rs` + `DetectScanTick` subscription + `view_detect_panel` 聚合 N 条 + vault 模板插值 → `create_resume_tab`;顺带修 `has_overlay` 漏判 hibernate/detect 面板渲染 bug);DoD 重定义(识别+提示 resume,非抢占 TTY);305 单测绿;待手动 GUI E2E |
+| GAP-7.7 | Custom resume bindings | F | P2 | 🚧 | 2026-06-23 | M1+M2 代码闭环:`[[resume.bindings]]` CRUD(`pureterm surface resume set/list/remove`)+ 轻量占位符插值 + HMAC-SHA256 持久令牌(`<data_dir>/resume.key`+`resume-tokens.json`)+ `resume run` 经 Feed 面板审批/token 静默 spawn + `cold_resume_agent` auto 绑定优先于 claude --resume;复用 Feed 面板(`FeedRequestPayload.resume`+Always→`approve_token`);**冷恢复不弹面板**(restore 无 &mut self → 无令牌则回落);23 新单测整套 293 绿;**待 dist 重打包 + GUI E2E** |
 | GAP-7.8 | agent-browser 兼容 | F | P2 | ❌ | - | - |
 | GAP-8.1 | Sparkle auto-update | G | P3 | ❌ | - | macOS 优先 |
 | GAP-8.2 | 商业 tier | G | P3 | ⛔ | - | 见 §10 |

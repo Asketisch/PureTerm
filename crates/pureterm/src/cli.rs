@@ -276,6 +276,12 @@ pub enum SurfaceSub {
     Resize,
     /// Snapshot the terminal buffer (not yet implemented server-side)
     Snapshot,
+    /// GAP-7.7: manage custom resume bindings (local config CRUD; no IPC).
+    #[cfg(unix)]
+    Resume {
+        #[command(subcommand)]
+        cmd: ResumeSub,
+    },
 }
 
 impl SurfaceSub {
@@ -285,8 +291,55 @@ impl SurfaceSub {
             SurfaceSub::SendText { text } => ("surface.send_text", Some(json!({ "text": text }))),
             SurfaceSub::Resize => ("surface.resize", None),
             SurfaceSub::Snapshot => ("surface.snapshot", None),
+            // Unreachable: SurfaceSub::Resume is intercepted by the hybrid
+            // dispatch in `run()` (cli.rs) and never reaches the IPC bridge.
+            #[cfg(unix)]
+            SurfaceSub::Resume { .. } => ("surface.resume", None),
         }
     }
+}
+
+/// GAP-7.7: `pureterm surface resume ...` — manage custom resume bindings
+/// (named, templated shell commands that reattach to an external persistent
+/// session such as tmux/screen on cold-resume). Local config CRUD; no IPC.
+/// Unix-only (resume execution goes through `puretermd`).
+#[cfg(unix)]
+#[derive(Subcommand, Clone)]
+pub enum ResumeSub {
+    /// Add or replace a resume binding keyed by (kind, checkpoint).
+    Set {
+        /// Agent kind this binding applies to (matches vault.agents.kind).
+        #[arg(long)]
+        kind: String,
+        /// Named checkpoint; also the value substituted for {checkpoint}.
+        #[arg(long)]
+        checkpoint: String,
+        /// argv template for the resume command. Supports the placeholders
+        /// {session_id}, {checkpoint}, {kind}, {cwd}. Must be the LAST
+        /// argument, e.g. `--shell tmux attach -t {checkpoint}`.
+        #[arg(long, num_args = 1.., allow_hyphen_values = true)]
+        shell: Vec<String>,
+        /// If set, cold-resume will attempt this binding (subject to HMAC-token
+        /// approval — see M2).
+        #[arg(long)]
+        auto: bool,
+    },
+    /// List all resume bindings.
+    List,
+    /// Remove the resume binding keyed by (kind, checkpoint).
+    Remove {
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        checkpoint: String,
+    },
+    /// Execute a resume binding now (manual trigger; M2 — approval + spawn).
+    Run {
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        checkpoint: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -558,7 +611,15 @@ pub fn run(cli: Cli) {
         Command::Window { cmd } => send(&socket, json, cmd.method_and_params()),
         Command::Tab { cmd } => send(&socket, json, cmd.method_and_params()),
         Command::Pane { cmd } => send(&socket, json, cmd.method_and_params()),
-        Command::Surface { cmd } => send(&socket, json, cmd.method_and_params()),
+        // GAP-7.7: Surface is hybrid — `resume *` is local config CRUD, the
+        // rest go through the IPC bridge. Precedent: Ssh arm below.
+        Command::Surface { cmd } => match &cmd {
+            #[cfg(unix)]
+            SurfaceSub::Resume { cmd: resume_cmd } => {
+                crate::resume_bindings::dispatch(resume_cmd.clone())
+            }
+            _ => send(&socket, json, cmd.method_and_params()),
+        },
         Command::Config { cmd } => send(&socket, json, cmd.method_and_params()),
         #[cfg(unix)]
         Command::Ssh { cmd } => match &cmd {

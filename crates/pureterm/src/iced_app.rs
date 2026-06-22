@@ -163,6 +163,12 @@ pub struct PureTermApp {
     /// GAP-7.5: `[[vault.agents]]` entries (resume_command templates).
     #[cfg(unix)]
     vault_agents: Vec<crate::app_config::VaultAgentEntry>,
+    /// GAP-7.6: detect-resume prompt panel state (external agent → resume hint).
+    #[cfg(unix)]
+    detect_panel: Box<crate::detect_panel::DetectPanelState>,
+    /// GAP-7.6: `[agent.detect]` config (enabled / scan interval / startup).
+    #[cfg(unix)]
+    detect_cfg: crate::app_config::AgentDetectConfig,
     /// GAP-7.6: most recent daemon `list_sessions` snapshot, cached by
     /// `hibernation_scan` so `view_bottom_bar` can show ❄ hibernated state
     /// without an extra IPC round-trip per frame.
@@ -644,6 +650,18 @@ pub enum Message {
     /// GAP-7.3: user clicked a hibernated pane's ❄ to resume (SIGCONT).
     #[cfg(unix)]
     HibernationResume { session_id: String },
+    /// GAP-7.6: periodic external-agent process detect scan.
+    #[cfg(unix)]
+    DetectScanTick,
+    /// GAP-7.6: user clicked one entry's Resume.
+    #[cfg(unix)]
+    DetectResumeOne { session_id: String },
+    /// GAP-7.6: user clicked "resume all".
+    #[cfg(unix)]
+    DetectResumeAll,
+    /// GAP-7.6: user dismissed the batch ("稍后" / ×).
+    #[cfg(unix)]
+    DetectDismiss,
     // Command palette (P5 GAP-5.9)
     OpenCommandPalette,
     CloseCommandPalette,
@@ -1118,6 +1136,12 @@ impl PureTermApp {
                 &crate::app_config::AppConfig::config_path(),
             ),
             #[cfg(unix)]
+            detect_panel: Box::new(crate::detect_panel::DetectPanelState::default()),
+            #[cfg(unix)]
+            detect_cfg: crate::app_config::AppConfig::load_agent_detect(
+                &crate::app_config::AppConfig::config_path(),
+            ),
+            #[cfg(unix)]
             last_session_list: Vec::new(),
             #[cfg(unix)]
             ssh_credential_store: None,
@@ -1173,6 +1197,18 @@ impl PureTermApp {
         if !restored {
             let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
             app.active_tab = first_id;
+        }
+
+        // GAP-7.6: scan once at startup for external agent processes (e.g. a
+        // `claude` started in another terminal) so the detect-resume panel can
+        // prompt immediately. Cheap (`ps` ~10-30ms) and unix-only; the periodic
+        // re-scan is driven by the DetectScanTick subscription.
+        #[cfg(unix)]
+        if app.detect_cfg.enabled && app.detect_cfg.scan_on_startup && !app.vault_agents.is_empty()
+        {
+            let detected = crate::agent_detect::scan(&app.vault_agents);
+            app.detect_panel
+                .refresh(crate::agent_detect::with_sessions(detected));
         }
 
         (app, task.map(Message::MainWindowOpened))
@@ -1235,6 +1271,95 @@ impl PureTermApp {
         );
         self.mark_layout_dirty();
         id
+    }
+
+    /// GAP-7.7: spawn a resume binding's interpolated argv as a new local tab
+    /// via the daemon (mirrors `create_tab`, but the PTY runs `argv` instead of
+    /// the user's shell — e.g. `tmux attach -t work`). Called from the Feed
+    /// panel after a resume binding is authorized (token or user Always).
+    /// Returns the new TabId, or `None` on daemon/attach failure (logged).
+    #[cfg(unix)]
+    fn create_resume_tab(&mut self, argv: &[String], kind: &str) -> Option<TabId> {
+        use alacritty_terminal::term::test::TermSize;
+
+        let (cols, rows, cw, ch) = {
+            let gs = self.glyph_state.borrow();
+            let terminal_height = terminal_content_height(self.viewport_size.height);
+            let cols = (self.viewport_size.width / gs.cell_width).floor().max(1.0) as usize;
+            let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
+            (cols, rows, gs.cell_width as u16, gs.cell_height as u16)
+        };
+
+        let daemon_socket = match crate::daemon_client::ensure_daemon() {
+            Ok(s) => s,
+            Err(e) => {
+                log::warn!("create_resume_tab: ensure_daemon failed: {e}");
+                return None;
+            }
+        };
+        let (sid, _data_path) = match crate::daemon_client::create_local(
+            &daemon_socket,
+            cols as u16,
+            rows as u16,
+            None,
+            Some(argv),
+            Some(kind),
+        ) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("create_resume_tab: create_local failed: {e}");
+                return None;
+            }
+        };
+        let terminal_ctx = match TerminalContext::attach_local_via_daemon(&sid, TermSize::new(cols, rows))
+        {
+            Ok(c) => Arc::new(c),
+            Err(e) => {
+                log::warn!("create_resume_tab: attach failed: {e}");
+                return None;
+            }
+        };
+        terminal_ctx.resize(cols, rows, cw, ch);
+
+        let id = TabId(self.next_tab_id);
+        self.next_tab_id += 1;
+        let pane_id = PaneId::next();
+        let title = format!("{kind} resume");
+        let mut panes = HashMap::new();
+        panes.insert(
+            pane_id,
+            Pane {
+                id: pane_id,
+                terminal_ctx,
+                title: title.clone(),
+            },
+        );
+        self.tabs.push(Tab {
+            id,
+            title: title.clone(),
+            panes,
+            split_tree: SplitNode::single(pane_id),
+            active_pane: pane_id,
+            tab_color: None,
+            created_at: Instant::now(),
+            zoom_state: None,
+            vi_sub_mode: None,
+        });
+        self.active_tab = id;
+        self.events.emit(
+            crate::events::Category::Surface,
+            "tab.created",
+            None,
+            serde_json::json!({ "tab_id": id.0, "pane_id": pane_id.0 }),
+        );
+        self.events.emit(
+            crate::events::Category::Session,
+            "session.spawned",
+            Some(sid.clone()),
+            serde_json::json!({ "kind": kind, "pane_id": pane_id.0, "resume": true }),
+        );
+        self.mark_layout_dirty();
+        Some(id)
     }
 
     /// GAP-5.6: re-attach to daemon sessions that survived the previous GUI run
@@ -3194,7 +3319,9 @@ impl PureTermApp {
                 // 回复,把 reply 句柄暂存,等人在 Feed 面板点按钮(或 120s 超时)
                 // 再回复。见 `handle_feed_request_approval`。
                 #[cfg(unix)]
-                if ipc_req.method == "feed.request_approval" {
+                if ipc_req.method == "feed.request_approval"
+                    || ipc_req.method == "resume.request_approval"
+                {
                     return self.handle_feed_request_approval(ipc_req);
                 }
                 // Build a rich snapshot from live app state.
@@ -3243,12 +3370,13 @@ impl PureTermApp {
             // ── GAP-7.4 Feed 审批面板 ──────────────────────────────────────
             #[cfg(unix)]
             Message::FeedResolve { id, choice } => {
-                // GAP-6.7: capture session_id before resolve drains the pending entry.
-                let session_id = self
+                // GAP-6.7 / GAP-7.7: capture fields before resolve drains pending.
+                let captured = self
                     .feed_panel
                     .pending
                     .get(&id)
-                    .map(|p| p.req.session_id.clone());
+                    .map(|p| (Some(p.req.session_id.clone()), p.req.resume.clone()));
+                let (session_id, resume) = captured.unwrap_or((None, None));
                 self.feed_panel.resolve(id, choice, crate::feed_panel::ResolveSource::User);
                 self.events.emit(
                     crate::events::Category::Feed,
@@ -3256,6 +3384,19 @@ impl PureTermApp {
                     session_id,
                     serde_json::json!({ "choice": choice.as_str(), "source": "user" }),
                 );
+                // GAP-7.7: on an allow choice, spawn the resume binding as a new tab.
+                if let Some(r) = resume {
+                    if choice.is_allow() {
+                        let cwd = self
+                            .active_pane_cwd()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_default();
+                        let argv = crate::resume_bindings::interpolate_shell(
+                            &r.shell, &r.kind, &r.checkpoint, "", &cwd,
+                        );
+                        self.create_resume_tab(&argv, &r.kind);
+                    }
+                }
             }
             #[cfg(unix)]
             Message::FeedDismiss => {
@@ -3313,6 +3454,26 @@ impl PureTermApp {
             #[cfg(unix)]
             Message::HibernationResume { session_id } => {
                 self.do_resume(&session_id);
+            }
+            #[cfg(unix)]
+            Message::DetectScanTick => {
+                self.detect_scan();
+            }
+            #[cfg(unix)]
+            Message::DetectResumeOne { session_id } => {
+                if let Some((kind, sid)) = self.detect_panel.resume_one(&session_id) {
+                    self.detect_resume_one(&kind, &sid);
+                }
+            }
+            #[cfg(unix)]
+            Message::DetectResumeAll => {
+                for (kind, sid) in self.detect_panel.resume_all() {
+                    self.detect_resume_one(&kind, &sid);
+                }
+            }
+            #[cfg(unix)]
+            Message::DetectDismiss => {
+                self.detect_panel.dismiss_all();
             }
             #[cfg(unix)]
             Message::SshReconnect(update) => {
@@ -5320,6 +5481,46 @@ impl PureTermApp {
         }
     }
 
+    /// GAP-7.6: scan host for external agent processes and refresh the
+    /// detect-resume panel. No-op unless `[agent.detect]` is enabled and
+    /// `[[vault.agents]]` is declared; `refresh` recomputes entries from the
+    /// latest scan (see `detect_panel::DetectPanelState::refresh`).
+    #[cfg(unix)]
+    fn detect_scan(&mut self) {
+        if !self.detect_cfg.enabled || self.vault_agents.is_empty() {
+            return;
+        }
+        let detected = crate::agent_detect::scan(&self.vault_agents);
+        self.detect_panel
+            .refresh(crate::agent_detect::with_sessions(detected));
+    }
+
+    /// GAP-7.6: spawn one detected agent's resume command in a new pane —
+    /// interpolate `{session_id}` into the vault `resume_command` template
+    /// (falling back to `claude --resume {session_id}`), then `create_resume_tab`.
+    /// Emits a `session.resumed` event on success for the audit log.
+    #[cfg(unix)]
+    fn detect_resume_one(&mut self, kind: &str, session_id: &str) {
+        let template = self
+            .vault_agents
+            .iter()
+            .find(|e| e.kind == kind)
+            .map(|e| e.resume_command.clone())
+            .unwrap_or_else(|| {
+                vec!["claude".to_string(), "--resume".to_string(), "{session_id}".to_string()]
+            });
+        let argv: Vec<String> =
+            template.iter().map(|a| a.replace("{session_id}", session_id)).collect();
+        if self.create_resume_tab(&argv, kind).is_some() {
+            self.events.emit(
+                crate::events::Category::Session,
+                "session.resumed",
+                Some(session_id.to_string()),
+                serde_json::json!({ "source": "detect-panel", "kind": kind }),
+            );
+        }
+    }
+
     /// GAP-7.4: Feed 面板可见性(view 的 has_overlay / layers 用;跨平台守卫)。
     #[cfg(unix)]
     fn feed_panel_visible(&self) -> bool {
@@ -5327,6 +5528,27 @@ impl PureTermApp {
     }
     #[cfg(not(unix))]
     fn feed_panel_visible(&self) -> bool {
+        false
+    }
+
+    /// GAP-7.3: hibernate 确认面板可见性(跨平台守卫)。has_overlay 此前漏判
+    /// 它,导致单独打开 hibernate 面板时不渲染 —— GAP-7.6 顺带修复。
+    #[cfg(unix)]
+    fn hibernate_panel_visible(&self) -> bool {
+        self.hibernate_panel.is_visible()
+    }
+    #[cfg(not(unix))]
+    fn hibernate_panel_visible(&self) -> bool {
+        false
+    }
+
+    /// GAP-7.6: detect-resume 提示面板可见性(跨平台守卫)。
+    #[cfg(unix)]
+    fn detect_panel_visible(&self) -> bool {
+        self.detect_panel.is_visible()
+    }
+    #[cfg(not(unix))]
+    fn detect_panel_visible(&self) -> bool {
         false
     }
 
@@ -5360,9 +5582,21 @@ impl PureTermApp {
 
         // 记忆命中(Always/All/Bypass)→ 入队后立即 resolve(source=Memory),
         // 不弹面板。否则入队 + 聚焦,等用户点按钮(或 120s 超时)。
-        let memory_choice = self
-            .feed_panel
-            .consult_memory(&payload.session_id, payload.tool_name.as_deref().unwrap_or(""));
+        // GAP-7.7: resume 绑定走 HMAC 令牌(非 in-memory map);令牌有效即视为 Always。
+        let memory_choice = if payload.resume.is_some() {
+            let r = payload.resume.as_ref().expect("checked Some above");
+            if matches!(
+                crate::resume_bindings::authorize(&r.kind, &r.checkpoint, &r.shell),
+                crate::resume_bindings::AuthDecision::Approved
+            ) {
+                Some(crate::feed_client::FeedChoice::Always)
+            } else {
+                None
+            }
+        } else {
+            self.feed_panel
+                .consult_memory(&payload.session_id, payload.tool_name.as_deref().unwrap_or(""))
+        };
         // GAP-6.7: capture payload fields for the event before moving it.
         let session_id = payload.session_id.clone();
         let request_meta = serde_json::json!({
@@ -5379,6 +5613,12 @@ impl PureTermApp {
             request_meta,
         );
         if let Some(choice) = memory_choice {
+            // GAP-7.7: capture resume payload before resolve drains pending.
+            let resume = self
+                .feed_panel
+                .pending
+                .get(&id)
+                .and_then(|p| p.req.resume.clone());
             self.feed_panel.resolve(id, choice, ResolveSource::Memory);
             self.events.emit(
                 crate::events::Category::Feed,
@@ -5386,6 +5626,17 @@ impl PureTermApp {
                 Some(session_id),
                 serde_json::json!({ "choice": choice.as_str(), "source": "memory" }),
             );
+            // GAP-7.7: token pre-approved → spawn the binding as a new tab.
+            if let Some(r) = resume {
+                let cwd = self
+                    .active_pane_cwd()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                let argv = crate::resume_bindings::interpolate_shell(
+                    &r.shell, &r.kind, &r.checkpoint, "", &cwd,
+                );
+                self.create_resume_tab(&argv, &r.kind);
+            }
         } else {
             self.feed_panel.focused = Some(id);
         }
@@ -6655,6 +6906,72 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(x).y(48.0).into())
     }
 
+    /// GAP-7.6: render the detect-resume prompt as a right-side pinned overlay.
+    /// Aggregates N detected agents: a header with the count, one row per entry
+    /// (kind · sid prefix · pid + [Resume]), and a footer ([全部 Resume] / [稍后]).
+    /// `None` when the batch is empty.
+    #[cfg(unix)]
+    fn view_detect_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, row, space, text};
+        use iced::Length;
+
+        if self.detect_panel.entries.is_empty() {
+            return None;
+        }
+
+        let mut body = column![row![
+            text(format!("⚡ 检测到 {} 个可恢复会话", self.detect_panel.entries.len())).size(14),
+            space().width(Length::Fill),
+            button(text("×").size(14))
+                .on_press(Message::DetectDismiss)
+                .padding([2, 8])
+                .style(button::secondary),
+        ]
+        .spacing(4)]
+        .spacing(4)
+        .padding(8);
+
+        // One row per detected agent: kind · sid prefix · (pid N) + [Resume].
+        for e in &self.detect_panel.entries {
+            let sid_short: String = e.session_id.chars().take(8).collect();
+            let sid = e.session_id.clone();
+            body = body.push(row![
+                text(format!("{} · {}… (pid {})", e.kind, sid_short, e.pid)).size(11),
+                space().width(Length::Fill),
+                button(text("Resume").size(11))
+                    .on_press(Message::DetectResumeOne { session_id: sid })
+                    .padding([2, 6])
+                    .style(button::primary),
+            ]
+            .spacing(4));
+        }
+
+        // Footer: resume all / dismiss.
+        body = body.push(row![
+            button(text("全部 Resume").size(12))
+                .on_press(Message::DetectResumeAll)
+                .width(Length::Fill)
+                .padding([4, 6])
+                .style(button::secondary),
+            button(text("稍后").size(12))
+                .on_press(Message::DetectDismiss)
+                .width(Length::Fill)
+                .padding([4, 6])
+                .style(button::secondary),
+        ]
+        .spacing(6));
+
+        let panel = container(body)
+            .width(Length::Fixed(320.0))
+            .height(Length::Shrink)
+            .style(container::bordered_box);
+        // Pin to the right edge, below the top status bar. Pushed after feed/
+        // hibernate in the layers stack → sits on top in z-order; if it ever
+        // collides with the hibernate panel, bump y to 96.0.
+        let x = (self.viewport_size.width - 320.0).max(0.0);
+        Some(iced::widget::pin(panel).x(x).y(48.0).into())
+    }
+
     /// P5 GAP-5.9: render the command palette as a centered overlay.
     /// Two modes:
     /// - `Mode::Actions` — fuzzy-searchable list of registered actions.
@@ -7106,7 +7423,9 @@ impl PureTermApp {
             || self.vi_search.is_some()
             || self.surface_search.is_some()
             || self.dir_search.is_some()
-            || self.feed_panel_visible();
+            || self.feed_panel_visible()
+            || self.hibernate_panel_visible()
+            || self.detect_panel_visible();
 
         if has_overlay {
             // No full-screen `dismiss` overlay here. The previous design
@@ -7159,6 +7478,10 @@ impl PureTermApp {
             #[cfg(unix)]
             if let Some(hibernate_el) = self.view_hibernate_panel() {
                 layers.push(hibernate_el);
+            }
+            #[cfg(unix)]
+            if let Some(detect_el) = self.view_detect_panel() {
+                layers.push(detect_el);
             }
             if let Some(palette_el) = self.view_command_palette() {
                 layers.push(palette_el);
@@ -7417,6 +7740,13 @@ impl PureTermApp {
         #[cfg(unix)]
         let hibernation_countdown_sub =
             time::every(Duration::from_secs(1)).map(|_| Message::HibernationCountdownTick);
+        // GAP-7.6: periodic external-agent detect scan (independent of
+        // hibernation's tick; default 30s). Drives the detect-resume panel.
+        #[cfg(unix)]
+        let detect_scan_secs = self.detect_cfg.scan_interval_secs.max(1);
+        #[cfg(unix)]
+        let detect_sub =
+            time::every(Duration::from_secs(detect_scan_secs)).map(|_| Message::DetectScanTick);
 
         // 注意：event::listen_with 要求 fn 指针（无捕获），所以全局鼠标事件
         // 不在闭包里过滤主窗口。GlobalCursorMoved / GlobalMouseRelease
@@ -7503,6 +7833,7 @@ impl PureTermApp {
             feed_tick_sub,
             hibernation_scan_sub,
             hibernation_countdown_sub,
+            detect_sub,
             events_sub,
         ];
         #[cfg(not(unix))]

@@ -19,6 +19,9 @@ mod feed_log;
 mod feed_panel;
 #[cfg(unix)]
 mod hibernate_panel;
+/// GAP-7.6: detect-resume prompt panel state machine (GUI-side).
+#[cfg(unix)]
+mod detect_panel;
 #[cfg(unix)]
 mod daemon_client;
 #[cfg(unix)]
@@ -43,6 +46,9 @@ mod macos_eyedropper;
 mod ssh;
 #[cfg(unix)]
 mod ssh_cli;
+/// GAP-7.7: custom resume bindings (`pureterm surface resume ...`).
+#[cfg(unix)]
+mod resume_bindings;
 mod terminal_context;
 mod terminal_shader;
 mod vi_mode_handler;

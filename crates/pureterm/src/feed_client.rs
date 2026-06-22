@@ -99,6 +99,42 @@ pub fn request_approval(
     timeout: Duration,
     socket_override: Option<PathBuf>,
 ) -> FeedOutcome {
+    let params = serde_json::to_value(req).unwrap_or_else(|_| serde_json::json!({}));
+    rpc_approval("feed.request_approval", params, timeout, socket_override)
+}
+
+/// GAP-7.7: 联系 GUI 请求执行一个 resume 绑定(经同一 Feed 延迟回复面板)。
+/// GUI 侧:令牌命中则静默放行 + 在新 tab 跑绑定命令;否则弹面板,用户点
+/// Always 时持久化 HMAC 令牌(供后续冷恢复)。shim 形参:`kind`/`checkpoint`/
+/// `shell`(模板 argv)。`session_id`/`event` 为面板解析必填,此处合成占位。
+pub fn request_resume_approval(
+    kind: &str,
+    checkpoint: &str,
+    shell: &[String],
+    timeout: Duration,
+    socket_override: Option<PathBuf>,
+) -> FeedOutcome {
+    let params = serde_json::json!({
+        "session_id": "",
+        "event": "resume.run",
+        "kind": kind,
+        "checkpoint": checkpoint,
+        "shell": shell,
+        "reason": format!("resume binding {kind}/{checkpoint}"),
+        "cwd": "",
+    });
+    rpc_approval("resume.request_approval", params, timeout, socket_override)
+}
+
+/// Shared deferred-reply round-trip for both `feed.request_approval` and
+/// `resume.request_approval`. Single connection, single request: write a
+/// JSON-RPC line → `shutdown(WRITE)` → blocking `read_line` for the choice.
+fn rpc_approval(
+    method: &str,
+    params: serde_json::Value,
+    timeout: Duration,
+    socket_override: Option<PathBuf>,
+) -> FeedOutcome {
     let mut stream = match find_socket(socket_override) {
         Ok(s) => s,
         Err(_) => return FeedOutcome::NoGui,
@@ -107,10 +143,9 @@ pub fn request_approval(
     let _ = stream.set_read_timeout(Some(timeout));
     let _ = stream.set_write_timeout(Some(timeout));
 
-    static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let params = serde_json::to_value(req).unwrap_or_else(|_| serde_json::json!({}));
-    let request = JsonRpcRequest::with_params(id, "feed.request_approval", params);
+    let request = JsonRpcRequest::with_params(id, method, params);
 
     let mut line = match serde_json::to_string(&request) {
         Ok(s) => s,

@@ -40,6 +40,18 @@ pub struct FeedRequestPayload {
     pub reason: String,
     pub cwd: Option<String>,
     pub created_at: Instant,
+    /// GAP-7.7: present when this is a resume-binding approval (not a tool hook).
+    /// On Always, the GUI mints+persists an HMAC token.
+    pub resume: Option<ResumePayload>,
+}
+
+/// GAP-7.7: resume-binding approval payload. On Always, `resolve()` mints an
+/// HMAC token over `(kind, checkpoint, shell)` via `resume_bindings::approve_token`.
+#[derive(Debug, Clone)]
+pub struct ResumePayload {
+    pub kind: String,
+    pub checkpoint: String,
+    pub shell: Vec<String>,
 }
 
 impl FeedRequestPayload {
@@ -152,6 +164,18 @@ impl FeedPanelState {
         let s = params.as_object()?;
         let session_id = s.get("session_id").and_then(|v| v.as_str())?.to_string();
         let event = s.get("event").and_then(|v| v.as_str())?.to_string();
+        // GAP-7.7: a resume-binding approval carries kind+checkpoint+shell.
+        let resume = (|| {
+            let kind = s.get("kind")?.as_str()?.to_string();
+            let checkpoint = s.get("checkpoint")?.as_str()?.to_string();
+            let shell = s
+                .get("shell")?
+                .as_array()?
+                .iter()
+                .map(|v| v.as_str().unwrap_or("").to_string())
+                .collect::<Vec<_>>();
+            Some(ResumePayload { kind, checkpoint, shell })
+        })();
         Some(FeedRequestPayload {
             ipc_id,
             session_id,
@@ -163,6 +187,7 @@ impl FeedPanelState {
             reason: s.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string(),
             cwd: s.get("cwd").and_then(|v| v.as_str()).map(String::from),
             created_at: Instant::now(),
+            resume,
         })
     }
 
@@ -183,7 +208,17 @@ impl FeedPanelState {
             let _ = tx.send(resp);
         }
         if matches!(source, ResolveSource::User) {
-            self.remember(&p.req.session_id, p.req.tool_name.as_deref().unwrap_or(""), choice);
+            if let Some(resume) = &p.req.resume {
+                // GAP-7.7: resume approval — on Always, mint+persist the HMAC
+                // token (the persistent memory). Resume approvals deliberately
+                // bypass the in-memory always_remember map: its (session_id,
+                // tool_name) key would collide on ("", "").
+                if matches!(choice, FeedChoice::Always) {
+                    crate::resume_bindings::approve_token(&resume.kind, &resume.checkpoint, &resume.shell);
+                }
+            } else {
+                self.remember(&p.req.session_id, p.req.tool_name.as_deref().unwrap_or(""), choice);
+            }
         }
         append_audit(&p.req, choice, source);
         self.history.push((ipc_id, choice, source));
@@ -319,6 +354,7 @@ mod tests {
             reason: "r".into(),
             cwd: None,
             created_at: Instant::now(),
+            resume: None,
         }
     }
 

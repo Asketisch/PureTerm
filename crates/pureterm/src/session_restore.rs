@@ -364,6 +364,23 @@ fn cold_resume_agent(
     use alacritty_terminal::term::test::TermSize;
 
     let kind = agent_kind.unwrap_or("claude-code");
+    // GAP-7.7: prefer an `auto` resume binding (e.g. `tmux attach -t work`)
+    // authorized by an HMAC token over the default `claude --resume`. Cold-
+    // resume never prompts — no token (or no auto binding) means fall through
+    // to the vault/claude path below.
+    if let Some(argv) = crate::resume_bindings::cold_resume_argv(kind, agent_session_id, "") {
+        let daemon_socket = crate::daemon_client::ensure_daemon()?;
+        let (sid, _data_path) = crate::daemon_client::create_local(
+            &daemon_socket,
+            80,
+            24,
+            None,
+            Some(&argv),
+            Some(kind),
+        )?;
+        let ctx = TerminalContext::attach_local_via_daemon(&sid, TermSize::new(80, 24))?;
+        return Ok(Arc::new(ctx));
+    }
     let argv = crate::app_config::AppConfig::load_vault_agents(
         &crate::app_config::AppConfig::config_path(),
     )

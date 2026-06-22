@@ -56,6 +56,10 @@ argon2 = "0.5"
 zeroize = { version = "1", features = ["zeroize_derive"] }
 rand = "0.8"
 rustix-openpty = "0.2"
+# GAP-7.7: HMAC-SHA256 signed approval tokens for custom resume bindings.
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
