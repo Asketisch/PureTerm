@@ -126,6 +126,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: AgentSub,
     },
+    /// GAP-7.6: read the Feed approval audit log (`feed.jsonl`). Local, no IPC.
+    Feed {
+        #[command(subcommand)]
+        cmd: FeedSub,
+    },
 }
 
 // ── Group subcommands ────────────────────────────────────────────────────
@@ -411,6 +416,24 @@ pub enum AgentsSub {
         #[arg(long)]
         kind: Option<String>,
     },
+    /// GAP-7.6: scan host processes for agents declared in `[[vault.agents]]`
+    /// (via their `detect` substring). Surfaces agents running outside
+    /// PureTerm so you can resume them. No IPC.
+    Detect,
+    /// GAP-7.6: print the parsed `[[vault.agents]]` registry (kind / detect /
+    /// resume_command / never_hibernate) to confirm config took effect. No IPC.
+    Registry,
+}
+
+/// GAP-7.6: read the Feed approval audit log (`feed.jsonl`). Local only.
+#[derive(Subcommand)]
+pub enum FeedSub {
+    /// List recent feed approval decisions (newest first)
+    List {
+        /// Max number of entries to show (default 50)
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 /// GAP-7.3: hibernate/resume agent sessions via the daemon control plane
@@ -539,6 +562,29 @@ pub fn run(cli: Cli) {
         // GAP-7.3: hibernate/resume via the daemon control plane.
         #[cfg(unix)]
         Command::Agent { cmd } => dispatch_agent(cmd),
+        // GAP-7.6: read feed audit log (local JSONL, no IPC).
+        Command::Feed { cmd } => match cmd {
+            FeedSub::List { limit } => {
+                let entries = crate::feed_log::read_last(limit.unwrap_or(50));
+                if entries.is_empty() {
+                    println!("no feed entries yet");
+                } else {
+                    println!(
+                        "{:<24} {:<10} {:<14} {:<8} {:<7}  {}",
+                        "TS", "SESSION", "EVENT", "CHOICE", "SRC", "TOOL"
+                    );
+                    for e in &entries {
+                        let session: String = e.session_id.chars().take(8).collect();
+                        let event: String = e.event.chars().take(14).collect();
+                        let tool = e.tool_name.clone().unwrap_or_else(|| "-".into());
+                        println!(
+                            "{:<24} {:<10} {:<14} {:<8} {:<7}  {}",
+                            e.ts, session, event, e.choice, e.source, tool
+                        );
+                    }
+                }
+            }
+        },
     }
 }
 

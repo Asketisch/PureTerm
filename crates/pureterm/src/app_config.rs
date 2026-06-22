@@ -31,13 +31,28 @@ impl Default for AppConfig {
 /// GAP-7.6/7.5: a `[[vault.agents]]` entry declaring how to resume an agent.
 /// `resume_command` may contain a `{session_id}` placeholder replaced at
 /// cold-resume time (e.g. `["claude", "--resume", "{session_id}"]`).
-#[derive(Clone, Debug, serde::Deserialize)]
+///
+/// GAP-7.6 字段:`name`/`detect`/`session_id_source`。`detect` 是进程名或 cmdline
+/// 的**子串**(非 shell 命令 —— 避免注入与 shell 依赖,偏离 cmux 的 shell 风格),
+/// 由 `agent_detect::scan` 在启动/周期扫描时识别机器上正在运行的 agent 进程。
+/// `session_id_source` 本期仅文档化、不消费(预留 GAP-7.7)。
+#[derive(Clone, Debug, Default, serde::Deserialize)]
 pub struct VaultAgentEntry {
     pub kind: String,
     pub resume_command: Vec<String>,
     /// If true, this agent kind is exempt from hibernation (GAP-7.3).
     #[serde(default)]
     pub never_hibernate: bool,
+    /// 可选:展示名(缺省回退 `kind`)。
+    #[serde(default)]
+    pub name: Option<String>,
+    /// 可选:进程名/cmdline 子串,供 `agent_detect::scan` 识别运行中的 agent。
+    /// 空/缺省 = 用 `kind` 小写形式。
+    #[serde(default)]
+    pub detect: Option<String>,
+    /// 可选:预留(GAP-7.7),本期不消费。当前固定 transcript/env 启发式推断。
+    #[serde(default)]
+    pub session_id_source: Option<String>,
 }
 
 /// GAP-7.3: `[agent.hibernation]` settings. Defaults yield a disabled config,
@@ -574,6 +589,35 @@ never_hibernate = true
         assert!(!agents[0].never_hibernate);
         assert_eq!(agents[1].kind, "codex");
         assert!(agents[1].never_hibernate);
+    }
+
+    #[test]
+    fn test_load_vault_agents_gap76_fields() {
+        // GAP-7.6:name/detect/session_id_source 反序列化 + serde default 回退。
+        let toml = r#"
+[[vault.agents]]
+kind = "claude-code"
+resume_command = ["claude", "--resume", "{session_id}"]
+name = "Claude Code"
+detect = "claude-code"
+session_id_source = "transcript"
+
+[[vault.agents]]
+kind = "codex"
+resume_command = ["codex", "resume", "{session_id}"]
+"#;
+        let path = write_temp_toml("pureterm_test_vault_gap76.toml", toml);
+        let agents = AppConfig::load_vault_agents(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(agents.len(), 2);
+        // 第一条:全字段。
+        assert_eq!(agents[0].name.as_deref(), Some("Claude Code"));
+        assert_eq!(agents[0].detect.as_deref(), Some("claude-code"));
+        assert_eq!(agents[0].session_id_source.as_deref(), Some("transcript"));
+        // 第二条:缺省 → None(serde default)。
+        assert!(agents[1].name.is_none());
+        assert!(agents[1].detect.is_none());
+        assert!(agents[1].session_id_source.is_none());
     }
 
     #[test]

@@ -1,4 +1,5 @@
 mod agent_adapters;
+mod agent_detect;
 mod agent_hooks;
 mod agent_sessions;
 mod app_config;
@@ -6,6 +7,8 @@ mod cli;
 mod config_watcher;
 #[cfg(unix)]
 mod feed_client;
+/// GAP-7.6: read-only feed audit log viewer (`pureterm feed list`).
+mod feed_log;
 #[cfg(unix)]
 mod feed_panel;
 #[cfg(unix)]

@@ -226,9 +226,27 @@ PureTerm 由 6 个 crate 组成的工作区:
 - **默认事件策略**:仅注册 `pureterm.toml` 中已配 `[[agent.hook]]` 规则的事件(Claude Code 不会在未配策略的事件上无谓 spawn pureterm);零规则时警告退出不写;`--all-events` 注册全量(之后新增规则无需重装,PureTerm `evaluate()` 内部按 matcher 过滤)
 - 实现:`crates/pureterm/src/agent_adapters.rs`(`AgentAdapter` trait + provided 加锁 RMW 引擎 + `ClaudeCodeAdapter` + `registry` + `dispatch` + `pureterm_bin` 解析)+ `cli.rs`(`Command::Agents` / `AgentsSub`)+ `main.rs`(`mod agent_adapters`)+ `Cargo.toml`(`fs2`/`tempfile`);10 单测(保留外部内容 / 幂等 / 同事件多 matcher / 精准卸载 / 非 object root 拒写 等),整套 181 全绿
 
+### Agent 自动发现 + 可观测(2026-06-22 GAP-7.6 🚧)
+- 在 GAP-7.2 之上,让 agent 体验"开箱即用闭环"+"一眼可见":
+  - **SessionStart 自动注册**(打通 GAP-7.5 冷恢复):`pureterm agents install claude-code` 后,只要 `pureterm.toml` 配了 `[[vault.agents]]`,SessionStart 钩子自动注册 —— agent session id 持久化 + 关 PureTerm 重开自动 `claude --resume`。修复了"装了适配器但冷恢复静默失效"的隐蔽坑(此前需 `--all-events` 或手配规则)
+  - **进程扫描**:`pureterm agents detect` 扫描机器上正在运行的 agent(按 `[[vault.agents]]` 的 `detect` 子串匹配,排除 grep/rg/ps/shell),交叉 `agent_sessions` 给出可 resume 的 session id —— 发现 PureTerm 之外启动的 agent
+  - **registry 检视**:`pureterm agents registry` 打印解析后的 `[[vault.agents]]`,确认配置生效
+  - **状态栏 agent 指示**:`⚡ kind`(活跃)/`❄ kind`(休眠)/`⏳ N`(N 条 Feed 审批待决),无需打开面板即知 agent 状态
+  - **Feed 审计查阅**:`pureterm feed list [--limit N]` 读 `feed.jsonl` 审批历史
+- **DoD 语义重定义**:原"attach 到现有 session"在 daemon 自持 PTY 模型下不可落地 → 重定义为"识别 + 提示 resume"(外部 agent 扫描识别,提示在新 pane resume,非抢占 TTY)
+- **配置**(`detect` 是进程名/cmdline **子串**,非 shell 命令 —— 避免注入):
+  ```toml
+  [[vault.agents]]
+  kind = "claude-code"
+  detect = "claude-code"                              # 可选,子串;缺省 = kind 小写
+  resume_command = ["claude", "--resume", "{session_id}"]
+  never_hibernate = false                             # 可选,豁免 GAP-7.3 休眠
+  ```
+- 实现:`agent_detect.rs` + `feed_log.rs`(新建)+ `agent_adapters.rs::derive_entries`(SessionStart 特例)+ `iced_app.rs`(`agent_indicator` 纯函数 + view_bottom_bar + `last_session_list` 缓存,零新 IPC)+ `cli.rs`(Feed/Detect/Registry);254 单测全绿。**待 dist 重打包 + GUI E2E**;GUI "检测到外部 session,是否 resume" 提示面板留后续
+
 ### 状态栏
-- 底部 24px 状态栏(2026-06-12 GAP-3.4 闭环)
-- 显示:工作目录(OSC 7) · Git 分支(30s 轮询) · SSH 连接指示 · 前台进程名 · 光标位置(row:col)
+- 底部 24px 状态栏(2026-06-12 GAP-3.4 闭环;2026-06-22 GAP-7.6 加 agent 指示)
+- 显示:工作目录(OSC 7) · Git 分支(30s 轮询) · SSH 连接指示 · 前台进程名 · **agent 指示 `⚡ kind` / `❄ kind` / `⏳ N`**(2026-06-22 GAP-7.6) · 光标位置(row:col)
 
 ### 跨平台
 - macOS / Linux / Windows
@@ -494,12 +512,14 @@ PureTerm 扩展段:
 - 🚧 **GAP-5.6 daemon 化跨重启恢复**(2026-06-17 代码闭环,待 GUI E2E):GUI 重启后自动重连 daemon 存活会话 + 重建 tabs/分屏布局/窗口尺寸;`gui-sessions.json` 变更去抖原子写 + 关窗 flush;孤儿会话作额外 tab 接回;SSH 重连到存活 `ssh -tt` child 无需重新认证
 - 🚧 **GAP-5.6** SSH reconnect/disconnect 状态机(进程内子集:网络中断自动重连 + 指数退避 + 状态栏 + `ssh.disconnect`;daemon 化跨重启恢复已实现,见上)
 - ✅ **GAP-6.1** Socket API v2 完整协议(31 method / 8 命名空间 + IpcSideEffect 写操作副作用)
+- ✅ **GAP-7.1/7.2** Agent Hooks 通用框架 + Claude Code 适配器自动安装(`pureterm hook` shim + `pureterm agents install`,加锁 RMW 写 `~/.claude/settings.json`)
+- 🚧 **GAP-7.3/7.4/7.5/7.6** Agent 体验闭环(2026-06-22 代码闭环,254 单测绿,待 GUI E2E):Hibernation(idle 双条件 SIGSTOP)+ Feed 审批面板(延迟回复 + 5 按钮 + 作用域记忆 + feed.jsonl 审计)+ Session Restore(`claude --resume` 冷恢复)+ Vault registry(`pureterm agents detect` 进程扫描 + SessionStart 自动注册打通冷恢复 + 状态栏 `⚡/❄/⏳` 指示 + `pureterm feed list`)
 
 **本季度焦点**(2026 Q2-Q3):
 - **GAP-6.2** CLI 协议(9 大组子命令,基于 GAP-6.1 Socket API 扩展)
 
 **重点未实现领域**(详见路线图):
-- AI Agent 集成(hooks 框架 + Claude Code adapter + Feed 审批面板)
+- AI Agent 收尾(GAP-7.3~7.6 的 GUI E2E + dist 重打包;GAP-7.7 custom resume bindings / GAP-7.8 agent-browser 兼容)
 - Browser 面板(WebView + SOCKS5 隧道)
 - 双侧边栏 + Workspace 抽象层
 

@@ -58,11 +58,11 @@
 | C. 终端交互 | 2 | 1 | 4 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
 | E. 集成与可编程 | 3 | 0 | 5 | 0 | 8 |
-| F. AI Agent | 2 | 3 | 3 | 0 | 8 |
+| F. AI Agent | 2 | 4 | 2 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **19** | **5** | **22** | **3** | **49** |
+| **总计** | **19** | **6** | **21** | **3** | **49** |
 
-整体进度:✅ 19/49 ≈ 39% · 🚧 5
+整体进度:✅ 19/49 ≈ 39% · 🚧 6
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -545,7 +545,7 @@
 - **状态**: 🚧(2026-06-22 M1 代码闭环:session id 持久化 + 冷恢复;**待 dist 重打包 + 手动 GUI E2E**)
 - **优先级**: P1
 - **实现位置(M1)**:`agent_sessions.rs`(新建:`AgentSessionStore` 读写 `data_dir()/agents/<kind>-sessions.json`,原子写照 `session_restore::save_atomic`,FIFO 16 条)+ `feed_client.rs::notify_session_started`(fire-and-forget,照 `notify_session_end`)+ `agent_hooks.rs`(SessionStart 钩子 + `infer_agent_kind` env/transcript 启发式)+ `ipc/methods.rs`(`agent.session_started` + `IpcSideEffect::AgentSessionStarted`)+ `iced_app.rs`(`handle_agent_session_started` 写 store + 按 active pane 关联 `agent_sessions` map;`capture_layout` 写进 `PaneSnapshot.agent_session_id`)+ `session_restore.rs::cold_resume_agent`(死 session + 有 agent_session_id → 查 `[[vault.agents]]` resume_command → `claude --resume <id>` via `create_local(argv)` → 重 attach)+ `session.rs::create_local` 加 `argv/agent_kind`(`tty::Options.shell = Some(Shell::new(..))` spawn 任意命令)+ `app_config.rs::load_vault_agents`(`[[vault.agents]]` typed serde)+ `cli.rs`(`pureterm agents sessions` 本地读 store)
-- **PureTerm 现状**: agent session id 经 `HookInput.session_id`(agent 自报)→ SessionStart hook → 持久化;restore 时若 daemon session 死且 pane 有 agent_session_id → 冷恢复 spawn `claude --resume`
+- **PureTerm 现状**: agent session id 经 `HookInput.session_id`(agent 自报)→ SessionStart hook → 持久化;restore 时若 daemon session 死且 pane 有 agent_session_id → 冷恢复 spawn `claude --resume`。**SessionStart 默认注册已由 GAP-7.6 修复**(`agent_adapters.rs::derive_entries` 在 `[[vault.agents]]` 非空时自动追加) —— 默认 `agents install` 即闭环冷恢复,不再需要 `--all-events`/手配规则
 - **目标**: 持久化 session id 到 `~/.local/share/pureterm/agents/<agent>-sessions.json`;启动时 `--resume <id>`;支持 `claude --resume` / `codex --resume`
 - **依赖**: GAP-7.2 ✅;~~GAP-2.4~~ —— **由 GAP-5.1(puretermd)实质满足**(2026-06-22 回填)
 - **风险点**: agent resume 协议可能变化;pane↔session_id 关联用启发式(active pane,M3 可改 child_pid 精确关联)
@@ -557,21 +557,32 @@
 ### F.P2
 
 #### GAP-7.6 Vault agent registry {#gap-7-6}
-- **状态**: ❌
+- **状态**: 🚧(2026-06-22 代码闭环 + 254 单测全绿 + release 编译通过;**GUI 提示 resume 面板待后续**)
 - **优先级**: P2
-- **PureTerm 现状**: 无
-- **目标**: `alacritty.toml::[vault.agents]` 声明式注册:
+- **DoD 语义重定义**: PureTerm 的 daemon 自持 PTY 模型无法抢占外部 agent 的 TTY —— 原 DoD"启动自动识别并 attach 到现有 session"不可直接落地。重定义为两层:(1) PureTerm **内**启动的 agent:修复 SessionStart 默认注册(见下)后,session id 持久化 + 冷恢复自动闭环;(2) PureTerm **外**启动的 agent:`detect` 扫描识别 + CLI/GUI 提示"N 个 session 可 resume",用户确认后新 pane 里 `claude --resume <id>`(识别 + 提示 resume,**非抢占 TTY**)
+- **PureTerm 现状**: schema + detect 扫描 + registry/CLI + 状态栏/Feed 可观测 全部落地
+- **目标**: `alacritty.toml::[vault.agents]` 声明式注册(`detect` 是**进程名/cmdline 子串**,非 shell 命令 —— 避免注入,偏离 cmux 风格):
   ```toml
   [[vault.agents]]
-  name = "claude-code"
-  detect = "ps aux | grep claude"
-  session_id_source = "transcript"
-  resume_command = "claude --resume $SESSION_ID"
+  kind = "claude-code"
+  name = "Claude Code"           # 可选,展示名(缺省回退 kind)
+  detect = "claude-code"         # 可选,子串;缺省 = kind 小写
+  resume_command = ["claude", "--resume", "{session_id}"]
+  never_hibernate = false        # 可选,豁免 GAP-7.3
   ```
-  启动扫描注册表识别运行 agent
-- **依赖**: GAP-7.5
-- **风险点**: detect 启发式
-- **DoD**: 配置 Claude Code,启动自动识别并 attach 到现有 session
+- **已实现**:
+  - **SessionStart 默认注册修复**(最高 ROI,打通 GAP-7.5 冷恢复):`agent_adapters.rs::derive_entries` 在 `[[vault.agents]]` 非空时自动追加 SessionStart(镜像 SessionEnd 特例),不再依赖 `--all-events`/手配规则。修复"装了适配器但冷恢复静默失效"隐蔽坑
+  - **schema 补齐**:`VaultAgentEntry` 加 `name`/`detect`/`session_id_source`(serde default)+ `Default` 派生
+  - **进程扫描器**:`agent_detect.rs`(新建)— macOS `ps -axo pid=,comm=,args=`/ Linux `/proc/*/comm+cmdline`,按 `detect` 子串匹配,排除 self/grep/rg/ps/shell;`with_sessions` 交叉 `agent_sessions` 最近 session_id。不引入 sysinfo
+  - **registry CLI**:`pureterm agents detect`(扫描打表)/ `pureterm agents registry`(打印解析结果),本地无 IPC
+  - **dead field 修复**:`never_hibernate` 接进 `hibernate_scan` 的 `is_live_agent`/`is_idle` 决策(`vault_kind_never_hibernate` 纯函数)
+  - **轻可观测**(不依赖完整 GAP-6.7):状态栏 `⚡ kind`(active)/`❄ kind`(hibernated)/`⏳ N`(feed pending)指示(`agent_indicator` 纯函数 + `last_session_list` 缓存,零新 IPC);`pureterm feed list [--limit N]` 读 `feed.jsonl`(`feed_log.rs`)
+- **实现位置**:`agent_detect.rs` + `feed_log.rs`(新建)+ `agent_adapters.rs`(`derive_entries` + Detect/Registry dispatch)+ `app_config.rs`(字段)+ `iced_app.rs`(纯函数 + view_bottom_bar + hibernate 闭包 + last_session_list)+ `cli.rs`(FeedSub/Command::Feed)+ `main.rs`(mod)
+- **依赖**: GAP-7.5 ✅
+- **风险点**: detect 子串误报(缓解:排除 self/grep/rg/ps + 建议写具体如 `claude-code`)
+- **DoD**: 配 `[[vault.agents]]` → `pureterm agents detect` 列出运行 agent 进程 + matched session_id ✅(CLI 侧);GUI 提示 resume 面板待后续
+- **单元测试**: `agent_detect`(5 + 1 ignore)+ `feed_log`(4)+ `agent_adapters::derive_entries`(3)+ `app_config::vault_gap76_fields`(1)+ `iced_app`(`vault_kind_never_hibernate` 2 + `agent_indicator` 4);整套 254 全绿
+- **留后续迭代**:GUI "检测到 N 个外部 session,是否 resume" 提示面板、按 child_pid 精确关联 detected 进程↔session_id、`session_id_source` 字段消费(GAP-7.7)
 - **对标**: cmux `Sources/CmuxConfig.swift::vault.agents[]`
 
 #### GAP-7.7 Custom resume bindings {#gap-7-7}
@@ -669,7 +680,7 @@
 | GAP-7.3 | Agent Hibernation | F | P1 | 🚧 | 2026-06-22 | M2+M3 代码闭环:daemon idle 采集(idle_probe CPU 采样 + run_pump PTY 空闲 + SessionInfo 暴露 idle/agent_kind/hibernated)+ hibernate/resume(SIGSTOP/SIGCONT via libc::kill)+ GUI 决策面板(HibernationScanTick 双条件 + max_live_terminals + 60s 确认 + pinned overlay)+ CLI(pureterm agent hibernate/resume/list);待 dist 重打包 + GUI E2E;status_bar ❄ deferred |
 | GAP-7.4 | Feed 审批面板 | F | P0 | 🚧 | 2026-06-22 | 代码闭环 + 220 单测绿 + release 编译通过;延迟回复(`Message::Ipc` 预判暂存 `IpcRequest`,零新类型)+ `feed_client.rs`/`feed_panel.rs` 新建 + `ask_pattern` 配置 + 5 按钮面板 + 120s 超时 + 作用域记忆 + SessionEnd 清记忆 + feed.jsonl 审计;**待 dist 重打包 + 手动 GUI E2E**(GAP-3.1 不阻塞:复用 pinned overlay 范式) |
 | GAP-7.5 | Agent Session Restore | F | P1 | 🚧 | 2026-06-22 | M1 代码闭环:session id 持久化(SessionStart hook→AgentSessionStore)+ 冷恢复(restore→claude --resume via create_local argv);PaneSnapshot 加 agent_session_id/agent_kind;待 dist 重打包 + GUI E2E |
-| GAP-7.6 | Vault agent registry | F | P2 | ❌ | - | - |
+| GAP-7.6 | Vault agent registry | F | P2 | 🚧 | 2026-06-22 | schema 补齐(name/detect/session_id_source + Default)+ `agent_detect.rs` 进程扫描(macOS ps / Linux proc,detect 子串匹配,排除 grep/rg/ps/shell)+ `pureterm agents detect/registry` CLI + SessionStart 默认注册修复(`derive_entries`,`[[vault.agents]]` 非空即注册,打通 7.5 冷恢复)+ never_hibernate 接进 hibernate 决策 + 状态栏 ⚡/❄/⏳ 指示(`agent_indicator` + `last_session_list` 缓存,零新 IPC)+ `pureterm feed list`;DoD 重定义(识别+提示 resume,非抢占 TTY);254 单测绿;待 dist 重打包 + GUI E2E |
 | GAP-7.7 | Custom resume bindings | F | P2 | ❌ | - | - |
 | GAP-7.8 | agent-browser 兼容 | F | P2 | ❌ | - | - |
 | GAP-8.1 | Sparkle auto-update | G | P3 | ❌ | - | macOS 优先 |

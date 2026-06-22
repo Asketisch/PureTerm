@@ -352,35 +352,59 @@ fn event_uses_matcher(event: &str) -> bool {
 }
 
 /// 构造注册数据。`all_events=true` → 全 9 事件(matcher=None);
-/// 否则从 `pureterm.toml` 的 `[[agent.hook]]` 规则派生(仅已配置事件,去重)。
+/// 否则从 `pureterm.toml` 的 `[[agent.hook]]` 规则派生(仅已配置事件,去重),
+/// 并在 `[[vault.agents]]` 非空时自动追加 SessionStart(见 `derive_entries`)。
 fn build_registration(all_events: bool) -> HookRegistration {
     let bin = pureterm_bin();
-    let entries = if all_events {
-        ALL_CC_EVENTS.iter().map(|e| (e.to_string(), None)).collect()
-    } else {
-        let path = crate::app_config::AppConfig::config_path();
-        let rules = crate::app_config::AppConfig::load_agent_hooks(&path);
-        let mut seen: BTreeSet<(String, Option<String>)> = BTreeSet::new();
-        let mut out: Vec<(String, Option<String>)> = Vec::new();
-        let mut feed_enabled = false;
-        for r in &rules {
-            // GAP-7.4:任一规则含 ask_pattern → 启用 Feed 审批。
-            if r.ask_pattern.is_some() {
-                feed_enabled = true;
-            }
-            let matcher = if event_uses_matcher(&r.event) { r.matcher.clone() } else { None };
-            if seen.insert((r.event.clone(), matcher.clone())) {
-                out.push((r.event.clone(), matcher));
-            }
+    let path = crate::app_config::AppConfig::config_path();
+    let rules = crate::app_config::AppConfig::load_agent_hooks(&path);
+    let vault = crate::app_config::AppConfig::load_vault_agents(&path);
+    HookRegistration {
+        entries: derive_entries(all_events, &rules, &vault),
+        pureterm_bin: bin,
+    }
+}
+
+/// 纯函数:从 hook 规则 + vault.agents 派生注册条目。抽出便于单测注入。
+///
+/// 两条自动注册特例(均为 matcher=None,镜像 `seen` 去重):
+/// - **GAP-7.6**:`[[vault.agents]]` 非空 → 自动注册 `SessionStart`,让 shim 在
+///   会话开始时触发 `infer_agent_kind` → `agent.session_started` IPC → session id
+///   持久化(`agent_sessions`),打通 GAP-7.5 冷恢复链路。仅在用户表达了 resume
+///   意图(配了 vault.agents)时注册,保持"零多余 spawn"。
+/// - **GAP-7.4**:任一规则含 `ask_pattern`(启用 Feed 审批)→ 自动注册 `SessionEnd`,
+///   让 shim fire-and-forget 通知 GUI 清掉 Always/All/Bypass 记忆。
+fn derive_entries(
+    all_events: bool,
+    rules: &[crate::agent_hooks::HookRule],
+    vault_agents: &[crate::app_config::VaultAgentEntry],
+) -> Vec<(String, Option<String>)> {
+    if all_events {
+        return ALL_CC_EVENTS.iter().map(|e| (e.to_string(), None)).collect();
+    }
+    let mut seen: BTreeSet<(String, Option<String>)> = BTreeSet::new();
+    let mut out: Vec<(String, Option<String>)> = Vec::new();
+    let mut feed_enabled = false;
+    for r in rules {
+        // GAP-7.4:任一规则含 ask_pattern → 启用 Feed 审批。
+        if r.ask_pattern.is_some() {
+            feed_enabled = true;
         }
-        // GAP-7.4:Feed 启用时自动注册 SessionEnd(无 matcher),让 shim 在会话
-        // 结束时 fire-and-forget 通知 GUI 清掉 Always/All/Bypass 记忆。
-        if feed_enabled && seen.insert(("SessionEnd".to_string(), None)) {
-            out.push(("SessionEnd".to_string(), None));
+        let matcher = if event_uses_matcher(&r.event) { r.matcher.clone() } else { None };
+        if seen.insert((r.event.clone(), matcher.clone())) {
+            out.push((r.event.clone(), matcher));
         }
-        out
-    };
-    HookRegistration { entries, pureterm_bin: bin }
+    }
+    // GAP-7.6:vault.agents 非空 → 自动注册 SessionStart(打通 7.5 冷恢复链路)。
+    if !vault_agents.is_empty() && seen.insert(("SessionStart".to_string(), None)) {
+        out.push(("SessionStart".to_string(), None));
+    }
+    // GAP-7.4:Feed 启用时自动注册 SessionEnd(无 matcher),让 shim 在会话
+    // 结束时 fire-and-forget 通知 GUI 清掉 Always/All/Bypass 记忆。
+    if feed_enabled && seen.insert(("SessionEnd".to_string(), None)) {
+        out.push(("SessionEnd".to_string(), None));
+    }
+    out
 }
 
 // ── 加锁 JSON 读-改-写(镜像 config_io::mutate_config) ─────────────────────
@@ -555,6 +579,58 @@ pub fn dispatch(cmd: AgentsSub) {
                 println!("no persisted agent sessions");
             }
         }
+        AgentsSub::Detect => {
+            // GAP-7.6: scan host processes for declared agents.
+            let path = crate::app_config::AppConfig::config_path();
+            let vault = crate::app_config::AppConfig::load_vault_agents(&path);
+            if vault.is_empty() {
+                println!("no [[vault.agents]] configured; nothing to detect");
+                println!("hint: add a [[vault.agents]] entry with a `detect` substring");
+                return;
+            }
+            let detected = crate::agent_detect::with_sessions(crate::agent_detect::scan(&vault));
+            if detected.is_empty() {
+                println!("no matching agent processes found");
+                return;
+            }
+            println!(
+                "{:<14} {:<8} {:<24} {}",
+                "KIND", "PID", "SESSION_ID", "CMDLINE"
+            );
+            for (d, sid) in detected {
+                println!(
+                    "{:<14} {:<8} {:<24} {}",
+                    d.kind,
+                    d.pid,
+                    sid.as_deref().unwrap_or("-"),
+                    d.cmdline
+                );
+            }
+        }
+        AgentsSub::Registry => {
+            // GAP-7.6: dump parsed [[vault.agents]].
+            let path = crate::app_config::AppConfig::config_path();
+            let vault = crate::app_config::AppConfig::load_vault_agents(&path);
+            if vault.is_empty() {
+                println!("no [[vault.agents]] entries");
+                return;
+            }
+            for v in &vault {
+                let detect = v
+                    .detect
+                    .clone()
+                    .unwrap_or_else(|| format!("({} lowercase)", v.kind.to_lowercase()));
+                let name = v.name.clone().unwrap_or_else(|| v.kind.clone());
+                println!(
+                    "{:<14} name={:<14} detect={:<24} never_hibernate={} resume={}",
+                    v.kind,
+                    name,
+                    detect,
+                    v.never_hibernate,
+                    v.resume_command.join(" ")
+                );
+            }
+        }
     }
 }
 
@@ -718,6 +794,57 @@ mod tests {
         assert_eq!(reg.entries.len(), 9, "all CC events");
         // 非 tool 事件不带 matcher。
         assert!(reg.entries.iter().all(|(_, m)| m.is_none()));
+    }
+
+    fn vault_entry(kind: &str) -> crate::app_config::VaultAgentEntry {
+        crate::app_config::VaultAgentEntry {
+            kind: kind.to_string(),
+            resume_command: vec!["claude".into(), "--resume".into(), "{session_id}".into()],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn derive_entries_vault_agents_adds_session_start() {
+        // GAP-7.6:配了 [[vault.agents]] → 自动注册 SessionStart,打通 7.5 冷恢复。
+        let vault = vec![vault_entry("claude-code")];
+        let entries = derive_entries(false, &[], &vault);
+        assert!(
+            entries.iter().any(|(e, m)| e == "SessionStart" && m.is_none()),
+            "vault.agents 非空应自动注册 SessionStart, got {entries:?}"
+        );
+    }
+
+    #[test]
+    fn derive_entries_no_vault_omits_session_start() {
+        // 零多余 spawn 回归保护:没配 vault.agents 时不注册 SessionStart。
+        let entries = derive_entries(false, &[], &[]);
+        assert!(
+            !entries.iter().any(|(e, _)| e == "SessionStart"),
+            "无 vault.agents 时不应注册 SessionStart, got {entries:?}"
+        );
+        assert!(entries.is_empty(), "空规则 + 空 vault → 空注册");
+    }
+
+    #[test]
+    fn derive_entries_feed_adds_session_end_not_session_start() {
+        // GAP-7.4 与 GAP-7.6 两条特例相互独立:ask_pattern 触发 SessionEnd,
+        // 但无 vault.agents 时不应顺手带上 SessionStart。
+        let rules = vec![crate::agent_hooks::HookRule {
+            event: "PreToolUse".into(),
+            matcher: Some("Bash".into()),
+            ask_pattern: Some(".".into()),
+            ..Default::default()
+        }];
+        let entries = derive_entries(false, &rules, &[]);
+        assert!(
+            entries.iter().any(|(e, _)| e == "SessionEnd"),
+            "Feed 启用应注册 SessionEnd, got {entries:?}"
+        );
+        assert!(
+            !entries.iter().any(|(e, _)| e == "SessionStart"),
+            "无 vault.agents 时 Feed 不应注册 SessionStart"
+        );
     }
 
     #[test]

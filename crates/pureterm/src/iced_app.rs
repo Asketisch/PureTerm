@@ -163,6 +163,11 @@ pub struct PureTermApp {
     /// GAP-7.5: `[[vault.agents]]` entries (resume_command templates).
     #[cfg(unix)]
     vault_agents: Vec<crate::app_config::VaultAgentEntry>,
+    /// GAP-7.6: most recent daemon `list_sessions` snapshot, cached by
+    /// `hibernation_scan` so `view_bottom_bar` can show ❄ hibernated state
+    /// without an extra IPC round-trip per frame.
+    #[cfg(unix)]
+    last_session_list: Vec<serde_json::Value>,
     #[cfg(unix)]
     ssh_credential_store: Option<crate::ssh::credential::CredentialStore>,
     // Command palette (P5 GAP-5.9)
@@ -398,6 +403,49 @@ const STATUS_BAR_HEIGHT: f32 = 24.0;
 #[inline]
 fn terminal_content_height(viewport_height: f32) -> f32 {
     (viewport_height - TAB_BAR_HEIGHT - STATUS_BAR_HEIGHT).max(0.0)
+}
+
+/// GAP-7.6: `kind` 是否在 `[[vault.agents]]` 中标记为 `never_hibernate`
+/// (豁免 hibernation_scan 候选)。纯函数,便于单测。
+fn vault_kind_never_hibernate(
+    vault_agents: &[crate::app_config::VaultAgentEntry],
+    kind: &str,
+) -> bool {
+    vault_agents
+        .iter()
+        .find(|v| v.kind == kind)
+        .map(|v| v.never_hibernate)
+        .unwrap_or(false)
+}
+
+/// GAP-7.6: status-bar agent indicator. Returns the label + color to render,
+/// or `None` when the pane has no agent AND no feed is pending. Pure, tested.
+///
+/// - `⚡ <kind>` (active, warm amber) / `❄ <kind>` (hibernated, cool blue)
+/// - `⏳ <N>` feed-pending badge appended when N > 0 (warning amber); shown on
+///   its own when the pane has no agent but approvals are queued elsewhere.
+fn agent_indicator(kind: &str, hibernated: bool, feed_pending: usize) -> Option<(String, Color)> {
+    let amber = Color::from_rgba(0.85, 0.65, 0.3, 1.0);
+    let cool = Color::from_rgba(0.45, 0.6, 0.85, 1.0);
+    let warn = Color::from_rgba(0.95, 0.75, 0.3, 1.0);
+    let pending_badge = if feed_pending > 0 {
+        format!("  \u{23f3} {}", feed_pending) // ⏳
+    } else {
+        String::new()
+    };
+    if kind.is_empty() {
+        return if feed_pending > 0 {
+            Some((pending_badge, warn))
+        } else {
+            None
+        };
+    }
+    let (glyph, color) = if hibernated {
+        ('\u{2744}', cool) // ❄
+    } else {
+        ('\u{26a1}', amber) // ⚡
+    };
+    Some((format!("  {glyph} {kind}{pending_badge}"), color))
 }
 
 /// 分割线拖拽状态。
@@ -1022,6 +1070,8 @@ impl PureTermApp {
             vault_agents: crate::app_config::AppConfig::load_vault_agents(
                 &crate::app_config::AppConfig::config_path(),
             ),
+            #[cfg(unix)]
+            last_session_list: Vec::new(),
             #[cfg(unix)]
             ssh_credential_store: None,
             context_menu: None,
@@ -4956,10 +5006,22 @@ impl PureTermApp {
             Ok(s) => s,
             Err(_) => return,
         };
+        // GAP-7.6: cache the snapshot for view_bottom_bar's ❄ indicator.
+        self.last_session_list = sessions.clone();
         let cfg = &self.hibernation_cfg;
+        let vault = &self.vault_agents;
 
         let is_idle = |s: &serde_json::Value| -> bool {
             if s.get("hibernated").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return false;
+            }
+            // GAP-7.6: never_hibernate 的 agent 不作为 hibernate 候选。
+            if s
+                .get("agent_kind")
+                .and_then(|v| v.as_str())
+                .map(|k| vault_kind_never_hibernate(vault, k))
+                .unwrap_or(false)
+            {
                 return false;
             }
             let pty = s.get("pty_idle_secs").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
@@ -4967,12 +5029,18 @@ impl PureTermApp {
             pty >= cfg.pty_idle_secs && cpu >= cfg.cpu_idle_secs
         };
         // A session counts as a "live agent" if it has an agent_kind registered
-        // in [[vault.agents]] (or is the common `claude-code` default).
+        // in [[vault.agents]] (or is the common `claude-code` default). GAP-7.6:
+        // `never_hibernate` 的 agent 不计入 live(豁免 max_live_terminals 比对)。
         let is_live_agent = |s: &serde_json::Value| {
             s.get("hibernated").and_then(|v| v.as_bool()) == Some(false)
                 && s.get("agent_kind")
                     .and_then(|v| v.as_str())
-                    .map(|k| k == "claude-code" || self.vault_agents.iter().any(|v| v.kind == k))
+                    .map(|k| {
+                        if vault_kind_never_hibernate(vault, k) {
+                            return false;
+                        }
+                        k == "claude-code" || vault.iter().any(|v| v.kind == k)
+                    })
                     .unwrap_or(false)
         };
 
@@ -5558,6 +5626,26 @@ impl PureTermApp {
     }
 
     /// Bottom status bar: cwd + git branch + SSH indicator + cursor position.
+    /// GAP-7.6: build the active pane's agent indicator (⚡/❄ + ⏳ pending) for
+    /// the status bar. `None` when the pane has no agent and nothing is
+    /// pending. Unix-only — depends on `last_session_list` (filled by
+    /// `hibernation_scan`) and `feed_panel`.
+    #[cfg(unix)]
+    fn agent_indicator_for_active_pane(&self) -> Option<(String, Color)> {
+        let active_pane = self.active_tab_ref()?.active_pane;
+        let (session_id, kind) = self.agent_sessions.get(&active_pane)?;
+        let session_id = session_id.as_str();
+        let kind = kind.as_str();
+        let hibernated = self
+            .last_session_list
+            .iter()
+            .find(|s| s.get("id").and_then(|v| v.as_str()) == Some(session_id))
+            .and_then(|s| s.get("hibernated").and_then(|v| v.as_bool()))
+            .unwrap_or(false);
+        let pending = self.feed_panel.pending_count();
+        agent_indicator(kind, hibernated, pending)
+    }
+
     fn view_bottom_bar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
         use iced::widget::{container, row, space, text};
         use iced::{Background, Border, Length, Shadow};
@@ -5653,6 +5741,14 @@ impl PureTermApp {
                     .size(11)
                     .color(Color::from_rgba(0.55, 0.55, 0.55, 1.0)),
             );
+        }
+
+        // GAP-7.6: agent indicator (⚡ active / ❄ hibernated / ⏳ feed pending).
+        #[cfg(unix)]
+        {
+            if let Some((label, color)) = self.agent_indicator_for_active_pane() {
+                bar = bar.push(text(label).size(11).color(color));
+            }
         }
 
         // Spacer to push cursor position right
@@ -7210,4 +7306,65 @@ pub fn run() -> iced::Result {
         text_color: Color::WHITE,
     })
     .run()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::app_config::VaultAgentEntry;
+
+    fn vault(kind: &str, never: bool) -> VaultAgentEntry {
+        VaultAgentEntry {
+            kind: kind.to_string(),
+            resume_command: vec![],
+            never_hibernate: never,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn vault_kind_never_hibernate_flag() {
+        // GAP-7.6: never_hibernate=true 的 kind 被豁免;false / 未注册不豁免。
+        let agents = vec![vault("claude-code", false), vault("codex", true)];
+        assert!(!super::vault_kind_never_hibernate(&agents, "claude-code"));
+        assert!(super::vault_kind_never_hibernate(&agents, "codex"));
+    }
+
+    #[test]
+    fn vault_kind_never_hibernate_unknown_kind_is_false() {
+        let agents = vec![vault("claude-code", true)];
+        assert!(!super::vault_kind_never_hibernate(&agents, "unknown"));
+        assert!(!super::vault_kind_never_hibernate(&[], "claude-code"));
+    }
+
+    #[test]
+    fn agent_indicator_active_shows_bolt() {
+        let (label, _) = super::agent_indicator("claude-code", false, 0).unwrap();
+        assert!(label.contains("claude-code"));
+        assert!(label.contains('\u{26a1}')); // ⚡
+        assert!(!label.contains('\u{2744}')); // not ❄
+        assert!(!label.contains('\u{23f3}')); // not ⏳
+    }
+
+    #[test]
+    fn agent_indicator_hibernated_shows_snowflake() {
+        let (label, _) = super::agent_indicator("codex", true, 0).unwrap();
+        assert!(label.contains("codex"));
+        assert!(label.contains('\u{2744}')); // ❄
+    }
+
+    #[test]
+    fn agent_indicator_pending_badge() {
+        let (label, _) = super::agent_indicator("claude-code", false, 3).unwrap();
+        assert!(label.contains('\u{23f3}')); // ⏳
+        assert!(label.contains('3'));
+        // No agent on pane but pending elsewhere → badge still shows.
+        let (label2, _) = super::agent_indicator("", false, 1).unwrap();
+        assert!(label2.contains('\u{23f3}'));
+        assert!(!label2.contains('\u{26a1}'));
+    }
+
+    #[test]
+    fn agent_indicator_none_when_empty_and_no_pending() {
+        assert!(super::agent_indicator("", false, 0).is_none());
+    }
 }
