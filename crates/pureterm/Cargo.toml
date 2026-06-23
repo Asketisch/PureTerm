@@ -46,6 +46,12 @@ nucleo-matcher = "0.3"
 # ~/.claude/settings.json (fs2 advisory lock + atomic NamedTempFile::persist).
 fs2 = "0.4"
 tempfile = "3"
+# GAP-3.5/5.2/7.8: WebView embed + per-view SOCKS5 proxy. `mac-proxy` enables
+# `WebViewBuilder::with_proxy_config` (Network framework SOCKS5; macOS 14+),
+# the Phase C R8 mechanism that binds a web pane to an SSH tunnel. The feature
+# compiles to nothing on non-macOS, so enabling it unconditionally is safe.
+wry = { version = "0.55.1", features = ["mac-proxy"] }
+raw-window-handle = "0.6.2"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

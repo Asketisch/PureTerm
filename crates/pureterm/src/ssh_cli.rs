@@ -189,7 +189,7 @@ fn write_all_stream(stream: &mut UnixStream, mut data: &[u8]) -> io::Result<()> 
 }
 
 /// Parse `[user@]host` into `(Option<user>, host)`.
-fn parse_target(target: &str) -> Option<(Option<String>, String)> {
+pub fn parse_target(target: &str) -> Option<(Option<String>, String)> {
     let t = target.trim();
     if t.is_empty() {
         return None;

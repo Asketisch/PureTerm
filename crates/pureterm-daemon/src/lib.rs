@@ -23,5 +23,6 @@ pub mod osc7;
 pub mod ring_buffer;
 pub mod runtime;
 pub mod session;
+pub mod tunnel;
 
 pub use discovery::{data_dir, lock_path, sessions_dir, socket_path};

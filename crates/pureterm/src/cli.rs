@@ -136,6 +136,13 @@ pub enum Command {
         #[command(subcommand)]
         cmd: EventsSub,
     },
+    /// GAP-7.8: drive an embedded web pane over the agent-browser protocol
+    /// (`browser.*` JSON-RPC). `--pane-id` (from `pane list`) selects the pane;
+    /// omit it to target the first web pane.
+    Browser {
+        #[command(subcommand)]
+        cmd: BrowserSub,
+    },
 }
 
 // ── Group subcommands ────────────────────────────────────────────────────
@@ -225,6 +232,16 @@ pub enum PaneSub {
         #[arg(long, default_value = "v")]
         direction: String,
     },
+    /// GAP-3.5: split the active pane and open the new pane as a web pane
+    /// (WebView) loading `url`.
+    SplitWeb {
+        /// URL to load in the new web pane.
+        #[arg(long, default_value = "https://example.com")]
+        url: String,
+        /// Direction: "v" (vertical) or "h" (horizontal)
+        #[arg(long, default_value = "v")]
+        direction: String,
+    },
     /// Close the active pane
     Close,
     /// Focus the next/previous pane
@@ -248,6 +265,13 @@ impl PaneSub {
                     _ => "vertical",
                 };
                 ("pane.split", Some(json!({ "direction": d })))
+            }
+            PaneSub::SplitWeb { url, direction } => {
+                let d = match direction.as_str() {
+                    "h" | "horizontal" => "horizontal",
+                    _ => "vertical",
+                };
+                ("pane.split_web", Some(json!({ "url": url, "direction": d })))
             }
             PaneSub::Close => ("pane.close", None),
             PaneSub::Focus { direction } => {
@@ -391,6 +415,37 @@ pub enum SshSub {
     },
     /// Disconnect (close the SSH tab)
     Disconnect,
+    /// GAP-5.2: open a russh-backed SOCKS5 tunnel through a gateway (daemon-owned).
+    /// `curl --socks5-hostname 127.0.0.1:<local-port> https://...` then routes via
+    /// the gateway, reaching hosts only it can see.
+    Tunnel {
+        /// `[user@]host` gateway.
+        target: String,
+        /// SSH port (default 22).
+        #[arg(long)]
+        port: Option<u16>,
+        /// Identity file / private key path (publickey auth).
+        #[arg(short = 'i', long)]
+        identity: Option<String>,
+        /// Local SOCKS5 listen port (default 1080).
+        #[arg(long)]
+        local_port: Option<u16>,
+        /// Password (password auth, or private-key passphrase when used with
+        /// `--identity`). If omitted and no `--identity`, prompted on stdin.
+        #[arg(long)]
+        password: Option<String>,
+        /// Resolve DNS locally instead of via the gateway (default: gateway
+        /// resolves, i.e. socks5h / `--socks5-hostname`).
+        #[arg(long)]
+        no_remote_dns: bool,
+    },
+    /// GAP-5.2: stop a tunnel by id.
+    TunnelStop {
+        /// Tunnel id from `ssh tunnel-list`.
+        id: String,
+    },
+    /// GAP-5.2: list active tunnels.
+    TunnelList,
 }
 
 #[cfg(unix)]
@@ -403,6 +458,163 @@ impl SshSub {
             }
             SshSub::Connect { .. } => ("ssh.connect", None),
             SshSub::Disconnect => ("ssh.disconnect", None),
+            // GAP-5.2: daemon-direct (handled in `run` before the GUI-IPC fallback).
+            // These arms are unreachable from the IPC path but keep the match total.
+            SshSub::Tunnel { .. } => ("tunnel.start", None),
+            SshSub::TunnelStop { .. } => ("tunnel.stop", None),
+            SshSub::TunnelList => ("tunnel.list", None),
+        }
+    }
+}
+
+/// GAP-7.8: agent-browser ops against an embedded web pane. Each variant maps
+/// to a `browser.<verb>` JSON-RPC method (Phase D), plus the Phase C proxy
+/// binding ops `bind-tunnel` / `clear-tunnel`. `--pane-id` is optional (defaults
+/// to the first web pane); every op carries it through to the GUI.
+#[derive(Subcommand)]
+pub enum BrowserSub {
+    /// Navigate the pane to `url`.
+    Navigate {
+        url: String,
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Click the element matching a CSS `selector`.
+    Click {
+        selector: String,
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Type `text` into the element matching `selector`.
+    Type {
+        selector: String,
+        text: String,
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Extract text (or an `attribute`) from `selector`.
+    Extract {
+        selector: String,
+        #[arg(long)]
+        attribute: Option<String>,
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Scroll by `--x`/`--y` pixels, or scroll `--selector` into view.
+    Scroll {
+        #[arg(long, default_value = "0")]
+        x: i64,
+        #[arg(long, default_value = "0")]
+        y: i64,
+        #[arg(long)]
+        selector: Option<String>,
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Wait until `selector` appears (default 5s, override with `--timeout-ms`).
+    Wait {
+        selector: String,
+        #[arg(long)]
+        timeout_ms: Option<u64>,
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Print the pane's current URL.
+    GetUrl {
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Print the pane's page title.
+    GetTitle {
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// (Stub) native WKWebView snapshot — not exposed by wry yet.
+    Screenshot {
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Phase C: route the pane's traffic through a daemon SSH tunnel (rebuilds
+    /// the webview with a SOCKS5 proxy; reaches hosts only the gateway sees).
+    BindTunnel {
+        /// Tunnel id from `ssh tunnel-list`.
+        tunnel_id: String,
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+    /// Phase C: drop the tunnel binding, restoring direct connection.
+    ClearTunnel {
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+}
+
+impl BrowserSub {
+    fn method_and_params(&self) -> (&'static str, Option<Value>) {
+        // Op-specific params first; `pane_id` is layered on at the end so every
+        // op (even the no-arg ones) can target a pane.
+        let (method, mut params): (&'static str, Value) = match self {
+            BrowserSub::Navigate { url, .. } => ("browser.navigate", json!({ "url": url })),
+            BrowserSub::Click { selector, .. } => ("browser.click", json!({ "selector": selector })),
+            BrowserSub::Type { selector, text, .. } => {
+                ("browser.type", json!({ "selector": selector, "text": text }))
+            }
+            BrowserSub::Extract { selector, attribute, .. } => {
+                let mut o = serde_json::Map::new();
+                o.insert("selector".into(), json!(selector));
+                if let Some(a) = attribute {
+                    o.insert("attribute".into(), json!(a));
+                }
+                ("browser.extract", Value::Object(o))
+            }
+            BrowserSub::Scroll { x, y, selector, .. } => {
+                let mut o = serde_json::Map::new();
+                o.insert("x".into(), json!(x));
+                o.insert("y".into(), json!(y));
+                if let Some(s) = selector {
+                    o.insert("selector".into(), json!(s));
+                }
+                ("browser.scroll", Value::Object(o))
+            }
+            BrowserSub::Wait { selector, timeout_ms, .. } => {
+                let mut o = serde_json::Map::new();
+                o.insert("selector".into(), json!(selector));
+                if let Some(t) = timeout_ms {
+                    o.insert("timeout_ms".into(), json!(t));
+                }
+                ("browser.wait", Value::Object(o))
+            }
+            BrowserSub::GetUrl { .. } => ("browser.get_url", json!({})),
+            BrowserSub::GetTitle { .. } => ("browser.get_title", json!({})),
+            BrowserSub::Screenshot { .. } => ("browser.screenshot", json!({})),
+            BrowserSub::BindTunnel { tunnel_id, .. } => {
+                ("browser.bind_tunnel", json!({ "tunnel_id": tunnel_id }))
+            }
+            BrowserSub::ClearTunnel { .. } => ("browser.clear_tunnel", json!({})),
+        };
+        if let Some(id) = self.pane_id() {
+            if let Some(obj) = params.as_object_mut() {
+                obj.insert("pane_id".into(), json!(id));
+            }
+        }
+        (method, Some(params))
+    }
+
+    /// Every variant carries an optional `pane_id`; collect it in one place so
+    /// the match above stays focused on op params.
+    fn pane_id(&self) -> Option<u64> {
+        match self {
+            BrowserSub::Navigate { pane_id, .. }
+            | BrowserSub::Click { pane_id, .. }
+            | BrowserSub::Type { pane_id, .. }
+            | BrowserSub::Extract { pane_id, .. }
+            | BrowserSub::Scroll { pane_id, .. }
+            | BrowserSub::Wait { pane_id, .. }
+            | BrowserSub::GetUrl { pane_id }
+            | BrowserSub::GetTitle { pane_id }
+            | BrowserSub::Screenshot { pane_id }
+            | BrowserSub::BindTunnel { pane_id, .. }
+            | BrowserSub::ClearTunnel { pane_id } => *pane_id,
         }
     }
 }
@@ -627,6 +839,19 @@ pub fn run(cli: Cli) {
             SshSub::Connect { target: Some(t), port, identity, .. } => {
                 crate::ssh_cli::connect(t, *port, identity.clone());
             }
+            // GAP-5.2: daemon-direct SOCKS5 tunnel control.
+            SshSub::Tunnel { target, port, identity, local_port, password, no_remote_dns } => {
+                crate::tunnel_cli::start(
+                    target,
+                    *port,
+                    identity.clone(),
+                    password.clone(),
+                    local_port.unwrap_or(1080),
+                    !*no_remote_dns,
+                );
+            }
+            SshSub::TunnelStop { id } => crate::tunnel_cli::stop(id),
+            SshSub::TunnelList => crate::tunnel_cli::list(),
             _ => send(&socket, json, cmd.method_and_params()),
         },
         #[cfg(unix)]
@@ -687,6 +912,10 @@ pub fn run(cli: Cli) {
                 });
             }
         },
+        // GAP-7.8: all browser ops are synchronous JSON-RPC over the GUI socket
+        // (the GUI owns the webview + the agent-browser execution layer). The
+        // async JS-ops' deferred reply is awaited inside `send`.
+        Command::Browser { cmd } => send(&socket, json, cmd.method_and_params()),
     }
 }
 

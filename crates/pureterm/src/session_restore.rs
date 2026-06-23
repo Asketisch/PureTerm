@@ -34,6 +34,12 @@ pub struct PaneSnapshot {
     /// GAP-7.5: agent kind (`claude-code`/`codex`), pairs with agent_session_id.
     #[serde(default)]
     pub agent_kind: Option<String>,
+    /// GAP-3.5: web pane 的 URL(仅 `kind == "web"` 时有值)。`#[serde(default)]`
+    /// 让 v1 快照可加载(web pane 是后加字段)。terminal pane 为 `None`。
+    /// 不 bump `SNAPSHOT_VERSION`:仅新增可选字段,serde 默认值即前向兼容,
+    /// bump 反而会让现存 v1 快照被 `load()` 拒绝(丢会话)。
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -135,10 +141,10 @@ use crate::ssh::config::SshProfile;
 #[cfg(unix)]
 use crate::terminal_context::TerminalContext;
 
-/// A restored pane: a freshly-attached terminal context + its display title.
+/// A restored pane: its content carrier (terminal or web, GAP-3.5) + display title.
 #[cfg(unix)]
 pub struct RestoredPane {
-    pub ctx: Arc<TerminalContext>,
+    pub content: crate::split_tree::PaneContent,
     pub title: String,
 }
 
@@ -219,6 +225,28 @@ pub fn restore(
 
         for (i, old_id) in leaf_ids.iter().enumerate() {
             let pane_snap = &tab_snap.panes[i];
+
+            // GAP-3.5: web pane — 无 daemon session,不参与存活/重连判定,
+            // 直接按快照里的 url 重建一个 BrowserContext。
+            if pane_snap.kind == "web" {
+                let url = pane_snap
+                    .url
+                    .clone()
+                    .unwrap_or_else(|| "about:blank".to_string());
+                let browser = crate::browser::BrowserContext::new(url);
+                if Some(*old_id) == active_old_id {
+                    active_survived_old_id = Some(*old_id);
+                }
+                alive_panes.push((
+                    *old_id,
+                    RestoredPane {
+                        content: crate::split_tree::PaneContent::Web(browser),
+                        title: pane_snap.title.clone(),
+                    },
+                ));
+                continue;
+            }
+
             let Some(sid) = pane_snap.session_id.as_ref() else {
                 // Non-daemon pane (direct PTY) — cannot survive. Prune.
                 let _ = tree.remove(*old_id);
@@ -237,7 +265,10 @@ pub fn restore(
                             }
                             alive_panes.push((
                                 *old_id,
-                                RestoredPane { ctx, title: pane_snap.title.clone() },
+                                RestoredPane {
+                                    content: crate::split_tree::PaneContent::Terminal(ctx),
+                                    title: pane_snap.title.clone(),
+                                },
                             ));
                             continue;
                         }
@@ -265,7 +296,7 @@ pub fn restore(
                     alive_panes.push((
                         *old_id,
                         RestoredPane {
-                            ctx,
+                            content: crate::split_tree::PaneContent::Terminal(ctx),
                             title: pane_snap.title.clone(),
                         },
                     ));
@@ -330,7 +361,10 @@ pub fn restore(
                 restored_tabs.push(RestoredTab {
                     title: title.clone(),
                     split_tree: SplitNode::single(fresh),
-                    panes: vec![RestoredPane { ctx, title }],
+                    panes: vec![RestoredPane {
+                        content: crate::split_tree::PaneContent::Terminal(ctx),
+                        title,
+                    }],
                     active_pane_index: 0,
                 });
             }
@@ -474,6 +508,7 @@ mod tests {
                     title: "zsh".to_string(),
                     agent_session_id: Some("cc-abc".to_string()),
                     agent_kind: Some("claude-code".to_string()),
+                    url: None,
                 }],
             }],
         };
@@ -491,15 +526,47 @@ mod tests {
         );
     }
 
-    /// GAP-7.5: a pre-GAP-7.5 (v1) pane has no agent_session_id/agent_kind.
-    /// `#[serde(default)]` must fill them with `None` rather than reject.
+    /// GAP-3.5: a web pane (kind="web", session_id=None, url=Some) must survive
+    /// the round-trip so it can be rebuilt by `restore()` from its url.
     #[test]
-    fn pane_snapshot_v1_without_agent_fields_loads_with_defaults() {
+    fn web_pane_snapshot_round_trip() {
+        let snap = LayoutSnapshot {
+            version: SNAPSHOT_VERSION,
+            viewport: ViewportSnapshot { w: 800.0, h: 600.0 },
+            active_tab: 0,
+            tabs: vec![TabSnapshot {
+                title: "🌐 Browser".to_string(),
+                active_pane_leaf_index: 0,
+                split_tree: SplitNode::single(crate::split_tree::PaneId(7)),
+                panes: vec![PaneSnapshot {
+                    session_id: None,
+                    kind: "web".to_string(),
+                    ssh_profile: None,
+                    title: "🌐 Browser".to_string(),
+                    agent_session_id: None,
+                    agent_kind: None,
+                    url: Some("https://example.com".to_string()),
+                }],
+            }],
+        };
+        let json = serde_json::to_string(&snap).expect("serialize");
+        let back: LayoutSnapshot = serde_json::from_str(&json).expect("deserialize");
+        let p = &back.tabs[0].panes[0];
+        assert_eq!(p.kind, "web");
+        assert!(p.session_id.is_none());
+        assert_eq!(p.url.as_deref(), Some("https://example.com"));
+    }
+
+    /// GAP-7.5 / GAP-3.5: a pre-existing (v1) pane has no agent_session_id /
+    /// agent_kind / url. `#[serde(default)]` must fill them with `None`.
+    #[test]
+    fn pane_snapshot_v1_without_optional_fields_loads_with_defaults() {
         let json = r#"{"session_id":"s","kind":"local","ssh_profile":null,"title":"t"}"#;
         let p: PaneSnapshot = serde_json::from_str(json).expect("deserialize v1 pane");
         assert_eq!(p.session_id.as_deref(), Some("s"));
         assert!(p.agent_session_id.is_none());
         assert!(p.agent_kind.is_none());
+        assert!(p.url.is_none());
     }
 
     /// A snapshot with the wrong version is rejected by `load`'s version gate.

@@ -25,6 +25,12 @@ pub struct ControlState {
     /// running after a repackage) and restart it so new code actually runs.
     /// 0 if the exe path/mtime couldn't be read.
     pub exe_mtime: u64,
+    /// GAP-5.2: handle to the multi-thread runtime, so the (sync) `tunnel.*`
+    /// methods can spawn async russh connect/copy tasks. `None` in unit tests
+    /// (no runtime spun up) — `tunnel.start` then errors with "no runtime".
+    pub runtime: Option<tokio::runtime::Handle>,
+    /// GAP-5.2: live russh SOCKS5 tunnels.
+    pub tunnels: crate::tunnel::TunnelManager,
 }
 
 impl ControlState {
@@ -36,7 +42,21 @@ impl ControlState {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        Self { manager, started: Instant::now(), exe_mtime }
+        Self {
+            manager,
+            started: Instant::now(),
+            exe_mtime,
+            runtime: None,
+            tunnels: crate::tunnel::TunnelManager::default(),
+        }
+    }
+
+    /// Production constructor: attaches the daemon's runtime handle so tunnel
+    /// tasks can be spawned. (`new` leaves runtime = None, for unit tests.)
+    pub fn with_runtime(manager: SessionManager, runtime: tokio::runtime::Handle) -> Self {
+        let mut s = Self::new(manager);
+        s.runtime = Some(runtime);
+        s
     }
 }
 
@@ -196,6 +216,54 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                 .collect::<Vec<_>>();
             Ok(serde_json::json!({ "sessions": hib }))
         }
+        // ── tunnel.* (GAP-5.2 russh SOCKS5 tunnel control plane) ────────────
+        "tunnel.start" => {
+            // russh connect/auth is async but dispatch is sync: bind the
+            // listener + register the tunnel synchronously, spawn the async
+            // connect on the runtime, return the id immediately. Status is
+            // polled via tunnel.list (connecting → connected | need_auth | failed).
+            let Some(rt) = state.runtime.as_ref().cloned() else {
+                return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "daemon runtime unavailable");
+            };
+            let host = match sparam(request, "host") {
+                Some(h) => h,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing host"),
+            };
+            let user = sparam(request, "user");
+            let port = uparam(request, "port").unwrap_or(22);
+            let identity_file = sparam(request, "identity_file");
+            let password = sparam(request, "password");
+            let local_port = uparam(request, "local_port").unwrap_or(1080);
+            let remote_dns = bparam(request, "remote_dns").unwrap_or(true);
+            match state.tunnels.start(
+                &rt, host, user, port, identity_file, password, local_port, remote_dns,
+            ) {
+                Ok(tid) => Ok(serde_json::json!({ "tunnel_id": tid, "status": "connecting" })),
+                Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("tunnel start failed: {e}"))),
+            }
+        }
+        "tunnel.list" => Ok(serde_json::json!({ "tunnels": state.tunnels.list() })),
+        "tunnel.stop" => {
+            let tid = match sparam(request, "tunnel_id") {
+                Some(t) => t,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing tunnel_id"),
+            };
+            Ok(serde_json::json!({ "stopped": state.tunnels.stop(&tid) }))
+        }
+        "tunnel.provide_auth" => {
+            let tid = match sparam(request, "tunnel_id") {
+                Some(t) => t,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing tunnel_id"),
+            };
+            let secret = match sparam(request, "secret") {
+                Some(s) => s,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing secret"),
+            };
+            match state.tunnels.provide_auth(&tid, secret) {
+                Ok(()) => Ok(serde_json::json!({ "provided": true })),
+                Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("provide_auth failed: {e}"))),
+            }
+        }
         other => {
             return JsonRpcResponse::method_not_found(id, other);
         }
@@ -224,6 +292,11 @@ fn uparam(request: &JsonRpcRequest, key: &str) -> Option<u16> {
 
 fn sparam(request: &JsonRpcRequest, key: &str) -> Option<String> {
     request.params.as_ref()?.get(key)?.as_str().map(|s| s.to_string())
+}
+
+/// GAP-5.2: parse a JSON bool param (e.g. `remote_dns`).
+fn bparam(request: &JsonRpcRequest, key: &str) -> Option<bool> {
+    request.params.as_ref()?.get(key)?.as_bool()
 }
 
 /// GAP-7.5: parse a JSON array of strings param (e.g. `argv` for cold resume
@@ -297,5 +370,51 @@ mod tests {
             assert!(attach.error.is_none());
             assert!(attach.result.unwrap()["data_path"].as_str().is_some());
         }
+    }
+
+    // ── GAP-5.2 tunnel.* dispatch ──────────────────────────────────────────
+    #[test]
+    fn tunnel_list_empty() {
+        let req = JsonRpcRequest::new(7, "tunnel.list");
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        let tunnels = result["tunnels"].as_array().unwrap();
+        assert!(tunnels.is_empty());
+    }
+
+    #[test]
+    fn tunnel_start_without_runtime_errors() {
+        // Unit-test ControlState has runtime = None, so start must refuse
+        // rather than spawn a tunnel it can't drive.
+        let req = JsonRpcRequest::with_params(
+            8,
+            "tunnel.start",
+            serde_json::json!({"host":"example.com","local_port":1080}),
+        );
+        let resp = dispatch(&req, &state());
+        let err = resp.error.expect("expected error without runtime");
+        assert_eq!(err.code, ERROR_INVALID_PARAMS);
+    }
+
+    #[test]
+    fn tunnel_start_missing_host_errors() {
+        let req = JsonRpcRequest::with_params(9, "tunnel.start", serde_json::json!({}));
+        let resp = dispatch(&req, &state());
+        // Missing host is checked before the runtime guard.
+        let err = resp.error.expect("expected missing-host error");
+        assert_eq!(err.code, ERROR_INVALID_PARAMS);
+    }
+
+    #[test]
+    fn tunnel_stop_unknown_returns_false() {
+        let req = JsonRpcRequest::with_params(
+            10,
+            "tunnel.stop",
+            serde_json::json!({"tunnel_id":"does-not-exist"}),
+        );
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_none());
+        assert_eq!(resp.result.unwrap()["stopped"], false);
     }
 }

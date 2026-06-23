@@ -28,7 +28,7 @@ use alacritty_terminal::term::TermMode;
 use crate::app_config::AppConfig;
 use crate::keymap::{Action, Keymap, ResolveResult};
 use crate::split_tree::{
-    DividerRect, Pane, PaneId, PaneRect, SplitDirection, SplitNode,
+    DividerRect, Pane, PaneContent, PaneId, PaneRect, SplitDirection, SplitNode,
     DIVIDER_HIT_WIDTH, DIVIDER_WIDTH, MAX_RATIO, MIN_RATIO,
 };
 use crate::terminal_context::{TerminalContext, TerminalEvent};
@@ -689,6 +689,9 @@ pub enum Message {
     DirSearchClose,
     // GAP-2.3 Socket API IPC
     Ipc(crate::ipc::IpcRequest),
+    // GAP-7.8: a `browser.*` op finished (JS callback or timeout resolved).
+    // Carries the deferred JSON-RPC reply + the EventBus payload to emit.
+    BrowserOpResolved(crate::browser::BrowserResolved),
     // GAP-5.6 SSH reconnect worker → main loop
     #[cfg(unix)]
     SshReconnect(crate::ssh::reconnect::ReconnectUpdate),
@@ -1227,7 +1230,7 @@ impl PureTermApp {
             pane_id,
             Pane {
                 id: pane_id,
-                terminal_ctx,
+                content: PaneContent::Terminal(terminal_ctx),
                 title: self.i18n.t_fmt("tab.title.format", &[("n", &tab_num.to_string())]),
             },
         );
@@ -1317,7 +1320,7 @@ impl PureTermApp {
             pane_id,
             Pane {
                 id: pane_id,
-                terminal_ctx,
+                content: PaneContent::Terminal(terminal_ctx),
                 title: title.clone(),
             },
         );
@@ -1398,7 +1401,7 @@ impl PureTermApp {
                     pane_id,
                     Pane {
                         id: pane_id,
-                        terminal_ctx: rpane.ctx,
+                        content: rpane.content,
                         title: rpane.title,
                     },
                 );
@@ -1466,18 +1469,25 @@ impl PureTermApp {
                 let panes = leaf_ids
                     .iter()
                     .map(|pid| {
-                        let (session_id, kind, ssh_profile, title, agent_session_id, agent_kind) =
+                        let (session_id, kind, ssh_profile, title, agent_session_id, agent_kind, url) =
                             match tab.panes.get(pid) {
                                 Some(p) => {
-                                    let sid =
-                                        p.terminal_ctx.session_id().map(|s| s.to_string());
-                                    let kind = if p.terminal_ctx.is_ssh() {
-                                        "ssh"
-                                    } else {
-                                        "local"
+                                    // GAP-3.5: terminal pane → local/ssh; web pane
+                                    // → "web"(无 session_id,持久化 url 供重启重建)。
+                                    let (sid, kind, prof, url) = match p.terminal() {
+                                        Some(ctx) => {
+                                            let sid = ctx.session_id().map(|s| s.to_string());
+                                            let kind = if ctx.is_ssh() { "ssh" } else { "local" };
+                                            let prof =
+                                                ctx.profile_display().map(|s| s.to_string());
+                                            (sid, kind.to_string(), prof, None)
+                                        }
+                                        None => {
+                                            // web pane: 记录当前 url(供 restore 重建)。
+                                            let url = p.web().map(|c| c.url());
+                                            (None, "web".to_string(), None, url)
+                                        }
                                     };
-                                    let prof =
-                                        p.terminal_ctx.profile_display().map(|s| s.to_string());
                                     // GAP-7.5: agent session id + kind learned from
                                     // the agent's SessionStart hook (see
                                     // handle_agent_session_started).
@@ -1487,13 +1497,14 @@ impl PureTermApp {
                                         .cloned()
                                         .map(|(s, k)| (Some(s), Some(k)))
                                         .unwrap_or((None, None));
-                                    (sid, kind.to_string(), prof, p.title.clone(), a_sid, a_kind)
+                                    (sid, kind, prof, p.title.clone(), a_sid, a_kind, url)
                                 }
                                 None => (
                                     None,
                                     "local".to_string(),
                                     None,
                                     String::new(),
+                                    None,
                                     None,
                                     None,
                                 ),
@@ -1505,6 +1516,7 @@ impl PureTermApp {
                             title,
                             agent_session_id,
                             agent_kind,
+                            url,
                         }
                     })
                     .collect();
@@ -1539,6 +1551,9 @@ impl PureTermApp {
     fn mark_layout_dirty(&mut self) {
         self.layout_dirty = true;
         self.last_layout_change_at = Some(Instant::now());
+        // GAP-3.5: 几何变化后立即重定位 web pane 的原生 WebView(split /
+        // close / zoom / swap / equalize / resize 全经过这里)。
+        self.reposition_web_panes();
     }
 
     /// GAP-5.6: called from the `LayoutSaveTick` handler. Writes the snapshot
@@ -1599,7 +1614,7 @@ impl PureTermApp {
     fn active_terminal_ctx(&self) -> Option<Arc<TerminalContext>> {
         self.active_tab_ref()
             .and_then(|tab| tab.panes.get(&tab.active_pane))
-            .map(|pane| pane.terminal_ctx.clone())
+            .and_then(|pane| pane.terminal().cloned())
     }
 
     /// The cwd to inherit when spawning a new local tab/pane: the active
@@ -1609,7 +1624,9 @@ impl PureTermApp {
         let tab = self.active_tab_ref()?;
         let pane_id = tab.active_pane;
         let pane = tab.panes.get(&pane_id)?;
-        if pane.terminal_ctx.is_ssh() {
+        // Local terminal only: SSH panes expose a remote cwd (unusable for a
+        // local shell), and web panes (GAP-3.5) have no cwd at all.
+        if pane.terminal().map_or(true, |c| c.is_ssh()) {
             return None;
         }
         let path = PathBuf::from(self.pane_cwds.get(&pane_id)?);
@@ -1783,7 +1800,18 @@ impl PureTermApp {
     fn pane_terminal_ctx(&self, pane_id: PaneId) -> Option<Arc<TerminalContext>> {
         self.tabs
             .iter()
-            .find_map(|tab| tab.panes.get(&pane_id).map(|p| p.terminal_ctx.clone()))
+            .find_map(|tab| tab.panes.get(&pane_id).and_then(|p| p.terminal().cloned()))
+    }
+
+    /// GAP-7.8: 取某 pane 的浏览器上下文(若是 web pane)。与 `pane_terminal_ctx`
+    /// 对称,供 `browser.*` 命令定位目标 web pane。
+    fn pane_browser_ctx(
+        &self,
+        pane_id: PaneId,
+    ) -> Option<Arc<crate::browser::BrowserContext>> {
+        self.tabs
+            .iter()
+            .find_map(|tab| tab.panes.get(&pane_id).and_then(|p| p.web().cloned()))
     }
 
     /// GAP-4.1: Check if vi mode is active on the current active pane.
@@ -1992,11 +2020,13 @@ impl PureTermApp {
                 return;
             };
             let Some(pane) = tab.panes.get(&pane_id) else { return };
-            let Some(params) = pane.terminal_ctx.ssh_reconnect_params() else {
+            // Web panes have no SSH session to reconnect.
+            let Some(ctx) = pane.terminal() else { return };
+            let Some(params) = ctx.ssh_reconnect_params() else {
                 return;
             };
             // Mark Reconnecting now so the status bar updates immediately.
-            pane.terminal_ctx.set_ssh_state(
+            ctx.set_ssh_state(
                 crate::ssh::reconnect::SshState::Reconnecting {
                     attempt: 0,
                     next_retry: std::time::Instant::now(),
@@ -2038,7 +2068,7 @@ impl PureTermApp {
             pane_id,
             Pane {
                 id: pane_id,
-                terminal_ctx,
+                content: PaneContent::Terminal(terminal_ctx),
                 title: self.i18n.t_fmt("tab.title.ssh", &[("name", &profile_name)]),
             },
         );
@@ -2515,6 +2545,8 @@ impl PureTermApp {
                 let cw = gs.cell_width;
                 let ch = gs.cell_height;
                 drop(gs);
+                // GAP-3.5: 窗口已开 → content NSView 可用 → realize 恢复的 web pane。
+                self.reposition_web_panes();
                 return window::set_resize_increments(id, Some(Size::new(cw, ch)));
             }
             Message::TerminalWakeup => {
@@ -2584,7 +2616,8 @@ impl PureTermApp {
                 let mut exited_panes = Vec::new();
                 for tab in &self.tabs {
                     for (pane_id, pane) in &tab.panes {
-                        while let Some(event) = pane.terminal_ctx.poll_terminal_event() {
+                        let Some(ctx) = pane.terminal() else { continue };
+                        while let Some(event) = ctx.poll_terminal_event() {
                             match event {
                                 TerminalEvent::Wakeup => { /* PTY 有新数据，重绘已在进行 */ }
                                 TerminalEvent::Exit => {
@@ -2635,7 +2668,7 @@ impl PureTermApp {
                             let is_ssh_quick_exit = {
                                 let pane = tab.panes.get(&pane_id);
                                 pane.map_or(false, |p| {
-                                    p.terminal_ctx.is_ssh()
+                                    p.terminal().map_or(false, |c| c.is_ssh())
                                         && created_at.elapsed() < Duration::from_secs(5)
                                 })
                             };
@@ -2643,7 +2676,8 @@ impl PureTermApp {
                             if is_ssh_quick_exit {
                                 // Read stderr for the error reason.
                                 let pane = tab.panes.get(&pane_id).unwrap();
-                                let stderr_msg = pane.terminal_ctx.read_stderr()
+                                let ctx = pane.terminal().expect("ssh pane must be terminal");
+                                let stderr_msg = ctx.read_stderr()
                                     .filter(|s| !s.is_empty());
                                 let error_msg = match stderr_msg {
                                     Some(err) => format!(
@@ -2656,7 +2690,7 @@ impl PureTermApp {
                                 };
 
                                 // Release SSH connection pool entry.
-                                let release_key = pane.terminal_ctx.ssh_release_key();
+                                let release_key = ctx.ssh_release_key();
                                 if let Some((host, user, port)) = release_key {
                                     if let Some(ref manager) = self.ssh_manager {
                                         manager.release(host, user, port);
@@ -2687,8 +2721,9 @@ impl PureTermApp {
                                         .panes
                                         .get(&pane_id)
                                         .map_or(false, |p| {
-                                            p.terminal_ctx.is_ssh()
-                                                && !p.terminal_ctx.is_user_initiated_close()
+                                            p.terminal().map_or(false, |c| {
+                                                c.is_ssh() && !c.is_user_initiated_close()
+                                            })
                                         });
                                     if is_reconnect_candidate {
                                         self.trigger_ssh_reconnect(tab_id, pane_id);
@@ -2763,7 +2798,9 @@ impl PureTermApp {
                             drop(gs);
                             // Resize all panes in the detached tab
                             for pane in dw.tab.panes.values() {
-                                pane.terminal_ctx.resize(cols, rows, cw, ch);
+                                if let Some(ctx) = pane.terminal() {
+                                    ctx.resize(cols, rows, cw, ch);
+                                }
                             }
                             return Task::none();
                         }
@@ -2977,7 +3014,9 @@ impl PureTermApp {
                     #[cfg(unix)]
                     if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
                         for pane in tab.panes.values() {
-                            self.kill_pane_session(&pane.terminal_ctx);
+                            if let Some(ctx) = pane.terminal() {
+                                self.kill_pane_session(ctx);
+                            }
                         }
                     }
                     // SSH cleanup: release pool entries for all panes in the tab
@@ -2985,12 +3024,13 @@ impl PureTermApp {
                     if let Some(manager) = self.ssh_manager.as_ref() {
                         if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
                             for pane in tab.panes.values() {
+                                let Some(ctx) = pane.terminal() else { continue };
                                 // GAP-5.6: this is a user-initiated close —
                                 // flag it so the exit handler doesn't auto-
                                 // reconnect, and cancel any in-flight worker.
-                                pane.terminal_ctx.mark_user_initiated_close();
+                                ctx.mark_user_initiated_close();
                                 self.reconnect_hub.cancel(pane.id);
-                                if let Some((host, user, port)) = pane.terminal_ctx.ssh_release_key() {
+                                if let Some((host, user, port)) = ctx.ssh_release_key() {
                                     manager.release(host, user, port);
                                 }
                             }
@@ -3016,6 +3056,8 @@ impl PureTermApp {
                         None,
                         serde_json::json!({ "tab_id": tab_id.0 }),
                     );
+                    // GAP-3.5: 切 tab 后重定位 web pane(隐藏旧 tab 的,显示新 tab 的)。
+                    self.reposition_web_panes();
                 }
             }
             Message::NextTab => {
@@ -3029,6 +3071,7 @@ impl PureTermApp {
                         None,
                         serde_json::json!({ "tab_id": self.active_tab.0 }),
                     );
+                    self.reposition_web_panes();
                 }
             }
             Message::PrevTab => {
@@ -3042,6 +3085,7 @@ impl PureTermApp {
                         None,
                         serde_json::json!({ "tab_id": self.active_tab.0 }),
                     );
+                    self.reposition_web_panes();
                 }
             }
             Message::ActivateTabByIndex(i) => {
@@ -3054,6 +3098,7 @@ impl PureTermApp {
                         None,
                         serde_json::json!({ "tab_id": self.active_tab.0 }),
                     );
+                    self.reposition_web_panes();
                 }
             }
             Message::ClipboardPaste(text) => {
@@ -3311,6 +3356,14 @@ impl PureTermApp {
                 {
                     return self.handle_feed_request_approval(ipc_req);
                 }
+                // GAP-7.8: `browser.*` drives a web pane. The op runs async
+                // (JS eval via wry); the JSON-RPC reply is deferred until the
+                // callback / timeout resolves. Intercepted before `dispatch`
+                // (same deferred-reply pattern as feed.request_approval) since
+                // the router's sync handlers can't await an async result.
+                if ipc_req.method.starts_with("browser.") {
+                    return self.handle_browser_request(ipc_req);
+                }
                 // Build a rich snapshot from live app state.
                 let snap = crate::ipc::methods::AppSnapshot {
                     window_count: if self.main_window.is_some() { 1 } else { 0 },
@@ -3531,6 +3584,42 @@ impl PureTermApp {
                         }
                     }
                 }
+            }
+            // GAP-7.8: a `browser.*` op finished (JS callback or timeout
+            // resolved). Send the deferred JSON-RPC reply (first-wins via the
+            // Mutex-take), then emit the outcome as a `browser.<verb>` event.
+            Message::BrowserOpResolved(resolved) => {
+                use crate::browser::BrowserReply;
+                let crate::browser::BrowserResolved {
+                    ipc_id,
+                    reply_tx,
+                    reply,
+                    ev_kind,
+                    ev_payload,
+                } = resolved;
+                let (resp, ok, err_msg): (crate::ipc::JsonRpcResponse, bool, Option<String>) =
+                    match reply {
+                        BrowserReply::Done(v) => (crate::ipc::JsonRpcResponse::ok(ipc_id, v), true, None),
+                        BrowserReply::Error(e) => (
+                            crate::ipc::JsonRpcResponse::err(ipc_id, -32000, e.clone()),
+                            false,
+                            Some(e),
+                        ),
+                    };
+                // Mutex-take: a late timeout can't double-reply.
+                if let Some(s) = reply_tx.lock().unwrap().take() {
+                    let _ = s.send(resp);
+                }
+                // Tag the op payload with the outcome, then emit.
+                let mut payload = ev_payload;
+                if let Some(obj) = payload.as_object_mut() {
+                    obj.insert("ok".into(), serde_json::json!(ok));
+                    if let Some(e) = err_msg {
+                        obj.insert("error".into(), serde_json::Value::String(e));
+                    }
+                }
+                self.events
+                    .emit(crate::events::Category::Browser, ev_kind, None, payload);
             }
             // GAP-6.7: in-process event bus subscriber. v1 has no consumer —
             // events are persisted in `emit()` and consumed via the JSONL log /
@@ -3935,7 +4024,7 @@ impl PureTermApp {
                     .iter()
                     .find(|t| t.panes.contains_key(&pane_id))
                     .and_then(|t| t.panes.get(&pane_id))
-                    .map(|p| p.terminal_ctx.clone());
+                    .and_then(|p| p.terminal().cloned());
                 let Some(ctx) = ctx else { return Task::none(); };
                 // 3) 由 mouse_area.on_move 写入的 last_cursor_pos 是 widget-local
                 //    像素坐标。配合 display_offset 算出 (line, col, side)。
@@ -4004,7 +4093,7 @@ impl PureTermApp {
                         .iter()
                         .find(|t| t.panes.contains_key(&pane_id))
                         .and_then(|t| t.panes.get(&pane_id))
-                        .map(|p| p.terminal_ctx.clone());
+                        .and_then(|p| p.terminal().cloned());
                     if let Some(ctx) = ctx {
                         let display_offset =
                             ctx.terminal().lock().grid().display_offset();
@@ -4485,7 +4574,9 @@ impl PureTermApp {
                             if let Some(pane) = tab.panes.get(pid) {
                                 let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
                                 let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                                pane.terminal_ctx.resize(cols, rows, cw, ch);
+                                if let Some(ctx) = pane.terminal() {
+                                    ctx.resize(cols, rows, cw, ch);
+                                }
                             }
                         }
                     }
@@ -4515,11 +4606,13 @@ impl PureTermApp {
                     #[cfg(unix)]
                     if let Some(manager) = self.ssh_manager.as_ref() {
                         if let Some(pane) = tab.panes.get(&pane_id) {
-                            // GAP-5.6: user-initiated pane close — flag + cancel.
-                            pane.terminal_ctx.mark_user_initiated_close();
-                            self.reconnect_hub.cancel(pane_id);
-                            if let Some((host, user, port)) = pane.terminal_ctx.ssh_release_key() {
-                                manager.release(host, user, port);
+                            if let Some(ctx) = pane.terminal() {
+                                // GAP-5.6: user-initiated pane close — flag + cancel.
+                                ctx.mark_user_initiated_close();
+                                self.reconnect_hub.cancel(pane_id);
+                                if let Some((host, user, port)) = ctx.ssh_release_key() {
+                                    manager.release(host, user, port);
+                                }
                             }
                         }
                     }
@@ -4539,7 +4632,9 @@ impl PureTermApp {
                         if let Some(pane) = tab.panes.get(pid) {
                             let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
                             let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                            pane.terminal_ctx.resize(cols, rows, cw, ch);
+                            if let Some(ctx) = pane.terminal() {
+                                ctx.resize(cols, rows, cw, ch);
+                            }
                         }
                     }
                 }
@@ -5247,6 +5342,11 @@ impl PureTermApp {
                 self.split_pane(SplitDirection::Vertical);
                 Task::none()
             }
+            // GAP-3.5: open the new pane as a web pane (wry WebView).
+            Fx::SplitPaneWeb { direction, url } => {
+                self.spawn_web_pane(direction, url);
+                Task::none()
+            }
             Fx::ClosePane => {
                 self.close_active_pane();
                 Task::none()
@@ -5554,6 +5654,246 @@ impl PureTermApp {
         Task::none()
     }
 
+    /// Send one deferred JSON-RPC error reply through a browser IPC handle.
+    /// Factored out so the early-return paths below stay one-liners (instead of
+    /// each re-taking the Mutex + constructing the response).
+    fn reply_browser_err(
+        ipc_id: u64,
+        reply_tx: &std::sync::Arc<
+            std::sync::Mutex<Option<tokio::sync::oneshot::Sender<crate::ipc::JsonRpcResponse>>>,
+        >,
+        code: i64,
+        msg: impl Into<String>,
+    ) {
+        if let Some(s) = reply_tx.lock().unwrap().take() {
+            let _ = s.send(crate::ipc::JsonRpcResponse::err(ipc_id, code, msg));
+        }
+    }
+
+    /// GAP-7.8: dispatch a `browser.*` request against a web pane.
+    ///
+    /// Async ops (navigate/click/type/extract/scroll/wait/get_url/get_title/
+    /// screenshot) run via wry's `evaluate_script_with_callback`; the JSON-RPC
+    /// reply is **deferred** until the callback (or the `tokio::time::timeout`
+    /// backstop) resolves — same deferred-reply pattern as
+    /// [`handle_feed_request_approval`].
+    ///
+    /// Two ops are synchronous and replied immediately (Phase C):
+    /// - `browser.bind_tunnel { pane_id, tunnel_id }` — resolve the daemon
+    ///   tunnel's local SOCKS5 endpoint and bind the pane's webview to it
+    ///   (rebuilds the webview with `with_proxy_config`).
+    /// - `browser.clear_tunnel { pane_id }` — drop the proxy binding.
+    fn handle_browser_request(&mut self, ipc_req: crate::ipc::IpcRequest) -> Task<Message> {
+        use crate::browser::{commands as browser_cmd, BrowserReply, BrowserResolved};
+        use pureterm_jsonrpc::ERROR_INVALID_PARAMS;
+
+        let ipc_id = ipc_req.id;
+        let reply_tx = ipc_req.reply_tx.clone();
+        let method = ipc_req.method.as_str();
+        let params = ipc_req.params.as_ref();
+
+        // Resolve the target web pane. Explicit `pane_id` wins; else the active
+        // tab's first web pane (convenience for single-browser-pane sessions).
+        let pane_id = params
+            .and_then(|p| p.get("pane_id"))
+            .and_then(|v| v.as_u64())
+            .map(PaneId);
+        let ctx = match pane_id {
+            Some(id) => self.pane_browser_ctx(id),
+            None => self
+                .active_tab_ref()
+                .and_then(|t| t.panes.values().find_map(|p| p.web().cloned())),
+        };
+
+        // ── Phase C: synchronous tunnel binding ops ──────────────────────
+        if method == "browser.bind_tunnel" {
+            let tid = match params
+                .and_then(|p| p.get("tunnel_id"))
+                .and_then(|v| v.as_str())
+            {
+                Some(t) => t.to_string(),
+                None => {
+                    Self::reply_browser_err(ipc_id, &reply_tx, ERROR_INVALID_PARAMS, "missing 'tunnel_id'");
+                    return Task::none();
+                }
+            };
+            return match ctx {
+                Some(c) => self.bind_browser_tunnel(ipc_id, reply_tx, c, tid),
+                None => {
+                    Self::reply_browser_err(
+                        ipc_id,
+                        &reply_tx,
+                        -32000,
+                        "no web pane found — pass an explicit pane_id",
+                    );
+                    Task::none()
+                }
+            };
+        }
+        if method == "browser.clear_tunnel" {
+            return match ctx {
+                Some(c) => {
+                    c.clear_tunnel();
+                    if let Some(s) = reply_tx.lock().unwrap().take() {
+                        let _ = s.send(crate::ipc::JsonRpcResponse::ok(
+                            ipc_id,
+                            serde_json::json!({ "cleared": true, "pane_id": pane_id.map(|p| p.0) }),
+                        ));
+                    }
+                    self.events.emit(
+                        crate::events::Category::Browser,
+                        "browser.clear_tunnel",
+                        None,
+                        serde_json::json!({ "pane_id": pane_id.map(|p| p.0) }),
+                    );
+                    Task::none()
+                }
+                None => {
+                    Self::reply_browser_err(
+                        ipc_id,
+                        &reply_tx,
+                        -32000,
+                        "no web pane found — pass an explicit pane_id",
+                    );
+                    Task::none()
+                }
+            };
+        }
+
+        // ── Async agent-browser ops ─────────────────────────────────────
+        let op = match browser_cmd::parse_op(method, params) {
+            Ok(op) => op,
+            Err(msg) => {
+                Self::reply_browser_err(ipc_id, &reply_tx, ERROR_INVALID_PARAMS, msg);
+                return Task::none();
+            }
+        };
+        let ctx = match ctx {
+            Some(c) => c,
+            None => {
+                Self::reply_browser_err(
+                    ipc_id,
+                    &reply_tx,
+                    -32000,
+                    "no web pane found — open one with `pane split-web <url>` or pass an explicit pane_id",
+                );
+                return Task::none();
+            }
+        };
+
+        // Sensitivity audit: a navigation to a new origin is recorded as a
+        // `browser.request` event (the agent is steering the browser somewhere
+        // new). MVP is audit-only — we proceed. A full interactive feed-panel
+        // gate (two-phase reply + a browser approval overlay) is deferred.
+        if let Some(target) = op.is_sensitive_navigate(&ctx.url()) {
+            self.events.emit(
+                crate::events::Category::Browser,
+                "browser.request",
+                None,
+                serde_json::json!({ "verb": op.verb(), "from": ctx.url(), "to": target }),
+            );
+        }
+
+        // Kick off the op; the oneshot resolves from the wry JS callback (or
+        // synchronously for navigate / screenshot / not-yet-realized).
+        let (tx, rx) = tokio::sync::oneshot::channel::<BrowserReply>();
+        browser_cmd::execute(&ctx, &op, tx);
+
+        let ev_kind = format!("browser.{}", op.verb());
+        let ev_payload = op.event_payload();
+        let timeout = op.timeout();
+        let verb = op.verb().to_string();
+
+        Task::perform(
+            async move {
+                let reply = match tokio::time::timeout(timeout, rx).await {
+                    Ok(Ok(r)) => r,
+                    // oneshot dropped without sending (execute always resolves tx
+                    // once; defensive against a future change).
+                    Ok(Err(_)) => BrowserReply::Error("browser op channel closed".into()),
+                    Err(_) => BrowserReply::Error(format!(
+                        "browser.{verb} timed out after {} ms",
+                        timeout.as_millis()
+                    )),
+                };
+                BrowserResolved { ipc_id, reply_tx, reply, ev_kind, ev_payload }
+            },
+            Message::BrowserOpResolved,
+        )
+    }
+
+    /// Phase C: resolve a daemon tunnel's local SOCKS5 endpoint and bind the
+    /// pane's webview to it. The webview is rebuilt on the next frame with wry's
+    /// `with_proxy_config(Socks5)` so all traffic egresses via the gateway,
+    /// reaching hosts only it can resolve (R8). Synchronous JSON-RPC reply.
+    fn bind_browser_tunnel(
+        &mut self,
+        ipc_id: u64,
+        reply_tx: std::sync::Arc<
+            std::sync::Mutex<Option<tokio::sync::oneshot::Sender<crate::ipc::JsonRpcResponse>>>,
+        >,
+        ctx: Arc<crate::browser::BrowserContext>,
+        tunnel_id: String,
+    ) -> Task<Message> {
+        let socket = pureterm_daemon::discovery::socket_path();
+        let tunnels = match crate::daemon_client::tunnel_list(&socket) {
+            Ok(t) => t,
+            Err(e) => {
+                Self::reply_browser_err(ipc_id, &reply_tx, -32000, format!("daemon unreachable: {e}"));
+                return Task::none();
+            }
+        };
+        let tunnel = tunnels
+            .iter()
+            .find(|t| t.get("id").and_then(|v| v.as_str()) == Some(tunnel_id.as_str()));
+        let local_addr = match tunnel.and_then(|t| t.get("local_addr")).and_then(|v| v.as_str()) {
+            Some(a) => a.to_string(),
+            None => {
+                Self::reply_browser_err(
+                    ipc_id,
+                    &reply_tx,
+                    -32000,
+                    format!("tunnel {tunnel_id} not found or has no local listener"),
+                );
+                return Task::none();
+            }
+        };
+        // Parse "host:port" (rsplit_once so IPv6-ish brackets stay with host).
+        let (host, port) = match local_addr.rsplit_once(':').and_then(|(h, p)| {
+            p.parse::<u16>().ok().map(|port| (h.to_string(), port))
+        }) {
+            Some(hp) => hp,
+            None => {
+                Self::reply_browser_err(ipc_id, &reply_tx, -32000, format!("bad local_addr {local_addr:?}"));
+                return Task::none();
+            }
+        };
+        let status = tunnel
+            .and_then(|t| t.get("status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("?")
+            .to_string();
+        ctx.set_tunnel(&tunnel_id, host, port);
+        if let Some(s) = reply_tx.lock().unwrap().take() {
+            let _ = s.send(crate::ipc::JsonRpcResponse::ok(
+                ipc_id,
+                serde_json::json!({
+                    "bound": true,
+                    "tunnel_id": tunnel_id,
+                    "local_addr": local_addr,
+                    "status": status,
+                }),
+            ));
+        }
+        self.events.emit(
+            crate::events::Category::Browser,
+            "browser.bind_tunnel",
+            None,
+            serde_json::json!({ "tunnel_id": tunnel_id, "local_addr": local_addr, "status": status }),
+        );
+        Task::none()
+    }
+
     /// 根据当前 split_tree 布局，重新 resize tab 中所有 pane 的 PTY。
     /// 在拖动分割线、窗口 resize、分屏/关闭 pane 等情况后调用，
     /// 让 term 网格的 cols/rows 与视觉 bounds 保持一致。
@@ -5575,7 +5915,9 @@ impl PureTermApp {
             if let Some(pane) = tab.panes.get(pane_id) {
                 let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
                 let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                pane.terminal_ctx.resize(cols, rows, cw, ch);
+                if let Some(ctx) = pane.terminal() {
+                    ctx.resize(cols, rows, cw, ch);
+                }
             }
         }
     }
@@ -5604,6 +5946,86 @@ impl PureTermApp {
         for tab in &mut self.tabs {
             Self::resize_panes_in_tab(tab, self.viewport_size.width, terminal_height, cw, ch);
         }
+        // GAP-3.5: web pane 的 wry WebView 跟随 resize 一起重定位。
+        self.reposition_web_panes();
+    }
+
+    /// GAP-3.5: 把所有 web pane 的 wry WebView 对齐到其 split_tree 矩形。
+    ///
+    /// 几何真值 = `split_tree::compute_layout`(与终端 grid resize 完全一致),
+    /// 故无需 iced Widget 报告 bounds 的 side-table。活跃 tab 的 web pane
+    /// 先惰性 realize(主线程)再 `set_frame`;非活跃 tab 的 `set_visible(false)`
+    /// (切回时由 tab-switch 钩子重新显示)。y 加 `TAB_BAR_HEIGHT` 偏移 ——
+    /// content NSView 原点在窗口顶部,terminal/web 区在标签栏下方。
+    ///
+    /// 取 `&self`:所有写都经 `BrowserContext` 的内部可变性(`Mutex`),不触碰
+    /// `self.tabs`,故可在不可变遍历中调用。
+    fn reposition_web_panes(&self) {
+        let vw = self.viewport_size.width;
+        let terminal_h = terminal_content_height(self.viewport_size.height);
+        for tab in &self.tabs {
+            // 纯终端 tab 快速跳过,避免无谓的 compute_layout。
+            if !tab.panes.values().any(|p| p.is_web()) {
+                continue;
+            }
+            let is_active_tab = tab.id == self.active_tab;
+            let layout = tab.split_tree.compute_layout(0.0, 0.0, vw, terminal_h);
+            for (pane_id, pane) in &tab.panes {
+                let Some(ctx) = pane.web() else { continue };
+                if !is_active_tab {
+                    ctx.set_visible(false);
+                    continue;
+                }
+                if !ctx.is_realized() {
+                    ctx.try_realize();
+                }
+                match layout.get(pane_id) {
+                    Some(rect) => {
+                        ctx.set_frame(rect.x, rect.y + TAB_BAR_HEIGHT, rect.w, rect.h);
+                        ctx.set_visible(true);
+                    }
+                    None => ctx.set_visible(false),
+                }
+            }
+        }
+    }
+
+    /// GAP-3.5: 在活跃 tab 的活跃 pane 旁分出一个 Web pane,加载 `url`。
+    /// 与 `split_pane` 对称,但内容载体是 `BrowserContext`(无 PTY)。
+    fn spawn_web_pane(&mut self, direction: SplitDirection, url: String) {
+        let active_tab_id = self.active_tab;
+        let active_pane_id = self.active_tab_ref().map(|t| t.active_pane);
+        let Some(active_pane_id) = active_pane_id else { return };
+        let new_pane_id = PaneId::next();
+
+        let browser_ctx = crate::browser::BrowserContext::new(url);
+
+        let tab = match self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+            Some(t) => t,
+            None => return,
+        };
+
+        // GAP-2.2 zoom 不变量:split 前先还原原树(同 split_pane)。
+        tab.restore_zoom_if_any();
+        tab.split_tree.split(active_pane_id, new_pane_id, direction);
+
+        tab.panes.insert(
+            new_pane_id,
+            Pane {
+                id: new_pane_id,
+                content: PaneContent::Web(browser_ctx),
+                title: "🌐 Browser".to_string(),
+            },
+        );
+        tab.active_pane = new_pane_id;
+        // mark_layout_dirty 内部会 reposition_web_panes → realize + set_frame。
+        self.mark_layout_dirty();
+        self.events.emit(
+            crate::events::Category::Pane,
+            "pane.split_web",
+            None,
+            serde_json::json!({ "pane_id": new_pane_id.0 }),
+        );
     }
 
     /// Split the active pane in the given direction.
@@ -5663,7 +6085,9 @@ impl PureTermApp {
             if let Some(pane) = tab.panes.get(&active_pane_id) {
                 let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
                 let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                pane.terminal_ctx.resize(cols, rows, cw, ch);
+                if let Some(ctx) = pane.terminal() {
+                    ctx.resize(cols, rows, cw, ch);
+                }
             }
         }
 
@@ -5671,7 +6095,7 @@ impl PureTermApp {
             new_pane_id,
             Pane {
                 id: new_pane_id,
-                terminal_ctx,
+                content: PaneContent::Terminal(terminal_ctx),
                 title: format!("Pane {:?}", new_pane_id),
             },
         );
@@ -5726,7 +6150,9 @@ impl PureTermApp {
             #[cfg(unix)]
             if let Some(tab) = self.tabs.iter().find(|t| t.id == active_tab_id) {
                 if let Some(pane) = tab.panes.get(&active_pane_id) {
-                    self.kill_pane_session(&pane.terminal_ctx);
+                    if let Some(ctx) = pane.terminal() {
+                        self.kill_pane_session(ctx);
+                    }
                 }
             }
             let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id).unwrap();
@@ -5734,8 +6160,10 @@ impl PureTermApp {
             #[cfg(unix)]
             if let Some(manager) = self.ssh_manager.as_ref() {
                 if let Some(pane) = tab.panes.get(&active_pane_id) {
-                    if let Some((host, user, port)) = pane.terminal_ctx.ssh_release_key() {
-                        manager.release(host, user, port);
+                    if let Some(ctx) = pane.terminal() {
+                        if let Some((host, user, port)) = ctx.ssh_release_key() {
+                            manager.release(host, user, port);
+                        }
                     }
                 }
             }
@@ -5755,7 +6183,9 @@ impl PureTermApp {
                 if let Some(pane) = tab.panes.get(pid) {
                     let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
                     let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                    pane.terminal_ctx.resize(cols, rows, cw, ch);
+                    if let Some(ctx) = pane.terminal() {
+                        ctx.resize(cols, rows, cw, ch);
+                    }
                 }
             }
         }
@@ -5826,7 +6256,9 @@ impl PureTermApp {
             if let Some(pane) = tab.panes.get(pane_id) {
                 let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
                 let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                pane.terminal_ctx.resize(cols, rows, cw, ch);
+                if let Some(ctx) = pane.terminal() {
+                    ctx.resize(cols, rows, cw, ch);
+                }
             }
         }
     }
@@ -5835,7 +6267,7 @@ impl PureTermApp {
     fn handle_scroll_for_pane(&mut self, pane_id: PaneId, delta: iced::mouse::ScrollDelta) {
         let ctx = self.active_tab_ref()
             .and_then(|tab| tab.panes.get(&pane_id))
-            .map(|p| p.terminal_ctx.clone());
+            .and_then(|p| p.terminal().cloned());
 
         let Some(ctx) = ctx else { return };
 
@@ -6039,7 +6471,9 @@ impl PureTermApp {
         let Some(pane) = tab.panes.get(&tab.active_pane) else {
             return (0, 0);
         };
-        let term = pane.terminal_ctx.terminal().lock_unfair();
+        // Web panes have no terminal grid cursor.
+        let Some(ctx) = pane.terminal() else { return (0, 0) };
+        let term = ctx.terminal().lock_unfair();
         let cursor = &term.grid().cursor;
         (cursor.point.line.0.max(0) as usize, cursor.point.column.0)
     }
@@ -6095,7 +6529,7 @@ impl PureTermApp {
             use crate::ssh::reconnect::SshStateSnapshot;
             if let Some(tab) = self.active_tab_ref() {
                 if let Some(pane) = tab.panes.get(&tab.active_pane) {
-                    if let Some(snap) = pane.terminal_ctx.ssh_state_snapshot() {
+                    if let Some(snap) = pane.terminal().and_then(|c| c.ssh_state_snapshot()) {
                         let (label, color): (String, Color) = match snap {
                             SshStateSnapshot::Connected => (
                                 "  SSH".to_string(),
@@ -7269,7 +7703,7 @@ impl PureTermApp {
             if dw.window_id == id {
                 // Use the first pane's terminal context for detached windows
                 let ctx = dw.tab.panes.values().next()
-                    .map(|p| p.terminal_ctx.clone());
+                    .and_then(|p| p.terminal().cloned());
                 let Some(ctx) = ctx else { continue };
 
                 let shader = Shader::new(TerminalProgram {
@@ -7487,18 +7921,52 @@ impl PureTermApp {
         }
     }
 
-    /// Render a single terminal pane with its shader.
+    /// Render a single pane. Terminal panes use the GPU shader; web panes
+    /// (GAP-3.5) render a transparent fill — the actual page is the wry
+    /// WKWebView child of the content NSView, positioned over this area by
+    /// `reposition_web_panes`.
     fn view_pane(
         &self,
         pane_id: PaneId,
         is_active: bool,
     ) -> Element<'_, Message, Theme, iced::Renderer> {
         let tab = self.active_tab_ref();
-        let ctx = tab
-            .and_then(|t| t.panes.get(&pane_id))
-            .map(|p| p.terminal_ctx.clone());
+        let pane = tab.and_then(|t| t.panes.get(&pane_id));
 
-        let Some(ctx) = ctx else {
+        let Some(pane) = pane else {
+            return container(space())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+        };
+
+        // GAP-3.5: Web pane — 透明占位。真正的页面是覆盖在此 rect 上的原生
+        // WKWebView(由 `reposition_web_panes` 用 split_tree layout 对齐)。
+        // 不套 ImeWrapper:WKWebView 自带 IME。
+        if pane.web().is_some() {
+            let el: Element<'_, Message, Theme, iced::Renderer> = container(space())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+            return if is_active {
+                container(el)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .style(move |_| container::Style {
+                        border: Border {
+                            color: Color::from_rgba(0.3, 0.6, 1.0, 0.3),
+                            width: 1.0,
+                            radius: 0.0.into(),
+                        },
+                        ..Default::default()
+                    })
+                    .into()
+            } else {
+                el
+            };
+        }
+
+        let Some(ctx) = pane.terminal().cloned() else {
             return container(space())
                 .width(Length::Fill)
                 .height(Length::Fill)

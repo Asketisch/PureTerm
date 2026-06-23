@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::browser::BrowserContext;
 use crate::terminal_context::TerminalContext;
 
 /// 面板的像素空间矩形。
@@ -39,11 +40,46 @@ impl PaneId {
     }
 }
 
-/// 面板：持有独立的终端上下文。
+/// Pane 的内容载体 —— 终端或内置浏览器(WebView)。
+///
+/// GAP-3.5:在终端之外引入 `Web` 变体,使一个 pane 能容纳 WebView。
+/// 用枚举而非 trait:仅两种变体,每个 match 点更直接,且快照序列化
+/// 需要判别式(`session_restore::PaneSnapshot::kind`)。
+pub enum PaneContent {
+    /// 终端(本地 PTY / SSH PTY)。
+    Terminal(Arc<TerminalContext>),
+    /// 内置浏览器(GAP-3.5 WebView)。
+    Web(Arc<BrowserContext>),
+}
+
+/// 面板:持有 pane 内容(终端或浏览器)+ 在分割树中的位置。
 pub struct Pane {
     pub id: PaneId,
-    pub terminal_ctx: Arc<TerminalContext>,
+    pub content: PaneContent,
     pub title: String,
+}
+
+impl Pane {
+    /// 若是终端 pane,返回其终端上下文。
+    pub fn terminal(&self) -> Option<&Arc<TerminalContext>> {
+        match &self.content {
+            PaneContent::Terminal(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// 若是浏览器 pane,返回其浏览器上下文。
+    pub fn web(&self) -> Option<&Arc<BrowserContext>> {
+        match &self.content {
+            PaneContent::Web(w) => Some(w),
+            _ => None,
+        }
+    }
+
+    /// 是否为浏览器 pane。
+    pub fn is_web(&self) -> bool {
+        matches!(self.content, PaneContent::Web(_))
+    }
 }
 
 /// 分割方向。

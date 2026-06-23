@@ -5,6 +5,8 @@ mod agent_e2e;
 mod agent_hooks;
 mod agent_sessions;
 mod app_config;
+/// GAP-3.5: 内置 Browser 面板(WebView)— pane 的第二种内容载体。
+mod browser;
 mod cli;
 mod config_watcher;
 /// GAP-6.7: unified event schema (Category + AppEvent).
@@ -48,6 +50,9 @@ mod macos_eyedropper;
 mod ssh;
 #[cfg(unix)]
 mod ssh_cli;
+/// GAP-5.2: `pureterm ssh tunnel …` — russh SOCKS5 tunnel (daemon-direct).
+#[cfg(unix)]
+mod tunnel_cli;
 /// GAP-7.7: custom resume bindings (`pureterm surface resume ...`).
 #[cfg(unix)]
 mod resume_bindings;

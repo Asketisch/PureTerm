@@ -30,6 +30,10 @@ pub enum IpcSideEffect {
     SplitHorizontal,
     SplitVertical,
     ClosePane,
+    /// GAP-3.5: split the active pane and open the new pane as a web pane
+    /// (wry WebView) loading `url`. `direction` mirrors `SplitHorizontal`/
+    /// `SplitVertical`.
+    SplitPaneWeb { direction: crate::split_tree::SplitDirection, url: String },
     SwapPane,
     ToggleZoom,
     EqualizeSplits,
@@ -269,6 +273,31 @@ impl SocketRouter {
                     (Ok(serde_json::json!({"split": "vertical"})), Some(IpcSideEffect::SplitVertical))
                 }
             }
+        });
+
+        // ── GAP-3.5: pane.split_web — open a web pane (WebView) ──
+        router.register("pane.split_web", |params, _snap| {
+            let direction = params
+                .as_ref()
+                .and_then(|p| p.get("direction"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("vertical");
+            let url = params
+                .as_ref()
+                .and_then(|p| p.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("https://example.com");
+            // Reject obviously empty / non-string urls with a sane default rather
+            // than spawning a blank webview.
+            let url = if url.trim().is_empty() { "https://example.com".to_string() } else { url.to_string() };
+            let dir = match direction {
+                "horizontal" | "h" => crate::split_tree::SplitDirection::Horizontal,
+                _ => crate::split_tree::SplitDirection::Vertical,
+            };
+            (
+                Ok(serde_json::json!({"split_web": true, "url": url})),
+                Some(IpcSideEffect::SplitPaneWeb { direction: dir, url }),
+            )
         });
 
         router.register("pane.close", |_params, _snap| {

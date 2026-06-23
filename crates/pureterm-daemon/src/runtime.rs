@@ -25,12 +25,17 @@ pub fn run() -> std::io::Result<()> {
         }
     };
 
-    let state = Arc::new(ControlState::new(SessionManager::default()));
-
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("puretermd-worker")
         .build()?;
+
+    // Build the runtime before the control state so GAP-5.2 tunnel tasks can be
+    // spawned onto it (ControlState holds the handle).
+    let state = Arc::new(ControlState::with_runtime(
+        SessionManager::default(),
+        runtime.handle().clone(),
+    ));
 
     // GAP-7.3: periodic CPU sample tick drives `cpu_idle_secs` for every
     // session — the dual idle condition for hibernation, alongside PTY-output
