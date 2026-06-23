@@ -178,11 +178,15 @@ pub fn scan(agents: &[VaultAgentEntry]) -> Vec<DetectedAgent> {
 /// Cross-reference detected agents with persisted `agent_sessions` records,
 /// attaching the most-recent (`last_seen`) session_id per kind when available.
 ///
+/// `load` is injected so the kind-LATEST heuristic is unit-testable without the
+/// on-disk session store; the public `with_sessions` passes `agent_sessions::load`.
+///
 /// **Limitation**: detected host processes carry no pid↔session_id link (the
 /// session store keys on kind, not pid), so the attached id is the kind's
 /// latest known session — a *resume hint*, not a proven correspondence.
-pub fn with_sessions(
+pub fn with_sessions_from(
     detected: Vec<DetectedAgent>,
+    load: impl Fn(&str) -> Vec<crate::agent_sessions::AgentSessionRecord>,
 ) -> Vec<(DetectedAgent, Option<String>)> {
     let mut cache: std::collections::HashMap<String, Vec<crate::agent_sessions::AgentSessionRecord>> =
         std::collections::HashMap::new();
@@ -191,16 +195,59 @@ pub fn with_sessions(
         .map(|d| {
             let recs = cache
                 .entry(d.kind.clone())
-                .or_insert_with(|| crate::agent_sessions::load(&d.kind));
+                .or_insert_with(|| load(&d.kind));
             let sid = recs.iter().max_by_key(|r| r.last_seen).map(|r| r.session_id.clone());
             (d, sid)
         })
         .collect()
 }
 
+/// Cross-reference detected agents with the on-disk `agent_sessions` store,
+/// attaching the most-recent (`last_seen`) session_id per kind when available.
+/// See [`with_sessions_from`] for the limitation (kind-LATEST heuristic).
+pub fn with_sessions(
+    detected: Vec<DetectedAgent>,
+) -> Vec<(DetectedAgent, Option<String>)> {
+    with_sessions_from(detected, crate::agent_sessions::load)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent_sessions::AgentSessionRecord;
+
+    fn detected(kind: &str, pid: u32) -> DetectedAgent {
+        DetectedAgent { kind: kind.into(), pid, cmdline: format!("{kind} --pid {pid}") }
+    }
+
+    fn rec(sid: &str, last_seen: u64) -> AgentSessionRecord {
+        AgentSessionRecord {
+            session_id: sid.into(),
+            kind: "claude-code".into(),
+            cwd: None,
+            last_seen,
+        }
+    }
+
+    #[test]
+    fn with_sessions_attaches_kind_latest_session_id() {
+        // Inject a loader returning seeded records; assert the kind-LATEST
+        // heuristic (max last_seen). DOCUMENTED LIMITATION: the attached id is
+        // the kind's latest known session — a resume HINT, not a proven
+        // pid↔session correspondence (host pids carry no session link).
+        let detected_vec = vec![detected("claude-code", 1)];
+        let out = with_sessions_from(detected_vec, |_| vec![rec("old", 1), rec("new", 2)]);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1.as_deref(), Some("new"));
+    }
+
+    #[test]
+    fn with_sessions_no_records_returns_none_sid() {
+        let detected_vec = vec![detected("codex", 1)];
+        let out = with_sessions_from(detected_vec, |_| vec![]);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].1.is_none());
+    }
 
     fn entry(kind: &str, detect: Option<&str>) -> VaultAgentEntry {
         VaultAgentEntry {
@@ -249,23 +296,41 @@ mod tests {
     }
 
     /// Integration: spawn a known long-lived process and confirm `scan` finds
-    /// it. `#[ignore]` by default — depends on the host `ps`/`/proc` snapshot
-    /// timing and may be flaky under load/CI.
+    /// it. Polls up to ~2s (the host `ps`/`/proc` snapshot may lag the spawn)
+    /// and reaps the child via a Drop guard so a panic never orphans it.
     #[test]
-    #[ignore]
     fn scan_finds_spawned_sleep() {
+        use std::time::{Duration, Instant};
+
+        struct Reap(std::process::Child);
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
         // `sleep` is not a filter process and lives long enough to be sampled.
-        let mut child = std::process::Command::new("sleep")
+        let child = std::process::Command::new("sleep")
             .arg("30")
             .spawn()
             .expect("spawn sleep");
         let pid = child.id();
-        let detected = scan(&[entry("sleep-agent", Some("sleep"))]);
-        let _ = child.kill();
-        let _ = child.wait();
-        assert!(
-            detected.iter().any(|d| d.pid == pid && d.kind == "sleep-agent"),
-            "expected spawned sleep (pid {pid}) in {detected:?}"
-        );
+        let _reap = Reap(child);
+
+        let agents = vec![entry("sleep-agent", Some("sleep"))];
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut found = false;
+        while Instant::now() < deadline {
+            if scan(&agents)
+                .iter()
+                .any(|d| d.pid == pid && d.kind == "sleep-agent")
+            {
+                found = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        assert!(found, "spawned sleep (pid {pid}) not detected within 2s");
     }
 }

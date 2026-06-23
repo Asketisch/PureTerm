@@ -134,7 +134,8 @@ fn write_bindings(path: &Path, bindings: &[ResumeBinding]) -> Result<(), ConfigE
 }
 
 /// CLI entrypoint for `pureterm surface resume ...`. Operates on the user's
-/// real config (`AppConfig::config_path()`). `Run` is stubbed to M2.
+/// real config (`AppConfig::config_path()`). `Run` mints an HMAC approval token
+/// via the Feed panel (see `run_binding`); `Set/List/Remove` are local CRUD.
 pub fn dispatch(cmd: ResumeSub) {
     let path = AppConfig::config_path();
     match cmd {
@@ -386,26 +387,30 @@ pub fn interpolate_shell(
     )
 }
 
-/// GAP-7.7: resolve the `auto=true` resume binding for `kind` and, if a valid
-/// HMAC token authorizes it, return the interpolated argv to spawn. Returns
-/// `None` when no auto binding matches, or when it matches but has no token
-/// yet — cold-resume never prompts (the `restore()` path has no Feed panel
-/// access); the user must `pureterm surface resume run` once to mint the token.
-pub fn cold_resume_argv(kind: &str, session_id: &str, cwd: &str) -> Option<Vec<String>> {
-    let mut matches: Vec<ResumeBinding> = AppConfig::load_resume_bindings(&AppConfig::config_path())
-        .into_iter()
-        .filter(|b| b.auto && b.kind == kind)
-        .collect();
+/// GAP-7.7: pure core of `cold_resume_argv`. Given already-loaded `bindings`,
+/// resolve the `auto=true` binding for `kind` and, if `authorized` approves it,
+/// return the interpolated argv. `None` when no auto binding matches or it
+/// matches but isn't authorized — cold-resume never prompts (the `restore()`
+/// path has no Feed panel access); the user must `pureterm surface resume run`
+/// once to mint the token.
+///
+/// `authorized` is injected so this stays pure & testable without the on-disk
+/// token store; the public `cold_resume_argv` passes the real `authorize`.
+pub fn cold_resume_argv_from(
+    bindings: &[ResumeBinding],
+    kind: &str,
+    session_id: &str,
+    cwd: &str,
+    authorized: impl Fn(&ResumeBinding) -> AuthDecision,
+) -> Option<Vec<String>> {
+    let mut matches: Vec<ResumeBinding> = bindings.iter().filter(|b| b.auto && b.kind == kind).cloned().collect();
     if matches.len() > 1 {
         log::warn!(
             "cold_resume_argv: multiple auto bindings for kind `{kind}`; using the first"
         );
     }
     let b = matches.first()?;
-    if !matches!(
-        authorize(&b.kind, &b.checkpoint, &b.shell),
-        AuthDecision::Approved
-    ) {
+    if !matches!(authorized(b), AuthDecision::Approved) {
         log::info!(
             "cold_resume_argv: kind `{kind}` auto binding has no token; skipping \
              (run `pureterm surface resume run --kind {kind} --checkpoint {}` to authorize)",
@@ -413,14 +418,71 @@ pub fn cold_resume_argv(kind: &str, session_id: &str, cwd: &str) -> Option<Vec<S
         );
         return None;
     }
-    Some(interpolate_shell(
-        &b.shell, &b.kind, &b.checkpoint, session_id, cwd,
-    ))
+    Some(interpolate_shell(&b.shell, &b.kind, &b.checkpoint, session_id, cwd))
+}
+
+/// GAP-7.7: resolve the `auto=true` resume binding for `kind` and, if a valid
+/// HMAC token authorizes it, return the interpolated argv to spawn. Returns
+/// `None` when no auto binding matches, or when it matches but has no token
+/// yet — cold-resume never prompts (the `restore()` path has no Feed panel
+/// access); the user must `pureterm surface resume run` once to mint the token.
+pub fn cold_resume_argv(kind: &str, session_id: &str, cwd: &str) -> Option<Vec<String>> {
+    let bindings = AppConfig::load_resume_bindings(&AppConfig::config_path());
+    cold_resume_argv_from(&bindings, kind, session_id, cwd, |b| {
+        authorize(&b.kind, &b.checkpoint, &b.shell)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn binding(kind: &str, auto: bool, shell: &[&str]) -> ResumeBinding {
+        ResumeBinding {
+            kind: kind.into(),
+            checkpoint: "work".into(),
+            shell: shell.iter().map(|s| s.to_string()).collect(),
+            auto,
+        }
+    }
+
+    #[test]
+    fn cold_resume_argv_from_auto_with_token_returns_interpolated() {
+        let bs = vec![binding("tmux", true, &["tmux", "attach", "-t", "{checkpoint}"])];
+        let argv = cold_resume_argv_from(&bs, "tmux", "sid-123", "/cwd", |_| AuthDecision::Approved);
+        let argv = argv.expect("auto binding + authorized token → Some");
+        // {checkpoint} interpolated to "work"; session_id/cwd unused by this shell.
+        assert_eq!(argv, vec!["tmux", "attach", "-t", "work"]);
+    }
+
+    #[test]
+    fn cold_resume_argv_from_auto_no_token_returns_none() {
+        let bs = vec![binding("tmux", true, &["tmux", "attach"])];
+        // auto binding but no token → None (cold-resume never prompts).
+        assert_eq!(
+            cold_resume_argv_from(&bs, "tmux", "sid", "/cwd", |_| AuthDecision::NeedsPrompt),
+            None
+        );
+    }
+
+    #[test]
+    fn cold_resume_argv_from_non_auto_returns_none() {
+        let bs = vec![binding("tmux", false, &["tmux", "attach"])];
+        // non-auto binding, even authorized → None (only auto qualifies for cold-resume).
+        assert_eq!(
+            cold_resume_argv_from(&bs, "tmux", "sid", "/cwd", |_| AuthDecision::Approved),
+            None
+        );
+    }
+
+    #[test]
+    fn cold_resume_argv_from_no_matching_kind_returns_none() {
+        let bs = vec![binding("tmux", true, &["tmux", "attach"])];
+        assert_eq!(
+            cold_resume_argv_from(&bs, "codex", "sid", "/cwd", |_| AuthDecision::Approved),
+            None
+        );
+    }
 
     #[test]
     fn interpolate_substitutes_all_placeholders() {

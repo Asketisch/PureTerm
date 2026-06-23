@@ -415,19 +415,6 @@ fn terminal_content_height(viewport_height: f32) -> f32 {
     (viewport_height - TAB_BAR_HEIGHT - STATUS_BAR_HEIGHT).max(0.0)
 }
 
-/// GAP-7.6: `kind` 是否在 `[[vault.agents]]` 中标记为 `never_hibernate`
-/// (豁免 hibernation_scan 候选)。纯函数,便于单测。
-fn vault_kind_never_hibernate(
-    vault_agents: &[crate::app_config::VaultAgentEntry],
-    kind: &str,
-) -> bool {
-    vault_agents
-        .iter()
-        .find(|v| v.kind == kind)
-        .map(|v| v.never_hibernate)
-        .unwrap_or(false)
-}
-
 /// GAP-7.6: status-bar agent indicator. Returns the label + color to render,
 /// or `None` when the pane has no agent AND no feed is pending. Pure, tested.
 ///
@@ -5375,66 +5362,19 @@ impl PureTermApp {
         };
         // GAP-7.6: cache the snapshot for view_bottom_bar's ❄ indicator.
         self.last_session_list = sessions.clone();
-        let cfg = &self.hibernation_cfg;
-        let vault = &self.vault_agents;
 
-        let is_idle = |s: &serde_json::Value| -> bool {
-            if s.get("hibernated").and_then(|v| v.as_bool()).unwrap_or(false) {
-                return false;
-            }
-            // GAP-7.6: never_hibernate 的 agent 不作为 hibernate 候选。
-            if s
-                .get("agent_kind")
-                .and_then(|v| v.as_str())
-                .map(|k| vault_kind_never_hibernate(vault, k))
-                .unwrap_or(false)
-            {
-                return false;
-            }
-            let pty = s.get("pty_idle_secs").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
-            let cpu = s.get("cpu_idle_secs").and_then(|v| v.as_u64()).unwrap_or(u64::MAX);
-            pty >= cfg.pty_idle_secs && cpu >= cfg.cpu_idle_secs
-        };
-        // A session counts as a "live agent" if it has an agent_kind registered
-        // in [[vault.agents]] (or is the common `claude-code` default). GAP-7.6:
-        // `never_hibernate` 的 agent 不计入 live(豁免 max_live_terminals 比对)。
-        let is_live_agent = |s: &serde_json::Value| {
-            s.get("hibernated").and_then(|v| v.as_bool()) == Some(false)
-                && s.get("agent_kind")
-                    .and_then(|v| v.as_str())
-                    .map(|k| {
-                        if vault_kind_never_hibernate(vault, k) {
-                            return false;
-                        }
-                        k == "claude-code" || vault.iter().any(|v| v.kind == k)
-                    })
-                    .unwrap_or(false)
-        };
-
-        if sessions.iter().filter(|s| is_live_agent(s)).count() <= cfg.max_live_terminals as usize {
-            return;
-        }
-        // Pick the idle candidate idle longest (max pty_idle_secs).
-        if let Some(best) = sessions
-            .iter()
-            .filter(|s| is_idle(s))
-            .max_by_key(|s| s.get("pty_idle_secs").and_then(|v| v.as_u64()).unwrap_or(0))
-        {
-            let session_id = best.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            if session_id.is_empty() {
-                return;
-            }
-            let kind = best
-                .get("agent_kind")
-                .and_then(|v| v.as_str())
-                .or_else(|| best.get("kind").and_then(|v| v.as_str()))
-                .unwrap_or("local")
-                .to_string();
+        // GAP-7.3: dual idle gate + max_live_terminals + never_hibernate 豁免的纯
+        // 分类逻辑在 `hibernate_panel::classify_candidate`(可单测)。
+        if let Some((session_id, kind)) = crate::hibernate_panel::classify_candidate(
+            &sessions,
+            &self.hibernation_cfg,
+            &self.vault_agents,
+        ) {
             self.hibernate_panel.request(crate::hibernate_panel::PendingHibernation {
                 session_id,
                 kind,
                 started_at: std::time::Instant::now(),
-                confirm_secs: cfg.confirm_secs,
+                confirm_secs: self.hibernation_cfg.confirm_secs,
             });
         }
     }
@@ -5552,93 +5492,64 @@ impl PureTermApp {
         false
     }
 
-    /// GAP-7.4: 处理 `feed.request_approval` 的 deferred-reply。先入 pending
-    /// 队列;记忆命中则立即回复(不弹面板),否则聚焦到面板等用户决定。
-    /// 回复统一由 `FeedPanelState::resolve` 发出(发 oneshot → 解锁 shim 阻塞)。
+    /// GAP-7.4: 处理 `feed.request_approval` 的 deferred-reply。纯核(解析 +
+    /// 记忆咨询 + stash + resolve + 审计)委托给 `FeedPanelState::accept_inbound`;
+    /// 这里只做它独占的两个副作用 —— emit `feed.*` 事件、(resume 命中)spawn tab。
+    /// 回复统一由 `FeedPanelState::resolve` 发出(oneshot → 解锁 shim 阻塞)。
     #[cfg(unix)]
     fn handle_feed_request_approval(&mut self, ipc_req: crate::ipc::IpcRequest) -> Task<Message> {
-        use crate::feed_panel::{FeedPanelState, PendingRequest, ResolveSource};
-        use crate::ipc::protocol::JsonRpcResponse;
+        use crate::feed_panel::{InboundDisposition, InboundOutcome};
 
-        let id = ipc_req.id;
-        let reply = ipc_req.reply_tx.clone();
-
-        // 解析 params(必填 session_id + event)。
-        let Some(params) = ipc_req.params.as_ref() else {
-            let resp = JsonRpcResponse::err(id, -32602, "feed.request_approval requires params");
-            if let Some(tx) = reply.lock().unwrap().take() {
-                let _ = tx.send(resp);
-            }
-            return Task::none();
-        };
-        let Some(payload) = FeedPanelState::parse_payload(id, params) else {
-            let resp =
-                JsonRpcResponse::err(id, -32602, "feed.request_approval requires session_id + event");
-            if let Some(tx) = reply.lock().unwrap().take() {
-                let _ = tx.send(resp);
-            }
-            return Task::none();
-        };
-
-        // 记忆命中(Always/All/Bypass)→ 入队后立即 resolve(source=Memory),
-        // 不弹面板。否则入队 + 聚焦,等用户点按钮(或 120s 超时)。
-        // GAP-7.7: resume 绑定走 HMAC 令牌(非 in-memory map);令牌有效即视为 Always。
-        let memory_choice = if payload.resume.is_some() {
-            let r = payload.resume.as_ref().expect("checked Some above");
-            if matches!(
-                crate::resume_bindings::authorize(&r.kind, &r.checkpoint, &r.shell),
-                crate::resume_bindings::AuthDecision::Approved
-            ) {
-                Some(crate::feed_client::FeedChoice::Always)
-            } else {
-                None
-            }
-        } else {
-            self.feed_panel
-                .consult_memory(&payload.session_id, payload.tool_name.as_deref().unwrap_or(""))
-        };
-        // GAP-6.7: capture payload fields for the event before moving it.
-        let session_id = payload.session_id.clone();
-        let request_meta = serde_json::json!({
-            "ipc_id": payload.ipc_id,
-            "event": payload.event,
-            "tool_name": payload.tool_name,
-            "subject": payload.subject(),
-        });
-        self.feed_panel.pending.insert(id, PendingRequest { req: payload, reply });
-        self.events.emit(
-            crate::events::Category::Feed,
-            "feed.requested",
-            Some(session_id.clone()),
-            request_meta,
-        );
-        if let Some(choice) = memory_choice {
-            // GAP-7.7: capture resume payload before resolve drains pending.
-            let resume = self
-                .feed_panel
-                .pending
-                .get(&id)
-                .and_then(|p| p.req.resume.clone());
-            self.feed_panel.resolve(id, choice, ResolveSource::Memory);
-            self.events.emit(
-                crate::events::Category::Feed,
-                "feed.resolved",
-                Some(session_id),
-                serde_json::json!({ "choice": choice.as_str(), "source": "memory" }),
+        let InboundDisposition { ipc_id: _, session_id, request_meta, outcome } = self
+            .feed_panel
+            .accept_inbound(
+                ipc_req.id,
+                ipc_req.params.as_ref(),
+                ipc_req.reply_tx.clone(),
+                // GAP-7.7: resume 绑定走 HMAC 令牌(非 in-memory map);令牌有效即视为 Always。
+                |r| {
+                    matches!(
+                        crate::resume_bindings::authorize(&r.kind, &r.checkpoint, &r.shell),
+                        crate::resume_bindings::AuthDecision::Approved
+                    )
+                },
             );
-            // GAP-7.7: token pre-approved → spawn the binding as a new tab.
-            if let Some(r) = resume {
-                let cwd = self
-                    .active_pane_cwd()
-                    .map(|p| p.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let argv = crate::resume_bindings::interpolate_shell(
-                    &r.shell, &r.kind, &r.checkpoint, "", &cwd,
+
+        match outcome {
+            InboundOutcome::ErrorReplied => {}
+            InboundOutcome::Focused => {
+                self.events.emit(
+                    crate::events::Category::Feed,
+                    "feed.requested",
+                    Some(session_id),
+                    request_meta,
                 );
-                self.create_resume_tab(&argv, &r.kind);
             }
-        } else {
-            self.feed_panel.focused = Some(id);
+            InboundOutcome::Resolved { choice, resume } => {
+                self.events.emit(
+                    crate::events::Category::Feed,
+                    "feed.requested",
+                    Some(session_id.clone()),
+                    request_meta,
+                );
+                self.events.emit(
+                    crate::events::Category::Feed,
+                    "feed.resolved",
+                    Some(session_id.clone()),
+                    serde_json::json!({ "choice": choice.as_str(), "source": "memory" }),
+                );
+                // GAP-7.7: token pre-approved → spawn the binding as a new tab.
+                if let Some(r) = resume {
+                    let cwd = self
+                        .active_pane_cwd()
+                        .map(|p| p.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    let argv = crate::resume_bindings::interpolate_shell(
+                        &r.shell, &r.kind, &r.checkpoint, "", &cwd,
+                    );
+                    self.create_resume_tab(&argv, &r.kind);
+                }
+            }
         }
         Task::none()
     }
@@ -7907,32 +7818,6 @@ pub fn run() -> iced::Result {
 
 #[cfg(test)]
 mod tests {
-    use crate::app_config::VaultAgentEntry;
-
-    fn vault(kind: &str, never: bool) -> VaultAgentEntry {
-        VaultAgentEntry {
-            kind: kind.to_string(),
-            resume_command: vec![],
-            never_hibernate: never,
-            ..Default::default()
-        }
-    }
-
-    #[test]
-    fn vault_kind_never_hibernate_flag() {
-        // GAP-7.6: never_hibernate=true 的 kind 被豁免;false / 未注册不豁免。
-        let agents = vec![vault("claude-code", false), vault("codex", true)];
-        assert!(!super::vault_kind_never_hibernate(&agents, "claude-code"));
-        assert!(super::vault_kind_never_hibernate(&agents, "codex"));
-    }
-
-    #[test]
-    fn vault_kind_never_hibernate_unknown_kind_is_false() {
-        let agents = vec![vault("claude-code", true)];
-        assert!(!super::vault_kind_never_hibernate(&agents, "unknown"));
-        assert!(!super::vault_kind_never_hibernate(&[], "claude-code"));
-    }
-
     #[test]
     fn agent_indicator_active_shows_bolt() {
         let (label, _) = super::agent_indicator("claude-code", false, 0).unwrap();

@@ -23,11 +23,13 @@ pub struct FeedEntry {
 }
 
 /// Path of the feed audit log. Kept in sync with `feed_panel::audit_path`.
+///
+/// `PURETERM_FEED_LOG` 覆盖(与 feed_panel::audit_path 同语义):设了就用该路径。
 fn audit_path() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("pureterm")
-        .join("feed.jsonl")
+    if let Ok(p) = std::env::var("PURETERM_FEED_LOG") {
+        return PathBuf::from(p);
+    }
+    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("pureterm").join("feed.jsonl")
 }
 
 /// Read the last `n` entries from `path`, newest first. Malformed lines are
@@ -53,6 +55,18 @@ pub fn read_last(n: usize) -> Vec<FeedEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audit_path_respects_env_override() {
+        // Mirrors feed_panel::audit_path: reader + writer must agree on the
+        // PURETERM_FEED_LOG override so `pureterm feed list` reads what the
+        // harness writes. Shares the lock with feed_panel's env test.
+        let _guard = crate::feed_panel::FEED_AUDIT_ENV_LOCK.lock().unwrap();
+        let override_path = std::env::temp_dir().join("pureterm_test_feedlog_audit_override.jsonl");
+        std::env::set_var("PURETERM_FEED_LOG", &override_path);
+        assert_eq!(audit_path(), override_path);
+        std::env::remove_var("PURETERM_FEED_LOG");
+    }
 
     fn entry_json(ipc: u64, choice: &str) -> String {
         format!(

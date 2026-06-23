@@ -567,6 +567,39 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    // PURETERM_AGENT_KIND is process-global env; serialize the infer_agent_kind
+    // tests so they don't race each other.
+    static AGENT_KIND_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn infer_agent_kind_env_var_takes_priority() {
+        let _g = AGENT_KIND_ENV_LOCK.lock().unwrap();
+        std::env::set_var("PURETERM_AGENT_KIND", "codex");
+        // transcript would imply claude-code, but the env var wins.
+        let input = HookInput {
+            transcript_path: "/home/u/.claude/projects/x.jsonl".into(),
+            ..Default::default()
+        };
+        assert_eq!(infer_agent_kind(&input).as_deref(), Some("codex"));
+        std::env::remove_var("PURETERM_AGENT_KIND");
+    }
+
+    #[test]
+    fn infer_agent_kind_transcript_heuristic_falls_back() {
+        let _g = AGENT_KIND_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("PURETERM_AGENT_KIND"); // ensure unset
+        let claude = HookInput {
+            transcript_path: "/home/u/.claude/projects/x.jsonl".into(),
+            ..Default::default()
+        };
+        assert_eq!(infer_agent_kind(&claude).as_deref(), Some("claude-code"));
+        let other = HookInput {
+            transcript_path: "/tmp/something-else.jsonl".into(),
+            ..Default::default()
+        };
+        assert!(infer_agent_kind(&other).is_none());
+    }
+
     /// 构造一个 PreToolUse/Bash hook 输入(默认 command)。
     fn bash_input(command: &str) -> HookInput {
         HookInput {

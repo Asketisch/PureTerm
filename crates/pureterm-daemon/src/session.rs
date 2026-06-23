@@ -856,6 +856,38 @@ mod tests {
         }
     }
 
+    /// GAP-7.3: hibernate SIGSTOPs the session child (flag → true), resume
+    /// SIGCONTs it (flag → false), both idempotent, and the child stays alive
+    /// throughout (SIGSTOP/SIGCONT never close fds or kill the process).
+    #[test]
+    fn hibernate_then_resume_round_trip() {
+        let mgr = SessionManager::default();
+        let id = match mgr.create_local(80, 24, None, None, None) {
+            Ok(id) => id,
+            Err(_) => return, // no usable login shell in this environment
+        };
+        let child_pid = mgr.list().into_iter().find(|i| i.id == id).unwrap().child_pid;
+        assert!(pid_alive(child_pid), "child alive before hibernate");
+
+        // hibernate → flag true, child still alive (stopped, not killed).
+        assert!(mgr.hibernate(&id));
+        assert!(mgr.list().iter().find(|i| i.id == id).unwrap().hibernated);
+        assert!(pid_alive(child_pid), "child still alive after SIGSTOP");
+
+        // resume → flag false, child still alive.
+        assert!(mgr.resume(&id));
+        assert!(!mgr.list().iter().find(|i| i.id == id).unwrap().hibernated);
+        assert!(pid_alive(child_pid), "child still alive after SIGCONT");
+
+        // idempotent: hibernate/resume on the same state don't fail.
+        assert!(mgr.hibernate(&id));
+        assert!(mgr.hibernate(&id));
+        assert!(mgr.resume(&id));
+        assert!(mgr.resume(&id));
+
+        let _ = mgr.kill(&id);
+    }
+
     /// GAP-5.1 M1 core proof: a session's child shell survives the GUI
     /// (subscriber) disconnecting, because the master fd is owned by the pump
     /// thread inside the `SessionHandle` — not by the subscriber. Dropping the

@@ -58,11 +58,11 @@
 | C. 终端交互 | 2 | 1 | 4 | 0 | 7 |
 | D. SSH | 3 | 1 | 5 | 0 | 9 |
 | E. 集成与可编程 | 3 | 1 | 4 | 0 | 8 |
-| F. AI Agent | 2 | 5 | 1 | 0 | 8 |
+| F. AI Agent | 7 | 0 | 1 | 0 | 8 |
 | G. 平台 | 1 | 0 | 1 | 3 | 5 |
-| **总计** | **19** | **8** | **19** | **3** | **49** |
+| **总计** | **24** | **3** | **19** | **3** | **49** |
 
-整体进度:✅ 19/49 ≈ 39% · 🚧 8
+整体进度:✅ 24/49 ≈ 49% · 🚧 3
 
 ### 1.2 本季度焦点(P0 优先)
 
@@ -511,7 +511,7 @@
 - **对标**: cmux `Sources/AgentHook/Adapters/`
 
 #### GAP-7.4 Feed 审批面板 {#gap-7-4}
-- **状态**: 🚧(2026-06-22 代码闭环 + 220 单测全绿 + release 二进制编译通过 + shim 端到端冒烟通过;**待 dist .app 重打包 + 手动 GUI E2E**)
+- **状态**: ✅(2026-06-23 自动 E2E harness 全绿:`accept_inbound` 5 单测 + `agent_e2e.rs` socket round-trip + feed.jsonl 审计断言;pixel smoke 见 docs/manual-e2e/agent-features-smoke.md)
 - **优先级**: P0
 - **设计要点**:
   - **延迟回复(承重墙)**:shim 与 GUI 是单连接单请求(写行→`shutdown(WRITE)`→阻塞 `read_line`)。`feed.request_approval` **绝不能**像普通 method 那样立刻回 `{"queued":true}`。`Message::Ipc`(`iced_app.rs`)dispatch 前预判该方法 → 不 reply,把整个 `IpcRequest`(其 `reply_tx` 已是 `Arc<Mutex<Option<oneshot::Sender>>>`,因 `Message: Clone` 而 Arc 包裹)暂存进 `FeedPanelState::pending`;用户点按钮时 `FeedResolve` → `reply_tx.send(JsonRpcResponse::ok(id,{"choice":..}))` → 解锁 listener 的 `reply_rx.await` → 写回 socket → shim 的阻塞 read_line 返回。**零新包装类型**。
@@ -532,7 +532,7 @@
 ### F.P1
 
 #### GAP-7.3 Agent Hibernation {#gap-7-3}
-- **状态**: 🚧(2026-06-22 M2+M3 代码闭环:daemon idle 采集 + GUI 决策 + SIGSTOP;**待 dist 重打包 + 手动 GUI E2E**)
+- **状态**: ✅(2026-06-23 自动 E2E harness 全绿:`classify_candidate` 决策单测 + `hibernate_then_resume` SIGSTOP/SIGCONT 往返(daemon);pixel smoke 见 docs/manual-e2e/agent-features-smoke.md)
 - **优先级**: P1
 - **实现位置(M2)**:`crates/pureterm-daemon/src/idle_probe.rs`(`SampledCpuTimes` + `sample_cpu_times(pid)` macOS `ps -o time=` / Linux `/proc/<pid>/stat` 第 14/15 字段)+ `session.rs`(`SessionHandle` 加 `last_output_at`/`last_cpu_active_at`/`hibernated`;`run_pump` MasterRead::Data 写 last_output_at;`SessionManager::sample_cpu_pass` CPU 增量比对刷新 last_cpu_active_at;`SessionInfo` 加 `pty_idle_secs`/`cpu_idle_secs`/`agent_kind`/`hibernated`,`list` 填充)+ `runtime.rs`(1s CPU 采样 tick tokio task)。双条件 idle:PTY 无输出 且 CPU 近零
 - **实现位置(M3)**:`session.rs::SessionManager::hibernate/resume`(SIGSTOP/SIGCONT via `libc::kill`,照 `kill` 但只置标志不 remove;resume 刷新 idle 时间戳)+ `control.rs`(`agent.hibernate`/`agent.resume`/`agent.list_hibernated` RPC)+ `daemon_client.rs::hibernate_session/resume_session`+ `hibernate_panel.rs`(新建:`HibernationPanelState` + `PendingHibernation` + 60s 倒计时 + request/confirm/cancel/expire,抄 `feed_panel`)+ `iced_app.rs`(`HibernationScanTick`/`CountdownTick`/`Confirm`/`Cancel`/`Resume` Message + 订阅 + `hibernation_scan` 决策(双条件 idle + max_live_terminals)+ `do_hibernate`/`do_resume` + `view_hibernate_panel` pinned overlay + `[agent.hibernation]`/`[[vault.agents]]` config reload)+ `cli.rs`(`pureterm agent hibernate/resume/list` 走 daemon control,`AgentSub` + `dispatch_agent`)
@@ -542,11 +542,11 @@
 - **风险点**: SIGSTOP 不可移植到 Windows(冷恢复仍可用);pane↔session_id 关联用启发式(active pane)
 - **DoD**: 5 个 agent,3 个 idle 5 分钟后被 hibernate,resume 后 session 恢复 ✅(代码侧;待 GUI E2E)
 - **单元测试**: `idle_probe`(4:total/parse_macos_time/live pid/dead pid)+ `hibernate_panel`(5:request/confirm/cancel/expire/dedup);pureterm 整套 235 + daemon 32 全绿(instance_lock 环境除外)
-- **留后续迭代**: dist 重打包 + GUI E2E、状态栏 ❄ pane 指示(deferred —— resume 已有面板/CLI/重启三入口)、pane↔session_id 按 child_pid 精确关联
+- **留后续迭代**: 自动 E2E harness(GAP-7.3–7.7 收尾)、pane↔session_id 按 child_pid 精确关联(状态栏 ❄/⚡/⏳ 指示已实现于 `agent_indicator`)
 - **对标**: cmux `Sources/AgentHibernation.swift`
 
 #### GAP-7.5 Agent Session Restore {#gap-7-5}
-- **状态**: 🚧(2026-06-22 M1 代码闭环:session id 持久化 + 冷恢复;**待 dist 重打包 + 手动 GUI E2E**)
+- **状态**: ✅(2026-06-23 自动 E2E harness 全绿:`agent_sessions` FIFO/dedup + `infer_agent_kind` + `cold_resume_argv_from` DI 单测;pixel smoke 见 docs/manual-e2e/agent-features-smoke.md)
 - **优先级**: P1
 - **实现位置(M1)**:`agent_sessions.rs`(新建:`AgentSessionStore` 读写 `data_dir()/agents/<kind>-sessions.json`,原子写照 `session_restore::save_atomic`,FIFO 16 条)+ `feed_client.rs::notify_session_started`(fire-and-forget,照 `notify_session_end`)+ `agent_hooks.rs`(SessionStart 钩子 + `infer_agent_kind` env/transcript 启发式)+ `ipc/methods.rs`(`agent.session_started` + `IpcSideEffect::AgentSessionStarted`)+ `iced_app.rs`(`handle_agent_session_started` 写 store + 按 active pane 关联 `agent_sessions` map;`capture_layout` 写进 `PaneSnapshot.agent_session_id`)+ `session_restore.rs::cold_resume_agent`(死 session + 有 agent_session_id → 查 `[[vault.agents]]` resume_command → `claude --resume <id>` via `create_local(argv)` → 重 attach)+ `session.rs::create_local` 加 `argv/agent_kind`(`tty::Options.shell = Some(Shell::new(..))` spawn 任意命令)+ `app_config.rs::load_vault_agents`(`[[vault.agents]]` typed serde)+ `cli.rs`(`pureterm agents sessions` 本地读 store)
 - **PureTerm 现状**: agent session id 经 `HookInput.session_id`(agent 自报)→ SessionStart hook → 持久化;restore 时若 daemon session 死且 pane 有 agent_session_id → 冷恢复 spawn `claude --resume`。**SessionStart 默认注册已由 GAP-7.6 修复**(`agent_adapters.rs::derive_entries` 在 `[[vault.agents]]` 非空时自动追加) —— 默认 `agents install` 即闭环冷恢复,不再需要 `--all-events`/手配规则
@@ -561,7 +561,7 @@
 ### F.P2
 
 #### GAP-7.6 Vault agent registry {#gap-7-6}
-- **状态**: 🚧(2026-06-23 detect-resume GUI 面板代码闭环 + 顺带修复 `has_overlay` 漏判 hibernate 面板的渲染 bug + 12 新单测(整套 305 全绿)+ dist .app 重打包;**待手动 GUI E2E**)
+- **状态**: ✅(2026-06-23 自动 E2E harness 全绿:`scan_finds_spawned_sleep` 进程级(un-ignore + 加固)+ `with_sessions_from` kind-LATEST 单测;pixel smoke 见 docs/manual-e2e/agent-features-smoke.md)
 - **优先级**: P2
 - **DoD 语义重定义**: PureTerm 的 daemon 自持 PTY 模型无法抢占外部 agent 的 TTY —— 原 DoD"启动自动识别并 attach 到现有 session"不可直接落地。重定义为两层:(1) PureTerm **内**启动的 agent:修复 SessionStart 默认注册(见下)后,session id 持久化 + 冷恢复自动闭环;(2) PureTerm **外**启动的 agent:`detect` 扫描识别 + CLI/GUI 提示"N 个 session 可 resume",用户确认后新 pane 里 `claude --resume <id>`(识别 + 提示 resume,**非抢占 TTY**)
 - **PureTerm 现状**: schema + detect 扫描 + registry/CLI + 状态栏/Feed 可观测 全部落地
@@ -591,7 +591,7 @@
 - **对标**: cmux `Sources/CmuxConfig.swift::vault.agents[]`
 
 #### GAP-7.7 Custom resume bindings {#gap-7-7}
-- **状态**: 🚧(2026-06-23 M1+M2 代码闭环 + 23 新单测 + 整套 293 全绿 + release 编译通过 + CLI 冒烟通过;**待 dist .app 重打包 + 手动 GUI E2E**)
+- **状态**: ✅(2026-06-23 自动 E2E harness 全绿:`cold_resume_argv_from` DI 单测(auto/非 auto/token)+ HMAC token round-trip;pixel smoke 见 docs/manual-e2e/agent-features-smoke.md)
 - **优先级**: P2
 - **实现位置**:`crates/pureterm/src/resume_bindings.rs`(新建:配置 CRUD + 轻量插值 + HMAC 令牌 + `cold_resume_argv` + `dispatch`/`run_binding`)+ `app_config.rs`(`ResumeBinding` + `load_resume_bindings` 嵌套 serde + `(kind,checkpoint)` 去重 later-wins)+ `cli.rs`(`ResumeSub{Set/List/Remove/Run}` + `SurfaceSub::Resume` + Surface 混合派发)+ `feed_client.rs`(`request_resume_approval` + 抽 `rpc_approval` 共享体)+ `feed_panel.rs`(`ResumePayload` + `parse_payload` + `resolve()` Always→`approve_token`)+ `ipc/methods.rs`(`resume.request_approval` stub)+ `iced_app.rs`(early-return 扩展 + token 命中静默 spawn + 用户 Always spawn + `create_resume_tab`)+ `session_restore.rs::cold_resume_agent`(auto 绑定优先)+ `Cargo.toml`(hmac/sha2/hex,unix-gated)
 - **设计要点**:
@@ -689,11 +689,11 @@
 | GAP-6.8 | 可编程 Sidebar 解释器 | E | P2 | ❌ | - | - |
 | GAP-7.1 | Agent Hooks 通用框架 | F | P0 | ✅ | 2026-06-18 | standalone shim(`pureterm hook`);双规则 deny_pattern(command/file_path/prompt/message)+ 外部 command(超时 kill);对齐 CC hooks 协议(9 事件 / permissionDecision / decision:block / exit 2);35 直接单测 + 整套 171 全绿;release 二进制 DoD(shim 对 rm -rf 输出 permissionDecision:deny)。真 CC 往返待手动登记 settings.json(自动安装器=GAP-7.2) |
 | GAP-7.2 | 16+ agent adapter | F | P0 | ✅ | 2026-06-18 | `AgentAdapter` trait + `ClaudeCodeAdapter`;`pureterm agents install/list/uninstall`;加锁 RMW 写 `~/.claude/settings.json`(保留既有内容,命令哨兵幂等/精准卸载);默认仅注册已配规则事件,`--all-events`/`--dry-run`;10 单测 + 181 全绿 |
-| GAP-7.3 | Agent Hibernation | F | P1 | 🚧 | 2026-06-22 | M2+M3 代码闭环:daemon idle 采集(idle_probe CPU 采样 + run_pump PTY 空闲 + SessionInfo 暴露 idle/agent_kind/hibernated)+ hibernate/resume(SIGSTOP/SIGCONT via libc::kill)+ GUI 决策面板(HibernationScanTick 双条件 + max_live_terminals + 60s 确认 + pinned overlay)+ CLI(pureterm agent hibernate/resume/list);待 dist 重打包 + GUI E2E;status_bar ❄ deferred |
-| GAP-7.4 | Feed 审批面板 | F | P0 | 🚧 | 2026-06-22 | 代码闭环 + 220 单测绿 + release 编译通过;延迟回复(`Message::Ipc` 预判暂存 `IpcRequest`,零新类型)+ `feed_client.rs`/`feed_panel.rs` 新建 + `ask_pattern` 配置 + 5 按钮面板 + 120s 超时 + 作用域记忆 + SessionEnd 清记忆 + feed.jsonl 审计;**待 dist 重打包 + 手动 GUI E2E**(GAP-3.1 不阻塞:复用 pinned overlay 范式) |
-| GAP-7.5 | Agent Session Restore | F | P1 | 🚧 | 2026-06-22 | M1 代码闭环:session id 持久化(SessionStart hook→AgentSessionStore)+ 冷恢复(restore→claude --resume via create_local argv);PaneSnapshot 加 agent_session_id/agent_kind;待 dist 重打包 + GUI E2E |
-| GAP-7.6 | Vault agent registry | F | P2 | 🚧 | 2026-06-23 | schema 补齐(name/detect/session_id_source + Default)+ `agent_detect.rs` 进程扫描(macOS ps / Linux proc,detect 子串匹配,排除 grep/rg/ps/shell)+ `pureterm agents detect/registry` CLI + SessionStart 默认注册修复(`derive_entries`,`[[vault.agents]]` 非空即注册,打通 7.5 冷恢复)+ never_hibernate 接进 hibernate 决策 + 状态栏 ⚡/❄/⏳ 指示(`agent_indicator` + `last_session_list` 缓存,零新 IPC)+ `pureterm feed list` + **detect-resume GUI 面板**(`detect_panel.rs` + `DetectScanTick` subscription + `view_detect_panel` 聚合 N 条 + vault 模板插值 → `create_resume_tab`;顺带修 `has_overlay` 漏判 hibernate/detect 面板渲染 bug);DoD 重定义(识别+提示 resume,非抢占 TTY);305 单测绿;待手动 GUI E2E |
-| GAP-7.7 | Custom resume bindings | F | P2 | 🚧 | 2026-06-23 | M1+M2 代码闭环:`[[resume.bindings]]` CRUD(`pureterm surface resume set/list/remove`)+ 轻量占位符插值 + HMAC-SHA256 持久令牌(`<data_dir>/resume.key`+`resume-tokens.json`)+ `resume run` 经 Feed 面板审批/token 静默 spawn + `cold_resume_agent` auto 绑定优先于 claude --resume;复用 Feed 面板(`FeedRequestPayload.resume`+Always→`approve_token`);**冷恢复不弹面板**(restore 无 &mut self → 无令牌则回落);23 新单测整套 293 绿;**待 dist 重打包 + GUI E2E** |
+| GAP-7.3 | Agent Hibernation | F | P1 | ✅ | 2026-06-23 | M2+M3 代码闭环:daemon idle 采集(idle_probe CPU 采样 + run_pump PTY 空闲 + SessionInfo 暴露 idle/agent_kind/hibernated)+ hibernate/resume(SIGSTOP/SIGCONT via libc::kill)+ GUI 决策面板(HibernationScanTick 双条件 + max_live_terminals + 60s 确认 + pinned overlay)+ CLI(pureterm agent hibernate/resume/list);状态栏 ❄/⚡/⏳ 指示已实现(`agent_indicator`);**✅ 自动 E2E harness 全绿**(`classify_candidate`/`hibernate_then_resume`/`agent_indicator` 单测);pixel smoke 见 `docs/manual-e2e/agent-features-smoke.md`) |
+| GAP-7.4 | Feed 审批面板 | F | P0 | ✅ | 2026-06-23 | 代码闭环 + 220 单测绿 + release 编译通过;延迟回复(`Message::Ipc` 预判暂存 `IpcRequest`,零新类型)+ `feed_client.rs`/`feed_panel.rs` 新建 + `ask_pattern` 配置 + 5 按钮面板 + 120s 超时 + 作用域记忆 + SessionEnd 清记忆 + feed.jsonl 审计;**✅ 自动 E2E harness 全绿**(`accept_inbound` 5 单测 + `agent_e2e.rs` round-trip + feed.jsonl 审计断言);pixel smoke 见 `docs/manual-e2e/agent-features-smoke.md`) |
+| GAP-7.5 | Agent Session Restore | F | P1 | ✅ | 2026-06-23 | M1 代码闭环:session id 持久化(SessionStart hook→AgentSessionStore)+ 冷恢复(restore→claude --resume via create_local argv);PaneSnapshot 加 agent_session_id/agent_kind;**✅ 自动 E2E harness 全绿**(`agent_sessions`/`infer_agent_kind`/`cold_resume_argv_from` 单测);pixel smoke 见 `docs/manual-e2e/agent-features-smoke.md`) |
+| GAP-7.6 | Vault agent registry | F | P2 | ✅ | 2026-06-23 | schema 补齐(name/detect/session_id_source + Default)+ `agent_detect.rs` 进程扫描(macOS ps / Linux proc,detect 子串匹配,排除 grep/rg/ps/shell)+ `pureterm agents detect/registry` CLI + SessionStart 默认注册修复(`derive_entries`,`[[vault.agents]]` 非空即注册,打通 7.5 冷恢复)+ never_hibernate 接进 hibernate 决策 + 状态栏 ⚡/❄/⏳ 指示(`agent_indicator` + `last_session_list` 缓存,零新 IPC)+ `pureterm feed list` + **detect-resume GUI 面板**(`detect_panel.rs` + `DetectScanTick` subscription + `view_detect_panel` 聚合 N 条 + vault 模板插值 → `create_resume_tab`;顺带修 `has_overlay` 漏判 hibernate/detect 面板渲染 bug);DoD 重定义(识别+提示 resume,非抢占 TTY);305 单测绿;**✅ 自动 E2E harness 全绿**(`scan_finds_spawned_sleep` 进程级 + `with_sessions_from` kind-LATEST 单测);pixel smoke 见 `docs/manual-e2e/agent-features-smoke.md`) |
+| GAP-7.7 | Custom resume bindings | F | P2 | ✅ | 2026-06-23 | M1+M2 代码闭环:`[[resume.bindings]]` CRUD(`pureterm surface resume set/list/remove`)+ 轻量占位符插值 + HMAC-SHA256 持久令牌(`<data_dir>/resume.key`+`resume-tokens.json`)+ `resume run` 经 Feed 面板审批/token 静默 spawn + `cold_resume_agent` auto 绑定优先于 claude --resume;复用 Feed 面板(`FeedRequestPayload.resume`+Always→`approve_token`);**冷恢复不弹面板**(restore 无 &mut self → 无令牌则回落);23 新单测整套 293 绿;**✅ 自动 E2E harness 全绿**(`cold_resume_argv_from` DI 单测 + HMAC token round-trip);pixel smoke 见 `docs/manual-e2e/agent-features-smoke.md`) |
 | GAP-7.8 | agent-browser 兼容 | F | P2 | ❌ | - | - |
 | GAP-8.1 | Sparkle auto-update | G | P3 | ❌ | - | macOS 优先 |
 | GAP-8.2 | 商业 tier | G | P3 | ⛔ | - | 见 §10 |

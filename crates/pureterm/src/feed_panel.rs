@@ -88,6 +88,28 @@ pub enum ResolveSource {
     Memory,
 }
 
+/// `FeedPanelState::accept_inbound` 的产出 —— iced 侧 `handle_feed_request_approval`
+/// 的纯核。携带 iced 调用方完成它独占的两个副作用(emit `feed.*` 事件、spawn resume
+/// tab)所需的一切,逻辑本身不碰 `&mut App`、不碰事件总线、不 spawn。
+pub struct InboundDisposition {
+    pub ipc_id: u64,
+    pub session_id: String,
+    /// `feed.requested` 事件的 JSON(ErrorReplied 时调用方不发)。
+    pub request_meta: Value,
+    pub outcome: InboundOutcome,
+}
+
+/// 入站请求的处理结果。
+pub enum InboundOutcome {
+    /// params 缺失/非法 —— err 已经经 reply 句柄发回,调用方无需再做。
+    ErrorReplied,
+    /// 无记忆命中 —— 面板已聚焦,等用户决定或 120s 超时。
+    Focused,
+    /// 记忆命中(Always/All/Bypass 或 resume token)—— 已 resolve(回复已发、记忆/审计已落)。
+    /// 调用方 emit `feed.resolved`;若 `resume` 为 Some,还要 spawn resume tab。
+    Resolved { choice: FeedChoice, resume: Option<ResumePayload> },
+}
+
 /// Feed 面板状态。始终存在于 app(记忆常驻);面板可见性 = `focused.is_some()`。
 pub struct FeedPanelState {
     /// pending:以 ipc_id 为键。
@@ -97,7 +119,7 @@ pub struct FeedPanelState {
     /// 作用域记忆(会话级,进程退出即清)。
     always_remember: HashMap<(String, String), FeedChoice>, // (session_id, tool_name)
     all_remember: HashMap<String, FeedChoice>, // session_id
-    bypass_until: HashMap<String, Instant>, // session_id → 过期时刻
+    bypass_until: HashMap<String, Instant>,    // session_id → 过期时刻
     /// 最近已决(展示用,有界 100)。
     pub history: Vec<(u64, FeedChoice, ResolveSource)>,
 }
@@ -127,7 +149,8 @@ impl FeedPanelState {
         if let Some(&c) = self.all_remember.get(session_id) {
             return Some(c);
         }
-        if let Some(&c) = self.always_remember.get(&(session_id.to_string(), tool_name.to_string())) {
+        if let Some(&c) = self.always_remember.get(&(session_id.to_string(), tool_name.to_string()))
+        {
             return Some(c);
         }
         None
@@ -191,6 +214,90 @@ impl FeedPanelState {
         })
     }
 
+    /// `handle_feed_request_approval`(iced 侧)的纯核。解析 params → 记忆咨询
+    /// (in-map Always/All/Bypass,或对 resume payload 调注入的 `resume_authorized`)
+    /// → stash PendingRequest → 命中则即时 resolve(发 oneshot 回复 + remember/审计)
+    /// 或聚焦面板。返回 `InboundDisposition` 让 iced 调用方做它独占的两个副作用
+    /// (emit 事件 + spawn resume tab)。
+    ///
+    /// `resume_authorized` 注入是为了保持纯 + 可测:不直接碰 `resume_bindings` 的
+    /// 落盘 token 存储;iced 调用方传真实的 `resume_bindings::authorize` 判定。
+    pub fn accept_inbound(
+        &mut self,
+        ipc_id: u64,
+        params: Option<&Value>,
+        reply: ReplyHandle,
+        resume_authorized: impl Fn(&ResumePayload) -> bool,
+    ) -> InboundDisposition {
+        use crate::ipc::protocol::JsonRpcResponse;
+
+        // 缺 params → -32602 err,直接回复,其余不做。
+        let Some(params) = params else {
+            let resp =
+                JsonRpcResponse::err(ipc_id, -32602, "feed.request_approval requires params");
+            if let Some(tx) = reply.lock().unwrap().take() {
+                let _ = tx.send(resp);
+            }
+            return InboundDisposition {
+                ipc_id,
+                session_id: String::new(),
+                request_meta: Value::Null,
+                outcome: InboundOutcome::ErrorReplied,
+            };
+        };
+        // 非法 payload → -32602 err。
+        let Some(payload) = Self::parse_payload(ipc_id, params) else {
+            let resp = JsonRpcResponse::err(
+                ipc_id,
+                -32602,
+                "feed.request_approval requires session_id + event",
+            );
+            if let Some(tx) = reply.lock().unwrap().take() {
+                let _ = tx.send(resp);
+            }
+            return InboundDisposition {
+                ipc_id,
+                session_id: String::new(),
+                request_meta: Value::Null,
+                outcome: InboundOutcome::ErrorReplied,
+            };
+        };
+
+        // 记忆咨询:resume payload → 注入的 token 判定;否则 in-map。
+        let memory_choice = if let Some(r) = payload.resume.as_ref() {
+            if resume_authorized(r) {
+                Some(FeedChoice::Always)
+            } else {
+                None
+            }
+        } else {
+            self.consult_memory(&payload.session_id, payload.tool_name.as_deref().unwrap_or(""))
+        };
+
+        let session_id = payload.session_id.clone();
+        let request_meta = json!({
+            "ipc_id": payload.ipc_id,
+            "event": payload.event,
+            "tool_name": payload.tool_name,
+            "subject": payload.subject(),
+        });
+
+        // stash PendingRequest(reply 句柄随之移交,后续 resolve/timeout 取用)。
+        self.pending.insert(ipc_id, PendingRequest { req: payload, reply });
+
+        let outcome = if let Some(choice) = memory_choice {
+            // GAP-7.7: resolve 会 drain pending,先抓出 resume 供调用方 spawn。
+            let resume = self.pending.get(&ipc_id).and_then(|p| p.req.resume.clone());
+            self.resolve(ipc_id, choice, ResolveSource::Memory);
+            InboundOutcome::Resolved { choice, resume }
+        } else {
+            self.focused = Some(ipc_id);
+            InboundOutcome::Focused
+        };
+
+        InboundDisposition { ipc_id, session_id, request_meta, outcome }
+    }
+
     /// 解析 `feed.clear_session` 的 params → session_id。
     pub fn parse_session_id(params: &Value) -> Option<String> {
         params.get("session_id").and_then(|v| v.as_str()).map(String::from)
@@ -214,7 +321,11 @@ impl FeedPanelState {
                 // bypass the in-memory always_remember map: its (session_id,
                 // tool_name) key would collide on ("", "").
                 if matches!(choice, FeedChoice::Always) {
-                    crate::resume_bindings::approve_token(&resume.kind, &resume.checkpoint, &resume.shell);
+                    crate::resume_bindings::approve_token(
+                        &resume.kind,
+                        &resume.checkpoint,
+                        &resume.shell,
+                    );
                 }
             } else {
                 self.remember(&p.req.session_id, p.req.tool_name.as_deref().unwrap_or(""), choice);
@@ -292,11 +403,14 @@ impl FeedPanelState {
 
 /// `data_local_dir()/pureterm/feed.jsonl`
 /// (Linux `~/.local/share/pureterm/feed.jsonl`,macOS `~/Library/Application Support/...`)。
+///
+/// `PURETERM_FEED_LOG` 覆盖(GAP-7.4 E2E harness 用):设了就用该路径,方便测试在
+/// temp dir 断言审计行而不污染用户真实 feed.jsonl。与 `feed_log::audit_path` 同语义。
 fn audit_path() -> std::path::PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join("pureterm")
-        .join("feed.jsonl")
+    if let Ok(p) = std::env::var("PURETERM_FEED_LOG") {
+        return std::path::PathBuf::from(p);
+    }
+    dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("pureterm").join("feed.jsonl")
 }
 
 fn append_audit(req: &FeedRequestPayload, choice: FeedChoice, source: ResolveSource) {
@@ -337,10 +451,110 @@ fn now_iso() -> String {
     format!("T{secs}")
 }
 
+// `PURETERM_FEED_LOG` is a single process-global env key. Serialize every test
+// that mutates it (feed_panel, feed_log, agent_e2e) through this one lock so
+// they can't race. Referenced as `crate::feed_panel::FEED_AUDIT_ENV_LOCK`.
+#[cfg(test)]
+pub(crate) static FEED_AUDIT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use tokio::sync::oneshot;
+
+    #[test]
+    fn audit_path_respects_env_override() {
+        let _guard = super::FEED_AUDIT_ENV_LOCK.lock().unwrap();
+        let override_path = std::env::temp_dir().join("pureterm_test_feed_audit_override.jsonl");
+        std::env::set_var("PURETERM_FEED_LOG", &override_path);
+        // GAP-7.4 E2E harness: audit_path() must honor PURETERM_FEED_LOG so the
+        // round-trip test can assert audit rows in a temp dir without polluting
+        // the user's real feed.jsonl.
+        assert_eq!(audit_path(), override_path);
+        std::env::remove_var("PURETERM_FEED_LOG");
+    }
+
+    // ── accept_inbound (GAP-7.4 extracted pure core of handle_feed_request_approval) ──
+    fn reply_handle() -> (ReplyHandle, oneshot::Receiver<JsonRpcResponse>) {
+        let (tx, rx) = oneshot::channel();
+        (Arc::new(Mutex::new(Some(tx))), rx)
+    }
+    fn tool_params(session: &str, tool: &str) -> Value {
+        json!({"session_id": session, "event": "PreToolUse", "tool_name": tool, "tool_input": {"command":"ls"}})
+    }
+    fn resume_params(session: &str, kind: &str, checkpoint: &str, shell: &[&str]) -> Value {
+        json!({"session_id": session, "event": "PreToolUse", "kind": kind, "checkpoint": checkpoint, "shell": shell})
+    }
+
+    #[test]
+    fn accept_inbound_missing_params_replies_err() {
+        let mut st = FeedPanelState::default();
+        let (reply, rx) = reply_handle();
+        let d = st.accept_inbound(7, None, reply, |_| false);
+        assert!(matches!(d.outcome, InboundOutcome::ErrorReplied));
+        let resp = rx.blocking_recv().expect("err replied");
+        assert!(resp.error.is_some(), "expected -32602 error");
+        assert!(st.pending.is_empty());
+    }
+
+    #[test]
+    fn accept_inbound_tool_no_memory_focuses_panel() {
+        let mut st = FeedPanelState::default();
+        let (reply, _rx) = reply_handle();
+        let d = st.accept_inbound(1, Some(&tool_params("s1", "Bash")), reply, |_| false);
+        assert!(matches!(d.outcome, InboundOutcome::Focused));
+        assert_eq!(st.focused, Some(1));
+        assert_eq!(st.pending.len(), 1);
+    }
+
+    #[test]
+    fn accept_inbound_memory_hit_resolves_immediately() {
+        let mut st = FeedPanelState::default();
+        st.remember("s1", "Bash", FeedChoice::Always);
+        let (reply, rx) = reply_handle();
+        let d = st.accept_inbound(1, Some(&tool_params("s1", "Bash")), reply, |_| false);
+        match d.outcome {
+            InboundOutcome::Resolved { choice, resume } => {
+                assert_eq!(choice, FeedChoice::Always);
+                assert!(resume.is_none());
+            }
+            _ => panic!("expected Resolved"),
+        }
+        let resp = rx.blocking_recv().expect("reply sent");
+        assert_eq!(resp.result.unwrap()["choice"], "always");
+        assert!(st.pending.is_empty(), "resolved drains pending");
+    }
+
+    #[test]
+    fn accept_inbound_resume_token_preapproved_resolves_always() {
+        let mut st = FeedPanelState::default();
+        let (reply, rx) = reply_handle();
+        let p = resume_params("s1", "tmux", "work", &["tmux", "attach", "-t", "work"]);
+        // closure = "token pre-approved" → memory hit → resolve Always + carry resume.
+        let d = st.accept_inbound(1, Some(&p), reply, |_| true);
+        match d.outcome {
+            InboundOutcome::Resolved { choice, resume } => {
+                assert_eq!(choice, FeedChoice::Always);
+                let r = resume.expect("resume payload carried for tab spawn");
+                assert_eq!(r.kind, "tmux");
+                assert_eq!(r.shell, vec!["tmux", "attach", "-t", "work"]);
+            }
+            _ => panic!("expected Resolved"),
+        }
+        let resp = rx.blocking_recv().expect("reply sent");
+        assert_eq!(resp.result.unwrap()["choice"], "always");
+    }
+
+    #[test]
+    fn accept_inbound_resume_no_token_focuses() {
+        let mut st = FeedPanelState::default();
+        let (reply, _rx) = reply_handle();
+        let p = resume_params("s1", "tmux", "work", &["tmux", "attach"]);
+        // closure = "no token" → not pre-approved → focus panel, no reply yet.
+        let d = st.accept_inbound(1, Some(&p), reply, |_| false);
+        assert!(matches!(d.outcome, InboundOutcome::Focused));
+        assert_eq!(st.focused, Some(1));
+    }
 
     fn payload(ipc_id: u64, session: &str, tool: &str) -> FeedRequestPayload {
         FeedRequestPayload {
@@ -386,7 +600,10 @@ mod tests {
         st.remember("s1", "Bash", FeedChoice::Bypass);
         assert!(st.bypass_until.contains_key("s1"));
         st.remember("s1", "Bash", FeedChoice::Once);
-        assert!(!st.always_remember.contains_key(&("s1".into(), "Bash".into())) || st.all_remember.contains_key("s1"));
+        assert!(
+            !st.always_remember.contains_key(&("s1".into(), "Bash".into()))
+                || st.all_remember.contains_key("s1")
+        );
     }
 
     #[test]
@@ -403,7 +620,10 @@ mod tests {
 
     #[test]
     fn parse_payload_requires_session_and_event() {
-        let p = FeedPanelState::parse_payload(7, &json!({"session_id":"s","event":"PreToolUse","tool_name":"Bash"}));
+        let p = FeedPanelState::parse_payload(
+            7,
+            &json!({"session_id":"s","event":"PreToolUse","tool_name":"Bash"}),
+        );
         assert!(p.is_some());
         let pp = p.unwrap();
         assert_eq!(pp.ipc_id, 7);
@@ -416,7 +636,8 @@ mod tests {
         let mut st = FeedPanelState::default();
         let (tx, rx) = oneshot::channel::<JsonRpcResponse>();
         let req = payload(42, "s1", "Bash");
-        st.pending.insert(42, PendingRequest { req: req.clone(), reply: Arc::new(Mutex::new(Some(tx))) });
+        st.pending
+            .insert(42, PendingRequest { req: req.clone(), reply: Arc::new(Mutex::new(Some(tx))) });
         assert!(st.resolve(42, FeedChoice::Always, ResolveSource::User));
         let resp = rx.blocking_recv().expect("reply sent");
         assert_eq!(resp.result.unwrap()["choice"], "always");

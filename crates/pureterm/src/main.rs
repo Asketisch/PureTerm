@@ -1,5 +1,7 @@
 mod agent_adapters;
 mod agent_detect;
+#[cfg(all(test, unix))]
+mod agent_e2e;
 mod agent_hooks;
 mod agent_sessions;
 mod app_config;
