@@ -196,7 +196,7 @@
 - 378 单测绿
 
 ### GAP-7.10 MCP server + agent 客户端安装(2026-06-24)
-- PureTerm 成为 agent 可驱动的终端宿主:`pureterm mcp serve` 起 **stdio MCP server**,Claude Code / Codex 装一次即获 `capture_pane` / `send_text` / `list_surfaces` / `new_tab` / `split_pane` / `focus_pane` / `browser_navigate` / `browser_extract` 原生结构化工具
+- PureTerm 成为 agent 可驱动的终端宿主:`pureterm mcp serve` 起 **stdio MCP server**,Claude Code / Codex 装一次即获 `capture_pane` / `send_text` / `list_surfaces` / `new_tab` / `split_pane` / `focus_pane` + **全 9 个 browser 工具**(`browser_navigate` / `browser_extract` / `browser_click` / `browser_type` / `browser_scroll` / `browser_wait` / `browser_get_url` / `browser_get_title` / `browser_screenshot`)原生结构化工具
 - **MCP↔IPC 桥**(`mcp/server.rs`,feature-gated `mcp-server` 默认开):rmcp 1.7.0,**精确双 pin `rmcp`+`rmcp-macros` =1.7.0**(rmcp 1.7.0 只声明 `rmcp-macros ^1.7.0` 会解析到 1.8.0 宏,`#[tool]` 展开引用 1.7.0 runtime 不存在的 `schema_for_input`);每工具 body = `Parameters<T>` → `rpc()` 助手把**阻塞** `send_rpc` 包 `spawn_blocking` 透传 GUI Socket API,`Result<String,String>`(Err → MCP `isError`)
 - **安装适配器**(`mcp/adapter.rs`):`McpClientAdapter` trait + ClaudeCodeAdapter(`.mcp.json`)/ CodexAdapter(`~/.codex/config.toml`,TOML `locked_toml_rmw`)/ ClaudeDesktopAdapter;复用 `agent_adapters::locked_json_rmw` + `pureterm_bin`;install 幂等(remove-then-insert,保留他人 server);CLI `mcp install/list/uninstall <client>`
 - `[mcp]` 配置(`McpConfig`):`default_capture_lines`(5000)+ `enabled_tools` 白名单(空=全部)

@@ -121,6 +121,66 @@ struct BrowserExtractParams {
     pane_id: Option<u64>,
 }
 
+// GAP-7.8: the remaining agent-browser ops. `pane_id` is resolved GUI-side
+// (handle_browser_request picks the first web pane when omitted), so each tool
+// just forwards its op-specific params — no per-op pane resolution here.
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct BrowserClickParams {
+    /// CSS selector of the element to click.
+    selector: String,
+    /// Target web pane id (default: first web pane).
+    #[serde(default)]
+    pane_id: Option<u64>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct BrowserTypeParams {
+    /// CSS selector of the input/element to type into.
+    selector: String,
+    /// Text to type into the element.
+    text: String,
+    /// Target web pane id (default: first web pane).
+    #[serde(default)]
+    pane_id: Option<u64>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct BrowserScrollParams {
+    /// Horizontal scroll delta in pixels (default 0; ignored when `selector` is set).
+    #[serde(default)]
+    x: Option<i64>,
+    /// Vertical scroll delta in pixels (default 0; ignored when `selector` is set).
+    #[serde(default)]
+    y: Option<i64>,
+    /// CSS selector to scroll into view (when set, overrides x/y).
+    #[serde(default)]
+    selector: Option<String>,
+    /// Target web pane id (default: first web pane).
+    #[serde(default)]
+    pane_id: Option<u64>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct BrowserWaitParams {
+    /// CSS selector to wait for.
+    selector: String,
+    /// Timeout in ms (default 5000). Blocks up to ~6.5s before timing out.
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+    /// Target web pane id (default: first web pane).
+    #[serde(default)]
+    pane_id: Option<u64>,
+}
+
+/// Shared params for pane-id-only browser ops (get_url / get_title / screenshot).
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct BrowserPaneIdParams {
+    /// Target web pane id (default: first web pane).
+    #[serde(default)]
+    pane_id: Option<u64>,
+}
+
 #[tool_router]
 impl PureTermServer {
     #[tool(description = "Read a terminal pane's buffer as text. Returns JSON {pane_id, text, lines, truncated}. Defaults to the active pane; set visible_only=true for just the viewport.")]
@@ -225,6 +285,118 @@ impl PureTermServer {
             obj.insert("pane_id".into(), json!(id));
         }
         let res = rpc("browser.extract", Some(Value::Object(obj)), self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
+    #[tool(description = "Click an element in a web pane by CSS selector. Returns {ok, clicked, selector} or {ok:false, error:\"element not found\"}. pane_id optional (default: first web pane).")]
+    async fn browser_click(
+        &self,
+        params: Parameters<BrowserClickParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        obj.insert("selector".into(), json!(p.selector));
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        let res = rpc("browser.click", Some(Value::Object(obj)), self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
+    #[tool(description = "Type text into an input/contenteditable element in a web pane by CSS selector. Fires input+change. pane_id optional (default: first web pane).")]
+    async fn browser_type(
+        &self,
+        params: Parameters<BrowserTypeParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        obj.insert("selector".into(), json!(p.selector));
+        obj.insert("text".into(), json!(p.text));
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        let res = rpc("browser.type", Some(Value::Object(obj)), self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
+    #[tool(description = "Scroll a web pane: by (x, y) pixel deltas, or scroll a CSS-selected element into view (selector overrides x/y). pane_id optional (default: first web pane).")]
+    async fn browser_scroll(
+        &self,
+        params: Parameters<BrowserScrollParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        if let Some(sel) = p.selector {
+            obj.insert("selector".into(), json!(sel));
+        } else {
+            // Match the op's event_payload shape: absent x/y default to 0.
+            obj.insert("x".into(), json!(p.x.unwrap_or(0)));
+            obj.insert("y".into(), json!(p.y.unwrap_or(0)));
+        }
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        let res = rpc("browser.scroll", Some(Value::Object(obj)), self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
+    #[tool(description = "Wait for a CSS-selected element to appear in a web pane. Blocks until found or timeout_ms (default 5000) elapses. pane_id optional (default: first web pane).")]
+    async fn browser_wait(
+        &self,
+        params: Parameters<BrowserWaitParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        obj.insert("selector".into(), json!(p.selector));
+        if let Some(t) = p.timeout_ms {
+            obj.insert("timeout_ms".into(), json!(t));
+        }
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        let res = rpc("browser.wait", Some(Value::Object(obj)), self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
+    #[tool(description = "Get the current URL of a web pane (location.href). pane_id optional (default: first web pane).")]
+    async fn browser_get_url(
+        &self,
+        params: Parameters<BrowserPaneIdParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        let res = rpc("browser.get_url", Some(Value::Object(obj)), self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
+    #[tool(description = "Get the page title of a web pane (document.title). pane_id optional (default: first web pane).")]
+    async fn browser_get_title(
+        &self,
+        params: Parameters<BrowserPaneIdParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        let res = rpc("browser.get_title", Some(Value::Object(obj)), self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
+    #[tool(description = "Capture a PNG screenshot of a web pane. Returns {ok:true, screenshot:\"data:image/png;base64,...\"} — a large payload. macOS-only. pane_id optional (default: first web pane).")]
+    async fn browser_screenshot(
+        &self,
+        params: Parameters<BrowserPaneIdParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        let res = rpc("browser.screenshot", Some(Value::Object(obj)), self.socket.clone()).await?;
         Ok(to_text(res))
     }
 }

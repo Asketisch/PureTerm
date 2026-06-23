@@ -10,10 +10,10 @@
 //! JSON-RPC reply.
 //!
 //! MVP ops: navigate / click / type / extract / scroll / wait / get_url /
-//! get_title + a `screenshot` stub (native WKWebView snapshot isn't exposed by
-//! wry — surfaced as a structured error, not a silent no-op). Adding an op =
-//! (1) a `BrowserOp` arm (2) a `build_js` arm (3) a `parse_op` arm (4) a CLI
-//! subcommand; the IPC + EventBus + reply wiring is generic.
+//! get_title + `screenshot` (real WKWebView snapshot via `takeSnapshotWith…`,
+//! macOS-only; other platforms get a structured "macOS-only" error). Adding an
+//! op = (1) a `BrowserOp` arm (2) a `build_js` arm (3) a `parse_op` arm (4) a
+//! CLI subcommand; the IPC + EventBus + reply wiring is generic.
 //!
 //! See plan「GAP-3.5 + GAP-5.2 + GAP-7.8」Phase D.
 
@@ -185,9 +185,26 @@ pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<Browser
             let _ = tx.send(BrowserReply::Done(json!({ "navigated": true, "url": url })));
         }
         BrowserOp::Screenshot => {
-            let _ = tx.send(BrowserReply::Error(
-                "screenshot: native WKWebView snapshot is not exposed by wry (GAP-7.8 TODO)".into(),
-            ));
+            if !ctx.is_realized() {
+                let _ = tx.send(BrowserReply::Error(
+                    "webview not realized yet — navigate to a page first".into(),
+                ));
+                return;
+            }
+            // Real WKWebView snapshot (replaces the prior "wry 未暴露" stub). The
+            // `tx` moves into the Obj-C completion-handler block below; if the
+            // near-impossible `is_realized`/`take()` race drops it, the `rx` side
+            // surfaces "browser op channel closed" — same property as the JS path.
+            #[cfg(target_os = "macos")]
+            {
+                let _ = ctx.with_wry_webview(|wk| macos_take_snapshot(wk, tx));
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = tx.send(BrowserReply::Error(
+                    "screenshot: macOS-only in GAP-7.8".into(),
+                ));
+            }
         }
         other => {
             if !ctx.is_realized() {
@@ -209,6 +226,101 @@ pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<Browser
             });
         }
     }
+}
+
+/// GAP-7.8 (macOS): kick off a WKWebView `takeSnapshotWithConfiguration:
+/// completionHandler:` and wire its async completion into `tx`. WebKit fires the
+/// completion on a later main-loop iteration (guaranteed main thread).
+///
+/// `tx` is wrapped in `Mutex<Option<_>>` because the wry/block2 callback is `Fn`
+/// (not `FnOnce`) — the block sends exactly once via `take()`, so a spurious
+/// second fire is a no-op. Mirrors [`crate::macos_eyedropper::start_sample`].
+/// `wk` is `&WryWebView` (a `WKWebView` subclass); `takeSnapshot…` is an
+/// inherited `WKWebView` method, callable on it the same way wry itself calls
+/// `evaluateJavaScript…` / `loadRequest` on the same type.
+#[cfg(target_os = "macos")]
+fn macos_take_snapshot(wk: &wry::WryWebView, tx: oneshot::Sender<BrowserReply>) {
+    use block2::RcBlock;
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSImage;
+    use objc2_foundation::NSError;
+    use std::sync::Mutex;
+
+    // `execute()` runs on the iced main thread, and takeSnapshot must too.
+    // Defensive: if somehow off-main, fail loudly rather than hit WebKit UB.
+    if MainThreadMarker::new().is_none() {
+        let _ = tx.send(BrowserReply::Error(
+            "screenshot: must run on the main thread".into(),
+        ));
+        return;
+    }
+
+    let tx_cell = Mutex::new(Some(tx));
+    let block = RcBlock::new(move |img: *mut NSImage, err: *mut NSError| {
+        let reply = if !err.is_null() {
+            // SAFETY: WebKit guarantees `err` is a valid NSError during callback.
+            let e: &NSError = unsafe { &*err };
+            BrowserReply::Error(format!("screenshot failed: {}", e.localizedDescription()))
+        } else if img.is_null() {
+            BrowserReply::Error("screenshot returned a nil image".into())
+        } else {
+            // SAFETY: WebKit guarantees `img` is a valid NSImage during callback.
+            match unsafe { ns_image_to_png_data_url(&*img) } {
+                Ok(url) => BrowserReply::Done(json!({ "ok": true, "screenshot": url })),
+                Err(msg) => BrowserReply::Error(msg),
+            }
+        };
+        if let Some(s) = tx_cell.lock().ok().and_then(|mut g| g.take()) {
+            let _ = s.send(reply);
+        }
+    });
+
+    // SAFETY: `wk` is a live WKWebView subclass instance; `block` is a heap Fn
+    // block whose lifetime RcBlock guarantees. The call returns immediately —
+    // `block` fires on a later main-loop tick, sending once on `tx`.
+    // `None` config = WebKit defaults (full bounds).
+    unsafe {
+        wk.takeSnapshotWithConfiguration_completionHandler(None, &block);
+    }
+}
+
+/// GAP-7.8 (macOS): `NSImage` → `data:image/png;base64,…`. Chain:
+/// TIFF data → `NSBitmapImageRep` → PNG rep → bytes → base64.
+///
+/// # Safety
+/// `img` must point to a valid `NSImage` for the duration of this call.
+#[cfg(target_os = "macos")]
+unsafe fn ns_image_to_png_data_url(img: &objc2_app_kit::NSImage) -> Result<String, String> {
+    use base64::Engine;
+    use objc2_app_kit::{NSBitmapImageFileType, NSBitmapImageRep, NSBitmapImageRepPropertyKey};
+    use objc2_foundation::NSDictionary;
+    use std::ffi::c_void;
+    use std::ptr::NonNull;
+
+    // NSImage → TIFF data.
+    let tiff = img
+        .TIFFRepresentation()
+        .ok_or_else(|| "screenshot: NSImage produced no TIFF data".to_string())?;
+    // TIFF data → a bitmap rep.
+    let rep = NSBitmapImageRep::imageRepWithData(&tiff)
+        .ok_or_else(|| "screenshot: could not build NSBitmapImageRep".to_string())?;
+    // Bitmap rep → PNG bytes. `properties` is an empty dict (no PNG options);
+    // `NSBitmapImageRepPropertyKey` is a type alias for `NSString`.
+    let props = NSDictionary::<NSBitmapImageRepPropertyKey, objc2::runtime::AnyObject>::new();
+    let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }
+        .ok_or_else(|| "screenshot: PNG encoding returned no data".to_string())?;
+
+    let len = png.length();
+    let mut buf = vec![0u8; len];
+    if len > 0 {
+        // SAFETY: `png` is a valid NSData of exactly `len` bytes; `buf` is `len`
+        // bytes of writable storage.
+        unsafe {
+            png.getBytes_length(NonNull::new_unchecked(buf.as_mut_ptr() as *mut c_void), len);
+        }
+    }
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&buf);
+    Ok(format!("data:image/png;base64,{b64}"))
 }
 
 /// Interpret the wry callback payload. Empty → the JS returned null/undefined

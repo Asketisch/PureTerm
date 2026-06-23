@@ -97,18 +97,37 @@ tempfile = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6.1"
-# PureTerm: screen eyedropper (NSColorSampler) 需要 block2 (0.6，与 objc2-app-kit 0.3.2 一致) 做 ObjC block。
+# PureTerm: screen eyedropper (NSColorSampler) + GAP-7.8 WKWebView snapshot 都需要
+# block2 (0.6，与 objc2-app-kit 0.3.2 一致) 做 ObjC block。
 block2 = "0.6"
-objc2-foundation = { version = "0.3.1", default-features = false, features = ["std", "NSArray", "NSString"] }
+objc2-foundation = { version = "0.3.1", default-features = false, features = [
+    "std", "NSArray", "NSString",
+    # GAP-7.8 screenshot: NSData(字节读取) + NSDictionary(空 props) + NSError(错误文案)。
+    "NSData", "NSDictionary", "NSError",
+] }
 objc2-app-kit = { version = "0.3.1", default-features = false, features = [
     "std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSMenu", "NSMenuItem",
     "objc2-quartz-core",
     # PureTerm: 屏幕吸管 NSColorSampler + sRGB 分量读取。
     "NSColorSampler", "NSColor", "NSColorSpace", "block2", "objc2-core-foundation",
+    # GAP-7.8 screenshot: NSImage(TIFFRepresentation) + NSBitmapImageRep(PNG 编码);
+    # NSBitmapImageRep 结构体的 re-export 额外要求 NSImageRep feature。
+    "NSImage", "NSBitmapImageRep", "NSImageRep",
 ] }
 objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
     "std", "CALayer", "CAMetalLayer", "objc2-metal",
 ] }
+# GAP-7.8: 原生 WKWebView 快照。wry 0.55.1 的 `WryWebView` 是 `WKWebView` 子类,
+# 经 `WebViewExtMacOS::webview()` 拿到 `Retained<WryWebView>` 后调
+# `takeSnapshotWithConfiguration:completionHandler:` 做快照(替代之前 "wry 未暴露"
+# 的 stub)。WKWebView 传递启用 objc2-foundation 的 NSData/NSDictionary/NSError/
+# objc2-core-foundation;WKSnapshotConfiguration+block2 解锁 takeSnapshot 方法;
+# objc2-app-kit 让 completion block 能引用 NSImage。
+objc2-web-kit = { version = "0.3.2", default-features = false, features = [
+    "std", "WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit",
+] }
+# GAP-7.8 screenshot: NSImage PNG → base64 data URL。
+base64 = "0.22"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xdg = "3.0.0"

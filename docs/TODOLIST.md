@@ -179,11 +179,11 @@
 
 ### GAP-7.8 agent-browser 兼容
 - **状态**: 🚧 | **优先级**: P2
-- **现状**: 代码闭环(2026-06-23,Phase D)——8 async ops + 2 sync ops(`navigate/click/type/extract/scroll/wait/get_url/get_title` + `screenshot` stub);`browser/commands.rs::BrowserOp` 每 op 经 wry `evaluate_script_with_callback` 跑 IIFE(JS try/catch 永远回 `{ok,...}` —— WKWebView 异常会丢 completion handler 不能挂 reply;`wait` 返回 Promise 单次 resolution 无需轮询)。**deferred-reply 关联**(核心):`browser.*` 在 `Message::Ipc` handler 先于 `router.dispatch` 拦截 → `handle_browser_request`;per-op oneshot(`tx` 塞 wry `Fn` 闭包用 `Mutex<Option<Sender>>` 守护,wry 回调是 `Fn` 非 `FnOnce`),`rx` 经 `Task::perform + tokio::time::timeout` 兜底;`Message::BrowserOpResolved` first-wins 回复 + emit `Category::Browser`。sensitivity gate(跨 origin navigate)仅审计 emit `browser.request` 并放行(交互式 feed-panel 拦截 deferred)。CLI `pureterm browser {…}` 11 子命令。**待 dist .app 重打包 + 真实页面 E2E**
+- **现状**: 代码闭环(2026-06-24 补齐 DoD 关键面)——8 async ops + 2 sync ops(`navigate/click/type/extract/scroll/wait/get_url/get_title` + **`screenshot` 真实实现**);`browser/commands.rs::BrowserOp` 每 op 经 wry `evaluate_script_with_callback` 跑 IIFE(JS try/catch 永远回 `{ok,...}` —— WKWebView 异常会丢 completion handler 不能挂 reply;`wait` 返回 Promise 单次 resolution 无需轮询)。**screenshot**:`wry::WebViewExtMacOS::webview()` 拿 `WryWebView`(WKWebView 子类)→ `takeSnapshotWithConfiguration:completionHandler:`(`block2` `RcBlock` + `Mutex<Option<Sender>>`,照搬 `macos_eyedropper`)+ NSImage→PNG(TIFF→NSBitmapImageRep→base64 data URL);非 macOS 降级 stub error。**MCP 全 op 暴露(DoD 关键)**:`mcp/server.rs` 现 9 个 browser tool(此前仅 navigate/extract,agent 连 `click` 都发不出);`browser_tools_cover_full_op_set` 测试锁定。**deferred-reply 关联**(核心):`browser.*` 在 `Message::Ipc` handler 先于 `router.dispatch` 拦截 → `handle_browser_request`;per-op oneshot(`tx` 塞 wry `Fn` 闭包用 `Mutex<Option<Sender>>` 守护,wry 回调是 `Fn` 非 `FnOnce`),`rx` 经 `Task::perform + tokio::time::timeout` 兜底;`Message::BrowserOpResolved` first-wins 回复 + emit `Category::Browser`。sensitivity gate(跨 origin navigate)仅审计 emit `browser.request` 并放行(交互式 feed-panel 拦截 deferred)。CLI `pureterm browser {…}` 11 子命令。**dist `.app` 已重打包(release 编译 0 error + 15 browser/mcp 单测全绿);待用户真实页面 GUI E2E**(我无法跑 GUI,是唯一 DoD 闭环门槛)
 - **目标**: GAP-3.5 实现后,实现 agent-browser 兼容子集 — `click / type / screenshot / navigate / extract`;参考 `https://agent-browser.dev/protocol`
 - **依赖**: GAP-3.5
 - **DoD**: agent 发 `click #submit`,Browser 面板点击对应 DOM
-- **未做**: `screenshot` 真实实现(wry 未暴露 WKWebView 快照)/ 交互式 feed-panel 跨 origin 两阶段拦截(现 audit-only)/ 93→125 命令扩展
+- **未做(独立后续)**: 交互式 feed-panel 跨 origin 两阶段拦截(现 audit-only,模板 `FeedPanelState` 已就绪)/ 93→125 命令扩展(约 100+ 命令,无 in-repo 明细,独立大项目)。「`screenshot` 真实实现」已于 2026-06-24 落地(WKWebView `takeSnapshot`),不再列为未做
 - **对标**: cmux `Sources/Browser/`(93/125 命令兼容)
 
 ---

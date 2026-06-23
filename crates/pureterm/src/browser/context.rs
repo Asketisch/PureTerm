@@ -195,6 +195,24 @@ impl BrowserContext {
         true
     }
 
+    /// GAP-7.8: 把底层 WKWebView(wry 的 `WryWebView` 子类)交给闭包,用于原生
+    /// `takeSnapshotWithConfiguration:completionHandler:` 快照。未 realize 时返回
+    /// `None`(调用方据此报错)。
+    ///
+    /// `WebViewExtMacOS::webview()` clone 出新的 `Retained<WryWebView>`(引用计数
+    /// +1);**不缓存**该 `Retained` —— 缓存会在 webview 被 `take()` 掉后悬空,导致
+    /// 快照打到已释放的 WKWebView。闭包拿到的是 `&WryWebView`(`Retained` 解引用);
+    /// WKWebView 的方法(含 `takeSnapshot`)经继承可直接在其上调用(与 wry 内部调
+    /// `evaluateJavaScript` 一致)。
+    #[cfg(target_os = "macos")]
+    pub fn with_wry_webview<R>(&self, f: impl FnOnce(&wry::WryWebView) -> R) -> Option<R> {
+        use wry::WebViewExtMacOS;
+        let guard = self.webview.lock();
+        let Some(wv) = guard.as_ref() else { return None };
+        let wk = wv.webview(); // Retained<WryWebView>
+        Some(f(&wk))
+    }
+
     /// Phase C: 把该 webview 绑定到一条 SSH 隧道 —— 后续所有流量经 `socks`
     /// 端点出网,可达仅网关能解析的内网站点。`tunnel_id` 仅作标识/快照;
     /// `socks` 是 realize 时真正消费的端点(通常 `127.0.0.1:<local_port>`)。

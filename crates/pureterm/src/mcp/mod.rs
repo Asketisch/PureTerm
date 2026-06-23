@@ -77,6 +77,41 @@ pub const TOOLS: &[ToolSpec] = &[
         rpc_method: "browser.extract",
         description: "Extract text or an attribute from a web pane via CSS selector. Deferred — returns once the page settles.",
     },
+    ToolSpec {
+        name: "browser_click",
+        rpc_method: "browser.click",
+        description: "Click an element in a web pane by CSS selector.",
+    },
+    ToolSpec {
+        name: "browser_type",
+        rpc_method: "browser.type",
+        description: "Type text into an input/contenteditable element in a web pane by CSS selector.",
+    },
+    ToolSpec {
+        name: "browser_scroll",
+        rpc_method: "browser.scroll",
+        description: "Scroll a web pane by (x, y) deltas or scroll a CSS-selected element into view.",
+    },
+    ToolSpec {
+        name: "browser_wait",
+        rpc_method: "browser.wait",
+        description: "Wait for a CSS-selected element to appear in a web pane (blocks until found or timeout).",
+    },
+    ToolSpec {
+        name: "browser_get_url",
+        rpc_method: "browser.get_url",
+        description: "Get the current URL (location.href) of a web pane.",
+    },
+    ToolSpec {
+        name: "browser_get_title",
+        rpc_method: "browser.get_title",
+        description: "Get the page title (document.title) of a web pane.",
+    },
+    ToolSpec {
+        name: "browser_screenshot",
+        rpc_method: "browser.screenshot",
+        description: "Capture a PNG screenshot of a web pane (returns a base64 data URL; macOS-only).",
+    },
 ];
 
 /// Resolve a tool spec by name (case-sensitive). Returns `None` for unknown
@@ -138,6 +173,39 @@ mod tests {
     fn browser_tools_forward_to_browser_namespace() {
         assert_eq!(tool_spec("browser_navigate").unwrap().rpc_method, "browser.navigate");
         assert_eq!(tool_spec("browser_extract").unwrap().rpc_method, "browser.extract");
+        assert_eq!(tool_spec("browser_click").unwrap().rpc_method, "browser.click");
+        assert_eq!(tool_spec("browser_type").unwrap().rpc_method, "browser.type");
+        assert_eq!(tool_spec("browser_scroll").unwrap().rpc_method, "browser.scroll");
+        assert_eq!(tool_spec("browser_wait").unwrap().rpc_method, "browser.wait");
+        assert_eq!(tool_spec("browser_get_url").unwrap().rpc_method, "browser.get_url");
+        assert_eq!(tool_spec("browser_get_title").unwrap().rpc_method, "browser.get_title");
+        assert_eq!(tool_spec("browser_screenshot").unwrap().rpc_method, "browser.screenshot");
+    }
+
+    #[test]
+    fn browser_tools_cover_full_op_set() {
+        // GAP-7.8 DoD: an agent can drive every functional browser op. The full
+        // set (navigate/click/type/extract/scroll/wait/get_url/get_title + the
+        // macOS screenshot) must all be exposed to MCP.
+        let browser: Vec<&str> = TOOLS
+            .iter()
+            .filter(|t| t.rpc_method.starts_with("browser."))
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(
+            browser,
+            vec![
+                "browser_navigate",
+                "browser_extract",
+                "browser_click",
+                "browser_type",
+                "browser_scroll",
+                "browser_wait",
+                "browser_get_url",
+                "browser_get_title",
+                "browser_screenshot",
+            ]
+        );
     }
 
     #[test]
