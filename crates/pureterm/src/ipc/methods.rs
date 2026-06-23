@@ -49,6 +49,13 @@ pub enum IpcSideEffect {
     /// and writes `exit\r`.
     #[cfg(unix)]
     SshDisconnect { pane_id: Option<u64> },
+    /// GAP-7.9: write `text` into a pane's PTY. `pane_id` None ⇒ active pane.
+    /// Fire-and-forget; the request is replied to immediately with
+    /// `{"sent": true, "length": <n>}` and the actual `write_to_pty` happens
+    /// in the main loop (mirrors `SshDisconnect`'s pane resolution). Drives
+    /// the MCP `send_text` tool + `pureterm surface send-text`.
+    #[cfg(unix)]
+    SendText { pane_id: Option<u64>, text: String },
     /// GAP-7.4: a `[[agent.hook]]` SessionEnd rule fired → clear that agent
     /// session's Feed approval memory (Always/All/Bypass). Fire-and-forget;
     /// the request itself is replied to immediately with `{"ok": true}`.
@@ -354,10 +361,23 @@ impl SocketRouter {
                 .and_then(|p| p.get("text"))
                 .and_then(|v| v.as_str());
             match text {
-                Some(t) => (
-                    Ok(serde_json::json!({"sent": true, "length": t.len()})),
-                    None, // TODO: IpcSideEffect::SendText when PTY write is wired
-                ),
+                Some(t) => {
+                    let pane_id = params
+                        .as_ref()
+                        .and_then(|p| p.get("pane_id"))
+                        .and_then(|v| v.as_u64());
+                    // GAP-7.9: emit a side effect so the main loop performs the
+                    // actual PTY write (sync handlers can't reach `write_to_pty`
+                    // without the iced `App`). None ⇒ active pane at exec time.
+                    #[cfg(unix)]
+                    let fx = Some(IpcSideEffect::SendText {
+                        pane_id,
+                        text: t.to_string(),
+                    });
+                    #[cfg(not(unix))]
+                    let fx = None;
+                    (Ok(serde_json::json!({ "sent": true, "length": t.len() })), fx)
+                }
                 None => (
                     Err(JsonRpcError {
                         code: ERROR_INVALID_PARAMS,
@@ -995,6 +1015,53 @@ mod tests {
         let (resp, _) = router.dispatch(25, "surface.send_text", None, &snap);
         assert!(resp.error.is_some());
         assert_eq!(resp.error.unwrap().code, ERROR_INVALID_PARAMS);
+    }
+
+    // GAP-7.9: `surface.send_text` must emit a `SendText` side effect carrying
+    // the parsed `text` + optional `pane_id` (None ⇒ active pane at exec time).
+    #[cfg(unix)]
+    #[test]
+    fn surface_send_text_emits_side_effect() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (resp, fx) = router.dispatch(
+            240,
+            "surface.send_text",
+            Some(serde_json::json!({"text": "ls\n", "pane_id": 5})),
+            &snap,
+        );
+        let r = resp.result.unwrap();
+        assert_eq!(r["sent"], true);
+        assert_eq!(r["length"], 3);
+        match fx {
+            Some(IpcSideEffect::SendText { pane_id, text }) => {
+                assert_eq!(pane_id, Some(5));
+                assert_eq!(text, "ls\n");
+            }
+            other => panic!("expected SendText side effect, got {other:?}"),
+        }
+    }
+
+    // GAP-7.9: without an explicit `pane_id` the side effect carries None so
+    // the main loop writes to the active pane.
+    #[cfg(unix)]
+    #[test]
+    fn surface_send_text_defaults_to_active_pane() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (_resp, fx) = router.dispatch(
+            241,
+            "surface.send_text",
+            Some(serde_json::json!({"text": "echo hi\r"})),
+            &snap,
+        );
+        match fx {
+            Some(IpcSideEffect::SendText { pane_id, text }) => {
+                assert_eq!(pane_id, None);
+                assert_eq!(text, "echo hi\r");
+            }
+            other => panic!("expected SendText side effect, got {other:?}"),
+        }
     }
 
     // ── config.* ──────────────────────────────────────────────────────

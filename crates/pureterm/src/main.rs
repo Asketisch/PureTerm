@@ -35,11 +35,16 @@ mod daemon_pty;
 mod iced_app;
 mod ime_widget;
 mod ipc;
+/// GAP-7.10: MCP server (`pureterm mcp serve`) — exposes the terminal surface
+/// to AI agents as native MCP tools. rmcp is feature-gated (`mcp-server`);
+/// the roster/whitelist/config pieces stay compiled without the feature.
+mod mcp;
 mod keymap;
 mod search;
 mod session_restore;
 mod split_tree;
 mod status_bar;
+mod surface_snapshot;
 #[cfg(target_os = "macos")]
 mod macos_menu;
 #[cfg(target_os = "macos")]

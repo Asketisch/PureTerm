@@ -143,6 +143,43 @@ pub enum Command {
         #[command(subcommand)]
         cmd: BrowserSub,
     },
+    /// GAP-7.10: MCP server + agent-client install — expose PureTerm's terminal
+    /// surface to AI agents (Claude Code, Codex) as native MCP tools.
+    Mcp {
+        #[command(subcommand)]
+        cmd: McpSub,
+    },
+}
+
+/// GAP-7.10: `pureterm mcp …` subcommands.
+///
+/// - `serve` runs the stdio MCP server (feature-gated `mcp-server`); each tool
+///   forwards to the GUI Socket API. Install adapters (Phase C) land here too.
+/// - `list-tools` prints the roster (filtered by `[mcp].enabled_tools`) — local,
+///   no IPC, available in every build.
+#[derive(Subcommand)]
+pub enum McpSub {
+    /// Run the MCP stdio server. Reads JSON-RPC on stdin, writes on stdout —
+    /// meant to be spawned by an MCP client (Claude Code / Codex). Requires the
+    /// `mcp-server` build feature (on by default).
+    Serve,
+    /// Print the MCP tool roster this build exposes, filtered by
+    /// `[mcp].enabled_tools`. Local only — no GUI/IPC needed.
+    ListTools,
+    /// GAP-7.10 (Phase C): write PureTerm's MCP server into an agent client's
+    /// config so it auto-launches. `client`: claude-code | codex | claude-desktop.
+    /// Idempotent; preserves other servers the client already has.
+    Install {
+        /// Which client to install into: claude-code | codex | claude-desktop.
+        client: String,
+    },
+    /// Show which clients have PureTerm's MCP server installed.
+    List,
+    /// Remove PureTerm's MCP server from a client's config.
+    Uninstall {
+        /// Which client: claude-code | codex | claude-desktop.
+        client: String,
+    },
 }
 
 // ── Group subcommands ────────────────────────────────────────────────────
@@ -291,15 +328,28 @@ impl PaneSub {
 pub enum SurfaceSub {
     /// List surfaces (PTY instances)
     List,
-    /// Send text to the active surface
+    /// Send text to a pane's PTY (default: active pane).
     SendText {
         #[arg(long)]
         text: String,
+        /// Target pane id (default: active pane).
+        #[arg(long)]
+        pane_id: Option<u64>,
     },
     /// Resize (note: use pane split/close to trigger resize)
     Resize,
-    /// Snapshot the terminal buffer (not yet implemented server-side)
-    Snapshot,
+    /// Capture a pane's terminal buffer to text (default: active pane).
+    Snapshot {
+        /// Target pane id (default: active pane).
+        #[arg(long)]
+        pane_id: Option<u64>,
+        /// Capture only the visible viewport (default: full scrollback).
+        #[arg(long)]
+        visible_only: bool,
+        /// Keep only the last N lines of the capture.
+        #[arg(long)]
+        lines: Option<usize>,
+    },
     /// GAP-7.7: manage custom resume bindings (local config CRUD; no IPC).
     #[cfg(unix)]
     Resume {
@@ -312,9 +362,38 @@ impl SurfaceSub {
     fn method_and_params(&self) -> (&'static str, Option<Value>) {
         match self {
             SurfaceSub::List => ("surface.list", None),
-            SurfaceSub::SendText { text } => ("surface.send_text", Some(json!({ "text": text }))),
+            SurfaceSub::SendText { text, pane_id } => {
+                let mut obj = serde_json::Map::new();
+                obj.insert("text".into(), json!(text));
+                if let Some(id) = pane_id {
+                    obj.insert("pane_id".into(), json!(id));
+                }
+                ("surface.send_text", Some(Value::Object(obj)))
+            }
             SurfaceSub::Resize => ("surface.resize", None),
-            SurfaceSub::Snapshot => ("surface.snapshot", None),
+            SurfaceSub::Snapshot {
+                pane_id,
+                visible_only,
+                lines,
+            } => {
+                // Only send params that were explicitly set so the server-side
+                // defaults (full scrollback, active pane) apply when omitted.
+                let mut obj = serde_json::Map::new();
+                let mut any = false;
+                if let Some(id) = pane_id {
+                    obj.insert("pane_id".into(), json!(id));
+                    any = true;
+                }
+                if *visible_only {
+                    obj.insert("visible_only".into(), json!(true));
+                    any = true;
+                }
+                if let Some(n) = lines {
+                    obj.insert("lines".into(), json!(n));
+                    any = true;
+                }
+                ("surface.snapshot", if any { Some(Value::Object(obj)) } else { None })
+            }
             // Unreachable: SurfaceSub::Resume is intercepted by the hybrid
             // dispatch in `run()` (cli.rs) and never reaches the IPC bridge.
             #[cfg(unix)]
@@ -916,6 +995,110 @@ pub fn run(cli: Cli) {
         // (the GUI owns the webview + the agent-browser execution layer). The
         // async JS-ops' deferred reply is awaited inside `send`.
         Command::Browser { cmd } => send(&socket, json, cmd.method_and_params()),
+        // GAP-7.10: MCP is hybrid — `serve` runs the stdio server (no IPC
+        // bridge; the server itself dials the GUI socket per tool call),
+        // `list-tools` is a local roster print. Precedent: Surface arm above.
+        Command::Mcp { cmd } => match cmd {
+            McpSub::Serve => {
+                let cfg = crate::app_config::AppConfig::load_mcp(
+                    &crate::app_config::AppConfig::config_path(),
+                );
+                #[cfg(feature = "mcp-server")]
+                {
+                    crate::mcp::run_server(cfg, socket.clone());
+                }
+                #[cfg(not(feature = "mcp-server"))]
+                {
+                    let _ = cfg;
+                    eprintln!(
+                        "pureterm mcp: this build was compiled without the `mcp-server` feature."
+                    );
+                    eprintln!("Rebuild without --no-default-features to enable it.");
+                    std::process::exit(1);
+                }
+            }
+            McpSub::ListTools => {
+                let cfg = crate::app_config::AppConfig::load_mcp(
+                    &crate::app_config::AppConfig::config_path(),
+                );
+                let names = crate::mcp::enabled_tool_names(&cfg);
+                if names.is_empty() {
+                    println!("(no tools — [mcp].enabled_tools whitelisted everything away)");
+                    return;
+                }
+                println!("{:<18}  {}", "TOOL", "RPC → DESCRIPTION");
+                for name in names {
+                    let spec = crate::mcp::tool_spec(name)
+                        .expect("enabled_tool_names returns only known tools");
+                    // First line of the description keeps the table readable.
+                    let desc: String =
+                        spec.description.lines().next().unwrap_or("").to_string();
+                    println!("{:<18}  {} → {}", spec.name, spec.rpc_method, desc);
+                }
+            }
+            McpSub::Install { client } => mcp_install(&client),
+            McpSub::List => mcp_list(),
+            McpSub::Uninstall { client } => mcp_uninstall(&client),
+        },
+    }
+}
+
+/// GAP-7.10: `pureterm mcp install <client>` — write our server entry into the
+/// client's config (idempotent). Local config RMW; no IPC. Mirrors
+/// `agent_adapters::dispatch`.
+fn mcp_install(client: &str) {
+    use crate::mcp::adapter::{find_adapter, McpClientAdapter};
+    use crate::agent_adapters::pureterm_bin;
+    let Some(adp) = find_adapter(client) else {
+        eprintln!(
+            "pureterm mcp install: unknown client '{client}' (available: claude-code, codex, claude-desktop)"
+        );
+        std::process::exit(1);
+    };
+    let bin = pureterm_bin();
+    match adp.install(&bin) {
+        Ok(path) => {
+            println!("Installed PureTerm MCP server for {}.", adp.display_name());
+            println!("  config: {}", path.display());
+            println!("  server: {} mcp serve", bin.display());
+            println!("Restart {} to pick up the new server.", adp.display_name());
+        }
+        Err(e) => {
+            eprintln!("pureterm mcp install: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// GAP-7.10: `pureterm mcp uninstall <client>` — remove our entry.
+fn mcp_uninstall(client: &str) {
+    use crate::mcp::adapter::{find_adapter, McpClientAdapter};
+    use crate::agent_adapters::pureterm_bin;
+    let Some(adp) = find_adapter(client) else {
+        eprintln!(
+            "pureterm mcp uninstall: unknown client '{client}' (available: claude-code, codex, claude-desktop)"
+        );
+        std::process::exit(1);
+    };
+    match adp.uninstall(&pureterm_bin()) {
+        Ok(path) => println!("Removed PureTerm MCP server from {} ({}).", adp.display_name(), path.display()),
+        Err(e) => {
+            eprintln!("pureterm mcp uninstall: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// GAP-7.10: `pureterm mcp list` — show each client's installed status.
+fn mcp_list() {
+    use crate::mcp::adapter::{registry, McpClientAdapter};
+    use crate::agent_adapters::pureterm_bin;
+    let bin = pureterm_bin();
+    println!("{:<16} {:<10} {}", "CLIENT", "INSTALLED", "CONFIG");
+    for adp in registry() {
+        let installed = if adp.is_installed(&bin) { "yes" } else { "no" };
+        let path = adp.config_path().map(|p| p.display().to_string()).unwrap_or_else(|e| e.to_string());
+        println!("{:<16} {:<10} {}", adp.id(), installed, path);
     }
 }
 
@@ -1064,6 +1247,47 @@ mod tests {
         );
     }
 
+    // GAP-7.9: `--pane-id` targets a specific pane (None ⇒ active at exec).
+    #[test]
+    fn surface_send_text_carries_pane_id() {
+        let cli = parse(&["surface", "send-text", "--text", "ls", "--pane-id", "7"]);
+        let Command::Surface { cmd } = cli.command else {
+            panic!("expected Surface");
+        };
+        assert_eq!(
+            cmd.method_and_params(),
+            ("surface.send_text", Some(json!({ "text": "ls", "pane_id": 7 })))
+        );
+    }
+
+    // GAP-7.9: `surface.snapshot` forwards capture params.
+    #[test]
+    fn surface_snapshot_serializes_params() {
+        let cli = parse(&[
+            "surface", "snapshot", "--visible-only", "--lines", "200", "--pane-id", "3",
+        ]);
+        let Command::Surface { cmd } = cli.command else {
+            panic!("expected Surface");
+        };
+        assert_eq!(
+            cmd.method_and_params(),
+            (
+                "surface.snapshot",
+                Some(json!({ "visible_only": true, "lines": 200, "pane_id": 3 }))
+            )
+        );
+    }
+
+    // GAP-7.9: bare `surface.snapshot` sends no params (server defaults apply).
+    #[test]
+    fn surface_snapshot_no_params() {
+        let cli = parse(&["surface", "snapshot"]);
+        let Command::Surface { cmd } = cli.command else {
+            panic!("expected Surface");
+        };
+        assert_eq!(cmd.method_and_params(), ("surface.snapshot", None));
+    }
+
     #[test]
     fn config_get_optional_key() {
         let with_key = parse(&["config", "get", "--key", "font.size"]);
@@ -1140,5 +1364,41 @@ mod tests {
             panic!("expected Shortcuts");
         };
         assert!(matches!(cmd, ShortcutsSub::Preset { ref name } if name == "vim"));
+    }
+
+    #[test]
+    fn mcp_serve_parses() {
+        let cli = parse(&["mcp", "serve"]);
+        let Command::Mcp { cmd } = cli.command else {
+            panic!("expected Mcp");
+        };
+        assert!(matches!(cmd, McpSub::Serve));
+    }
+
+    #[test]
+    fn mcp_list_tools_parses() {
+        let cli = parse(&["mcp", "list-tools"]);
+        let Command::Mcp { cmd } = cli.command else {
+            panic!("expected Mcp");
+        };
+        assert!(matches!(cmd, McpSub::ListTools));
+    }
+
+    #[test]
+    fn mcp_install_carries_client() {
+        let cli = parse(&["mcp", "install", "codex"]);
+        let Command::Mcp { cmd } = cli.command else {
+            panic!("expected Mcp");
+        };
+        assert!(matches!(cmd, McpSub::Install { ref client } if client == "codex"));
+    }
+
+    #[test]
+    fn mcp_uninstall_carries_client() {
+        let cli = parse(&["mcp", "uninstall", "claude-code"]);
+        let Command::Mcp { cmd } = cli.command else {
+            panic!("expected Mcp");
+        };
+        assert!(matches!(cmd, McpSub::Uninstall { ref client } if client == "claude-code"));
     }
 }

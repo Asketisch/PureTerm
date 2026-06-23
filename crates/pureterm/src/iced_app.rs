@@ -692,6 +692,11 @@ pub enum Message {
     // GAP-7.8: a `browser.*` op finished (JS callback or timeout resolved).
     // Carries the deferred JSON-RPC reply + the EventBus payload to emit.
     BrowserOpResolved(crate::browser::BrowserResolved),
+    // GAP-7.9: a deferred `surface.snapshot` (capture-pane) finished off-main.
+    // Carries the built response; the main loop forwards it to the deferred
+    // IPC reply handle (first-wins via Mutex-take).
+    #[cfg(unix)]
+    SurfaceSnapshotResolved(crate::surface_snapshot::SurfaceSnapshotResolved),
     // GAP-5.6 SSH reconnect worker → main loop
     #[cfg(unix)]
     SshReconnect(crate::ssh::reconnect::ReconnectUpdate),
@@ -3364,6 +3369,15 @@ impl PureTermApp {
                 if ipc_req.method.starts_with("browser.") {
                     return self.handle_browser_request(ipc_req);
                 }
+                // GAP-7.9: `surface.snapshot` (capture-pane) reads the term grid.
+                // Deferred like `browser.*`/`feed.*`: the sync router handlers
+                // only see `AppSnapshot` (titles/cwds), not the `Term` grid, so
+                // capture must run from here (which has `&mut self`) and off the
+                // main thread; the reply is sent when the task resolves.
+                #[cfg(unix)]
+                if ipc_req.method == "surface.snapshot" {
+                    return self.handle_surface_snapshot(ipc_req);
+                }
                 // Build a rich snapshot from live app state.
                 let snap = crate::ipc::methods::AppSnapshot {
                     window_count: if self.main_window.is_some() { 1 } else { 0 },
@@ -3620,6 +3634,26 @@ impl PureTermApp {
                 }
                 self.events
                     .emit(crate::events::Category::Browser, ev_kind, None, payload);
+            }
+            // GAP-7.9: a deferred `surface.snapshot` finished — forward the
+            // built response to the deferred IPC reply (first-wins via
+            // Mutex-take), then emit a `surface.snapshot` audit event.
+            #[cfg(unix)]
+            Message::SurfaceSnapshotResolved(resolved) => {
+                let crate::surface_snapshot::SurfaceSnapshotResolved {
+                    ipc_id,
+                    reply_tx,
+                    resp,
+                } = resolved;
+                if let Some(s) = reply_tx.lock().unwrap().take() {
+                    let _ = s.send(resp);
+                }
+                self.events.emit(
+                    crate::events::Category::Surface,
+                    "surface.snapshot",
+                    None,
+                    serde_json::json!({ "ipc_id": ipc_id }),
+                );
             }
             // GAP-6.7: in-process event bus subscriber. v1 has no consumer —
             // events are persisted in `emit()` and consumed via the JSONL log /
@@ -5391,6 +5425,21 @@ impl PureTermApp {
                 Task::none()
             }
             #[cfg(unix)]
+            Fx::SendText { pane_id, text } => {
+                // GAP-7.9: write `text` into the resolved pane's PTY. Same
+                // pane-resolution shape as `SshDisconnect`; fire-and-forget.
+                // `write_to_pty` is a non-blocking channel send to the PTY IO
+                // thread, so this stays off the hot path.
+                let ctx = match pane_id {
+                    Some(id) => self.pane_terminal_ctx(PaneId(id)),
+                    None => self.active_terminal_ctx(),
+                };
+                if let Some(ctx) = ctx {
+                    ctx.write_to_pty(text.as_bytes());
+                }
+                Task::none()
+            }
+            #[cfg(unix)]
             Fx::FeedClearSession { session_id } => {
                 // GAP-7.4: SessionEnd hook fired → drop that agent's Feed memory.
                 self.feed_panel.clear_session(&session_id);
@@ -5819,6 +5868,75 @@ impl PureTermApp {
                 BrowserResolved { ipc_id, reply_tx, reply, ev_kind, ev_payload }
             },
             Message::BrowserOpResolved,
+        )
+    }
+
+    /// GAP-7.9: capture a pane's grid to text (`surface.snapshot`). Resolves
+    /// the pane (explicit `pane_id` else active), clones the cheap
+    /// `Arc<FairMutex<Term>>`, and runs the lock + `bounds_to_string` off-main
+    /// via `spawn_blocking` so a full-scrollback capture can't stutter the GUI.
+    /// The built response is forwarded to the deferred reply handle on resolve.
+    #[cfg(unix)]
+    fn handle_surface_snapshot(&mut self, ipc_req: crate::ipc::IpcRequest) -> Task<Message> {
+        use crate::surface_snapshot::{capture, SurfaceSnapshotResolved};
+
+        let ipc_id = ipc_req.id;
+        let reply_tx = ipc_req.reply_tx.clone();
+        let params = ipc_req.params.as_ref();
+
+        let pane_id = params
+            .and_then(|p| p.get("pane_id"))
+            .and_then(|v| v.as_u64())
+            .map(PaneId);
+        let term_arc = match pane_id {
+            Some(id) => self.pane_terminal_ctx(id),
+            None => self.active_terminal_ctx(),
+        }
+        .map(|ctx| ctx.terminal().clone());
+
+        let Some(term_arc) = term_arc else {
+            if let Some(s) = reply_tx.lock().unwrap().take() {
+                let _ = s.send(crate::ipc::JsonRpcResponse::err(
+                    ipc_id,
+                    -32000,
+                    "no terminal pane found — pass an explicit pane_id",
+                ));
+            }
+            return Task::none();
+        };
+
+        let visible_only = params
+            .and_then(|p| p.get("visible_only"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let lines = params
+            .and_then(|p| p.get("lines"))
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize);
+
+        Task::perform(
+            async move {
+                let arc = term_arc;
+                match tokio::task::spawn_blocking(move || {
+                    capture(arc, visible_only, lines, ipc_id)
+                })
+                .await
+                {
+                    Ok(resp) => resp,
+                    Err(join_err) => crate::ipc::JsonRpcResponse::err(
+                        ipc_id,
+                        -32000,
+                        format!("surface.snapshot task failed: {join_err}"),
+                    ),
+                }
+            },
+            move |resp| {
+                Message::SurfaceSnapshotResolved(SurfaceSnapshotResolved {
+                    ipc_id,
+                    reply_tx,
+                    resp,
+                })
+            },
         )
     }
 

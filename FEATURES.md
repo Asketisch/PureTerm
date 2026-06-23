@@ -186,6 +186,24 @@
 - 实现:`resume_bindings.rs` + `app_config.rs` + `cli.rs` + `feed_client.rs` + `feed_panel.rs` + `iced_app.rs`
 - 自动 E2E harness 全绿:293 单测
 
+### GAP-7.9 PTY 读写原语(2026-06-24)
+- 补齐 Socket API 两个承重空壳,让任何 agent / 脚本能「读屏 + 注命令」(免 shell-out、免 JSON 解析)
+- `surface.send_text`(`ipc/methods.rs`):`text` 必填 + `pane_id` 可选 → `IpcSideEffect::SendText`(unix);`iced_app::execute_ipc_side_effect` 镜像 `SshDisconnect` 解析 pane → `write_to_pty`(fire-and-forget)
+- `surface.snapshot`:**deferred reply**(仿 `browser.*`,全 scrollback 序列化持 `FairMutex<Term>` 锁跨千行 off-main 避免掉帧);`Message::Ipc` 拦截 → clone `Arc<FairMutex<Term>>` → `Task::perform` 内 `spawn_blocking` 复用 `Term::bounds_to_string`(**不重写 cell 迭代**)+ tail 截尾 + `tokio::time::timeout`;oneshot first-wins
+- CLI:`pureterm surface send-text --pane-id N --text 'echo hi\r'` / `snapshot --visible-only --lines N`
+- 独立可用:CLI / 脚本 / MCP 都消费它;零依赖
+- 实现:`surface_snapshot.rs` + `ipc/methods.rs` + `iced_app.rs` + `cli.rs`
+- 378 单测绿
+
+### GAP-7.10 MCP server + agent 客户端安装(2026-06-24)
+- PureTerm 成为 agent 可驱动的终端宿主:`pureterm mcp serve` 起 **stdio MCP server**,Claude Code / Codex 装一次即获 `capture_pane` / `send_text` / `list_surfaces` / `new_tab` / `split_pane` / `focus_pane` / `browser_navigate` / `browser_extract` 原生结构化工具
+- **MCP↔IPC 桥**(`mcp/server.rs`,feature-gated `mcp-server` 默认开):rmcp 1.7.0,**精确双 pin `rmcp`+`rmcp-macros` =1.7.0**(rmcp 1.7.0 只声明 `rmcp-macros ^1.7.0` 会解析到 1.8.0 宏,`#[tool]` 展开引用 1.7.0 runtime 不存在的 `schema_for_input`);每工具 body = `Parameters<T>` → `rpc()` 助手把**阻塞** `send_rpc` 包 `spawn_blocking` 透传 GUI Socket API,`Result<String,String>`(Err → MCP `isError`)
+- **安装适配器**(`mcp/adapter.rs`):`McpClientAdapter` trait + ClaudeCodeAdapter(`.mcp.json`)/ CodexAdapter(`~/.codex/config.toml`,TOML `locked_toml_rmw`)/ ClaudeDesktopAdapter;复用 `agent_adapters::locked_json_rmw` + `pureterm_bin`;install 幂等(remove-then-insert,保留他人 server);CLI `mcp install/list/uninstall <client>`
+- `[mcp]` 配置(`McpConfig`):`default_capture_lines`(5000)+ `enabled_tools` 白名单(空=全部)
+- 安全 stance:同用户所有权是主边界(GUI socket `0600`;`serve` 仅因 agent 住 pane 内才继承 socket);v1 不接 Feed 审批,用户主动 `mcp install` 即知情授权
+- 实现:`mcp/{mod,server,adapter}.rs` + `app_config.rs` + `cli.rs` + `Cargo.toml`(feature `mcp-server`)
+- E2E:stdio handshake / `tools/list` schema 生成 / 无 GUI 时 `tools/call` 优雅 `isError` 均验证;378 单测绿
+
 ---
 
 ## G. 平台
@@ -204,8 +222,8 @@
 | C. 终端交互 | 2 |
 | D. SSH | 4 |
 | E. 集成与可编程 | 3 |
-| F. AI Agent | 7 |
+| F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **25** |
+| **总计** | **27** |
 
 ---

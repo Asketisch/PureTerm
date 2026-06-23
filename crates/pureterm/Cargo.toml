@@ -4,6 +4,19 @@ version = "0.1.0"
 edition = "2021"
 description = "PureTerm - Alacritty-based terminal emulator"
 
+[features]
+# GAP-7.10: MCP stdio server (`pureterm mcp serve`). Default-on so the shipped
+# binary exposes the terminal surface to AI agents out of the box; build with
+# `--no-default-features` to drop rmcp and the tokio runtime bits.
+default = ["mcp-server"]
+mcp-server = [
+    "dep:rmcp",
+    "dep:rmcp-macros",
+    "tokio/io-std",
+    "tokio/rt",
+    "tokio/rt-multi-thread",
+]
+
 [dependencies]
 pureterm-alacritty-runtime = { workspace = true }
 pureterm-settings = { path = "../pureterm-settings" }
@@ -52,6 +65,18 @@ tempfile = "3"
 # compiles to nothing on non-macOS, so enabling it unconditionally is safe.
 wry = { version = "0.55.1", features = ["mac-proxy"] }
 raw-window-handle = "0.6.2"
+# GAP-7.10: MCP stdio server. Optional + feature-gated (`mcp-server`). `server`
+# pulls the handler + `#[tool]` macros (macros is on by default); `transport-io`
+# brings the stdio transport adapter (`ServiceExt::serve(stdin, stdout)`) and,
+# transitively, schemars for tool-param schemas. Pinned exactly to 1.7.0 — the
+# macro API (`#[tool_router]` / `#[tool_handler]`, `Parameters<T>`) was verified
+# against this release and the plan flags upstream macro drift as a risk.
+rmcp = { version = "=1.7.0", optional = true, features = ["server", "transport-io", "schemars"] }
+# Pin the proc-macro crate to the exact matching release: rmcp 1.7.0 only
+# requires `rmcp-macros ^1.7.0`, so the resolver picks the latest (1.8.0) whose
+# `#[tool]` expansion emits symbols (`schema_for_input`) absent from the 1.7.0
+# runtime. Declaring the exact match here steers the whole graph to 1.7.0.
+rmcp-macros = { version = "=1.7.0", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

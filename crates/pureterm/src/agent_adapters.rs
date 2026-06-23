@@ -318,7 +318,7 @@ fn group_is_ours(group: &Value, prefix: &str) -> bool {
 
 // ── pureterm 二进制路径解析(镜像 autostart::puretermd_path) ──────────────
 
-fn pureterm_bin() -> PathBuf {
+pub(crate) fn pureterm_bin() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Ok(canon) = exe.canonicalize() {
             return canon;
@@ -409,7 +409,7 @@ fn derive_entries(
 
 // ── 加锁 JSON 读-改-写(镜像 config_io::mutate_config) ─────────────────────
 
-fn locked_json_rmw<F>(path: &Path, mutate: F) -> Result<(), AdapterError>
+pub(crate) fn locked_json_rmw<F>(path: &Path, mutate: F) -> Result<(), AdapterError>
 where
     F: FnOnce(&mut Value) -> Result<(), AdapterError>,
 {

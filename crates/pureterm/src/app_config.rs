@@ -134,6 +134,29 @@ impl Default for AgentDetectConfig {
     }
 }
 
+/// GAP-7.10: `[mcp]` settings — tune the `pureterm mcp serve` server. A
+/// missing/malformed table yields `Default` (every tool exposed, 5000-line
+/// capture cap) so a bad config never breaks startup. v1 surfaces only these
+/// two knobs; `proxy_methods` allowlist + streaming capture are deferred to v2.
+#[derive(Clone, Debug)]
+pub struct McpConfig {
+    /// Default `lines` cap for `capture_pane` when the tool omits it. Bounds
+    /// runaway full-scrollback captures an agent didn't ask for.
+    pub default_capture_lines: usize,
+    /// Whitelist of exposed tool names. Empty/unset → all tools (see
+    /// `mcp::enabled_tools`); otherwise only listed names are advertised.
+    pub enabled_tools: Vec<String>,
+}
+
+impl Default for McpConfig {
+    fn default() -> Self {
+        Self {
+            default_capture_lines: 5000,
+            enabled_tools: Vec::new(),
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Self {
         let mut config = Self::default();
@@ -400,6 +423,34 @@ impl AppConfig {
         }
         if let Some(b) = table.get("scan_on_startup").and_then(|v| v.as_bool()) {
             cfg.scan_on_startup = b;
+        }
+        cfg
+    }
+
+    /// Load the `[mcp]` table (GAP-7.10). A missing/malformed table yields
+    /// `Default` (all tools, 5000-line capture cap). See `McpConfig`.
+    pub fn load_mcp(path: &Path) -> McpConfig {
+        let mut cfg = McpConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("mcp").and_then(|m| m.as_table()) else {
+            return cfg;
+        };
+        if let Some(n) = table.get("default_capture_lines").and_then(|v| v.as_integer()) {
+            // Floor at 1 — a 0/negative cap would make capture_pane useless.
+            cfg.default_capture_lines = (n.max(1)) as usize;
+        }
+        if let Some(arr) = table.get("enabled_tools").and_then(|v| v.as_array()) {
+            cfg.enabled_tools = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
         }
         cfg
     }
@@ -1145,5 +1196,55 @@ deny_pattern = "x"
         let hooks = AppConfig::load_agent_hooks(&path);
         let _ = std::fs::remove_file(&path);
         assert!(hooks.is_empty(), "entry without event skipped");
+    }
+
+    #[test]
+    fn mcp_defaults_when_table_absent() {
+        let toml = r#"
+[font]
+size = 14.0
+"#;
+        let path = write_temp_toml("pureterm_test_mcp_absent.toml", toml);
+        let cfg = AppConfig::load_mcp(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg.default_capture_lines, 5000);
+        assert!(cfg.enabled_tools.is_empty());
+    }
+
+    #[test]
+    fn mcp_loads_capture_lines_and_whitelist() {
+        let toml = r#"
+[mcp]
+default_capture_lines = 200
+enabled_tools = ["capture_pane", "send_text"]
+"#;
+        let path = write_temp_toml("pureterm_test_mcp_set.toml", toml);
+        let cfg = AppConfig::load_mcp(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg.default_capture_lines, 200);
+        assert_eq!(cfg.enabled_tools, vec!["capture_pane", "send_text"]);
+    }
+
+    #[test]
+    fn mcp_floors_capture_lines_at_one() {
+        let toml = r#"
+[mcp]
+default_capture_lines = 0
+"#;
+        let path = write_temp_toml("pureterm_test_mcp_floor.toml", toml);
+        let cfg = AppConfig::load_mcp(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg.default_capture_lines, 1);
+    }
+
+    #[test]
+    fn mcp_malformed_table_yields_default() {
+        // Not a table → Default, never panics.
+        let toml = "mcp = \"oops\"";
+        let path = write_temp_toml("pureterm_test_mcp_bad.toml", toml);
+        let cfg = AppConfig::load_mcp(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg.default_capture_lines, 5000);
+        assert!(cfg.enabled_tools.is_empty());
     }
 }
