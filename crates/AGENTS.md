@@ -20,7 +20,3 @@ pureterm (二进制)
 
 pureterm-alacritty-runtime → alacritty_terminal, alacritty_config, alacritty_config_derive
 ```
-
-## 已移除的功能
-
-所有 PureTerm legacy 功能已移至 `archive/` 目录，详见 [docs/removed-legacy-features.md](../docs/removed-legacy-features.md)。

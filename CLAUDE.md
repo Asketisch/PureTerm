@@ -25,6 +25,8 @@ cargo build --release
 
 - **项目导航**：[AGENTS.md](AGENTS.md)
 - **工作区总览**：[crates/AGENTS.md](crates/AGENTS.md)
+- **已实现特性**：[FEATURES.md](FEATURES.md)
+- **规划中特性**：[docs/TODOLIST.md](docs/TODOLIST.md)
 - **已移除的 legacy 功能**：[docs/removed-legacy-features.md](docs/removed-legacy-features.md)
 
 ## 维护规则
@@ -32,88 +34,8 @@ cargo build --release
 - vendored Alacritty 源码不做无关格式化或重构，便于同步上游
 - 新功能应在主路径（`crates/pureterm/src/`）实现；`pureterm-alacritty-runtime` 已精简为只承载 `glyph_atlas`，不再扩展
 - 修改 alacritty 源码时在修改处添加注释说明原因
-
-## 已归档模块（2026-06-08）
-
-`pureterm-alacritty-runtime` 的 Alacritty Display 渲染管线（8-pass wgpu + 独立 render thread + HarfBuzz shaper + 全套配置 + IPC + SSH 后端）已整体归档至 [`archive/pureterm-display-path/`](archive/pureterm-display-path/AGENTS.md)。详见 [`docs/removed-legacy-features.md`](docs/removed-legacy-features.md)。
-
-- 触发原因：`docs/performance-issues-todo.md` Phase B (B1–B8) 误把 Display 路径当主路径 GPU 优化目标，改完用户感知为 0
-- 主路径 GPU 优化已重规划为 P-B' 4 项，只针对 `crates/pureterm/src/terminal_shader.rs`：
-  - P-B1' 持久 atlas texture + 局部上传
-  - P-B5' 颜色 atlas Nearest 采样 + 双 pipeline
-  - P-B7' Widget 边界内 damage rect
-  - P-B8' 复用 scratch buffer
-
-## Settings UI
-
-基于 Iced 0.14 的图形化设置界面，作为独立进程运行：
-
-- **快捷键**：`Cmd+,`（macOS）打开设置窗口
-- **架构**：独立进程 `pureterm-settings`，通过配置文件通信（写文件 → ConfigMonitor 自动热重载）
-- **主题**：Halloy 风格暖色调暗色（Ferra 配色方向）
-- **页面**：General / Appearance / Colors / Terminal / SSH Profiles / Keyboard Shortcuts
-- **配置 I/O**：使用 `toml_edit::DocumentMut` 格式保留读写，`NamedTempFile::persist()` 原子写入
-
-## SSH 会话后端
-
-已实现 SSH 会话后端支持：
-
-### 功能
-- **ControlMaster socket 复用** — 连接池管理，多标签共享同一 SSH 连接
-- **~/.ssh/config 集成** — 直接使用 SSH Host 别名连接
-- **PureTerm SSH Profile** — 可在 alacritty.toml 中配置 SSH Profile
-- **加密凭证存储** — AES-256-GCM + Argon2id 加密，跨平台存储
-- **SshPty EventedPty 实现** — 集成到 Alacritty 事件循环
-
-### SSH Profile 配置 (alacritty.toml)
-
-```toml
-[[ssh.profiles]]
-name = "生产服务器"
-host = "192.168.1.100"
-user = "admin"
-port = 22
-
-[[ssh.profiles]]
-name = "跳板机"
-host = "bastion"
-key_path = "~/.ssh/bastion_key"
-```
-
-### SSH Action 键盘绑定
-
-```toml
-[[keyboard.bindings]]
-key = "F5"
-mods = "Control|Shift"
-action = { Ssh = "OpenSettings" }
-
-[[keyboard.bindings]]
-key = "F6"
-mods = "Control|Shift"
-action = { Ssh = "ListProfiles" }
-```
-
-可用的 SSH Action：
-- `Ssh = "Connect"` — 打开 SSH 连接对话框
-- `Ssh = "OpenSettings"` — 打开 SSH 设置界面
-- `Ssh = "ListProfiles"` — 列出所有 SSH Profile
-
-### 待实现
-- SSH agent forwarding(GAP-5.4)
-- pureterm:// URL scheme(GAP-5.5)
-
-### 已实现(2026-06-08 闭环)
-- ✅ SSH Tab UI(GAP-5.7):`crates/pureterm/src/ssh/` + iced UI 串通;`⌘⇧S` 弹 SSH 对话框;异步 ssh spawn;PtyEventLoop 集成;`🔒 SSH: <name>` 标题;Tab 关闭时 `graceful_close` 发 `exit\r` + 500ms 等待 + SIGHUP 兜底
-- ✅ SSH 主 UI 设置 UI(GAP-5.8):右侧栏 `SshSettingsPanelState`;Profile 列表 + 编辑 + 保存到 toml;`CredentialStore` 主密码解锁/设置端到端(AES-256-GCM + Argon2id,Zeroizing 包裹 master_key)
-- ✅ 命令面板(GAP-5.9):`⌘⇧P` 触发;`nucleo-matcher` 模糊搜索;`Mode::Actions` ↔ `Mode::Profiles` 切换,SSH Profile 一跳到底
-
-### 已实现(2026-06-14 闭环)
-- 🚧 SSH reconnect/disconnect 状态机(GAP-5.6 进程内子集):`crates/pureterm/src/ssh/reconnect.rs`(`SshState` 状态机 + `ReconnectHub` std::thread worker + tokio mpsc + 持久 iced Subscription + 按 `ConnectionKey` 防重连风暴)+ `terminal_context.rs::SshCtx::reattach()`(同 terminal `Arc` 重建 `PtyEventLoop`,保留滚动历史);指数退避 3→60s × 8,Condvar 可唤醒;退出按**用户意图**分类(`user_initiated_close` + `>5s` grace);状态栏 `SSH`/`SSH ↻ n`/`SSH ✗`/`SSH ⏻`;`ssh.disconnect` IPC 真实落地(`pureterm ssh disconnect`);daemon 化跨重启恢复已实现(见下方 2026-06-17 闭环)
-
-### 已实现(2026-06-17 闭环)
-- ✅ 持久 PTY 守护进程(GAP-5.1):`puretermd` 单例(flock)+ `setsid` 脱离 GUI 进程组,GUI 关闭后 PTY master fd 由 pump 线程持有,子 shell 不死;`crates/pureterm-daemon/`(control JSON-RPC + per-session 数据 socket + `RingBuffer` 1 MiB scrollback + 多 subscriber 扇出);`SessionManager::create_local/create_ssh` + `run_pump` 回放 `SCROLLBACK` 帧;`LocalCtx`/`SshCtx` 持 `session_id`(`None` = 直接 PTY,不可恢复)
-- ✅ daemon 化跨重启恢复(GAP-5.6):GUI 重启后自动重连 daemon 存活会话 + 重建 tabs/分屏布局。`crates/pureterm/src/session_restore.rs`(`LayoutSnapshot` 持久化 → `data_dir()/gui-sessions.json`,`NamedTempFile::persist` 原子写,变更去抖 `time::every(250ms)` + ≥500ms 空闲落盘 + 关窗 flush);`iced_app::new()` 启动 `load → session.list 校验存活 → attach_existing 重连 → scrollback 回放重建 grid`;孤儿会话(daemon 有/快照无)作额外 tab 接回;窗口尺寸按上次快照重开;`SplitNode` serde + `remap_pane_ids`/`regenerate_split_ids`(进程本地 id 重映射)。daemon 零改动;SSH 重连到存活 `ssh -tt` child 无需重新认证。**关闭语义**:`⌘W` 关 tab/pane → `kill_pane_session` 调 `session.kill` 结束该 daemon 会话(下次不再恢复);退出 app(`⌘Q`/关窗/杀进程)→ 不 kill,保留存活会话供下次恢复(`daemon_client::kill_session` + `iced_app::{CloseTab else 分支, close_active_pane}`)
+- 已实现特性维护在 [FEATURES.md](FEATURES.md)，新特性闭环后同步更新
+- 规划中特性维护在 [docs/TODOLIST.md](docs/TODOLIST.md)
 
 ## graphify
 

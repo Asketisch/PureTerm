@@ -56,6 +56,15 @@
 - 实现:搜索浮层 UI + flag(case/regex/whole-word)
 - 196 测试绿 + dist .app 重打包;待手动 GUI E2E
 
+### GAP-3.9 Settings UI(2026-06-08)
+- 基于 Iced 0.14 的图形化设置界面,作为独立进程运行
+- **快捷键**:`Cmd+,`(macOS)打开设置窗口
+- **架构**:独立进程 `pureterm-settings`,通过配置文件通信(写文件 → ConfigMonitor 自动热重载)
+- **主题**:Halloy 风格暖色调暗色(Ferra 配色方向)
+- **页面**:General / Appearance / Colors / Terminal / SSH Profiles / Keyboard Shortcuts
+- **配置 I/O**:使用 `toml_edit::DocumentMut` 格式保留读写,`NamedTempFile::persist()` 原子写入
+- 实现:`crates/pureterm-settings/`(独立 crate)
+
 ---
 
 ## C. 终端交互
@@ -98,6 +107,52 @@
 
 ### GAP-5.9 SSH 命令面板集成(2026-06-08)
 - `Mode::Profiles` 一跳到底:命令面板搜 `ssh` → 切到 Profiles 模式 → 选 Profile 直接连接
+
+### GAP-5.6 SSH reconnect/disconnect 状态机(2026-06-14/2026-06-17)
+- **进程内子集(2026-06-14)**:`SshState` 状态机 + `ReconnectHub` std::thread worker + tokio mpsc + 持久 iced Subscription + 按 `ConnectionKey` 防重连风暴
+- `terminal_context.rs::SshCtx::reattach()`:同 terminal `Arc` 重建 `PtyEventLoop`,保留滚动历史
+- 指数退避 3→60s × 8,Condvar 可唤醒;退出按**用户意图**分类(`user_initiated_close` + `>5s` grace)
+- 状态栏指示:`SSH` / `SSH ↻ n` / `SSH ✗` / `SSH ⏻`
+- `ssh.disconnect` IPC 真实落地(`pureterm ssh disconnect`)
+- **daemon 化跨重启恢复(2026-06-17)**:GUI 重启后自动重连 daemon 存活会话 + 重建 tabs/分屏布局
+- `session_restore.rs`:`LayoutSnapshot` 持久化 → `data_dir()/gui-sessions.json`,`NamedTempFile::persist` 原子写,变更去抖 `time::every(250ms)` + ≥500ms 空闲落盘 + 关窗 flush
+- `iced_app::new()` 启动 `load → session.list 校验存活 → attach_existing 重连 → scrollback 回放重建 grid`
+- 孤儿会话(daemon 有/快照无)作额外 tab 接回;窗口尺寸按上次快照重开
+- `SplitNode` serde + `remap_pane_ids`/`regenerate_split_ids`(进程本地 id 重映射);daemon 零改动
+- SSH 重连到存活 `ssh -tt` child 无需重新认证
+- **关闭语义**:`⌘W` 关 tab/pane → `kill_pane_session` 结束该 daemon 会话(下次不再恢复);退出 app → 不 kill,保留存活会话供下次恢复
+- 实现:`crates/pureterm/src/ssh/reconnect.rs` + `session_restore.rs` + `terminal_context.rs` + `iced_app.rs`
+
+### SSH Profile 配置示例(alacritty.toml)
+
+```toml
+[[ssh.profiles]]
+name = "生产服务器"
+host = "192.168.1.100"
+user = "admin"
+port = 22
+
+[[ssh.profiles]]
+name = "跳板机"
+host = "bastion"
+key_path = "~/.ssh/bastion_key"
+```
+
+### SSH Action 键盘绑定示例
+
+```toml
+[[keyboard.bindings]]
+key = "F5"
+mods = "Control|Shift"
+action = { Ssh = "OpenSettings" }
+
+[[keyboard.bindings]]
+key = "F6"
+mods = "Control|Shift"
+action = { Ssh = "ListProfiles" }
+```
+
+可用的 SSH Action:`Ssh = "Connect"` / `Ssh = "OpenSettings"` / `Ssh = "ListProfiles"`
 
 ---
 
@@ -230,12 +285,12 @@
 | 类别 | 已实现数 |
 |---|---|
 | A. 核心架构 | 4 |
-| B. UI/UX | 4 |
+| B. UI/UX | 5 |
 | C. 终端交互 | 2 |
-| D. SSH | 4 |
+| D. SSH | 5 |
 | E. 集成与可编程 | 4 |
 | F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **28** |
+| **总计** | **30** |
 
 ---

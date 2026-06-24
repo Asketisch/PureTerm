@@ -13,10 +13,6 @@
 //! On Windows the SSH UI surface is wired in P3+ but the actual connection
 //! falls back to a stub (P3 work). The cross-platform bits (config,
 //! credential store, ssh config reader) compile on every platform.
-//!
-//! Migration: extracted from `archive/pureterm-display-path/alacritty/ssh/`
-//! on 2026-06-08 (P1 of the GAP-5.7/5.8/5.9 plan). Spawn machinery moved to
-//! `pureterm-ssh` on 2026-06-17 (GAP-5.1 M3).
 
 #[cfg(unix)]
 pub use pureterm_ssh::{command, pty, session};

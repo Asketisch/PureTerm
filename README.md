@@ -1,7 +1,7 @@
 # PureTerm
 
 > 基于 Alacritty 内核 + Iced 0.14 daemon 的 GPU 加速终端模拟器,纯 Rust 编写,跨平台(macOS / Linux / Windows)。
-> 主分支:`iced-cover`。归档历史详见 [`archive/`](archive/) 与 [`docs/removed-legacy-features.md`](docs/removed-legacy-features.md)。
+> 主分支:`iced-cover`。
 
 ---
 
@@ -14,7 +14,6 @@
 - [使用示例](#使用示例)
 - [配置](#配置)
 - [快捷键速查](#快捷键速查)
-- [已归档特性(2026-06-08 起)](#已归档特性2026-06-08-起)
 - [路线图](#路线图)
 - [贡献与协议](#贡献与协议)
 
@@ -477,27 +476,6 @@ PureTerm 扩展段:
 
 ---
 
-## 已归档特性(2026-06-08 起)
-
-**重要**:以下能力曾在 `pureterm-alacritty-runtime` 中实现,因 2026-06-08 Display 8-pass 渲染管线整体归档而连带失效。完整说明见 [`docs/removed-legacy-features.md`](docs/removed-legacy-features.md)。
-
-| 已归档特性 | 原文件位置 | 当前主路径替代 |
-|---|---|---|
-| 8 pass wgpu 渲染管线 | `archive/pureterm-display-path/.../renderer/render_pass/` | 主路径单 pass Iced widget shader(`terminal_shader.rs`),性能与复杂度已够 |
-| 触发器系统(11 动作) | `archive/pureterm-display-path/.../trigger.rs` + `trigger_dispatch.rs` | 暂未回归;设计 spec 仍保留在 [`docs/superpowers/specs/2026-05-15-triggers-system-design.md`](docs/superpowers/specs/2026-05-15-triggers-system-design.md) |
-| OSC 133 Shell 集成 | `archive/pureterm-display-path/.../shell_block.rs` + `shell_integration.rs` | 暂未回归,等需求驱动 |
-| HarfBuzz 文本整形 | `archive/pureterm-display-path/.../renderer/harfbuzz_shaper.rs` | iced 路径走默认字体堆叠 |
-| 字体回退链(5 步 fontdb) | `archive/pureterm-display-path/.../renderer/font_fallback.rs` | iced 路径使用系统字体 fallback |
-| 背景图像渲染 | `archive/pureterm-display-path/.../renderer/bg_image_loader.rs` | 暂未回归 |
-| `alacritty-runtime` 内 SSH 后端 | `archive/pureterm-display-path/.../ssh/`(7 文件) | 主路径 `crates/pureterm/src/ssh/` 独立完整实现(更全 + 加密凭证) |
-| 实验 crate(5 个) | `archive/pureterm-{core,terminal,session,ui,gui}/` | 各归档目录的 `AGENTS.md` 给出替代方案 |
-
-**触发原因**(摘自 [`CLAUDE.md`](CLAUDE.md)):`docs/performance-issues-todo.md` Phase B 误把 Display 路径当主路径 GPU 优化目标,改完用户感知为 0,故整体归档。主路径 GPU 优化已重规划为 P-B' 4 项,只针对 `terminal_shader.rs`。
-
-**回滚方式**:`git checkout HEAD~N -- archive/<path>`(每个归档目录的 `AGENTS.md` 含详细步骤)。
-
----
-
 ## 路线图
 
 **已实现**(2026 Q2):
@@ -543,4 +521,3 @@ PureTerm 扩展段:
 - vendored Alacritty 不做无关改动,便于上游 rebase
 - 新功能在 `crates/pureterm/src/` 实现,不再扩展 `pureterm-alacritty-runtime`
 - 修改 vendored 源码时,在修改处加注释说明原因
-- 归档操作用 `git mv` 保留历史,在 [`docs/removed-legacy-features.md`](docs/removed-legacy-features.md) 中索引

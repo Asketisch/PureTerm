@@ -2,7 +2,7 @@
 name = "pureterm-alacritty-runtime"
 version = "0.1.0"
 edition = "2024"
-description = "PureTerm - GPU glyph atlas runtime (slimmed: Display path archived)"
+description = "PureTerm - GPU glyph atlas runtime"
 
 [dependencies]
 # glyph_atlas 实际需要的依赖
