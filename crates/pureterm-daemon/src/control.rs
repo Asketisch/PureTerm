@@ -31,6 +31,9 @@ pub struct ControlState {
     pub runtime: Option<tokio::runtime::Handle>,
     /// GAP-5.2: live russh SOCKS5 tunnels.
     pub tunnels: crate::tunnel::TunnelManager,
+    /// GAP-6.6: wait-for channel/lock store (tmux `wait-for`). Waiters park
+    /// here until a signaler wakes them (or the daemon shuts down).
+    pub wait_channels: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<tokio::sync::oneshot::Sender<()>>>>>,
 }
 
 impl ControlState {
@@ -48,6 +51,7 @@ impl ControlState {
             exe_mtime,
             runtime: None,
             tunnels: crate::tunnel::TunnelManager::default(),
+            wait_channels: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
 
@@ -109,7 +113,15 @@ async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<ControlSta
         }
     };
 
-    let response = dispatch(&request, &state);
+    // GAP-6.6: `wait_for.*` is async — `wait`/`lock` park the caller. Routed
+    // here (before the sync `dispatch`) since blocking would need an await.
+    // Each connection is its own tokio task, so a parked waiter only blocks
+    // itself, not the accept loop or other callers.
+    let response = if request.method.starts_with("wait_for.") {
+        crate::wait_for::handle(&request, &state).await
+    } else {
+        dispatch(&request, &state)
+    };
     let _ = write_half.write_all(response.to_line().as_bytes()).await;
 }
 
@@ -264,6 +276,30 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                 Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("provide_auth failed: {e}"))),
             }
         }
+        // ── pipe.* (GAP-6.6 pipe-pane — tap a session's PTY to a command) ──
+        "pipe.set" => {
+            let Some(rt) = state.runtime.as_ref().cloned() else {
+                return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "daemon runtime unavailable");
+            };
+            let sid = match sparam(request, "session_id") {
+                Some(s) => s,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing session_id"),
+            };
+            let command = sparam(request, "command"); // None ⇒ clear
+            match crate::pipe_pane::set(&state.manager, &rt, &sid, command.as_deref()) {
+                Ok(()) => Ok(serde_json::json!({ "set": true })),
+                Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("pipe.set failed: {e}"))),
+            }
+        }
+        "pipe.clear" => {
+            let sid = match sparam(request, "session_id") {
+                Some(s) => s,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing session_id"),
+            };
+            crate::pipe_pane::clear(&state.manager, &sid);
+            Ok(serde_json::json!({ "cleared": true }))
+        }
+        "pipe.list" => Ok(serde_json::json!({ "sessions": crate::pipe_pane::list(&state.manager) })),
         other => {
             return JsonRpcResponse::method_not_found(id, other);
         }
@@ -416,5 +452,37 @@ mod tests {
         let resp = dispatch(&req, &state());
         assert!(resp.error.is_none());
         assert_eq!(resp.result.unwrap()["stopped"], false);
+    }
+
+    // ── GAP-6.6 pipe.* dispatch ───────────────────────────────────────────
+    #[test]
+    fn pipe_set_without_runtime_errors() {
+        // Unit-test ControlState has runtime = None, so pipe.set must refuse
+        // (it needs the runtime to spawn the child task).
+        let req = JsonRpcRequest::with_params(
+            11,
+            "pipe.set",
+            serde_json::json!({"session_id": "s1", "command": "cat"}),
+        );
+        let resp = dispatch(&req, &state());
+        let err = resp.error.expect("expected error without runtime");
+        assert_eq!(err.code, ERROR_INVALID_PARAMS);
+    }
+
+    #[test]
+    fn pipe_clear_missing_session_errors() {
+        let req = JsonRpcRequest::with_params(12, "pipe.clear", serde_json::json!({}));
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn pipe_list_empty() {
+        let req = JsonRpcRequest::new(13, "pipe.list");
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_none());
+        let result = resp.result.unwrap();
+        let sessions = result["sessions"].as_array().unwrap();
+        assert!(sessions.is_empty());
     }
 }

@@ -81,6 +81,9 @@ pub struct SessionHandle {
     /// GAP-7.3: true while the child is SIGSTOPped (hibernated). Set/cleared by
     /// `hibernate`/`resume` (M3); idle detection + CPU sampling skip these.
     pub hibernated: Arc<AtomicBool>,
+    /// GAP-6.6: pipe-pane tap. `Some(tx)` ⇒ the pump feeds PTY output to a
+    /// tokio task that writes it to a spawned command's stdin; None ⇒ no pipe.
+    pub pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>>,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
@@ -177,7 +180,9 @@ impl SessionManager {
         let last_output_at = Arc::new(Mutex::new(Instant::now()));
         let last_cpu_active_at = Arc::new(Mutex::new(Instant::now()));
         let hibernated = Arc::new(AtomicBool::new(false));
-        let pump = spawn_pump(pty, listener, stop.clone(), last_output_at.clone());
+        let pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> =
+            Arc::new(Mutex::new(None));
+        let pump = spawn_pump(pty, listener, stop.clone(), last_output_at.clone(), pipe_feeder.clone());
 
         let handle = Arc::new(Mutex::new(SessionHandle {
             id: id.clone(),
@@ -188,6 +193,7 @@ impl SessionManager {
             last_output_at,
             last_cpu_active_at,
             hibernated,
+            pipe_feeder,
             stop,
             join: Some(pump),
         }));
@@ -247,7 +253,9 @@ impl SessionManager {
         let last_output_at = Arc::new(Mutex::new(Instant::now()));
         let last_cpu_active_at = Arc::new(Mutex::new(Instant::now()));
         let hibernated = Arc::new(AtomicBool::new(false));
-        let pump = spawn_pump(ssh_pty, listener, stop.clone(), last_output_at.clone());
+        let pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> =
+            Arc::new(Mutex::new(None));
+        let pump = spawn_pump(ssh_pty, listener, stop.clone(), last_output_at.clone(), pipe_feeder.clone());
 
         let handle = Arc::new(Mutex::new(SessionHandle {
             id: id.clone(),
@@ -258,11 +266,33 @@ impl SessionManager {
             last_output_at,
             last_cpu_active_at,
             hibernated,
+            pipe_feeder,
             stop,
             join: Some(pump),
         }));
         self.sessions.lock().unwrap().insert(id.clone(), handle);
         Ok(id)
+    }
+
+    /// GAP-6.6: fetch a session handle by id (for pipe-pane control).
+    pub fn session_handle(&self, sid: &str) -> Option<Arc<Mutex<SessionHandle>>> {
+        self.sessions.lock().unwrap().get(sid).cloned()
+    }
+
+    /// GAP-6.6: session ids that currently have an active pipe-pane tap.
+    pub fn pipe_status(&self) -> Vec<String> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(sid, h)| {
+                if h.lock().unwrap().pipe_feeder.lock().unwrap().is_some() {
+                    Some(sid.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Enumerate live sessions as serializable descriptors.
@@ -418,10 +448,11 @@ fn spawn_pump<P: PumpablePty + Send + 'static>(
     listener: UnixListener,
     stop: Arc<AtomicBool>,
     last_output_at: Arc<Mutex<Instant>>,
+    pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>>,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("puretermd-session".into())
-        .spawn(move || run_pump(pty, listener, stop, last_output_at))
+        .spawn(move || run_pump(pty, listener, stop, last_output_at, pipe_feeder))
         .expect("spawn session pump")
 }
 
@@ -446,6 +477,7 @@ fn run_pump<P: PumpablePty + Send + 'static>(
     listener: UnixListener,
     stop: Arc<AtomicBool>,
     last_output_at: Arc<Mutex<Instant>>,
+    pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>>,
 ) {
     let poll = match Poller::new() {
         Ok(p) => p,
@@ -520,6 +552,15 @@ fn run_pump<P: PumpablePty + Send + 'static>(
                         ring.push(&buf[..n]);
                         broadcast_output(&mut subscribers, &buf[..n]);
                         flush_subscribers(&mut subscribers);
+                        // GAP-6.6: pipe-pane tap — best-effort feed PTY output to
+                        // the spawned command's stdin task. try_send-style
+                        // (UnboundedSender::send never blocks); a dead task
+                        // (child exited) just yields Err, which we ignore.
+                        if let Ok(feeder) = pipe_feeder.lock() {
+                            if let Some(tx) = feeder.as_ref() {
+                                let _ = tx.send(buf[..n].to_vec());
+                            }
+                        }
                         // GAP-7.3: record PTY activity for idle detection.
                         if let Ok(mut t) = last_output_at.lock() {
                             *t = Instant::now();

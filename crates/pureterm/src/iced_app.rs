@@ -3405,6 +3405,15 @@ impl PureTermApp {
                         }
                     }).collect(),
                     active_pane_ids: self.tabs.iter().map(|t| t.active_pane.0).collect(),
+                    // GAP-6.6: every pane's stable id per tab (DFS order) —
+                    // drives tmux `%N` targeting + `list-panes`.
+                    pane_ids: self
+                        .tabs
+                        .iter()
+                        .map(|t| {
+                            t.split_tree.pane_ids().into_iter().map(|p| p.0).collect()
+                        })
+                        .collect(),
                 };
 
                 let (resp, side_effect) = self.ipc_router.dispatch(
@@ -5390,6 +5399,35 @@ impl PureTermApp {
             Fx::EqualizeSplits => Task::done(Message::EqualizeSplits),
             Fx::FocusNextPane => Task::done(Message::FocusPaneInOrder(1)),
             Fx::FocusPrevPane => Task::done(Message::FocusPaneInOrder(-1)),
+            // ── GAP-6.6: tmux-compatible layout ops ──
+            Fx::ResizePane { pane_id, delta_ratio } => {
+                self.apply_resize_pane(pane_id, delta_ratio);
+                Task::none()
+            }
+            Fx::FocusGeometric { pane_id, direction } => {
+                self.apply_focus_geometric(pane_id, direction);
+                Task::none()
+            }
+            Fx::SwapPaneById { src, dst } => {
+                self.apply_swap_by_ids(PaneId(src), PaneId(dst));
+                Task::none()
+            }
+            Fx::DetachPane { pane_id } => {
+                // Make the target pane active, then reuse the break-pane path.
+                if let Some(id) = pane_id {
+                    self.make_pane_active(PaneId(id));
+                }
+                Task::done(Message::MovePaneToNewTab)
+            }
+            Fx::AttachPane { src_pane_id, dst_tab_index, direction } => {
+                self.apply_attach_pane(PaneId(src_pane_id), dst_tab_index, direction);
+                Task::none()
+            }
+            #[cfg(unix)]
+            Fx::PipePane { pane_id, command } => {
+                self.apply_pipe_pane(pane_id, command);
+                Task::none()
+            }
             // ── Config ──
             Fx::ReloadConfig => {
                 self.apply_config_reload();
@@ -6356,6 +6394,131 @@ impl PureTermApp {
         };
         self.resize_active_tab_panes();
         Some(pane)
+    }
+
+    /// GAP-6.6: resize a pane's split ratio (tmux `resize-pane`). Finds the tab
+    /// containing the pane (active if None), applies the delta to its nearest
+    /// ancestor Split, then resyncs every pane's PTY grid to the new layout.
+    fn apply_resize_pane(&mut self, pane_id: Option<u64>, delta_ratio: f32) {
+        let pid = pane_id
+            .map(PaneId)
+            .unwrap_or_else(|| self.active_tab_ref().map(|t| t.active_pane).unwrap_or(PaneId(0)));
+        let (cw, ch) = {
+            let gs = self.glyph_state.borrow();
+            (gs.cell_width as u16, gs.cell_height as u16)
+        };
+        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let viewport_w = self.viewport_size.width;
+        for tab in &mut self.tabs {
+            if tab.split_tree.contains(pid) {
+                tab.split_tree.resize_ratio(pid, delta_ratio);
+                Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+                break;
+            }
+        }
+    }
+
+    /// GAP-6.6: focus the geometric neighbor (tmux `select-pane -L/-R/-U/-D`).
+    fn apply_focus_geometric(&mut self, pane_id: Option<u64>, direction: SplitDirection) {
+        let pid = pane_id
+            .map(PaneId)
+            .unwrap_or_else(|| self.active_tab_ref().map(|t| t.active_pane).unwrap_or(PaneId(0)));
+        for tab in &mut self.tabs {
+            if tab.split_tree.contains(pid) {
+                if let Some(adj) = tab.split_tree.find_adjacent(pid, direction) {
+                    tab.active_pane = adj;
+                }
+                self.active_tab = tab.id;
+                break;
+            }
+        }
+    }
+
+    /// GAP-6.6: swap two panes by id (tmux `swap-pane -s A -t B`). Both panes
+    /// must share a tab; `swap_by_ids` exchanges their leaf ids so their
+    /// contents render in each other's place (the panes HashMap is untouched).
+    fn apply_swap_by_ids(&mut self, src: PaneId, dst: PaneId) {
+        for tab in &mut self.tabs {
+            if tab.split_tree.contains(src) && tab.split_tree.contains(dst) {
+                tab.split_tree.swap_by_ids(src, dst);
+                break;
+            }
+        }
+    }
+
+    /// GAP-6.6: make `pane_id` the active pane of its tab + switch to that tab
+    /// (used by `break-pane` before detaching, so the right pane is moved).
+    fn make_pane_active(&mut self, pane_id: PaneId) {
+        for tab in &mut self.tabs {
+            if tab.panes.contains_key(&pane_id) {
+                tab.active_pane = pane_id;
+                self.active_tab = tab.id;
+                break;
+            }
+        }
+    }
+
+    /// GAP-6.6: join-pane — move `src` from its tab into `dst_tab_index` as a
+    /// new sibling of the dst tab's active pane (tmux `join-pane`). No-op if src
+    /// is its tab's only pane or either tab is missing. The TerminalContext is
+    /// `Arc`-shared, so moving the `Pane` between tabs preserves the PTY /
+    /// daemon session; only the tree membership + grid sizes change.
+    fn apply_attach_pane(&mut self, src: PaneId, dst_tab_index: usize, direction: SplitDirection) {
+        // 1. Detach src from its source tab (record the index to resync later).
+        let (src_tab_idx, pane) = {
+            let mut found = None;
+            for (i, tab) in self.tabs.iter_mut().enumerate() {
+                if tab.panes.contains_key(&src) {
+                    if tab.panes.len() <= 1 {
+                        break; // can't move the last pane out
+                    }
+                    tab.restore_zoom_if_any();
+                    if let Some(new_first) = tab.split_tree.remove(src) {
+                        tab.active_pane = new_first;
+                        found = Some((i, tab.panes.remove(&src)));
+                    }
+                    break;
+                }
+            }
+            match found {
+                Some((i, Some(p))) => (i, p),
+                _ => return,
+            }
+        };
+        // 2. Insert into the dst tab as a sibling of its active pane.
+        let (cw, ch) = {
+            let gs = self.glyph_state.borrow();
+            (gs.cell_width as u16, gs.cell_height as u16)
+        };
+        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let viewport_w = self.viewport_size.width;
+        if let Some(tab) = self.tabs.get_mut(dst_tab_index) {
+            let at = tab.active_pane;
+            tab.split_tree.split(at, src, direction);
+            tab.panes.insert(src, pane);
+            tab.active_pane = src;
+            Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+        }
+        // 3. Resync the source tab's grid (its layout shrank).
+        if let Some(tab) = self.tabs.get_mut(src_tab_idx) {
+            Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+        }
+    }
+
+    /// GAP-6.6: pipe-pane — resolve the pane → daemon `session_id` and forward
+    /// to `pipe.set`. No-op if the pane isn't daemon-backed (local direct PTY)
+    /// or the daemon is unreachable. `command` None ⇒ clear the tap.
+    #[cfg(unix)]
+    fn apply_pipe_pane(&mut self, pane_id: Option<u64>, command: Option<String>) {
+        let ctx = match pane_id {
+            Some(id) => self.pane_terminal_ctx(PaneId(id)),
+            None => self.active_terminal_ctx(),
+        };
+        let Some(ctx) = ctx else { return };
+        let Some(sid) = ctx.session_id().map(|s| s.to_string()) else { return };
+        if let Ok(socket) = crate::daemon_client::ensure_daemon() {
+            let _ = crate::daemon_client::pipe_set(&socket, &sid, command.as_deref());
+        }
     }
 
     /// Resize all panes in a tab according to the current split layout.

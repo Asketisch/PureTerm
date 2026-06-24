@@ -61,6 +61,8 @@ mod tunnel_cli;
 /// GAP-7.7: custom resume bindings (`pureterm surface resume ...`).
 #[cfg(unix)]
 mod resume_bindings;
+/// GAP-6.6: `pureterm tmux …` — tmux-compatible command subset.
+mod tmux_cli;
 mod terminal_context;
 mod terminal_shader;
 mod vi_mode_handler;

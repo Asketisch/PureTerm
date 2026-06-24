@@ -39,6 +39,25 @@ pub enum IpcSideEffect {
     EqualizeSplits,
     FocusNextPane,
     FocusPrevPane,
+    // GAP-6.6: tmux-compatible layout ops.
+    /// resize a pane's split ratio by a signed delta (tmux `resize-pane -L/-R/-U/-D N`).
+    /// `pane_id` None ⇒ active; `delta_ratio` is clamped to MIN/MAX inside `resize_ratio`.
+    ResizePane { pane_id: Option<u64>, delta_ratio: f32 },
+    /// focus the geometrically-adjacent pane (tmux `select-pane -L/-R/-U/-D`).
+    /// `pane_id` None ⇒ active; `direction` selects the neighbor via `find_adjacent`.
+    FocusGeometric { pane_id: Option<u64>, direction: crate::split_tree::SplitDirection },
+    /// swap two panes by id (tmux `swap-pane -s A -t B`); both must share a tab.
+    SwapPaneById { src: u64, dst: u64 },
+    /// break a pane into its own tab (tmux `break-pane`); None ⇒ active.
+    DetachPane { pane_id: Option<u64> },
+    /// join-pane — move a pane (`src_pane_id`) from its tab into `dst_tab_index`
+    /// as a new sibling (tmux `join-pane -s A -t <tab>`).
+    AttachPane { src_pane_id: u64, dst_tab_index: usize, direction: crate::split_tree::SplitDirection },
+    /// GAP-6.6: pipe-pane — tap a pane's PTY output to a shell command. The
+    /// main loop resolves pane → daemon `session_id` and forwards to
+    /// `pipe.set`. `command` None ⇒ clear. Unix-only (daemon-backed).
+    #[cfg(unix)]
+    PipePane { pane_id: Option<u64>, command: Option<String> },
     // Config
     ReloadConfig,
     // SSH
@@ -106,6 +125,11 @@ pub struct AppSnapshot {
     pub tab_cwds: Vec<Option<String>>,
     /// Active pane ID (.0) per tab.
     pub active_pane_ids: Vec<u64>,
+    /// GAP-6.6: every pane's stable id (DFS order, `.0`) per tab. Lets
+    /// `pane.list` / `surface.list` expose each pane's own id (the legacy
+    /// `active_pane_ids` only gave the focused pane per tab) so tmux `%N`
+    /// targeting can address any pane.
+    pub pane_ids: Vec<Vec<u64>>,
 }
 
 impl Default for AppSnapshot {
@@ -121,6 +145,7 @@ impl Default for AppSnapshot {
             config_path: None,
             tab_cwds: Vec::new(),
             active_pane_ids: Vec::new(),
+            pane_ids: Vec::new(),
         }
     }
 }
@@ -254,11 +279,22 @@ impl SocketRouter {
             for (tab_idx, title) in snap.tab_titles.iter().enumerate() {
                 let count = snap.pane_counts.get(tab_idx).copied().unwrap_or(1);
                 let active_id = snap.active_pane_ids.get(tab_idx).copied().unwrap_or(0);
+                let ids = snap.pane_ids.get(tab_idx);
                 for pane_idx in 0..count {
+                    // GAP-6.6: expose the pane's OWN stable id (vs the legacy
+                    // `active_pane_id`, which was identical for every row in a
+                    // tab). Fall back to active when the per-pane id list is
+                    // shorter than the count so targeting degrades, not breaks.
+                    let pane_id = ids
+                        .and_then(|v| v.get(pane_idx).copied())
+                        .unwrap_or(active_id);
                     panes.push(serde_json::json!({
                         "tab": tab_idx,
                         "tab_title": title,
                         "pane_index": pane_idx,
+                        "pane_id": pane_id,
+                        "active": pane_id == active_id,
+                        // Legacy field kept for back-compat.
                         "active_pane_id": active_id,
                     }));
                 }
@@ -317,22 +353,118 @@ impl SocketRouter {
                 .and_then(|p| p.get("direction"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("next");
+            let pane_id = params
+                .as_ref()
+                .and_then(|p| p.get("pane_id"))
+                .and_then(|v| v.as_u64());
+            use crate::split_tree::SplitDirection;
             match direction {
                 "prev" | "previous" => {
                     (Ok(serde_json::json!({"focused": "prev"})), Some(IpcSideEffect::FocusPrevPane))
                 }
+                // GAP-6.6: geometric focus (tmux `select-pane -L/-R/-U/-D`).
+                "left" | "right" => (
+                    Ok(serde_json::json!({"focused": direction})),
+                    Some(IpcSideEffect::FocusGeometric { pane_id, direction: SplitDirection::Horizontal }),
+                ),
+                "up" | "down" => (
+                    Ok(serde_json::json!({"focused": direction})),
+                    Some(IpcSideEffect::FocusGeometric { pane_id, direction: SplitDirection::Vertical }),
+                ),
                 _ => {
                     (Ok(serde_json::json!({"focused": "next"})), Some(IpcSideEffect::FocusNextPane))
                 }
             }
         });
 
-        router.register("pane.swap", |_params, _snap| {
-            (Ok(serde_json::json!({"swapped": true})), Some(IpcSideEffect::SwapPane))
+        router.register("pane.swap", |params, _snap| {
+            // GAP-6.6: `src`+`dst` ⇒ swap two arbitrary panes by id; otherwise
+            // fall back to swapping the active pane with its sibling (legacy).
+            let src = params.as_ref().and_then(|p| p.get("src")).and_then(|v| v.as_u64());
+            let dst = params.as_ref().and_then(|p| p.get("dst")).and_then(|v| v.as_u64());
+            match (src, dst) {
+                (Some(s), Some(d)) => (
+                    Ok(serde_json::json!({"swapped": true, "src": s, "dst": d})),
+                    Some(IpcSideEffect::SwapPaneById { src: s, dst: d }),
+                ),
+                _ => (Ok(serde_json::json!({"swapped": true})), Some(IpcSideEffect::SwapPane)),
+            }
         });
 
         router.register("pane.zoom", |_params, _snap| {
             (Ok(serde_json::json!({"zoom_toggled": true})), Some(IpcSideEffect::ToggleZoom))
+        });
+
+        // ── GAP-6.6: tmux layout ops (resize / detach / equalize) ──────
+        // resize-pane — adjust the nearest-ancestor Split ratio by a delta.
+        // tmux counts cells; the handler doesn't know total cells, so each
+        // `amount` unit ≈ 3% ratio (MVP). Absolute `cols`/`rows` reuse the shape.
+        router.register("pane.resize", |params, _snap| {
+            const STEP: f32 = 0.03;
+            let pane_id = params.as_ref().and_then(|p| p.get("pane_id")).and_then(|v| v.as_u64());
+            let amount = params.as_ref().and_then(|p| p.get("amount")).and_then(|v| v.as_f64());
+            let dir = params.as_ref().and_then(|p| p.get("direction")).and_then(|v| v.as_str());
+            let cols = params.as_ref().and_then(|p| p.get("cols")).and_then(|v| v.as_f64());
+            let rows = params.as_ref().and_then(|p| p.get("rows")).and_then(|v| v.as_f64());
+            let signed: Option<f32> = if let Some(a) = amount {
+                let mag = a as f32 * STEP;
+                match dir {
+                    Some("left") | Some("up") => Some(-mag),
+                    _ => Some(mag),
+                }
+            } else if let Some(c) = cols.or(rows) {
+                Some(c as f32 * STEP)
+            } else {
+                None
+            };
+            match signed {
+                Some(d) => (
+                    Ok(serde_json::json!({ "resized": true, "delta_ratio": d })),
+                    Some(IpcSideEffect::ResizePane { pane_id, delta_ratio: d }),
+                ),
+                None => (
+                    Err(JsonRpcError {
+                        code: ERROR_INVALID_PARAMS,
+                        message: "pane.resize needs `amount` (+`direction`) or `cols`/`rows`".into(),
+                        data: None,
+                    }),
+                    None,
+                ),
+            }
+        });
+
+        // break-pane — detach a pane into its own tab (None ⇒ active).
+        router.register("pane.detach", |params, _snap| {
+            let pane_id = params.as_ref().and_then(|p| p.get("pane_id")).and_then(|v| v.as_u64());
+            (Ok(serde_json::json!({ "detached": true })), Some(IpcSideEffect::DetachPane { pane_id }))
+        });
+
+        // select-layout — equalize the active tab's split ratios.
+        router.register("pane.equalize", |_params, _snap| {
+            (Ok(serde_json::json!({ "equalized": true })), Some(IpcSideEffect::EqualizeSplits))
+        });
+
+        // join-pane — move a pane from its tab into another (tmux `join-pane`).
+        router.register("pane.attach", |params, _snap| {
+            let src = params.as_ref().and_then(|p| p.get("src_pane_id")).and_then(|v| v.as_u64());
+            let dst_tab = params.as_ref().and_then(|p| p.get("dst_tab_index")).and_then(|v| v.as_u64());
+            let dir = params.as_ref().and_then(|p| p.get("direction")).and_then(|v| v.as_str()).unwrap_or("vertical");
+            match (src, dst_tab) {
+                (Some(s), Some(t)) => {
+                    use crate::split_tree::SplitDirection;
+                    let direction = match dir {
+                        "horizontal" | "h" => SplitDirection::Horizontal,
+                        _ => SplitDirection::Vertical,
+                    };
+                    (Ok(serde_json::json!({ "attached": true, "src": s, "dst_tab": t })),
+                     Some(IpcSideEffect::AttachPane { src_pane_id: s, dst_tab_index: t as usize, direction }))
+                }
+                _ => (Err(JsonRpcError {
+                    code: ERROR_INVALID_PARAMS,
+                    message: "pane.attach needs `src_pane_id` and `dst_tab_index`".into(),
+                    data: None,
+                }), None),
+            }
         });
 
         // ── surface.* (4 methods) ─────────────────────────────────────
@@ -341,12 +473,19 @@ impl SocketRouter {
             for (tab_idx, title) in snap.tab_titles.iter().enumerate() {
                 let count = snap.pane_counts.get(tab_idx).copied().unwrap_or(1);
                 let active_id = snap.active_pane_ids.get(tab_idx).copied().unwrap_or(0);
+                let ids = snap.pane_ids.get(tab_idx);
                 for pane_idx in 0..count {
+                    // GAP-6.6: per-pane stable id (see `pane.list`).
+                    let pane_id = ids
+                        .and_then(|v| v.get(pane_idx).copied())
+                        .unwrap_or(active_id);
                     surfaces.push(serde_json::json!({
                         "id": format!("{}-{}", tab_idx, pane_idx),
                         "tab": tab_idx,
                         "tab_title": title,
                         "pane": pane_idx,
+                        "pane_id": pane_id,
+                        "active": pane_id == active_id,
                         "active_pane_id": active_id,
                         "cwd": snap.tab_cwds.get(tab_idx).and_then(|c| c.clone()),
                     }));
@@ -387,6 +526,23 @@ impl SocketRouter {
                     None,
                 ),
             }
+        });
+
+        // GAP-6.6: pipe-pane — tap a pane's PTY output to a shell command. The
+        // main loop resolves pane → daemon session_id (deferred; sync handlers
+        // only see AppSnapshot) and forwards to `pipe.set`.
+        router.register("surface.pipe", |params, _snap| {
+            let pane_id = params.as_ref().and_then(|p| p.get("pane_id")).and_then(|v| v.as_u64());
+            let command = params
+                .as_ref()
+                .and_then(|p| p.get("command"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            #[cfg(unix)]
+            let fx = Some(IpcSideEffect::PipePane { pane_id, command });
+            #[cfg(not(unix))]
+            let fx = None;
+            (Ok(serde_json::json!({ "queued": true })), fx)
         });
 
         router.register("surface.resize", |_params, _snap| {
@@ -756,6 +912,7 @@ mod tests {
             config_path: Some("/tmp/test.toml".into()),
             tab_cwds: vec![Some("/home/user".into()), None],
             active_pane_ids: vec![10, 20],
+            pane_ids: vec![vec![10, 11], vec![20]],
         }
     }
 
@@ -912,6 +1069,134 @@ mod tests {
         let result = resp.result.unwrap();
         let panes = result.as_array().unwrap();
         assert_eq!(panes.len(), 3); // tab 0 has 2, tab 1 has 1
+    }
+
+    // ── GAP-6.6: tmux layout / pipe RPCs ──────────────────────────────
+    #[test]
+    fn pane_list_exposes_per_pane_id() {
+        // Phase 0: every row carries its own stable id (tmux `%N` targeting).
+        let router = SocketRouter::new();
+        let snap = test_snap(); // pane_ids = [[10, 11], [20]]
+        let (resp, _) = router.dispatch(29, "pane.list", None, &snap);
+        let panes = resp.result.unwrap().as_array().unwrap().clone();
+        let ids: Vec<u64> = panes.iter().map(|p| p["pane_id"].as_u64().unwrap()).collect();
+        assert_eq!(ids, vec![10, 11, 20]);
+    }
+
+    #[test]
+    fn pane_resize_emits_signed_side_effect() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (resp, fx) = router.dispatch(
+            30,
+            "pane.resize",
+            Some(serde_json::json!({"amount": 5, "direction": "left"})),
+            &snap,
+        );
+        assert_eq!(resp.result.unwrap()["resized"], true);
+        assert!(
+            matches!(fx, Some(IpcSideEffect::ResizePane { delta_ratio, .. }) if delta_ratio < 0.0),
+            "left/up should produce a negative delta"
+        );
+    }
+
+    #[test]
+    fn pane_resize_missing_params_errors() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (resp, fx) = router.dispatch(31, "pane.resize", None, &snap);
+        assert!(resp.error.is_some());
+        assert!(fx.is_none());
+    }
+
+    #[test]
+    fn pane_swap_by_id_emits_side_effect() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (_, fx) =
+            router.dispatch(32, "pane.swap", Some(serde_json::json!({"src": 10, "dst": 20})), &snap);
+        assert!(matches!(fx, Some(IpcSideEffect::SwapPaneById { src: 10, dst: 20 })));
+    }
+
+    #[test]
+    fn pane_focus_geometric_horizontal() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (_, fx) =
+            router.dispatch(33, "pane.focus", Some(serde_json::json!({"direction": "left"})), &snap);
+        assert!(matches!(
+            fx,
+            Some(IpcSideEffect::FocusGeometric {
+                direction: crate::split_tree::SplitDirection::Horizontal,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn pane_detach_emits_side_effect() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (_, fx) =
+            router.dispatch(34, "pane.detach", Some(serde_json::json!({"pane_id": 10})), &snap);
+        assert!(matches!(fx, Some(IpcSideEffect::DetachPane { pane_id: Some(10) })));
+    }
+
+    #[test]
+    fn pane_equalize_emits_side_effect() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (_, fx) = router.dispatch(35, "pane.equalize", None, &snap);
+        assert!(matches!(fx, Some(IpcSideEffect::EqualizeSplits)));
+    }
+
+    #[test]
+    fn pane_attach_emits_side_effect() {
+        use crate::split_tree::SplitDirection;
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (_, fx) = router.dispatch(
+            36,
+            "pane.attach",
+            Some(serde_json::json!({"src_pane_id": 10, "dst_tab_index": 1, "direction": "horizontal"})),
+            &snap,
+        );
+        assert!(matches!(
+            fx,
+            Some(IpcSideEffect::AttachPane {
+                src_pane_id: 10,
+                dst_tab_index: 1,
+                direction: SplitDirection::Horizontal
+            })
+        ));
+    }
+
+    #[test]
+    fn pane_attach_missing_params_errors() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (resp, fx) =
+            router.dispatch(37, "pane.attach", Some(serde_json::json!({"src_pane_id": 10})), &snap);
+        assert!(resp.error.is_some());
+        assert!(fx.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn surface_pipe_emits_side_effect() {
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (_, fx) = router.dispatch(
+            38,
+            "surface.pipe",
+            Some(serde_json::json!({"pane_id": 10, "command": "cat > /tmp/x"})),
+            &snap,
+        );
+        assert!(matches!(
+            fx,
+            Some(IpcSideEffect::PipePane { pane_id: Some(10), command })
+                if command.as_deref() == Some("cat > /tmp/x")
+        ));
     }
 
     #[test]

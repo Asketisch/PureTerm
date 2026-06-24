@@ -779,6 +779,47 @@ impl SplitNode {
         let next = ((pos as i32 + delta).rem_euclid(len)) as usize;
         Some(ids[next])
     }
+
+    /// GAP-6.6: swap two panes by id (tmux `swap-pane -s A -t B`). Swaps the
+    /// pane ids of the two leaves in place — the tree structure + ratios are
+    /// preserved, and since rendering maps `PaneId → content`, the two panes'
+    /// contents visually exchange position (exactly swap-pane's semantics).
+    /// Both ids must be present; returns false (tree unchanged) otherwise.
+    pub fn swap_by_ids(&mut self, src: PaneId, dst: PaneId) -> bool {
+        if src == dst {
+            return self.contains(src);
+        }
+        if !self.contains(src) || !self.contains(dst) {
+            return false;
+        }
+        self.swap_ids_inner(src, dst);
+        true
+    }
+
+    fn swap_ids_inner(&mut self, src: PaneId, dst: PaneId) {
+        match self {
+            SplitNode::Leaf(id) => {
+                if *id == src {
+                    *id = dst;
+                } else if *id == dst {
+                    *id = src;
+                }
+            }
+            SplitNode::Split { first, second, .. } => {
+                first.swap_ids_inner(src, dst);
+                second.swap_ids_inner(src, dst);
+            }
+        }
+    }
+
+    /// GAP-6.6: detach (remove) a leaf pane, collapsing its parent Split into
+    /// the sibling (tmux `break-pane` / `join-pane` source side). Returns true
+    /// iff the pane was present and the tree still has ≥1 pane afterwards
+    /// (false if it was the only leaf — the last pane can't be detached). The
+    /// caller owns moving the pane's content elsewhere.
+    pub fn detach_leaf(&mut self, pane_id: PaneId) -> bool {
+        self.remove(pane_id).is_some()
+    }
 }
 
 /// 分割线的位置信息。
@@ -871,6 +912,67 @@ mod tests {
         let mut tree = SplitNode::Leaf(PaneId(42));
         tree.equalize_all();
         assert!(matches!(tree, SplitNode::Leaf(PaneId(42))));
+    }
+
+    // ── GAP-6.6: swap_by_ids / detach_leaf (swap-pane / join-pane) ────────
+
+    #[test]
+    fn swap_by_ids_swaps_two_leaves_anywhere() {
+        let (mut tree, ids) = build_nested(); // DFS order [a, b, c, d, e]
+        assert!(tree.swap_by_ids(ids[0], ids[3])); // swap a ↔ d
+        assert_eq!(tree.pane_ids(), vec![ids[3], ids[1], ids[2], ids[0], ids[4]]);
+    }
+
+    #[test]
+    fn swap_by_ids_twice_restores() {
+        let (mut tree, ids) = build_nested();
+        let before = tree.pane_ids();
+        assert!(tree.swap_by_ids(ids[0], ids[4]));
+        assert!(tree.swap_by_ids(ids[0], ids[4]));
+        assert_eq!(tree.pane_ids(), before);
+    }
+
+    #[test]
+    fn swap_by_ids_unknown_leaves_tree_unchanged() {
+        let (mut tree, ids) = build_nested();
+        let before = tree.pane_ids();
+        assert!(!tree.swap_by_ids(ids[0], PaneId(999)));
+        assert_eq!(tree.pane_ids(), before);
+    }
+
+    #[test]
+    fn swap_by_ids_same_id_present_is_noop() {
+        let (mut tree, ids) = build_nested();
+        let before = tree.pane_ids();
+        assert!(tree.swap_by_ids(ids[0], ids[0]));
+        assert_eq!(tree.pane_ids(), before);
+    }
+
+    #[test]
+    fn detach_leaf_removes_and_keeps_rest() {
+        let (mut tree, ids) = build_nested(); // 5 panes
+        assert!(tree.detach_leaf(ids[1])); // remove b
+        assert_eq!(tree.pane_count(), 4);
+        assert!(!tree.contains(ids[1]));
+        assert!(tree.contains(ids[0]));
+    }
+
+    #[test]
+    fn detach_only_leaf_fails() {
+        let mut tree = SplitNode::single(PaneId(7));
+        assert!(!tree.detach_leaf(PaneId(7)));
+        assert!(matches!(tree, SplitNode::Leaf(PaneId(7))));
+    }
+
+    #[test]
+    fn insert_existing_pane_as_sibling_via_split() {
+        // join-pane target side: `split(at_leaf, existing_pane, dir)` inserts an
+        // external pane as the sibling of at_leaf — split already supports this.
+        let (mut tree, ids) = build_nested();
+        let external = PaneId(999);
+        assert!(tree.split(ids[2], external, SplitDirection::Vertical));
+        assert!(tree.contains(external));
+        assert_eq!(tree.pane_count(), 6);
     }
 
     #[test]

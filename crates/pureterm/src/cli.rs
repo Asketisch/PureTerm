@@ -149,6 +149,13 @@ pub enum Command {
         #[command(subcommand)]
         cmd: McpSub,
     },
+    /// GAP-6.6: tmux-compatible command subset — maps tmux commands onto the
+    /// pane/surface Socket API (+ daemon for pipe-pane/wait-for). Target syntax
+    /// (`-t`/`-s`): `%N`, `:+`, `:-`, omitted=active.
+    Tmux {
+        #[command(subcommand)]
+        cmd: crate::tmux_cli::TmuxSub,
+    },
 }
 
 /// GAP-7.10: `pureterm mcp …` subcommands.
@@ -1040,6 +1047,9 @@ pub fn run(cli: Cli) {
             McpSub::List => mcp_list(),
             McpSub::Uninstall { client } => mcp_uninstall(&client),
         },
+        // GAP-6.6: hybrid — tmux commands dispatch in `tmux_cli` (some need
+        // multi-step RPC + local formatting, e.g. capture-pane / list-panes).
+        Command::Tmux { cmd } => crate::tmux_cli::dispatch(cmd, &socket, json),
     }
 }
 

@@ -9,8 +9,8 @@
 
 | 状态 | 数量 | 说明 |
 |---|---|---|
-| ❌ 未实现 | 16 | 待排期 |
-| 🚧 进行中 | 6 | 代码闭环待 E2E |
+| ❌ 未实现 | 15 | 待排期 |
+| 🚧 进行中 | 7 | 代码闭环待 E2E |
 | ⛔ 不做 | 4 | 见下方 §拒绝 |
 
 ---
@@ -154,7 +154,8 @@
 - **对标**: cmux `Sources/AppleScriptBridge.swift`
 
 ### GAP-6.6 tmux 兼容子集
-- **状态**: ❌ | **优先级**: P2
+- **状态**: 🚧 | **优先级**: P2
+- **现状**: 代码闭环(2026-06-24,全 7 命令 + 辅助)——`crates/pureterm/src/tmux_cli.rs`(`pureterm tmux <command>` 14 子命令 + target 解析器 `%N`/`:+`/`:-`/active/`%0` fallback)。**阶段 1(只读)**:capture-pane(复用 `surface.snapshot` 真实实现,`-p` 默认最近 50 行)/ list-panes(`pane.list`)/ send-keys(`surface.send_text`)/ split-window / kill-pane / select-pane。**阶段 2(布局,新增 RPC + IpcSideEffect)**:pane.resize(复用 `split_tree::resize_ratio`)/ pane.swap `{src,dst}`(新 `swap_by_ids`)/ pane.focus 几何(`find_adjacent`)/ pane.detach(break-pane → MovePaneToNewTab)/ pane.equalize(`equalize_all`)。**阶段 3(跨 tab)**:pane.attach(join-pane;`remove`+`split`+TerminalContext `Arc` 移动,PTY/daemon session 跟随)。**阶段 4(daemon 新机制)**:pipe-pane(`crates/pureterm-daemon/src/pipe_pane.rs`,pump `pipe_feeder` mpsc → tokio 子进程 `kill_on_drop`;GUI `surface.pipe` 解析 pane→session 转发)+ wait-for(`wait_for.rs` channel/lock store + async handler;CLI 直连 daemon socket 绕 `daemon_client` 5s 超时)。`tokio` +`process` feature。`AppSnapshot.pane_ids` + `pane.list`/`surface.list` 每 pane 稳定 id。**release 编译 0 error + dist .app 已重打包;407 pureterm 单测 + 53 daemon 单测绿**(含 pipe.*/wait_for.* dispatch + wait↔signal / unlock 释放单个 waiter 时序测试;1 个 `discovery::instance_lock_is_exclusive` 失败 = 环境 production puretermd 占锁,discovery.rs 未改)。**待用户手动 GUI E2E**(7 命令逐个验证渲染/事件,esp join-pane 跨 tab 移动)
 - **目标**: `pureterm tmux ...` 子集 — `capture-pane / resize-pane / pipe-pane / wait-for / swap-pane / break-pane / join-pane`;解析 tmux 参数映射到 Socket API
 - **依赖**: GAP-6.1
 - **DoD**: `pureterm tmux capture-pane -t %0 -p` 输出最近 50 行
