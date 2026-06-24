@@ -635,6 +635,10 @@ pub enum Message {
     InputMethod(iced::advanced::input_method::Event),
     WindowResized(window::Id, Size),
     WindowClosed(window::Id),
+    /// GAP-2.1: a window gained OS focus. Drives per-window keyboard routing —
+    /// the handler points `active_window_id` at it so keystrokes/IME land in
+    /// that window's active terminal (detached windows are no longer input-dead).
+    WindowFocused(window::Id),
     /// Device pixel ratio changed (e.g. dragging window between Retina and 1× displays).
     ScaleFactorChanged(window::Id, f32),
     /// File/directory dropped onto the window via OS drag-and-drop.
@@ -3137,6 +3141,17 @@ impl PureTermApp {
                     }
                 }
             }
+            // GAP-2.1: 焦点切到某窗口 → 把键盘/IME 路由指针 `active_window_id`
+            // 指向它。整条按键链路(active_terminal_ctx / active_tab_mut / IME
+            // commit)都经 `active_window_id` 解析,故只需改这一个字段,detached
+            // 窗口即可独立接收输入(此前 main-centric:detached 能渲染但按键全进主窗)。
+            // 未知 win_id(如已关窗的迟到事件)静默忽略,保持不变。
+            Message::WindowFocused(win_id) => {
+                if self.window_for(win_id).is_some() {
+                    self.active_window_id = win_id;
+                }
+                return Task::none();
+            }
             Message::WindowClosed(win_id) => {
                 if Some(win_id) == self.settings_window {
                     self.settings_window = None;
@@ -3166,6 +3181,13 @@ impl PureTermApp {
                 }
                 // 从统一 vec 移除已关窗口(main 或 detached)。
                 self.windows.retain(|w| w.window_id != win_id);
+                // GAP-2.1: 若关掉的是当前焦点窗口,把路由指针弹回主窗,避免后续
+                // 按键/IME 落到已不存在的窗口上(active_window_id 必须恒指向存活窗口)。
+                if win_id == self.active_window_id {
+                    if let Some(main) = self.main_window {
+                        self.active_window_id = main;
+                    }
+                }
                 // PureTerm: 全部窗口（主终端 + 设置 + detached）都关闭时退出进程
                 // （Alacritty 上游规范行为）。这样 16ms TerminalWakeup 循环里
                 // 的 dock-reopen 消费逻辑再也跑不到——也就不会"关闭后又自动
@@ -8875,6 +8897,9 @@ impl PureTermApp {
                 Event::Window(window::Event::Closed) => {
                     Some(Message::WindowClosed(win_id))
                 }
+                // GAP-2.1: 窗口获得 OS 焦点 → 路由键盘/IME 到该窗口。iced 0.14 的
+                // `window::Event::Focused` 走同一 listen_with 闭包(携带 win_id)。
+                Event::Window(window::Event::Focused) => Some(Message::WindowFocused(win_id)),
                 Event::Window(window::Event::Rescaled(scale)) => {
                     Some(Message::ScaleFactorChanged(win_id, scale))
                 }

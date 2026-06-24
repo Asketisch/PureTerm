@@ -9,6 +9,9 @@ mod join_pane_e2e;
 /// GAP-2.1: Workspace 切换「不丢 Surface 状态」不变量(headless,无 PTY)。
 #[cfg(all(test, unix))]
 mod workspace_e2e;
+/// GAP-2.1: detached 键盘路由「焦点指针决定按键落点」不变量(headless,无 GUI)。
+#[cfg(all(test, unix))]
+mod keyboard_routing_e2e;
 mod agent_hooks;
 mod agent_sessions;
 mod app_config;
