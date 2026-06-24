@@ -1486,7 +1486,7 @@ impl PureTermApp {
                 title: title.clone(),
             },
         );
-        self.tabs.push(Tab {
+        self.tabs_mut().push(Tab {
             id,
             title: title.clone(),
             panes,
@@ -1497,7 +1497,7 @@ impl PureTermApp {
             zoom_state: None,
             vi_sub_mode: None,
         });
-        self.active_tab = id;
+        self.set_active_tab(id);
         self.events.emit(
             crate::events::Category::Surface,
             "tab.created",
@@ -1570,9 +1570,9 @@ impl PureTermApp {
             }
 
             if idx == outcome.active_tab_index {
-                self.active_tab = tab_id;
+                self.set_active_tab(tab_id);
             }
-            self.tabs.push(Tab {
+            self.tabs_mut().push(Tab {
                 id: tab_id,
                 title: rtab.title,
                 panes,
@@ -1606,7 +1606,7 @@ impl PureTermApp {
 
         log::info!(
             "GAP-5.6: restored {} tab(s) from previous session",
-            self.tabs.len()
+            self.tabs().len()
         );
         true
     }
@@ -1620,7 +1620,7 @@ impl PureTermApp {
         use crate::session_restore::{LayoutSnapshot, PaneSnapshot, TabSnapshot, ViewportSnapshot};
 
         let tabs = self
-            .tabs
+            .tabs()
             .iter()
             .map(|tab| {
                 let leaf_ids = tab.split_tree.pane_ids();
@@ -1692,9 +1692,9 @@ impl PureTermApp {
             .collect();
 
         let active_tab = self
-            .tabs
+            .tabs()
             .iter()
-            .position(|t| t.id == self.active_tab)
+            .position(|t| t.id == self.active_tab_id())
             .unwrap_or(0);
 
         LayoutSnapshot {
@@ -2060,7 +2060,7 @@ impl PureTermApp {
     /// borrow of `self`.
     #[cfg(unix)]
     fn pane_terminal_ctx(&self, pane_id: PaneId) -> Option<Arc<TerminalContext>> {
-        self.tabs
+        self.tabs()
             .iter()
             .find_map(|tab| tab.panes.get(&pane_id).and_then(|p| p.terminal().cloned()))
     }
@@ -2071,7 +2071,7 @@ impl PureTermApp {
         &self,
         pane_id: PaneId,
     ) -> Option<Arc<crate::browser::BrowserContext>> {
-        self.tabs
+        self.tabs()
             .iter()
             .find_map(|tab| tab.panes.get(&pane_id).and_then(|p| p.web().cloned()))
     }
@@ -2093,7 +2093,7 @@ impl PureTermApp {
         pos: Point,
         display_offset: usize,
     ) -> Option<(TermPoint, Side)> {
-        let tab = self.tabs.iter().find(|t| t.panes.contains_key(&pane_id))?;
+        let tab = self.tabs().iter().find(|t| t.panes.contains_key(&pane_id))?;
         let terminal_height = terminal_content_height(self.viewport_size.height);
         let layout = tab.split_tree.compute_layout(
             0.0,
@@ -2185,7 +2185,7 @@ impl PureTermApp {
             Ok(ctx) => {
                 let id = self.push_ssh_tab(profile_name.clone(), ctx);
                 self.ssh_dialog = None;
-                self.active_tab = id;
+                self.set_active_tab(id);
                 // GAP-6.7: SSH tab + daemon session created.
                 self.events.emit(
                     crate::events::Category::Surface,
@@ -2234,7 +2234,7 @@ impl PureTermApp {
                     Ok(ctx) => {
                         let id = self.push_ssh_tab(profile_name.clone(), ctx);
                         self.ssh_dialog = None;
-                        self.active_tab = id;
+                        self.set_active_tab(id);
                     },
                     Err(e) => {
                         self.show_ssh_error(self.i18n.t_fmt(
@@ -2278,7 +2278,7 @@ impl PureTermApp {
         // Gather the pane's reconnect params (limits the immutable borrow of
         // self to this block so the ssh_manager mutation below is clean).
         let params = {
-            let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) else {
+            let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) else {
                 return;
             };
             let Some(pane) = tab.panes.get(&pane_id) else { return };
@@ -2716,38 +2716,38 @@ impl PureTermApp {
     }
 
     fn activate_next_tab(&mut self) {
-        if self.tabs.is_empty() {
+        if self.tabs().is_empty() {
             return;
         }
-        let pos = self.tabs.iter().position(|t| t.id == self.active_tab).unwrap_or(0);
-        let next = (pos + 1) % self.tabs.len();
-        self.active_tab = self.tabs[next].id;
+        let pos = self.tabs().iter().position(|t| t.id == self.active_tab_id()).unwrap_or(0);
+        let next = (pos + 1) % self.tabs().len();
+        self.set_active_tab(self.tabs()[next].id);
     }
 
     fn activate_prev_tab(&mut self) {
-        if self.tabs.is_empty() {
+        if self.tabs().is_empty() {
             return;
         }
-        let pos = self.tabs.iter().position(|t| t.id == self.active_tab).unwrap_or(0);
-        let prev = if pos == 0 { self.tabs.len() - 1 } else { pos - 1 };
-        self.active_tab = self.tabs[prev].id;
+        let pos = self.tabs().iter().position(|t| t.id == self.active_tab_id()).unwrap_or(0);
+        let prev = if pos == 0 { self.tabs().len() - 1 } else { pos - 1 };
+        self.set_active_tab(self.tabs()[prev].id);
     }
 
     fn close_active_tab(&mut self) {
-        let active = self.active_tab;
-        if let Some(pos) = self.tabs.iter().position(|t| t.id == active) {
-            self.tabs.remove(pos);
-            if !self.tabs.is_empty() {
-                let new_idx = pos.min(self.tabs.len() - 1);
-                self.active_tab = self.tabs[new_idx].id;
+        let active = self.active_tab_id();
+        if let Some(pos) = self.tabs().iter().position(|t| t.id == active) {
+            self.tabs_mut().remove(pos);
+            if !self.tabs().is_empty() {
+                let new_idx = pos.min(self.tabs().len() - 1);
+                self.set_active_tab(self.tabs()[new_idx].id);
             }
         }
     }
 
     /// 获取活跃 tab 中活跃 pane 的可变引用。
     fn active_pane_mut(&mut self) -> Option<&mut Pane> {
-        let active_tab = self.active_tab;
-        let tab = self.tabs.iter_mut().find(|t| t.id == active_tab)?;
+        let active_tab = self.active_tab_id();
+        let tab = self.tabs_mut().iter_mut().find(|t| t.id == active_tab)?;
         tab.panes.get_mut(&tab.active_pane)
     }
 
@@ -2873,7 +2873,7 @@ impl PureTermApp {
                         // 跨窗口累加 `next_tab_id`，导致新窗口首个 tab 叫 "Tab 6"）。
                         self.next_tab_id = 0;
                         let first_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
-                        self.active_tab = first_id;
+                        self.set_active_tab(first_id);
                         self.metal_layer_configured = false;
                         self.glyph_state.borrow_mut().mark_atlas_dirty();
                         return task.map(Message::MainWindowOpened);
@@ -2904,7 +2904,7 @@ impl PureTermApp {
                                     // by new tabs/panes and restored when this pane
                                     // becomes active again.
                                     self.pane_cwds.insert(*pane_id, path.clone());
-                                    if *pane_id == tab.active_pane && tab.id == self.active_tab {
+                                    if *pane_id == tab.active_pane && tab.id == self.active_tab_id() {
                                         self.status_bar_cwd = Some(path);
                                         // Immediately refresh git branch on CWD change.
                                         if let Some(ref cwd) = self.status_bar_cwd {
@@ -2934,7 +2934,7 @@ impl PureTermApp {
                     let pane_id = *pane_id;
                     let created_at = *created_at;
                     let pane_count = *pane_count;
-                    let tab = self.tabs.iter().find(|t| t.id == tab_id);
+                    let tab = self.tabs().iter().find(|t| t.id == tab_id);
                     if let Some(tab) = tab {
                         if pane_count <= 1 {
                             // SSH grace period: if an SSH tab exits within 5 seconds
@@ -2974,12 +2974,14 @@ impl PureTermApp {
                                 }
 
                                 // Remove the failed tab.
-                                self.tabs.retain(|t| t.id != tab_id);
-                                if self.active_tab == tab_id {
-                                    self.active_tab = self.tabs
-                                        .first()
-                                        .map(|t| t.id)
-                                        .unwrap_or(tab_id);
+                                self.tabs_mut().retain(|t| t.id != tab_id);
+                                if self.active_tab_id() == tab_id {
+                                    self.set_active_tab(
+                                        self.tabs()
+                                            .first()
+                                            .map(|t| t.id)
+                                            .unwrap_or(tab_id),
+                                    );
                                 }
 
                                 // Show the error in the SSH dialog.
@@ -3134,7 +3136,7 @@ impl PureTermApp {
                         crate::session_restore::save_atomic(&snapshot);
                     }
                     self.main_window = None;
-                    self.tabs.clear();
+                    self.tabs_mut().clear();
                     // GAP-6.7: main window closed.
                     self.events.emit(
                         crate::events::Category::Window,
@@ -3277,10 +3279,10 @@ impl PureTermApp {
             }
             Message::NewTab => {
                 let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
-                self.active_tab = new_id;
+                self.set_active_tab(new_id);
             }
             Message::CloseTab(tab_id) => {
-                if self.tabs.len() <= 1 {
+                if self.tabs().len() <= 1 {
                     if let Some(win_id) = self.main_window {
                         return window::close(win_id);
                     }
@@ -3290,7 +3292,7 @@ impl PureTermApp {
                     // next launch (only an app quit / window close preserves
                     // sessions). Kill before we drop the GUI handles.
                     #[cfg(unix)]
-                    if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
+                    if let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) {
                         for pane in tab.panes.values() {
                             if let Some(ctx) = pane.terminal() {
                                 self.kill_pane_session(ctx);
@@ -3300,7 +3302,7 @@ impl PureTermApp {
                     // SSH cleanup: release pool entries for all panes in the tab
                     #[cfg(unix)]
                     if let Some(manager) = self.ssh_manager.as_ref() {
-                        if let Some(tab) = self.tabs.iter().find(|t| t.id == tab_id) {
+                        if let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) {
                             for pane in tab.panes.values() {
                                 let Some(ctx) = pane.terminal() else { continue };
                                 // GAP-5.6: this is a user-initiated close —
@@ -3315,18 +3317,18 @@ impl PureTermApp {
                         }
                     }
 
-                    let idx = self.tabs.iter().position(|t| t.id == tab_id).unwrap_or(0);
-                    self.tabs.retain(|t| t.id != tab_id);
-                    if self.active_tab == tab_id {
-                        let new_idx = idx.min(self.tabs.len() - 1);
-                        self.active_tab = self.tabs[new_idx].id;
+                    let idx = self.tabs().iter().position(|t| t.id == tab_id).unwrap_or(0);
+                    self.tabs_mut().retain(|t| t.id != tab_id);
+                    if self.active_tab_id() == tab_id {
+                        let new_idx = idx.min(self.tabs().len() - 1);
+                        self.set_active_tab(self.tabs()[new_idx].id);
                     }
                     self.mark_layout_dirty();
                 }
             }
             Message::ActivateTab(tab_id) => {
-                if self.tabs.iter().any(|t| t.id == tab_id) {
-                    self.active_tab = tab_id;
+                if self.tabs().iter().any(|t| t.id == tab_id) {
+                    self.set_active_tab(tab_id);
                     self.refresh_status_bar_cwd();
                     self.events.emit(
                         crate::events::Category::Surface,
@@ -3339,42 +3341,42 @@ impl PureTermApp {
                 }
             }
             Message::NextTab => {
-                if let Some(idx) = self.tabs.iter().position(|t| t.id == self.active_tab) {
-                    let next = (idx + 1) % self.tabs.len();
-                    self.active_tab = self.tabs[next].id;
+                if let Some(idx) = self.tabs().iter().position(|t| t.id == self.active_tab_id()) {
+                    let next = (idx + 1) % self.tabs().len();
+                    self.set_active_tab(self.tabs()[next].id);
                     self.refresh_status_bar_cwd();
                     self.events.emit(
                         crate::events::Category::Surface,
                         "tab.switched",
                         None,
-                        serde_json::json!({ "tab_id": self.active_tab.0 }),
+                        serde_json::json!({ "tab_id": self.active_tab_id().0 }),
                     );
                     self.reposition_web_panes();
                 }
             }
             Message::PrevTab => {
-                if let Some(idx) = self.tabs.iter().position(|t| t.id == self.active_tab) {
-                    let prev = if idx == 0 { self.tabs.len() - 1 } else { idx - 1 };
-                    self.active_tab = self.tabs[prev].id;
+                if let Some(idx) = self.tabs().iter().position(|t| t.id == self.active_tab_id()) {
+                    let prev = if idx == 0 { self.tabs().len() - 1 } else { idx - 1 };
+                    self.set_active_tab(self.tabs()[prev].id);
                     self.refresh_status_bar_cwd();
                     self.events.emit(
                         crate::events::Category::Surface,
                         "tab.switched",
                         None,
-                        serde_json::json!({ "tab_id": self.active_tab.0 }),
+                        serde_json::json!({ "tab_id": self.active_tab_id().0 }),
                     );
                     self.reposition_web_panes();
                 }
             }
             Message::ActivateTabByIndex(i) => {
-                if i < self.tabs.len() {
-                    self.active_tab = self.tabs[i].id;
+                if i < self.tabs().len() {
+                    self.set_active_tab(self.tabs()[i].id);
                     self.refresh_status_bar_cwd();
                     self.events.emit(
                         crate::events::Category::Surface,
                         "tab.switched",
                         None,
-                        serde_json::json!({ "tab_id": self.active_tab.0 }),
+                        serde_json::json!({ "tab_id": self.active_tab_id().0 }),
                     );
                     self.reposition_web_panes();
                 }
@@ -3395,7 +3397,7 @@ impl PureTermApp {
                     &name,
                 );
                 let id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
-                self.active_tab = id;
+                self.set_active_tab(id);
                 self.refresh_status_bar_cwd();
                 self.reposition_web_panes();
                 self.mark_layout_dirty();
@@ -3693,10 +3695,10 @@ impl PureTermApp {
                 // Build a rich snapshot from live app state.
                 let snap = crate::ipc::methods::AppSnapshot {
                     window_count: if self.main_window.is_some() { 1 } else { 0 },
-                    tab_titles: self.tabs.iter().map(|t| t.title.clone()).collect(),
-                    tab_ids: self.tabs.iter().map(|t| t.id.0).collect(),
-                    pane_counts: self.tabs.iter().map(|t| t.panes.len()).collect(),
-                    active_tab_index: self.tabs.iter().position(|t| t.id == self.active_tab).unwrap_or(0),
+                    tab_titles: self.tabs().iter().map(|t| t.title.clone()).collect(),
+                    tab_ids: self.tabs().iter().map(|t| t.id.0).collect(),
+                    pane_counts: self.tabs().iter().map(|t| t.panes.len()).collect(),
+                    active_tab_index: self.tabs().iter().position(|t| t.id == self.active_tab_id()).unwrap_or(0),
                     version: env!("CARGO_PKG_VERSION").to_string(),
                     ssh_profile_names: {
                         #[cfg(unix)]
@@ -3705,22 +3707,22 @@ impl PureTermApp {
                         { Vec::new() }
                     },
                     config_path: Some(self.config_path.to_string_lossy().into_owned()),
-                    tab_cwds: self.tabs.iter().map(|t| {
+                    tab_cwds: self.tabs().iter().map(|t| {
                         // CWD is tracked per-active-pane via OSC 7. The status bar
                         // reflects the currently focused tab's surface; report that
                         // for the active tab and None for others until per-tab CWD
                         // tracking is added.
-                        if t.id == self.active_tab {
+                        if t.id == self.active_tab_id() {
                             self.status_bar_cwd.clone()
                         } else {
                             None
                         }
                     }).collect(),
-                    active_pane_ids: self.tabs.iter().map(|t| t.active_pane.0).collect(),
+                    active_pane_ids: self.tabs().iter().map(|t| t.active_pane.0).collect(),
                     // GAP-6.6: every pane's stable id per tab (DFS order) —
                     // drives tmux `%N` targeting + `list-panes`.
                     pane_ids: self
-                        .tabs
+                        .tabs()
                         .iter()
                         .map(|t| {
                             t.split_tree.pane_ids().into_iter().map(|p| p.0).collect()
@@ -4060,13 +4062,13 @@ impl PureTermApp {
                     Some(m) => m,
                     None => return Task::none(),
                 };
-                let tab_idx = self.tabs.iter().position(|t| t.id == menu.tab_id);
+                let tab_idx = self.tabs().iter().position(|t| t.id == menu.tab_id);
 
                 // GAP-3.7: Pane-level items — convert to Action and dispatch.
                 // These first set active_tab to the menu's target tab, then
                 // go through the unified dispatch path.
                 if let Some(action) = crate::keymap::action_from_context_menu(item) {
-                    self.active_tab = menu.tab_id;
+                    self.set_active_tab(menu.tab_id);
                     return self.dispatch_action(action);
                 }
 
@@ -4077,29 +4079,29 @@ impl PureTermApp {
                     }
                     ContextMenuItem::CloseOtherTabs => {
                         let keep_id = menu.tab_id;
-                        self.tabs.retain(|t| t.id == keep_id);
-                        self.active_tab = keep_id;
+                        self.tabs_mut().retain(|t| t.id == keep_id);
+                        self.set_active_tab(keep_id);
                     }
                     ContextMenuItem::CloseTabsToLeft => {
                         if let Some(idx) = tab_idx {
-                            self.tabs.drain(0..idx);
-                            if !self.tabs.iter().any(|t| t.id == self.active_tab) {
-                                self.active_tab = menu.tab_id;
+                            self.tabs_mut().drain(0..idx);
+                            if !self.tabs().iter().any(|t| t.id == self.active_tab_id()) {
+                                self.set_active_tab(menu.tab_id);
                             }
                         }
                     }
                     ContextMenuItem::CloseTabsToRight => {
                         if let Some(idx) = tab_idx {
-                            self.tabs.drain(idx + 1..);
+                            self.tabs_mut().drain(idx + 1..);
                         }
                     }
                     ContextMenuItem::MoveToNewWindow => {
                         if let Some(idx) = tab_idx {
-                            let mut tab = self.tabs.remove(idx);
-                            if self.active_tab == tab.id {
-                                let new_idx = idx.min(self.tabs.len().saturating_sub(1));
-                                if !self.tabs.is_empty() {
-                                    self.active_tab = self.tabs[new_idx].id;
+                            let mut tab = self.tabs_mut().remove(idx);
+                            if self.active_tab_id() == tab.id {
+                                let new_idx = idx.min(self.tabs().len().saturating_sub(1));
+                                if !self.tabs().is_empty() {
+                                    self.set_active_tab(self.tabs()[new_idx].id);
                                 }
                             }
                             // PureTerm: 新窗口是「干净的窗口」，从 Tab 1 开始计数。
@@ -4134,7 +4136,7 @@ impl PureTermApp {
                                 win_id_for_task,
                                 tab,
                             ));
-                            if self.tabs.is_empty() {
+                            if self.tabs().is_empty() {
                                 if let Some(main_id) = self.main_window {
                                     return Task::batch(vec![
                                         window::close(main_id),
@@ -4156,7 +4158,7 @@ impl PureTermApp {
                     }
                     ContextMenuItem::RenameTab => {
                         let title = self
-                            .tabs
+                            .tabs()
                             .iter()
                             .find(|t| t.id == menu.tab_id)
                             .map(|t| t.title.clone())
@@ -4187,7 +4189,7 @@ impl PureTermApp {
             }
             Message::RenameConfirmed => {
                 if let Some(rename) = self.renaming_tab.take() {
-                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == rename.tab_id) {
+                    if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == rename.tab_id) {
                         if !rename.draft.is_empty() {
                             tab.title = rename.draft;
                         }
@@ -4197,14 +4199,14 @@ impl PureTermApp {
             // Tab color
             Message::TabColorPicked(color) => {
                 if let Some(tab_id) = self.color_picker_tab.take() {
-                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == tab_id) {
                         tab.tab_color = Some(color);
                     }
                 }
             }
             Message::ClearTabColor => {
                 if let Some(tab_id) = self.color_picker_tab.take() {
-                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == tab_id) {
                         tab.tab_color = None;
                     }
                 }
@@ -4217,8 +4219,8 @@ impl PureTermApp {
             }
             Message::TabListSelected(tab_id) => {
                 self.tab_list = None;
-                if self.tabs.iter().any(|t| t.id == tab_id) {
-                    self.active_tab = tab_id;
+                if self.tabs().iter().any(|t| t.id == tab_id) {
+                    self.set_active_tab(tab_id);
                 }
             }
             // Split pane messages
@@ -4233,16 +4235,16 @@ impl PureTermApp {
             }
             // ---- GAP-2.2 嵌套分屏补齐 ----
             Message::EqualizeSplits => {
-                let active_tab_id = self.active_tab;
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+                let active_tab_id = self.active_tab_id();
+                if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == active_tab_id) {
                     tab.restore_zoom_if_any();
                     tab.split_tree.equalize_all();
                 }
                 self.resize_active_tab_panes();
             }
             Message::SwapPane => {
-                let active_tab_id = self.active_tab;
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+                let active_tab_id = self.active_tab_id();
+                if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == active_tab_id) {
                     tab.restore_zoom_if_any();
                     let pane = tab.active_pane;
                     let _ = tab.split_tree.swap_with_sibling(pane);
@@ -4250,8 +4252,8 @@ impl PureTermApp {
                 self.resize_active_tab_panes();
             }
             Message::ToggleZoom => {
-                let active_tab_id = self.active_tab;
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+                let active_tab_id = self.active_tab_id();
+                if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == active_tab_id) {
                     if let Some(saved) = tab.zoom_state.take() {
                         // 当前在 zoom 中 → 恢复 saved 树
                         if saved.contains(tab.active_pane) {
@@ -4287,7 +4289,7 @@ impl PureTermApp {
                     let title = pane.title.clone();
                     let mut panes = HashMap::new();
                     panes.insert(pane_id, pane);
-                    self.tabs.push(Tab {
+                    self.tabs_mut().push(Tab {
                         id: new_tab_id,
                         title,
                         panes,
@@ -4298,7 +4300,7 @@ impl PureTermApp {
                         zoom_state: None,
                         vi_sub_mode: None,
                     });
-                    self.active_tab = new_tab_id;
+                    self.set_active_tab(new_tab_id);
                     self.resize_active_tab_panes();
                 }
             }
@@ -4372,7 +4374,7 @@ impl PureTermApp {
                 self.refresh_status_bar_cwd();
                 // 2) 拿到 pane 的 TerminalContext。
                 let ctx = self
-                    .tabs
+                    .tabs()
                     .iter()
                     .find(|t| t.panes.contains_key(&pane_id))
                     .and_then(|t| t.panes.get(&pane_id))
@@ -4441,7 +4443,7 @@ impl PureTermApp {
                     .unwrap_or(false);
                 if drag_active {
                     let ctx = self
-                        .tabs
+                        .tabs()
                         .iter()
                         .find(|t| t.panes.contains_key(&pane_id))
                         .and_then(|t| t.panes.get(&pane_id))
@@ -4462,12 +4464,12 @@ impl PureTermApp {
             }
             Message::PaneRightClick(pane_id) => {
                 // 在 pane 上右键：切换活跃 tab+ pane，然后弹出 context menu
-                if let Some((tab_id, _)) = self.tabs.iter()
+                if let Some((tab_id, _)) = self.tabs().iter()
                     .find(|t| t.panes.contains_key(&pane_id))
                     .map(|t| (t.id, ()))
                 {
-                    self.active_tab = tab_id;
-                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == tab_id) {
+                    self.set_active_tab(tab_id);
+                    if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == tab_id) {
                         tab.active_pane = pane_id;
                     }
                     self.context_menu = Some(ContextMenuState {
@@ -4850,7 +4852,7 @@ impl PureTermApp {
             }
             Message::DividerPress(mut drag) => {
                 // 在按下时通过 split_id 找到分割线屏幕位置和可用大小
-                if let Some(tab) = self.tabs.iter().find(|t| t.id == drag.tab_id) {
+                if let Some(tab) = self.tabs().iter().find(|t| t.id == drag.tab_id) {
                     let terminal_height = terminal_content_height(self.viewport_size.height);
                     if let Some(divider) = tab.split_tree.compute_divider_by_split_id(
                         drag.split_id,
@@ -4940,7 +4942,7 @@ impl PureTermApp {
             }
             Message::PtyExitedPane(tab_id, pane_id) => {
                 // Close specific pane, keep tab alive if other panes exist
-                let pane_count = self.tabs.iter()
+                let pane_count = self.tabs().iter()
                     .find(|t| t.id == tab_id)
                     .map(|t| t.panes.len())
                     .unwrap_or(0);
@@ -5285,10 +5287,10 @@ impl PureTermApp {
         match action {
             Action::NewTab => {
                 let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
-                self.active_tab = new_id;
+                self.set_active_tab(new_id);
                 Task::none()
             }
-            Action::CloseTab => Task::done(Message::CloseTab(self.active_tab)),
+            Action::CloseTab => Task::done(Message::CloseTab(self.active_tab_id())),
             Action::ClosePaneOrTab => {
                 // Context-dependent: close pane first; if last pane, close tab
                 let has_multiple_panes = self
@@ -5298,7 +5300,7 @@ impl PureTermApp {
                 if has_multiple_panes {
                     Task::done(Message::ClosePane)
                 } else {
-                    Task::done(Message::CloseTab(self.active_tab))
+                    Task::done(Message::CloseTab(self.active_tab_id()))
                 }
             }
             Action::NextTab => Task::done(Message::NextTab),
@@ -5641,7 +5643,7 @@ impl PureTermApp {
                 terminal_content_height(self.viewport_size.height);
             let viewport_w = self.viewport_size.width;
 
-            for tab in &mut self.tabs {
+            for tab in self.tabs_mut() {
                 Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
             }
         }
@@ -5671,11 +5673,11 @@ impl PureTermApp {
             // ── Tab operations ──
             Fx::NewTab => {
                 let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
-                self.active_tab = new_id;
+                self.set_active_tab(new_id);
                 Task::none()
             }
             Fx::CloseTab { index } => {
-                if let Some(tab) = self.tabs.get(index) {
+                if let Some(tab) = self.tabs().get(index) {
                     let tab_id = tab.id;
                     Task::done(Message::CloseTab(tab_id))
                 } else {
@@ -5683,7 +5685,7 @@ impl PureTermApp {
                 }
             }
             Fx::SwitchTab { index } => {
-                if let Some(tab) = self.tabs.get(index) {
+                if let Some(tab) = self.tabs().get(index) {
                     let tab_id = tab.id;
                     Task::done(Message::ActivateTab(tab_id))
                 } else {
@@ -5839,7 +5841,7 @@ impl PureTermApp {
         // Associate with the active pane (heuristic: the agent most recently
         // launched is the focused pane). `capture_layout` reads this map to
         // persist agent_session_id into PaneSnapshot for cold resume.
-        if let Some(tab) = self.tabs.iter().find(|t| t.id == self.active_tab) {
+        if let Some(tab) = self.tabs().iter().find(|t| t.id == self.active_tab_id()) {
             self.agent_sessions.insert(tab.active_pane, (session_id, kind));
         }
     }
@@ -6429,16 +6431,16 @@ impl PureTermApp {
     /// content NSView 原点在窗口顶部,terminal/web 区在标签栏下方。
     ///
     /// 取 `&self`:所有写都经 `BrowserContext` 的内部可变性(`Mutex`),不触碰
-    /// `self.tabs`,故可在不可变遍历中调用。
+    /// `self.tabs()`,故可在不可变遍历中调用。
     fn reposition_web_panes(&self) {
         let vw = self.viewport_size.width;
         let terminal_h = terminal_content_height(self.viewport_size.height);
-        for tab in &self.tabs {
+        for tab in self.tabs() {
             // 纯终端 tab 快速跳过,避免无谓的 compute_layout。
             if !tab.panes.values().any(|p| p.is_web()) {
                 continue;
             }
-            let is_active_tab = tab.id == self.active_tab;
+            let is_active_tab = tab.id == self.active_tab_id();
             let layout = tab.split_tree.compute_layout(0.0, 0.0, vw, terminal_h);
             for (pane_id, pane) in &tab.panes {
                 let Some(ctx) = pane.web() else { continue };
@@ -6463,7 +6465,7 @@ impl PureTermApp {
     /// GAP-3.5: 在活跃 tab 的活跃 pane 旁分出一个 Web pane,加载 `url`。
     /// 与 `split_pane` 对称,但内容载体是 `BrowserContext`(无 PTY)。
     fn spawn_web_pane(&mut self, direction: SplitDirection, url: String) {
-        let active_tab_id = self.active_tab;
+        let active_tab_id = self.active_tab_id();
         let active_pane_id = self.active_tab_ref().map(|t| t.active_pane);
         let Some(active_pane_id) = active_pane_id else { return };
         let new_pane_id = PaneId::next();
@@ -6500,7 +6502,7 @@ impl PureTermApp {
 
     /// Split the active pane in the given direction.
     fn split_pane(&mut self, direction: SplitDirection) {
-        let active_tab_id = self.active_tab;
+        let active_tab_id = self.active_tab_id();
         let active_pane_id = self.active_tab_ref()
             .map(|t| t.active_pane);
 
@@ -6588,9 +6590,9 @@ impl PureTermApp {
 
     /// Close the active pane. If it's the last pane, close the tab.
     fn close_active_pane(&mut self) {
-        let active_tab_id = self.active_tab;
+        let active_tab_id = self.active_tab_id();
 
-        let pane_count = self.tabs.iter()
+        let pane_count = self.tabs().iter()
             .find(|t| t.id == active_tab_id)
             .map(|t| t.panes.len())
             .unwrap_or(0);
@@ -6600,14 +6602,14 @@ impl PureTermApp {
             return;
         }
 
-        let active_pane_id = self.tabs.iter()
+        let active_pane_id = self.tabs().iter()
             .find(|t| t.id == active_tab_id)
             .map(|t| t.active_pane);
 
         let Some(active_pane_id) = active_pane_id else { return };
 
         let new_active = {
-            let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id).unwrap();
+            let tab = self.tabs_mut().iter_mut().find(|t| t.id == active_tab_id).unwrap();
             // GAP-2.2 zoom 不变量:close 前先还原 saved 树,否则 remove() 作用在
             // Leaf 上,zoom_state 持有的旧树会成为孤儿。
             tab.restore_zoom_if_any();
@@ -6618,7 +6620,7 @@ impl PureTermApp {
             // GAP-5.6: end the daemon session for this pane on close (immutable
             // borrows only — done before the mut borrow that removes the pane).
             #[cfg(unix)]
-            if let Some(tab) = self.tabs.iter().find(|t| t.id == active_tab_id) {
+            if let Some(tab) = self.tabs().iter().find(|t| t.id == active_tab_id) {
                 if let Some(pane) = tab.panes.get(&active_pane_id) {
                     if let Some(ctx) = pane.terminal() {
                         self.kill_pane_session(ctx);
@@ -6671,14 +6673,14 @@ impl PureTermApp {
     /// 在活跃 tab 上调用 `resize_panes_in_tab`,使用当前 viewport 与 cell 尺寸。
     /// 任何修改 active tab 的 split_tree(equalize / swap / zoom / detach)后都应调用。
     fn resize_active_tab_panes(&mut self) {
-        let active_tab_id = self.active_tab;
+        let active_tab_id = self.active_tab_id();
         let viewport_w = self.viewport_size.width;
         let terminal_height = terminal_content_height(self.viewport_size.height);
         let (cw, ch) = {
             let gs = self.glyph_state.borrow();
             (gs.cell_width as u16, gs.cell_height as u16)
         };
-        if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+        if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == active_tab_id) {
             Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
         }
     }
@@ -6693,9 +6695,9 @@ impl PureTermApp {
     ///   - panes 已删除该 pane(注意:不 release SSH pool,因为 pane 即将在新 tab/window 继续活跃)
     ///   - 剩余 pane 已自动 resize
     fn detach_active_pane(&mut self) -> Option<Pane> {
-        let active_tab_id = self.active_tab;
+        let active_tab_id = self.active_tab_id();
         let pane = {
-            let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id)?;
+            let tab = self.tabs_mut().iter_mut().find(|t| t.id == active_tab_id)?;
             if tab.panes.len() <= 1 {
                 return None;
             }
@@ -6723,7 +6725,7 @@ impl PureTermApp {
         };
         let terminal_height = terminal_content_height(self.viewport_size.height);
         let viewport_w = self.viewport_size.width;
-        for tab in &mut self.tabs {
+        for tab in self.tabs_mut() {
             if tab.split_tree.contains(pid) {
                 tab.split_tree.resize_ratio(pid, delta_ratio);
                 Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
@@ -6752,7 +6754,7 @@ impl PureTermApp {
     /// must share a tab; `swap_by_ids` exchanges their leaf ids so their
     /// contents render in each other's place (the panes HashMap is untouched).
     fn apply_swap_by_ids(&mut self, src: PaneId, dst: PaneId) {
-        for tab in &mut self.tabs {
+        for tab in self.tabs_mut() {
             if tab.split_tree.contains(src) && tab.split_tree.contains(dst) {
                 tab.split_tree.swap_by_ids(src, dst);
                 break;
@@ -6781,7 +6783,7 @@ impl PureTermApp {
         // 1. Detach src from its source tab (record the index to resync later).
         let (src_tab_idx, pane) = {
             let mut found = None;
-            for (i, tab) in self.tabs.iter_mut().enumerate() {
+            for (i, tab) in self.tabs_mut().iter_mut().enumerate() {
                 if tab.panes.contains_key(&src) {
                     if tab.panes.len() <= 1 {
                         break; // can't move the last pane out
@@ -6806,7 +6808,7 @@ impl PureTermApp {
         };
         let terminal_height = terminal_content_height(self.viewport_size.height);
         let viewport_w = self.viewport_size.width;
-        if let Some(tab) = self.tabs.get_mut(dst_tab_index) {
+        if let Some(tab) = self.tabs_mut().get_mut(dst_tab_index) {
             let at = tab.active_pane;
             tab.split_tree.split(at, src, direction);
             tab.panes.insert(src, pane);
@@ -6814,7 +6816,7 @@ impl PureTermApp {
             Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
         }
         // 3. Resync the source tab's grid (its layout shrank).
-        if let Some(tab) = self.tabs.get_mut(src_tab_idx) {
+        if let Some(tab) = self.tabs_mut().get_mut(src_tab_idx) {
             Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
         }
     }
@@ -6940,8 +6942,8 @@ impl PureTermApp {
     fn view_top_bar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
         let mut bar = row![].spacing(2).align_y(iced::Alignment::Center);
 
-        for (i, tab) in self.tabs.iter().enumerate() {
-            let is_active = tab.id == self.active_tab;
+        for (i, tab) in self.tabs().iter().enumerate() {
+            let is_active = tab.id == self.active_tab_id();
             let is_hovered = self.hovered_tab == Some(tab.id);
 
             let left: Element<'_, Message, Theme, iced::Renderer> = if is_hovered {
@@ -7308,7 +7310,7 @@ impl PureTermApp {
 
         // Find the tab index to position the input roughly above it
         let tab_idx = self
-            .tabs
+            .tabs()
             .iter()
             .position(|t| t.id == state.tab_id)
             .unwrap_or(0);
@@ -8200,7 +8202,7 @@ impl PureTermApp {
             .width(Length::Fill);
 
         let filtered: Vec<(TabId, String, usize)> = self
-            .tabs
+            .tabs()
             .iter()
             .enumerate()
             .filter(|(_, tab)| {
@@ -8216,7 +8218,7 @@ impl PureTermApp {
         let list_items: Vec<Element<'_, Message, Theme, iced::Renderer>> = filtered
             .iter()
             .map(|(id, title, idx)| {
-                let is_active = *id == self.active_tab;
+                let is_active = *id == self.active_tab_id();
                 let label = format!("{}. {}", idx + 1, title);
                 let bg = if is_active {
                     Color::from_rgba(1.0, 1.0, 1.0, 0.08)
