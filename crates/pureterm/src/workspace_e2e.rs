@@ -268,3 +268,31 @@ fn window_new_detached_holds_single_tab_without_tabbar() {
     // window_id 路由字段仍在(Window 对外与旧 DetachedWindow 同构)。
     let _ = win.window_id; // 路由/retain 用字段可读
 }
+
+// ── Window 纯模型:workspace 切换 + 邻接(T1 访问器预备) ──────────────────
+// 这些是 `Window` 自身的方法(区别于 PureTermApp 的 hybrid tier),证明纯指针
+// 切换/邻接语义,为 T2b「坍缩 hybrid tier → 纯 Window 模型」铺路。
+
+#[test]
+fn window_switch_to_changes_pointer_and_unknown_fails() {
+    let mut w = Window::new_main(iced::window::Id::unique());
+    let b = w.create_workspace("B"); // create 自动切到 B
+    assert_eq!(w.active_workspace().unwrap().id, b, "create_workspace 切到新建");
+    assert!(w.switch_to(WorkspaceId(0)), "切回 Default");
+    assert_eq!(w.active_workspace().unwrap().name, "Default");
+    assert!(!w.switch_to(WorkspaceId(99)), "未知 workspace 切换失败");
+}
+
+#[test]
+fn window_workspace_neighbor_wraps() {
+    let mut w = Window::new_main(iced::window::Id::unique());
+    let _b = w.create_workspace("B");
+    let _c = w.create_workspace("C");
+    // ids 创建顺序 [Default=0, B, C];active = C(index 2)。
+    // next(+1) 环绕回 Default(0);prev(-1) 到 B(1)。
+    assert_eq!(w.workspace_neighbor(1), Some(WorkspaceId(0)));
+    assert_eq!(w.workspace_neighbor(-1), Some(WorkspaceId(1)));
+    // 单 workspace 窗口:neighbor 无意义 → None
+    let mut single = Window::new_main(iced::window::Id::unique());
+    assert_eq!(single.workspace_neighbor(1), None);
+}

@@ -208,6 +208,24 @@ impl Window {
             next_workspace_id: 1,
         }
     }
+
+    /// 所有 workspace id 按创建顺序(= id 递增)排列。⌃1..9 按索引切换、Next/Prev 环绕用。
+    pub(crate) fn workspace_ids_in_order(&self) -> Vec<WorkspaceId> {
+        let mut ids: Vec<WorkspaceId> = self.workspaces.iter().map(|w| w.id).collect();
+        ids.sort_by_key(|id| id.0);
+        ids
+    }
+
+    /// 相邻 workspace id(delta=+1 Next / -1 Prev,创建顺序环绕)。仅 1 个 workspace 返回 None。
+    pub(crate) fn workspace_neighbor(&self, delta: i32) -> Option<WorkspaceId> {
+        let ids = self.workspace_ids_in_order();
+        if ids.len() <= 1 {
+            return None;
+        }
+        let cur = ids.iter().position(|id| *id == self.active_workspace)?;
+        let n = ids.len() as i32;
+        Some(ids[((cur as i32 + delta).rem_euclid(n)) as usize])
+    }
 }
 
 pub struct PureTermApp {
@@ -1745,6 +1763,52 @@ impl PureTermApp {
             Ok(false) => log::debug!("GAP-5.6: daemon session {sid} already gone"),
             Err(e) => log::warn!("GAP-5.6: kill daemon session {sid} failed: {e}"),
         }
+    }
+
+    // ── GAP-2.1 Phase 4 cutover 访问器(T1 stub / T2b 填实) ──────────────────
+    // T1:这些访问器先指向现有 flat 字段或返回 None,零行为变化。T2a 把 ~205 处
+    // `self.tabs`/`self.active_tab` 机械重路由到 `tabs()`/`active_tab_id()`(仍指 flat
+    // → 编译+测试绿);T2b 删 flat 字段、加 `windows: Vec<Window>`,把这些实现改成走
+    // 活跃 Window,残余「同时借多字段」站点用 field-path 直访解。
+    #[allow(dead_code)] // T2b 全部启用后移除
+    fn active_window(&self) -> Option<&Window> {
+        None
+    }
+    #[allow(dead_code)]
+    fn active_window_mut(&mut self) -> Option<&mut Window> {
+        None
+    }
+    #[allow(dead_code)]
+    fn window_for(&self, _id: window::Id) -> Option<&Window> {
+        None
+    }
+    #[allow(dead_code)]
+    fn window_for_mut(&mut self, _id: window::Id) -> Option<&mut Window> {
+        None
+    }
+    #[allow(dead_code)]
+    fn active_ws(&self) -> Option<&Workspace> {
+        None
+    }
+    #[allow(dead_code)]
+    fn active_ws_mut(&mut self) -> Option<&mut Workspace> {
+        None
+    }
+    /// 活跃 tab 的 id。T1 指向 flat `active_tab`;T2b 改为活跃 workspace 的 active_tab。
+    fn active_tab_id(&self) -> TabId {
+        self.active_tab
+    }
+    /// 设活跃 tab。T1 写 flat `active_tab`;T2b 写活跃 workspace。
+    fn set_active_tab(&mut self, id: TabId) {
+        self.active_tab = id;
+    }
+    /// 活跃 workspace 的 tabs(只读)。T1 指向 flat `tabs`;T2b 改为活跃 workspace.tabs。
+    fn tabs(&self) -> &Vec<Tab> {
+        &self.tabs
+    }
+    /// 活跃 workspace 的 tabs(可变)。T1 指向 flat `tabs`;T2b 改为活跃 workspace.tabs。
+    fn tabs_mut(&mut self) -> &mut Vec<Tab> {
+        &mut self.tabs
     }
 
     fn active_tab_ref(&self) -> Option<&Tab> {
