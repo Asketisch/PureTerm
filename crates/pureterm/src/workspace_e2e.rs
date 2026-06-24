@@ -228,3 +228,43 @@ fn hybrid_swap_preserves_surface_arc_across_create_and_switch() {
         "switch 到当前 active 是 no-op,返回 true"
     );
 }
+
+// ── detached 折叠不变量(T2a 增量切片) ──────────────────────────────────
+// 旧 `DetachedWindow { window_id, tab }` 折叠进 `Window` 抽象:detached 窗口 =
+// 单 workspace(单 tab)的 `Window { is_main: false, show_tab_bar: false }`。
+// 不变量:折叠构造必须原样搬入 tab(move,非 clone),Surface Arc 身份存活 ——
+// 证明后端(PTY/session)跟随 pane 未被重建。这是主窗 hybrid tabs 模型不动、
+// 仅折叠 detached 表示的真·回归 gate。
+
+/// detached 窗口折叠进 `Window`:单 workspace/单 tab、非主窗、无 tab bar;
+/// 构造 move(非 clone)入 tab,Surface Arc 身份存活。
+#[test]
+fn window_new_detached_holds_single_tab_without_tabbar() {
+    let (tab, ctx) = web_tab(7, "https://detached.example");
+    let tab_id = tab.id;
+    let win = Window::new_detached(iced::window::Id::unique(), tab);
+
+    // detached 语义:非主窗、无 tab bar(对齐旧 DetachedWindow 行为)。
+    assert!(!win.is_main, "detached 窗口 is_main=false");
+    assert!(!win.show_tab_bar, "detached 窗口 show_tab_bar=false");
+
+    // 恰一个 workspace,其中恰一个 tab;active 解析到构造时传入的 tab。
+    assert_eq!(win.workspaces.len(), 1, "detached 窗口只含一个 workspace");
+    assert_eq!(
+        win.active_workspace().unwrap().tabs.len(),
+        1,
+        "detached workspace 只含一个 tab"
+    );
+    let active = win.active_tab().expect("detached 窗口有 active tab");
+    assert_eq!(active.id, tab_id, "active tab 是构造时传入的 tab");
+
+    // Surface Arc 身份存活 —— 折叠构造不重建后端(PTY/session 跟随 pane)。
+    let got = active.panes.values().next().unwrap().web().unwrap().clone();
+    assert!(
+        Arc::ptr_eq(&got, &ctx),
+        "detached 折叠后 surface Arc 身份存活"
+    );
+
+    // window_id 路由字段仍在(Window 对外与旧 DetachedWindow 同构)。
+    let _ = win.window_id; // 路由/retain 用字段可读
+}

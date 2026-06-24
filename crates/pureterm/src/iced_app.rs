@@ -186,6 +186,28 @@ impl Window {
     pub(crate) fn workspace_mut(&mut self, id: WorkspaceId) -> Option<&mut Workspace> {
         self.workspaces.iter_mut().find(|w| w.id == id)
     }
+
+    /// 活跃 workspace 的活跃 tab(只读)。切换 workspace 后按 workspace 独立解析。
+    pub(crate) fn active_tab(&self) -> Option<&Tab> {
+        self.active_workspace().and_then(|ws| ws.active_tab_ref())
+    }
+
+    /// detached 窗口:单 workspace(单 tab)、`is_main=false`、`show_tab_bar=false`。
+    /// 折叠旧 `DetachedWindow { window_id, tab }`:tab 被 **move**(非 clone)入
+    /// workspace,因此其 `Arc<TerminalContext>` 身份存活 —— 后端(PTY/session)
+    /// 跟随 pane 未被重建(GAP-2.1 Phase 4 detached→Window 增量切片)。
+    pub(crate) fn new_detached(window_id: window::Id, tab: Tab) -> Self {
+        let mut ws = Workspace::new(WorkspaceId(0), "Detached".to_string());
+        ws.push_tab(tab);
+        Self {
+            window_id,
+            workspaces: vec![ws],
+            active_workspace: WorkspaceId(0),
+            is_main: false,
+            show_tab_bar: false,
+            next_workspace_id: 1,
+        }
+    }
 }
 
 pub struct PureTermApp {
@@ -290,8 +312,8 @@ pub struct PureTermApp {
     ssh_credential_store: Option<crate::ssh::credential::CredentialStore>,
     // Command palette (P5 GAP-5.9)
     command_palette: Option<CommandPaletteState>,
-    // Detached windows
-    detached_windows: Vec<DetachedWindow>,
+    // Detached windows(GAP-2.1 Phase 4:折叠进 `Window` 抽象 —— 单 workspace 单 tab)
+    detached_windows: Vec<Window>,
     // Split pane drag state
     drag_state: Option<DragState>,
     /// 文本选择拖动状态：按下时开启，松手时清。`term.selection` 本身保留。
@@ -509,11 +531,6 @@ struct RenamingState {
 #[derive(Debug, Clone)]
 struct TabListState {
     query: String,
-}
-
-struct DetachedWindow {
-    window_id: window::Id,
-    tab: Tab,
 }
 
 const TAB_BAR_HEIGHT: f32 = 32.0;
@@ -2980,7 +2997,7 @@ impl PureTermApp {
             Message::WindowResized(win_id, size) => {
                 if Some(win_id) != self.main_window {
                     // Resize detached windows too
-                    for dw in &mut self.detached_windows {
+                    for dw in &self.detached_windows {
                         if dw.window_id == win_id {
                             let terminal_height = terminal_content_height(size.height);
                             let gs = self.glyph_state.borrow();
@@ -2991,10 +3008,12 @@ impl PureTermApp {
                             let cw = gs.cell_width as u16;
                             let ch = gs.cell_height as u16;
                             drop(gs);
-                            // Resize all panes in the detached tab
-                            for pane in dw.tab.panes.values() {
-                                if let Some(ctx) = pane.terminal() {
-                                    ctx.resize(cols, rows, cw, ch);
+                            // Resize all panes in the detached tab(单 workspace 单 tab)
+                            if let Some(tab) = dw.active_tab() {
+                                for pane in tab.panes.values() {
+                                    if let Some(ctx) = pane.terminal() {
+                                        ctx.resize(cols, rows, cw, ch);
+                                    }
                                 }
                             }
                             return Task::none();
@@ -4047,10 +4066,10 @@ impl PureTermApp {
                                     Some(Size::new(cw, ch)),
                                 )
                             };
-                            self.detached_windows.push(DetachedWindow {
-                                window_id: win_id_for_task,
+                            self.detached_windows.push(Window::new_detached(
+                                win_id_for_task,
                                 tab,
-                            });
+                            ));
                             if self.tabs.is_empty() {
                                 if let Some(main_id) = self.main_window {
                                     return Task::batch(vec![
@@ -4253,10 +4272,7 @@ impl PureTermApp {
                         drop(gs);
                         window::set_resize_increments(win_id, Some(Size::new(cw, ch)))
                     };
-                    self.detached_windows.push(DetachedWindow {
-                        window_id: win_id,
-                        tab,
-                    });
+                    self.detached_windows.push(Window::new_detached(win_id, tab));
                     return Task::batch(vec![
                         task.map(|_| Message::TerminalWakeup),
                         resize_task.map(|_: ()| Message::TerminalWakeup),
@@ -8213,11 +8229,13 @@ impl PureTermApp {
             }
         }
 
-        // Detached windows render their own terminal (single pane)
+        // Detached windows render their own terminal(单 workspace 单 tab)
         for dw in &self.detached_windows {
             if dw.window_id == id {
-                // Use the first pane's terminal context for detached windows
-                let ctx = dw.tab.panes.values().next()
+                // Use the active tab's first pane terminal context for detached windows
+                let ctx = dw
+                    .active_tab()
+                    .and_then(|t| t.panes.values().next())
                     .and_then(|p| p.terminal().cloned());
                 let Some(ctx) = ctx else { continue };
 
