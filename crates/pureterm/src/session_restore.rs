@@ -144,7 +144,7 @@ use crate::terminal_context::TerminalContext;
 /// A restored pane: its content carrier (terminal or web, GAP-3.5) + display title.
 #[cfg(unix)]
 pub struct RestoredPane {
-    pub content: crate::split_tree::PaneContent,
+    pub content: crate::split_tree::Surface,
     pub title: String,
 }
 
@@ -240,7 +240,7 @@ pub fn restore(
                 alive_panes.push((
                     *old_id,
                     RestoredPane {
-                        content: crate::split_tree::PaneContent::Web(browser),
+                        content: crate::split_tree::Surface::Web(browser),
                         title: pane_snap.title.clone(),
                     },
                 ));
@@ -266,7 +266,7 @@ pub fn restore(
                             alive_panes.push((
                                 *old_id,
                                 RestoredPane {
-                                    content: crate::split_tree::PaneContent::Terminal(ctx),
+                                    content: crate::split_tree::Surface::Terminal(ctx),
                                     title: pane_snap.title.clone(),
                                 },
                             ));
@@ -296,7 +296,7 @@ pub fn restore(
                     alive_panes.push((
                         *old_id,
                         RestoredPane {
-                            content: crate::split_tree::PaneContent::Terminal(ctx),
+                            content: crate::split_tree::Surface::Terminal(ctx),
                             title: pane_snap.title.clone(),
                         },
                     ));
@@ -362,7 +362,7 @@ pub fn restore(
                     title: title.clone(),
                     split_tree: SplitNode::single(fresh),
                     panes: vec![RestoredPane {
-                        content: crate::split_tree::PaneContent::Terminal(ctx),
+                        content: crate::split_tree::Surface::Terminal(ctx),
                         title,
                     }],
                     active_pane_index: 0,

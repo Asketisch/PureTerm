@@ -41,21 +41,27 @@ impl PaneId {
 }
 
 /// Pane 的内容载体 —— 终端或内置浏览器(WebView)。
+/// 单个 surface 的后端:一个 PTY(终端)或一个 WebView(浏览器)。
 ///
+/// GAP-2.1: 由 `PaneContent` 重命名为 `Surface`,作为后端一等类型名。
 /// GAP-3.5:在终端之外引入 `Web` 变体,使一个 pane 能容纳 WebView。
 /// 用枚举而非 trait:仅两种变体,每个 match 点更直接,且快照序列化
 /// 需要判别式(`session_restore::PaneSnapshot::kind`)。
-pub enum PaneContent {
+pub enum Surface {
     /// 终端(本地 PTY / SSH PTY)。
     Terminal(Arc<TerminalContext>),
     /// 内置浏览器(GAP-3.5 WebView)。
     Web(Arc<BrowserContext>),
 }
 
-/// 面板:持有 pane 内容(终端或浏览器)+ 在分割树中的位置。
+/// 向后兼容别名:旧名 `PaneContent` 等价于 `Surface`(GAP-2.1 重命名)。
+/// 新代码应使用 `Surface`;此别名保留一个 release 后移除。
+pub type PaneContent = Surface;
+
+/// 面板:持有一个 surface(终端或浏览器)+ 在分割树中的位置。
 pub struct Pane {
     pub id: PaneId,
-    pub content: PaneContent,
+    pub content: Surface,
     pub title: String,
 }
 
@@ -63,7 +69,7 @@ impl Pane {
     /// 若是终端 pane,返回其终端上下文。
     pub fn terminal(&self) -> Option<&Arc<TerminalContext>> {
         match &self.content {
-            PaneContent::Terminal(t) => Some(t),
+            Surface::Terminal(t) => Some(t),
             _ => None,
         }
     }
@@ -71,14 +77,14 @@ impl Pane {
     /// 若是浏览器 pane,返回其浏览器上下文。
     pub fn web(&self) -> Option<&Arc<BrowserContext>> {
         match &self.content {
-            PaneContent::Web(w) => Some(w),
+            Surface::Web(w) => Some(w),
             _ => None,
         }
     }
 
     /// 是否为浏览器 pane。
     pub fn is_web(&self) -> bool {
-        matches!(self.content, PaneContent::Web(_))
+        matches!(self.content, Surface::Web(_))
     }
 }
 
@@ -1219,5 +1225,31 @@ mod tests {
         assert_eq!(tree_b.pane_count(), 2);
         assert!(tree_b.contains(a) && tree_b.contains(c));
         assert_eq!(tree_b.pane_ids(), vec![c, a]);
+    }
+
+    // ── GAP-2.1: Surface(原 PaneContent)重命名 ──────────────────────────
+
+    /// `Surface` 是 PTY/WebView 后端的一等类型名(GAP-2.1 把 `PaneContent`
+    /// 重命名为 `Surface`)。旧名 `PaneContent` 保留为类型别名,旧引用无需改动。
+    /// 构造一个 Web surface,经 match 穷尽判别,并确认 `PaneContent` 别名指向
+    /// 同一类型;`Pane` 访问器沿用既有行为。
+    #[test]
+    fn surface_is_canonical_name_with_pane_content_alias() {
+        fn kind_of(s: &Surface) -> &'static str {
+            match s {
+                Surface::Terminal(_) => "terminal",
+                Surface::Web(_) => "web",
+            }
+        }
+        let web = Surface::Web(crate::browser::BrowserContext::new("https://example.com"));
+        assert_eq!(kind_of(&web), "web");
+
+        // 别名:PaneContent 就是 Surface(同一类型,无转换)。
+        let _alias_check: &PaneContent = &web;
+
+        let pane = Pane { id: PaneId(7), content: web, title: "t".into() };
+        assert!(pane.is_web());
+        assert!(pane.web().is_some());
+        assert!(pane.terminal().is_none());
     }
 }

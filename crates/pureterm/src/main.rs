@@ -6,6 +6,9 @@ mod agent_e2e;
 /// cross-module seam `apply_attach_pane` drives on the split tree + pane map.
 #[cfg(all(test, unix))]
 mod join_pane_e2e;
+/// GAP-2.1: Workspace 切换「不丢 Surface 状态」不变量(headless,无 PTY)。
+#[cfg(all(test, unix))]
+mod workspace_e2e;
 mod agent_hooks;
 mod agent_sessions;
 mod app_config;
@@ -48,6 +51,8 @@ mod search;
 mod session_restore;
 mod split_tree;
 mod status_bar;
+/// GAP-2.1: hybrid workspace tier(flat-active + background-swap 纯函数)。
+mod workspace_tier;
 mod surface_snapshot;
 #[cfg(target_os = "macos")]
 mod macos_menu;
@@ -199,6 +204,10 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::ActivateTabByIndex(i) => format!("Tab {}", i + 1),
         keymap::Action::MovePaneToNewTab => "Pane → New Tab".into(),
         keymap::Action::MovePaneToNewWindow => "Pane → New Window".into(),
+        keymap::Action::NewWorkspace => "New Workspace".into(),
+        keymap::Action::NextWorkspace => "Next Workspace".into(),
+        keymap::Action::PrevWorkspace => "Previous Workspace".into(),
+        keymap::Action::ActivateWorkspaceByIndex(i) => format!("Workspace {}", i + 1),
         keymap::Action::SplitHorizontal => "Split Horizontal".into(),
         keymap::Action::SplitVertical => "Split Vertical".into(),
         keymap::Action::EqualizeSplits => "Equalize Splits".into(),

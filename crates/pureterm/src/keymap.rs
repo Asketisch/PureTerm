@@ -37,6 +37,17 @@ pub enum Action {
     MovePaneToNewTab,
     MovePaneToNewWindow,
 
+    // ── Workspace (GAP-2.1) ────────────────────────────────────────
+    /// Create a new named workspace, snapshot the current one into the
+    /// background, and switch to it (opens a fresh shell tab).
+    NewWorkspace,
+    /// Switch to the next workspace (wraps around).
+    NextWorkspace,
+    /// Switch to the previous workspace (wraps around).
+    PrevWorkspace,
+    /// Switch to workspace by 0-based index (⌃1..9 → 0..8).
+    ActivateWorkspaceByIndex(usize),
+
     // ── Split pane ──────────────────────────────────────────────────
     SplitHorizontal,
     SplitVertical,
@@ -203,6 +214,8 @@ impl Keymap {
         let cmd = Modifiers::COMMAND;
         let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
         let cmd_alt = Modifiers::COMMAND | Modifiers::ALT;
+        let ctrl = Modifiers::CTRL;
+        let cmd_ctrl = Modifiers::COMMAND | Modifiers::CTRL;
 
         // ── Tab management ──────────────────────────────────────────
         bindings.insert(
@@ -253,6 +266,31 @@ impl Keymap {
                 Action::ActivateTabByIndex((i - 1) as usize),
             );
         }
+
+        // ── Workspace (GAP-2.1) ────────────────────────────────────
+        // ⌃1..9 → ActivateWorkspaceByIndex(0..8). ⌘1..9 is tabs, so workspace
+        // switching rides the Control modifier (i3-style).
+        for i in 1..=9u8 {
+            let ch = (b'0' + i) as char;
+            bindings.insert(
+                (ctrl, BindingKey::Character(ch.to_string())),
+                Action::ActivateWorkspaceByIndex((i - 1) as usize),
+            );
+        }
+        // ⌘⌃← / ⌘⌃→ → Prev / Next workspace.
+        bindings.insert(
+            (cmd_ctrl, BindingKey::Named(BindingNamedKey::ArrowLeft)),
+            Action::PrevWorkspace,
+        );
+        bindings.insert(
+            (cmd_ctrl, BindingKey::Named(BindingNamedKey::ArrowRight)),
+            Action::NextWorkspace,
+        );
+        // ⌘⌃N → New workspace.
+        bindings.insert(
+            (cmd_ctrl, BindingKey::Character("n".into())),
+            Action::NewWorkspace,
+        );
 
         // ── Split pane ──────────────────────────────────────────────
         // ⌘D → SplitHorizontal
@@ -715,6 +753,12 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "MovePaneToNewTab" => Ok(Action::MovePaneToNewTab),
         "MovePaneToNewWindow" => Ok(Action::MovePaneToNewWindow),
 
+        // Workspace (GAP-2.1)
+        "NewWorkspace" => Ok(Action::NewWorkspace),
+        "NextWorkspace" => Ok(Action::NextWorkspace),
+        "PrevWorkspace" | "PreviousWorkspace" => Ok(Action::PrevWorkspace),
+        "ActivateWorkspaceByIndex" => Ok(Action::ActivateWorkspaceByIndex(0)),
+
         // Split pane
         "SplitHorizontal" | "NewPaneHorizontal" => Ok(Action::SplitHorizontal),
         "SplitVertical" | "NewPaneVertical" => Ok(Action::SplitVertical),
@@ -779,6 +823,9 @@ pub fn action_from_palette_id(id: &str) -> Option<Action> {
         "split.focus_prev" => Some(Action::FocusPaneInOrder(-1)),
         "split.move_to_new_tab" => Some(Action::MovePaneToNewTab),
         "split.move_to_new_window" => Some(Action::MovePaneToNewWindow),
+        "workspace.new" => Some(Action::NewWorkspace),
+        "workspace.next" => Some(Action::NextWorkspace),
+        "workspace.prev" => Some(Action::PrevWorkspace),
         "toggle_vi_mode" | "toggle_copy_mode" => Some(Action::ToggleViMode),
         _ => None,
     }

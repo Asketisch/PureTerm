@@ -21,12 +21,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::browser::BrowserContext;
-use crate::split_tree::{Pane, PaneContent, PaneId, SplitDirection, SplitNode};
+use crate::split_tree::{Pane, Surface, PaneId, SplitDirection, SplitNode};
 
 /// Build a web pane + capture the `Arc<BrowserContext>` it owns (for ptr_eq).
 fn web_pane(id: PaneId, url: &str) -> (Pane, Arc<BrowserContext>) {
     let ctx = BrowserContext::new(url);
-    let pane = Pane { id, content: PaneContent::Web(Arc::clone(&ctx)), title: url.into() };
+    let pane = Pane { id, content: Surface::Web(Arc::clone(&ctx)), title: url.into() };
     (pane, ctx)
 }
 
@@ -70,7 +70,7 @@ fn join_pane_move_preserves_arc_identity_and_tab_invariants() {
 
     // ── invariant 1: Arc identity survives the move (PTY follows) ──────────
     let moved_ctx = match &dst_panes[&src_id].content {
-        PaneContent::Web(w) => Arc::clone(w),
+        Surface::Web(w) => Arc::clone(w),
         _ => unreachable!("moved pane is a web pane"),
     };
     assert!(

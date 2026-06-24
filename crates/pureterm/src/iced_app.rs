@@ -28,7 +28,7 @@ use alacritty_terminal::term::TermMode;
 use crate::app_config::AppConfig;
 use crate::keymap::{Action, Keymap, ResolveResult};
 use crate::split_tree::{
-    DividerRect, Pane, PaneContent, PaneId, PaneRect, SplitDirection, SplitNode,
+    DividerRect, Pane, Surface, PaneId, PaneRect, SplitDirection, SplitNode,
     DIVIDER_HIT_WIDTH, DIVIDER_WIDTH, MAX_RATIO, MIN_RATIO,
 };
 use crate::terminal_context::{TerminalContext, TerminalEvent};
@@ -45,27 +45,27 @@ use pureterm_settings::i18n::I18n;
 use pureterm_settings::pages::colors::ColorsMsg;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TabId(u64);
+pub struct TabId(pub(crate) u64);
 
 pub struct Tab {
-    id: TabId,
-    title: String,
-    panes: HashMap<PaneId, Pane>,
-    split_tree: SplitNode,
-    active_pane: PaneId,
-    tab_color: Option<Color>,
+    pub(crate) id: TabId,
+    pub(crate) title: String,
+    pub(crate) panes: HashMap<PaneId, Pane>,
+    pub(crate) split_tree: SplitNode,
+    pub(crate) active_pane: PaneId,
+    pub(crate) tab_color: Option<Color>,
     /// Creation timestamp — used for SSH grace period detection.
-    created_at: Instant,
+    pub(crate) created_at: Instant,
     /// GAP-2.2 Zoom 状态:
     /// - `None` = 正常态。
     /// - `Some(saved)` = 当前在 Zoom 中,`split_tree` 已被替换为 `Leaf(zoomed_pane)`,
     ///   saved 持有进入 zoom 前的完整树。
     /// 不变量:任何修改 `split_tree` 的入口(split/close/swap/equalize/detach)
     /// 必须先调 `restore_zoom_if_any()` 还原。
-    zoom_state: Option<SplitNode>,
+    pub(crate) zoom_state: Option<SplitNode>,
     /// GAP-4.1 Vi/Copy mode sub-mode for the active pane.
     /// `None` = vi mode not active. `Some(ViSubMode)` = vi mode is on.
-    vi_sub_mode: Option<crate::vi_mode_handler::ViSubMode>,
+    pub(crate) vi_sub_mode: Option<crate::vi_mode_handler::ViSubMode>,
 }
 
 impl Tab {
@@ -83,11 +83,123 @@ impl Tab {
     }
 }
 
+// ── GAP-2.1: Workspace / Window 抽象层 ──────────────────────────────────
+// 4 层模型:Window(顶级窗口)> Workspace(命名工作区)> Tab > Pane > Surface。
+// 本层为纯数据结构 + 方法,便于 headless 单测;「切换不丢 Surface 状态」不变量
+// 靠「切换只改 active_workspace 指针」保证 —— 见 workspace_e2e。
+
+/// Workspace 标识(进程内自增)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct WorkspaceId(pub(crate) u64);
+
+/// 命名工作区:一组 Tab 的容器。每个 Workspace 自带 `active_tab`,因此切换
+/// Workspace 后 active_tab 按 workspace 独立解析。
+pub(crate) struct Workspace {
+    pub(crate) id: WorkspaceId,
+    pub(crate) name: String,
+    pub(crate) tabs: Vec<Tab>,
+    pub(crate) active_tab: TabId,
+    pub(crate) next_tab_id: u64,
+}
+
+impl Workspace {
+    pub(crate) fn new(id: WorkspaceId, name: String) -> Self {
+        Self { id, name, tabs: Vec::new(), active_tab: TabId(0), next_tab_id: 1 }
+    }
+
+    /// 当前 active tab 的只读引用(`active_tab` 按 workspace 独立)。
+    pub(crate) fn active_tab_ref(&self) -> Option<&Tab> {
+        self.tabs.iter().find(|t| t.id == self.active_tab)
+    }
+
+    /// 当前 active tab 的可变引用。
+    pub(crate) fn active_tab_mut(&mut self) -> Option<&mut Tab> {
+        self.tabs.iter_mut().find(|t| t.id == self.active_tab)
+    }
+
+    /// 推入一个 Tab 并把 active_tab 指向它(新 tab 即活跃,对齐 NewTab 语义)。
+    pub(crate) fn push_tab(&mut self, tab: Tab) -> TabId {
+        let id = tab.id;
+        self.active_tab = id;
+        self.tabs.push(tab);
+        id
+    }
+}
+
+/// 顶级窗口:持有若干 Workspace,同一时刻只渲染 active_workspace 的 tabs。
+/// `is_main` 驱动标题前缀与首窗语义;`show_tab_bar=false` 用于旧 detached
+/// 单 pane 窗口的对等行为(GAP-2.1 把 `detached_windows` 统一进此抽象)。
+pub(crate) struct Window {
+    pub(crate) window_id: window::Id,
+    pub(crate) workspaces: Vec<Workspace>,
+    pub(crate) active_workspace: WorkspaceId,
+    pub(crate) is_main: bool,
+    pub(crate) show_tab_bar: bool,
+    next_workspace_id: u64,
+}
+
+impl Window {
+    /// 主窗口:预置一个名为 "Default" 的 workspace。
+    pub(crate) fn new_main(window_id: window::Id) -> Self {
+        Self {
+            window_id,
+            workspaces: vec![Workspace::new(WorkspaceId(0), "Default".to_string())],
+            active_workspace: WorkspaceId(0),
+            is_main: true,
+            show_tab_bar: true,
+            next_workspace_id: 1,
+        }
+    }
+
+    /// 新建命名 workspace,自动切到它,返回其 id。
+    pub(crate) fn create_workspace(&mut self, name: &str) -> WorkspaceId {
+        let id = WorkspaceId(self.next_workspace_id);
+        self.next_workspace_id += 1;
+        self.workspaces.push(Workspace::new(id, name.to_string()));
+        self.active_workspace = id;
+        id
+    }
+
+    /// 切换 active workspace。仅改指针,不动 `workspaces` —— 不丢 Surface 状态。
+    /// workspace 不存在则返回 false 且不改 active。
+    pub(crate) fn switch_to(&mut self, id: WorkspaceId) -> bool {
+        if self.workspaces.iter().any(|w| w.id == id) {
+            self.active_workspace = id;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn active_workspace(&self) -> Option<&Workspace> {
+        self.workspaces.iter().find(|w| w.id == self.active_workspace)
+    }
+
+    pub(crate) fn active_workspace_mut(&mut self) -> Option<&mut Workspace> {
+        self.workspaces.iter_mut().find(|w| w.id == self.active_workspace)
+    }
+
+    pub(crate) fn workspace(&self, id: WorkspaceId) -> Option<&Workspace> {
+        self.workspaces.iter().find(|w| w.id == id)
+    }
+
+    pub(crate) fn workspace_mut(&mut self, id: WorkspaceId) -> Option<&mut Workspace> {
+        self.workspaces.iter_mut().find(|w| w.id == id)
+    }
+}
+
 pub struct PureTermApp {
     main_window: Option<window::Id>,
     tabs: Vec<Tab>,
     active_tab: TabId,
     next_tab_id: u64,
+    // GAP-2.1 hybrid workspace tier:活跃 workspace 的 tabs/active_tab 就是上面的
+    // flat 字段(保持 disjoint borrow);其余 workspace 存于 `background_workspaces`,
+    // 切换走 `workspace_tier::switch_active_workspace` 的 `mem::swap`(Arc 跟随存活)。
+    background_workspaces: Vec<Workspace>,
+    active_workspace_id: WorkspaceId,
+    active_workspace_name: String,
+    next_workspace_id: u64,
     hovered_tab: Option<TabId>,
     glyph_state: Arc<RefCell<GlyphState>>,
     config: AppConfig,
@@ -507,6 +619,11 @@ pub enum Message {
     NextTab,
     PrevTab,
     ActivateTabByIndex(usize),
+    // GAP-2.1 Workspace(hybrid flat-active + background-swap)。
+    NewWorkspace,
+    NextWorkspace,
+    PrevWorkspace,
+    ActivateWorkspaceByIndex(usize),
     TabHoverEnter(TabId),
     TabHoverExit(TabId),
     // Context menu
@@ -1088,6 +1205,11 @@ impl PureTermApp {
             tabs: Vec::new(),
             active_tab: TabId(0),
             next_tab_id: 0,
+            // GAP-2.1:启动即一个名为 "Default" 的活跃 workspace;无 background。
+            background_workspaces: Vec::new(),
+            active_workspace_id: WorkspaceId(0),
+            active_workspace_name: String::from("Default"),
+            next_workspace_id: 1,
             hovered_tab: None,
             glyph_state,
             config,
@@ -1235,7 +1357,7 @@ impl PureTermApp {
             pane_id,
             Pane {
                 id: pane_id,
-                content: PaneContent::Terminal(terminal_ctx),
+                content: Surface::Terminal(terminal_ctx),
                 title: self.i18n.t_fmt("tab.title.format", &[("n", &tab_num.to_string())]),
             },
         );
@@ -1325,7 +1447,7 @@ impl PureTermApp {
             pane_id,
             Pane {
                 id: pane_id,
-                content: PaneContent::Terminal(terminal_ctx),
+                content: Surface::Terminal(terminal_ctx),
                 title: title.clone(),
             },
         );
@@ -1614,6 +1736,60 @@ impl PureTermApp {
 
     fn active_tab_mut(&mut self) -> Option<&mut Tab> {
         self.tabs.iter_mut().find(|t| t.id == self.active_tab)
+    }
+
+    // ── GAP-2.1 Workspace(hybrid flat-active + background-swap)────────────
+    /// 所有 workspace id 按创建顺序(= id 递增)排列:活跃 id + background id 合并排序。
+    /// 用于 ⌃1..9 按索引切换、Next/Prev 环绕。
+    fn workspace_ids_in_order(&self) -> Vec<WorkspaceId> {
+        let mut ids: Vec<WorkspaceId> =
+            self.background_workspaces.iter().map(|w| w.id).collect();
+        ids.push(self.active_workspace_id);
+        ids.sort_by_key(|id| id.0);
+        ids
+    }
+
+    /// 当前活跃 workspace 在创建顺序中的索引。
+    fn active_workspace_index(&self) -> usize {
+        self.workspace_ids_in_order()
+            .iter()
+            .position(|id| *id == self.active_workspace_id)
+            .unwrap_or(0)
+    }
+
+    /// 相邻 workspace 的 id(delta=+1 Next / -1 Prev,环绕)。仅 1 个时返回自身。
+    fn workspace_neighbor(&self, delta: i32) -> WorkspaceId {
+        let ids = self.workspace_ids_in_order();
+        if ids.len() <= 1 {
+            return self.active_workspace_id;
+        }
+        let cur = self.active_workspace_index();
+        let n = ids.len() as i32;
+        let next = ((cur as i32 + delta).rem_euclid(n)) as usize;
+        ids[next]
+    }
+
+    /// 切到 target workspace(swap flat ↔ background,Arc 跟随存活),刷新后续状态。
+    fn apply_workspace_switch(&mut self, target: WorkspaceId) {
+        let switched = crate::workspace_tier::switch_active_workspace(
+            &mut self.tabs,
+            &mut self.active_tab,
+            &mut self.active_workspace_id,
+            &mut self.active_workspace_name,
+            &mut self.background_workspaces,
+            target,
+        );
+        if switched {
+            self.refresh_status_bar_cwd();
+            self.reposition_web_panes();
+            self.mark_layout_dirty();
+            self.events.emit(
+                crate::events::Category::Surface,
+                "workspace.switched",
+                None,
+                serde_json::json!({ "workspace": self.active_workspace_name }),
+            );
+        }
     }
 
     fn active_terminal_ctx(&self) -> Option<Arc<TerminalContext>> {
@@ -2073,7 +2249,7 @@ impl PureTermApp {
             pane_id,
             Pane {
                 id: pane_id,
-                content: PaneContent::Terminal(terminal_ctx),
+                content: Surface::Terminal(terminal_ctx),
                 title: self.i18n.t_fmt("tab.title.ssh", &[("name", &profile_name)]),
             },
         );
@@ -2328,6 +2504,11 @@ impl PureTermApp {
         push_builtin("split.focus_prev", "palette.action.split_focus_prev.label", "palette.action.split_focus_prev.hint", "palette.action.split_focus_prev.search", &mut all_entries);
         push_builtin("split.move_to_new_tab", "palette.action.split_move_to_new_tab.label", "palette.action.split_move_to_new_tab.hint", "palette.action.split_move_to_new_tab.search", &mut all_entries);
         push_builtin("split.move_to_new_window", "palette.action.split_move_to_new_window.label", "palette.action.split_move_to_new_window.hint", "palette.action.split_move_to_new_window.search", &mut all_entries);
+        // GAP-2.1: Workspace 创建/切换。i18n key 未配则 i18n.t() 返回 key 本身(同
+        // GAP-2.2),模糊搜索仍可命中 "workspace" 字面;后续可补 zh/en 资源。
+        push_builtin("workspace.new", "palette.action.workspace_new.label", "palette.action.workspace_new.hint", "palette.action.workspace_new.search", &mut all_entries);
+        push_builtin("workspace.next", "palette.action.workspace_next.label", "palette.action.workspace_next.hint", "palette.action.workspace_next.search", &mut all_entries);
+        push_builtin("workspace.prev", "palette.action.workspace_prev.label", "palette.action.workspace_prev.hint", "palette.action.workspace_prev.search", &mut all_entries);
         push_builtin("settings", "palette.action.settings.label", "palette.action.settings.hint", "palette.action.settings.search", &mut all_entries);
         // GAP-4.1: Vi/Copy mode toggle in command palette
         push_builtin("toggle_vi_mode", "palette.action.toggle_vi_mode.label", "palette.action.toggle_vi_mode.hint", "palette.action.toggle_vi_mode.search", &mut all_entries);
@@ -2495,10 +2676,19 @@ impl PureTermApp {
                 return state.title(id);
             }
         }
-        if let Some(tab) = self.active_tab_ref() {
-            format!("PureTerm — {}", tab.title)
+        // GAP-2.1: 多 workspace 时标题带当前 workspace 名,让切换可见(单 workspace
+        // 不加前缀,保持原标题)。
+        let ws_prefix = if self.background_workspaces.is_empty() {
+            String::new()
         } else {
+            format!("[{}] ", self.active_workspace_name)
+        };
+        if let Some(tab) = self.active_tab_ref() {
+            format!("PureTerm — {}{}", ws_prefix, tab.title)
+        } else if self.background_workspaces.is_empty() {
             "PureTerm".to_string()
+        } else {
+            format!("PureTerm — [{}]", self.active_workspace_name)
         }
     }
 
@@ -3104,6 +3294,45 @@ impl PureTermApp {
                         serde_json::json!({ "tab_id": self.active_tab.0 }),
                     );
                     self.reposition_web_panes();
+                }
+            }
+            // ── GAP-2.1 Workspace(hybrid flat-active + background-swap)────────
+            Message::NewWorkspace => {
+                // 把当前活跃快照进 background,重置 flat,再为新 workspace 起一个
+                // fresh shell tab(复用 NewTab 的 PTY spawn 路径)。Arc 跟随存活,
+                // 旧 workspace 的 PTY 状态完整保留在 background。
+                let name = format!("Workspace {}", self.next_workspace_id);
+                crate::workspace_tier::create_workspace(
+                    &mut self.tabs,
+                    &mut self.active_tab,
+                    &mut self.active_workspace_id,
+                    &mut self.active_workspace_name,
+                    &mut self.background_workspaces,
+                    &mut self.next_workspace_id,
+                    &name,
+                );
+                let id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                self.active_tab = id;
+                self.refresh_status_bar_cwd();
+                self.reposition_web_panes();
+                self.mark_layout_dirty();
+                self.events.emit(
+                    crate::events::Category::Surface,
+                    "workspace.created",
+                    None,
+                    serde_json::json!({ "workspace": self.active_workspace_name }),
+                );
+            }
+            Message::NextWorkspace => {
+                self.apply_workspace_switch(self.workspace_neighbor(1));
+            }
+            Message::PrevWorkspace => {
+                self.apply_workspace_switch(self.workspace_neighbor(-1));
+            }
+            Message::ActivateWorkspaceByIndex(i) => {
+                let ids = self.workspace_ids_in_order();
+                if let Some(&target) = ids.get(i) {
+                    self.apply_workspace_switch(target);
                 }
             }
             Message::ClipboardPaste(text) => {
@@ -4997,6 +5226,11 @@ impl PureTermApp {
             Action::ActivateTabByIndex(i) => Task::done(Message::ActivateTabByIndex(i)),
             Action::MovePaneToNewTab => Task::done(Message::MovePaneToNewTab),
             Action::MovePaneToNewWindow => Task::done(Message::MovePaneToNewWindow),
+            // GAP-2.1 Workspace
+            Action::NewWorkspace => Task::done(Message::NewWorkspace),
+            Action::NextWorkspace => Task::done(Message::NextWorkspace),
+            Action::PrevWorkspace => Task::done(Message::PrevWorkspace),
+            Action::ActivateWorkspaceByIndex(i) => Task::done(Message::ActivateWorkspaceByIndex(i)),
 
             // Split pane
             Action::SplitHorizontal => Task::done(Message::SplitHorizontal),
@@ -6169,7 +6403,7 @@ impl PureTermApp {
             new_pane_id,
             Pane {
                 id: new_pane_id,
-                content: PaneContent::Web(browser_ctx),
+                content: Surface::Web(browser_ctx),
                 title: "🌐 Browser".to_string(),
             },
         );
@@ -6251,7 +6485,7 @@ impl PureTermApp {
             new_pane_id,
             Pane {
                 id: new_pane_id,
-                content: PaneContent::Terminal(terminal_ctx),
+                content: Surface::Terminal(terminal_ctx),
                 title: format!("Pane {:?}", new_pane_id),
             },
         );
