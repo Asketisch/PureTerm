@@ -230,16 +230,12 @@ impl Window {
 
 pub struct PureTermApp {
     main_window: Option<window::Id>,
-    tabs: Vec<Tab>,
-    active_tab: TabId,
     next_tab_id: u64,
-    // GAP-2.1 hybrid workspace tier:活跃 workspace 的 tabs/active_tab 就是上面的
-    // flat 字段(保持 disjoint borrow);其余 workspace 存于 `background_workspaces`,
-    // 切换走 `workspace_tier::switch_active_workspace` 的 `mem::swap`(Arc 跟随存活)。
-    background_workspaces: Vec<Workspace>,
-    active_workspace_id: WorkspaceId,
-    active_workspace_name: String,
-    next_workspace_id: u64,
+    /// GAP-2.1 Phase 4:窗口的唯一真源。windows[0] = 主窗(is_main=true);
+    /// 其余(Phase 4 T2b-2 起)= detached 窗口。每个 Window 持 workspaces: Vec<Workspace>。
+    windows: Vec<Window>,
+    /// 焦点路由:当前活跃窗口的 window::Id(初值 = 主窗)。
+    active_window_id: window::Id,
     hovered_tab: Option<TabId>,
     glyph_state: Arc<RefCell<GlyphState>>,
     config: AppConfig,
@@ -1237,14 +1233,9 @@ impl PureTermApp {
 
         let mut app = Self {
             main_window: Some(id),
-            tabs: Vec::new(),
-            active_tab: TabId(0),
             next_tab_id: 0,
-            // GAP-2.1:启动即一个名为 "Default" 的活跃 workspace;无 background。
-            background_workspaces: Vec::new(),
-            active_workspace_id: WorkspaceId(0),
-            active_workspace_name: String::from("Default"),
-            next_workspace_id: 1,
+            windows: vec![Window::new_main(id)],
+            active_window_id: id,
             hovered_tab: None,
             glyph_state,
             config,
@@ -1348,7 +1339,7 @@ impl PureTermApp {
         let restored = false;
         if !restored {
             let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
-            app.active_tab = first_id;
+            app.set_active_tab(first_id);
         }
 
         // GAP-7.6: scan once at startup for external agent processes (e.g. a
@@ -1387,19 +1378,22 @@ impl PureTermApp {
         drop(gs);
 
         let tab_num = self.next_tab_id;
+        // T2b-1:先取出 title(借 self.i18n),再用 field-path 直访 self.windows 推入,
+        // 避免同时借 self.tabs(已删)与 self.i18n。
+        let title = self.i18n.t_fmt("tab.title.format", &[("n", &tab_num.to_string())]);
         let mut panes = HashMap::new();
         panes.insert(
             pane_id,
             Pane {
                 id: pane_id,
                 content: Surface::Terminal(terminal_ctx),
-                title: self.i18n.t_fmt("tab.title.format", &[("n", &tab_num.to_string())]),
+                title: title.clone(),
             },
         );
 
-        self.tabs.push(Tab {
+        let tab = Tab {
             id,
-            title: self.i18n.t_fmt("tab.title.format", &[("n", &tab_num.to_string())]),
+            title,
             panes,
             split_tree: SplitNode::single(pane_id),
             active_pane: pane_id,
@@ -1407,7 +1401,15 @@ impl PureTermApp {
             created_at: Instant::now(),
             zoom_state: None,
             vi_sub_mode: None,
-        });
+        };
+        // field-path:只借 self.windows,与后续 self.events / self.i18n disjoint。
+        let aw = self.active_window_id;
+        self.windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+            .expect("active workspace missing")
+            .push_tab(tab);
         // GAP-6.7: a new tab = a new local PTY session.
         self.events.emit(
             crate::events::Category::Surface,
@@ -1600,8 +1602,19 @@ impl PureTermApp {
         let cw = self.glyph_state.borrow().cell_width as u16;
         let ch = self.glyph_state.borrow().cell_height as u16;
         let terminal_height = terminal_content_height(self.viewport_size.height);
-        for tab in &mut self.tabs {
-            Self::resize_panes_in_tab(tab, self.viewport_size.width, terminal_height, cw, ch);
+        // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访 self.windows
+        // 遍历活跃 workspace 的 tabs(只借 self.windows,不借 *self)。
+        let vw = self.viewport_size.width;
+        let aw = self.active_window_id;
+        if let Some(ws) = self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+        {
+            for tab in &mut ws.tabs {
+                Self::resize_panes_in_tab(tab, vw, terminal_height, cw, ch);
+            }
         }
 
         log::info!(
@@ -1765,101 +1778,75 @@ impl PureTermApp {
         }
     }
 
-    // ── GAP-2.1 Phase 4 cutover 访问器(T1 stub / T2b 填实) ──────────────────
-    // T1:这些访问器先指向现有 flat 字段或返回 None,零行为变化。T2a 把 ~205 处
-    // `self.tabs`/`self.active_tab` 机械重路由到 `tabs()`/`active_tab_id()`(仍指 flat
-    // → 编译+测试绿);T2b 删 flat 字段、加 `windows: Vec<Window>`,把这些实现改成走
-    // 活跃 Window,残余「同时借多字段」站点用 field-path 直访解。
-    #[allow(dead_code)] // T2b 全部启用后移除
+    // ── GAP-2.1 Phase 4 cutover 访问器(走活跃 Window) ──────────────────────
     fn active_window(&self) -> Option<&Window> {
-        None
+        self.windows.iter().find(|w| w.window_id == self.active_window_id)
     }
-    #[allow(dead_code)]
     fn active_window_mut(&mut self) -> Option<&mut Window> {
-        None
+        self.windows.iter_mut().find(|w| w.window_id == self.active_window_id)
     }
-    #[allow(dead_code)]
-    fn window_for(&self, _id: window::Id) -> Option<&Window> {
-        None
+    fn window_for(&self, id: window::Id) -> Option<&Window> {
+        self.windows.iter().find(|w| w.window_id == id)
     }
-    #[allow(dead_code)]
-    fn window_for_mut(&mut self, _id: window::Id) -> Option<&mut Window> {
-        None
+    fn window_for_mut(&mut self, id: window::Id) -> Option<&mut Window> {
+        self.windows.iter_mut().find(|w| w.window_id == id)
     }
-    #[allow(dead_code)]
     fn active_ws(&self) -> Option<&Workspace> {
-        None
+        self.active_window()?.active_workspace()
     }
-    #[allow(dead_code)]
     fn active_ws_mut(&mut self) -> Option<&mut Workspace> {
-        None
+        self.active_window_mut()?.active_workspace_mut()
     }
-    /// 活跃 tab 的 id。T1 指向 flat `active_tab`;T2b 改为活跃 workspace 的 active_tab。
     fn active_tab_id(&self) -> TabId {
-        self.active_tab
+        self.active_ws().map_or(TabId(0), |ws| ws.active_tab)
     }
-    /// 设活跃 tab。T1 写 flat `active_tab`;T2b 写活跃 workspace。
     fn set_active_tab(&mut self, id: TabId) {
-        self.active_tab = id;
+        if let Some(ws) = self.active_ws_mut() {
+            ws.active_tab = id;
+        }
     }
-    /// 活跃 workspace 的 tabs(只读)。T1 指向 flat `tabs`;T2b 改为活跃 workspace.tabs。
     fn tabs(&self) -> &Vec<Tab> {
-        &self.tabs
+        self.active_ws().map(|ws| &ws.tabs).expect("active workspace missing")
     }
-    /// 活跃 workspace 的 tabs(可变)。T1 指向 flat `tabs`;T2b 改为活跃 workspace.tabs。
     fn tabs_mut(&mut self) -> &mut Vec<Tab> {
-        &mut self.tabs
+        self.active_ws_mut().map(|ws| &mut ws.tabs).expect("active workspace missing")
     }
 
     fn active_tab_ref(&self) -> Option<&Tab> {
-        self.tabs.iter().find(|t| t.id == self.active_tab)
+        self.active_ws()?.active_tab_ref()
     }
 
     fn active_tab_mut(&mut self) -> Option<&mut Tab> {
-        self.tabs.iter_mut().find(|t| t.id == self.active_tab)
+        self.active_ws_mut()?.active_tab_mut()
     }
 
-    // ── GAP-2.1 Workspace(hybrid flat-active + background-swap)────────────
-    /// 所有 workspace id 按创建顺序(= id 递增)排列:活跃 id + background id 合并排序。
-    /// 用于 ⌃1..9 按索引切换、Next/Prev 环绕。
+    // ── GAP-2.1 Phase 4 Workspace tier(坍缩为纯 Window 指针切换) ──────────
+    /// 所有 workspace id 按创建顺序(= id 递增)排列。用于 ⌃1..9 按索引切换、Next/Prev 环绕。
     fn workspace_ids_in_order(&self) -> Vec<WorkspaceId> {
-        let mut ids: Vec<WorkspaceId> =
-            self.background_workspaces.iter().map(|w| w.id).collect();
-        ids.push(self.active_workspace_id);
-        ids.sort_by_key(|id| id.0);
-        ids
+        self.active_window().map_or(vec![], |w| w.workspace_ids_in_order())
     }
 
     /// 当前活跃 workspace 在创建顺序中的索引。
     fn active_workspace_index(&self) -> usize {
-        self.workspace_ids_in_order()
-            .iter()
-            .position(|id| *id == self.active_workspace_id)
+        self.active_window()
+            .and_then(|w| {
+                let ids = w.workspace_ids_in_order();
+                ids.iter().position(|id| *id == w.active_workspace)
+            })
             .unwrap_or(0)
     }
 
     /// 相邻 workspace 的 id(delta=+1 Next / -1 Prev,环绕)。仅 1 个时返回自身。
     fn workspace_neighbor(&self, delta: i32) -> WorkspaceId {
-        let ids = self.workspace_ids_in_order();
-        if ids.len() <= 1 {
-            return self.active_workspace_id;
-        }
-        let cur = self.active_workspace_index();
-        let n = ids.len() as i32;
-        let next = ((cur as i32 + delta).rem_euclid(n)) as usize;
-        ids[next]
+        self.active_window()
+            .and_then(|w| w.workspace_neighbor(delta))
+            .unwrap_or(WorkspaceId(0))
     }
 
-    /// 切到 target workspace(swap flat ↔ background,Arc 跟随存活),刷新后续状态。
+    /// 切到 target workspace(纯指针切换,不动 `workspaces` → 不丢 Surface 状态),
+    /// 刷新后续状态。
     fn apply_workspace_switch(&mut self, target: WorkspaceId) {
-        let switched = crate::workspace_tier::switch_active_workspace(
-            &mut self.tabs,
-            &mut self.active_tab,
-            &mut self.active_workspace_id,
-            &mut self.active_workspace_name,
-            &mut self.background_workspaces,
-            target,
-        );
+        let switched = self.active_window_mut().map_or(false, |w| w.switch_to(target));
         if switched {
             self.refresh_status_bar_cwd();
             self.reposition_web_panes();
@@ -1868,7 +1855,7 @@ impl PureTermApp {
                 crate::events::Category::Surface,
                 "workspace.switched",
                 None,
-                serde_json::json!({ "workspace": self.active_workspace_name }),
+                serde_json::json!({ "workspace": self.active_ws().map(|ws| ws.name.clone()).unwrap_or_default() }),
             );
         }
     }
@@ -2325,19 +2312,25 @@ impl PureTermApp {
         terminal_ctx.resize(cols, rows, gs.cell_width as u16, gs.cell_height as u16);
         drop(gs);
 
+        // T2b-1:先取出 title(借 self.i18n),再用 field-path 直访 self.windows 推入,
+        // 避免同时借 self.tabs(已删)与 self.i18n。
+        let pane_title =
+            self.i18n.t_fmt("tab.title.ssh", &[("name", &profile_name)]);
+        let tab_title =
+            self.i18n.t_fmt("tab.title.ssh_locked", &[("name", &profile_name)]);
         let mut panes = HashMap::new();
         panes.insert(
             pane_id,
             Pane {
                 id: pane_id,
                 content: Surface::Terminal(terminal_ctx),
-                title: self.i18n.t_fmt("tab.title.ssh", &[("name", &profile_name)]),
+                title: pane_title,
             },
         );
 
-        self.tabs.push(Tab {
+        let tab = Tab {
             id,
-            title: self.i18n.t_fmt("tab.title.ssh_locked", &[("name", &profile_name)]),
+            title: tab_title,
             panes,
             split_tree: SplitNode::single(pane_id),
             active_pane: pane_id,
@@ -2345,7 +2338,14 @@ impl PureTermApp {
             created_at: Instant::now(),
             zoom_state: None,
             vi_sub_mode: None,
-        });
+        };
+        let aw = self.active_window_id;
+        self.windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+            .expect("active workspace missing")
+            .push_tab(tab);
         self.mark_layout_dirty();
         id
     }
@@ -2759,17 +2759,21 @@ impl PureTermApp {
         }
         // GAP-2.1: 多 workspace 时标题带当前 workspace 名,让切换可见(单 workspace
         // 不加前缀,保持原标题)。
-        let ws_prefix = if self.background_workspaces.is_empty() {
-            String::new()
+        let ws_count = self.active_window().map_or(0, |w| w.workspaces.len());
+        let prefix = if ws_count > 1 {
+            self.active_ws().map(|ws| format!("[{}] ", ws.name))
         } else {
-            format!("[{}] ", self.active_workspace_name)
+            None
         };
         if let Some(tab) = self.active_tab_ref() {
-            format!("PureTerm — {}{}", ws_prefix, tab.title)
-        } else if self.background_workspaces.is_empty() {
-            "PureTerm".to_string()
+            format!("PureTerm — {}{}", prefix.unwrap_or_default(), tab.title)
+        } else if ws_count > 1 {
+            format!(
+                "PureTerm — [{}]",
+                self.active_ws().map(|ws| ws.name.clone()).unwrap_or_default()
+            )
         } else {
-            format!("PureTerm — [{}]", self.active_workspace_name)
+            "PureTerm".to_string()
         }
     }
 
@@ -2889,8 +2893,18 @@ impl PureTermApp {
                 }
 
                 // 消费所有 tab 中所有 pane 的 PTY 事件（Wakeup / Exit）
+                // T2b-1:field-path 直访 self.windows(只读),与循环体内
+                // self.pane_cwds / self.status_bar_* 的 mut disjoint。
                 let mut exited_panes = Vec::new();
-                for tab in &self.tabs {
+                let aw = self.active_window_id;
+                let active_ws_tabs: Vec<&Tab> = self
+                    .windows
+                    .iter()
+                    .find(|w| w.window_id == aw)
+                    .and_then(|w| w.active_workspace())
+                    .map(|ws| ws.tabs.iter().collect())
+                    .unwrap_or_default();
+                for tab in active_ws_tabs {
                     for (pane_id, pane) in &tab.panes {
                         let Some(ctx) = pane.terminal() else { continue };
                         while let Some(event) = ctx.poll_terminal_event() {
@@ -3111,10 +3125,19 @@ impl PureTermApp {
                     drop(gs);
                     let terminal_height =
                         terminal_content_height(self.viewport_size.height);
-                    for tab in &mut self.tabs {
-                        Self::resize_panes_in_tab(
-                            tab, self.viewport_size.width, terminal_height, cw, ch,
-                        );
+                    // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访
+                    // self.windows 遍历活跃 workspace 的 tabs(只借 self.windows)。
+                    let vw = self.viewport_size.width;
+                    let aw = self.active_window_id;
+                    if let Some(ws) = self
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.window_id == aw)
+                        .and_then(|w| w.active_workspace_mut())
+                    {
+                        for tab in &mut ws.tabs {
+                            Self::resize_panes_in_tab(tab, vw, terminal_height, cw, ch);
+                        }
                     }
                 }
             }
@@ -3383,21 +3406,19 @@ impl PureTermApp {
             }
             // ── GAP-2.1 Workspace(hybrid flat-active + background-swap)────────
             Message::NewWorkspace => {
-                // 把当前活跃快照进 background,重置 flat,再为新 workspace 起一个
-                // fresh shell tab(复用 NewTab 的 PTY spawn 路径)。Arc 跟随存活,
-                // 旧 workspace 的 PTY 状态完整保留在 background。
-                let name = format!("Workspace {}", self.next_workspace_id);
-                crate::workspace_tier::create_workspace(
-                    &mut self.tabs,
-                    &mut self.active_tab,
-                    &mut self.active_workspace_id,
-                    &mut self.active_workspace_name,
-                    &mut self.background_workspaces,
-                    &mut self.next_workspace_id,
-                    &name,
-                );
-                let id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
-                self.set_active_tab(id);
+                // 为活跃 Window 建新 workspace(自动切到它),再为其起一个 fresh shell
+                // tab(复用 NewTab 的 PTY spawn 路径)。旧 workspace 的 PTY 状态完整保留
+                // 在 `windows[aw].workspaces` 里(纯指针切换,不丢 Surface 状态)。
+                let name = self
+                    .active_window()
+                    .map(|w| format!("Workspace {}", w.next_workspace_id))
+                    .unwrap_or_default();
+                if let Some(w) = self.active_window_mut() {
+                    w.create_workspace(&name);
+                }
+                // create_workspace 已切到新 workspace;为其建首个 tab。
+                let tab_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                self.set_active_tab(tab_id);
                 self.refresh_status_bar_cwd();
                 self.reposition_web_panes();
                 self.mark_layout_dirty();
@@ -3405,7 +3426,7 @@ impl PureTermApp {
                     crate::events::Category::Surface,
                     "workspace.created",
                     None,
-                    serde_json::json!({ "workspace": self.active_workspace_name }),
+                    serde_json::json!({ "workspace": self.active_ws().map(|ws| ws.name.clone()).unwrap_or_default() }),
                 );
             }
             Message::NextWorkspace => {
@@ -4346,9 +4367,19 @@ impl PureTermApp {
                 }
             }
             Message::PaneFocused(pane_id) => {
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == self.active_tab) {
-                    if tab.panes.contains_key(&pane_id) {
-                        tab.active_pane = pane_id;
+                // T2b-1:field-path 直访 self.windows → 活跃 workspace,
+                // 在 &mut Workspace 上 find/写 active_tab,不借 *self。
+                let aw = self.active_window_id;
+                let ws_tabs: Option<&mut Workspace> = self
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.window_id == aw)
+                    .and_then(|w| w.active_workspace_mut());
+                if let Some(ws) = ws_tabs {
+                    if let Some(tab) = ws.tabs.iter_mut().find(|t| t.id == ws.active_tab) {
+                        if tab.panes.contains_key(&pane_id) {
+                            tab.active_pane = pane_id;
+                        }
                     }
                 }
                 // Active pane changed; refresh the status bar. zsh only
@@ -4365,10 +4396,19 @@ impl PureTermApp {
             }
             Message::PaneMousePressed(pane_id) => {
                 // 1) 把 pane 设为活跃(原 PaneFocused 副作用)。
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.panes.contains_key(&pane_id))
-                {
-                    self.active_tab = tab.id;
-                    tab.active_pane = pane_id;
+                // T2b-1:field-path 直访 self.windows → 活跃 workspace。
+                let aw = self.active_window_id;
+                let ws_tabs: Option<&mut Workspace> = self
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.window_id == aw)
+                    .and_then(|w| w.active_workspace_mut());
+                if let Some(ws) = ws_tabs {
+                    if let Some(tab) = ws.tabs.iter_mut().find(|t| t.panes.contains_key(&pane_id))
+                    {
+                        ws.active_tab = tab.id;
+                        tab.active_pane = pane_id;
+                    }
                 }
                 // Active pane changed; refresh the status bar (see PaneFocused).
                 self.refresh_status_bar_cwd();
@@ -4430,9 +4470,18 @@ impl PureTermApp {
             Message::PaneCursorMoved(pane_id, pos) => {
                 self.last_cursor_pos = pos;
                 // Also update active pane on click/move
-                if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == self.active_tab) {
-                    if tab.panes.contains_key(&pane_id) {
-                        tab.active_pane = pane_id;
+                // T2b-1:field-path 直访 self.windows → 活跃 workspace。
+                let aw = self.active_window_id;
+                let ws_tabs: Option<&mut Workspace> = self
+                    .windows
+                    .iter_mut()
+                    .find(|w| w.window_id == aw)
+                    .and_then(|w| w.active_workspace_mut());
+                if let Some(ws) = ws_tabs {
+                    if let Some(tab) = ws.tabs.iter_mut().find(|t| t.id == ws.active_tab) {
+                        if tab.panes.contains_key(&pane_id) {
+                            tab.active_pane = pane_id;
+                        }
                     }
                 }
                 // 若该 pane 处于选区拖动中,扩展 selection 终点。
@@ -4902,7 +4951,15 @@ impl PureTermApp {
                     let terminal_height =
                         terminal_content_height(self.viewport_size.height);
 
-                    if let Some(tab) = self.tabs.iter_mut().find(|t| t.id == drag.tab_id) {
+                    // T2b-1:field-path 直访 self.windows → 活跃 workspace。
+                    let aw = self.active_window_id;
+                    let ws_tab: Option<&mut Tab> = self
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.window_id == aw)
+                        .and_then(|w| w.active_workspace_mut())
+                        .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == drag.tab_id));
+                    if let Some(tab) = ws_tab {
                         tab.split_tree.update_split_ratio_by_id(drag.split_id, new_ratio);
                         // 同步 resize PTY，让 term 网格与视觉 bounds 同步，避免拖动时字体变形
                         Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
@@ -4914,8 +4971,16 @@ impl PureTermApp {
                 self.selection_drag = None;
                 if let Some(drag) = self.drag_state.take() {
                     // 触发最终 PTY resize
-                    let tab = self.tabs.iter_mut().find(|t| t.id == drag.tab_id);
-                    if let Some(tab) = tab {
+                    // T2b-1:field-path 直访 self.windows → 活跃 workspace;self.viewport_size
+                    // / self.glyph_state 与 self.windows disjoint,可同借。
+                    let aw = self.active_window_id;
+                    let tab_opt: Option<&mut Tab> = self
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.window_id == aw)
+                        .and_then(|w| w.active_workspace_mut())
+                        .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == drag.tab_id));
+                    if let Some(tab) = tab_opt {
                         let terminal_height = terminal_content_height(self.viewport_size.height);
                         let layout = tab.split_tree.compute_layout(
                             0.0, 0.0, self.viewport_size.width, terminal_height,
@@ -4950,12 +5015,28 @@ impl PureTermApp {
                     // Last pane, close entire tab
                     return Task::done(Message::CloseTab(tab_id));
                 }
+                // T2b-1:field-path 直访 self.windows → 活跃 workspace;后续
+                // self.ssh_manager / reconnect_hub / pane_cwds / viewport_size /
+                // glyph_state 均与 self.windows disjoint,可同借。
+                let aw = self.active_window_id;
                 let new_active = {
-                    let tab = self.tabs.iter_mut().find(|t| t.id == tab_id).unwrap();
+                    let tab = self
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.window_id == aw)
+                        .and_then(|w| w.active_workspace_mut())
+                        .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == tab_id))
+                        .unwrap();
                     tab.split_tree.remove(pane_id)
                 };
                 if let Some(new_active) = new_active {
-                    let tab = self.tabs.iter_mut().find(|t| t.id == tab_id).unwrap();
+                    let tab = self
+                        .windows
+                        .iter_mut()
+                        .find(|w| w.window_id == aw)
+                        .and_then(|w| w.active_workspace_mut())
+                        .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == tab_id))
+                        .unwrap();
                     // SSH cleanup: release pool entry for this pane
                     #[cfg(unix)]
                     if let Some(manager) = self.ssh_manager.as_ref() {
@@ -6415,8 +6496,18 @@ impl PureTermApp {
         let cw: u16 = self.glyph_state.borrow().cell_width as u16;
         let ch: u16 = self.glyph_state.borrow().cell_height as u16;
         let terminal_height = terminal_content_height(self.viewport_size.height);
-        for tab in &mut self.tabs {
-            Self::resize_panes_in_tab(tab, self.viewport_size.width, terminal_height, cw, ch);
+        // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访 self.windows。
+        let vw = self.viewport_size.width;
+        let aw = self.active_window_id;
+        if let Some(ws) = self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+        {
+            for tab in &mut ws.tabs {
+                Self::resize_panes_in_tab(tab, vw, terminal_height, cw, ch);
+            }
         }
         // GAP-3.5: web pane 的 wry WebView 跟随 resize 一起重定位。
         self.reposition_web_panes();
@@ -6472,7 +6563,16 @@ impl PureTermApp {
 
         let browser_ctx = crate::browser::BrowserContext::new(url);
 
-        let tab = match self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+        // T2b-1:field-path 直访 self.windows → 活跃 workspace;tab 借用在使用后
+        // 即结束(NLL),后续 self.mark_layout_dirty() 可借 *self。
+        let aw = self.active_window_id;
+        let tab = match self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+            .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == active_tab_id))
+        {
             Some(t) => t,
             None => return,
         };
@@ -6517,7 +6617,16 @@ impl PureTermApp {
         let terminal_ctx = Arc::new(TerminalContext::new_local_auto(cwd.as_deref()));
 
         // Find the tab and perform the split
-        let tab = match self.tabs.iter_mut().find(|t| t.id == active_tab_id) {
+        // T2b-1:field-path 直访 self.windows → 活跃 workspace;self.viewport_size /
+        // self.glyph_state 与 self.windows disjoint,可同借。
+        let aw = self.active_window_id;
+        let tab = match self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+            .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == active_tab_id))
+        {
             Some(t) => t,
             None => return,
         };
@@ -6627,7 +6736,17 @@ impl PureTermApp {
                     }
                 }
             }
-            let tab = self.tabs.iter_mut().find(|t| t.id == active_tab_id).unwrap();
+            // T2b-1:field-path 直访 self.windows → 活跃 workspace;后续
+            // ssh_manager / pane_cwds / viewport_size / glyph_state 均与
+            // self.windows disjoint,可同借。
+            let aw = self.active_window_id;
+            let tab = self
+                .windows
+                .iter_mut()
+                .find(|w| w.window_id == aw)
+                .and_then(|w| w.active_workspace_mut())
+                .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == active_tab_id))
+                .unwrap();
             // SSH cleanup: release pool entry for this pane
             #[cfg(unix)]
             if let Some(manager) = self.ssh_manager.as_ref() {
@@ -6739,13 +6858,23 @@ impl PureTermApp {
         let pid = pane_id
             .map(PaneId)
             .unwrap_or_else(|| self.active_tab_ref().map(|t| t.active_pane).unwrap_or(PaneId(0)));
-        for tab in &mut self.tabs {
-            if tab.split_tree.contains(pid) {
-                if let Some(adj) = tab.split_tree.find_adjacent(pid, direction) {
-                    tab.active_pane = adj;
+        // T2b-1:field-path 直访 self.windows → 活跃 workspace;在 &mut Workspace 上
+        // 遍历 tabs 并写 ws.active_tab,不借 *self。
+        let aw = self.active_window_id;
+        let ws_opt: Option<&mut Workspace> = self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut());
+        if let Some(ws) = ws_opt {
+            for tab in &mut ws.tabs {
+                if tab.split_tree.contains(pid) {
+                    if let Some(adj) = tab.split_tree.find_adjacent(pid, direction) {
+                        tab.active_pane = adj;
+                    }
+                    ws.active_tab = tab.id;
+                    break;
                 }
-                self.active_tab = tab.id;
-                break;
             }
         }
     }
@@ -6765,11 +6894,20 @@ impl PureTermApp {
     /// GAP-6.6: make `pane_id` the active pane of its tab + switch to that tab
     /// (used by `break-pane` before detaching, so the right pane is moved).
     fn make_pane_active(&mut self, pane_id: PaneId) {
-        for tab in &mut self.tabs {
-            if tab.panes.contains_key(&pane_id) {
-                tab.active_pane = pane_id;
-                self.active_tab = tab.id;
-                break;
+        // T2b-1:field-path 直访 self.windows → 活跃 workspace;写 ws.active_tab。
+        let aw = self.active_window_id;
+        let ws_opt: Option<&mut Workspace> = self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut());
+        if let Some(ws) = ws_opt {
+            for tab in &mut ws.tabs {
+                if tab.panes.contains_key(&pane_id) {
+                    tab.active_pane = pane_id;
+                    ws.active_tab = tab.id;
+                    break;
+                }
             }
         }
     }

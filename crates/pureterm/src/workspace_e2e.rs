@@ -14,9 +14,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::browser::BrowserContext;
-use crate::iced_app::{Tab, TabId, Window, Workspace, WorkspaceId};
+use crate::iced_app::{Tab, TabId, Window, WorkspaceId};
 use crate::split_tree::{Pane, PaneId, SplitNode, Surface};
-use crate::workspace_tier::{create_workspace, switch_active_workspace};
 
 /// 构造一个仅含单个 Web pane 的 Tab,并捕获其 surface 的 `Arc`(供 ptr_eq)。
 fn web_tab(tab_num: u64, url: &str) -> (Tab, Arc<BrowserContext>) {
@@ -103,131 +102,10 @@ fn switch_workspace_preserves_inactive_workspace_surface() {
 }
 
 // ── 混合模型(workspace_tier 纯函数)不变量 ──────────────────────────────
-// PureTermApp 用 flat-active + background-swap:create 把活跃快照进 background
-// 并重置 flat;switch 用 `mem::swap` 交换 flat ↔ background。两次 swap 后,Arc
-// 身份必须存活(证明 PTY/session 跟随 pane,非 clone 重建)—— 这是 PureTermApp
-// 真实代码路径(`workspace_tier` 自由函数)的不变量,区别于上面的纯 `Window` 模型。
-
-fn tier_web_tab(id: u64, url: &str) -> (Tab, Arc<BrowserContext>) {
-    let pid = PaneId(id * 10 + 1);
-    let ctx = BrowserContext::new(url);
-    let mut panes = HashMap::new();
-    panes.insert(
-        pid,
-        Pane { id: pid, content: Surface::Web(Arc::clone(&ctx)), title: url.into() },
-    );
-    let tab = Tab {
-        id: TabId(id),
-        title: format!("t{id}"),
-        panes,
-        split_tree: SplitNode::single(pid),
-        active_pane: pid,
-        tab_color: None,
-        created_at: Instant::now(),
-        zoom_state: None,
-        vi_sub_mode: None,
-    };
-    (tab, ctx)
-}
-
-/// 取 tab 内首个 pane 的 Web Arc(测试 fixture:每个 tab 恰好 1 个 web pane)。
-fn tier_web_ctx(tab: &Tab) -> Arc<BrowserContext> {
-    tab.panes.values().next().unwrap().web().unwrap().clone()
-}
-
-#[test]
-fn hybrid_swap_preserves_surface_arc_across_create_and_switch() {
-    // 活跃 workspace "Default" 持 tab 1(ctx_a)。
-    let (tab_a, ctx_a) = tier_web_tab(1, "https://a.example");
-    let mut flat_tabs: Vec<Tab> = vec![tab_a];
-    let mut flat_active_tab = TabId(1);
-    let mut active_id = WorkspaceId(0);
-    let mut active_name = String::from("Default");
-    let mut background: Vec<Workspace> = Vec::new();
-    let mut next_ws: u64 = 1;
-
-    // create "B":flat(含 ctx_a)快照进 background,flat 重置。
-    let ws_b = create_workspace(
-        &mut flat_tabs,
-        &mut flat_active_tab,
-        &mut active_id,
-        &mut active_name,
-        &mut background,
-        &mut next_ws,
-        "B",
-    );
-    assert_eq!(ws_b, WorkspaceId(1), "新 workspace 拿到递增 id");
-    assert_eq!(active_id, ws_b, "create 后 active 切到新建");
-    assert_eq!(active_name, "B");
-    assert_eq!(background.len(), 1, "旧活跃快照进 background");
-    assert_eq!(background[0].id, WorkspaceId(0), "快照保留旧活跃 id");
-    assert_eq!(background[0].name, "Default");
-    assert!(flat_tabs.is_empty(), "flat 重置,等调用方建首个 tab");
-    assert!(
-        Arc::ptr_eq(&tier_web_ctx(&background[0].tabs[0]), &ctx_a),
-        "create 快照:ctx_a Arc 身份存活(Vec move,非 clone)"
-    );
-
-    // 为新 workspace B 建一个 tab(ctx_b),放入 flat。
-    let (tab_b, ctx_b) = tier_web_tab(2, "https://b.example");
-    flat_tabs = vec![tab_b];
-    flat_active_tab = TabId(2);
-
-    // switch 回 A(WorkspaceId(0) 在 background):swap。
-    assert!(switch_active_workspace(
-        &mut flat_tabs,
-        &mut flat_active_tab,
-        &mut active_id,
-        &mut active_name,
-        &mut background,
-        WorkspaceId(0),
-    ));
-    assert_eq!(active_id, WorkspaceId(0), "switch 后 active = A");
-    assert_eq!(active_name, "Default");
-    assert_eq!(flat_tabs.len(), 1);
-    assert!(
-        Arc::ptr_eq(&tier_web_ctx(&flat_tabs[0]), &ctx_a),
-        "switch 回 A:ctx_a Arc 身份存活 —— 后端(PTY)跟随 pane 未被销毁"
-    );
-    // background 现在持有 B(ctx_b),其 Arc 也存活。
-    assert_eq!(background.len(), 1);
-    assert_eq!(background[0].id, ws_b);
-    assert!(Arc::ptr_eq(&tier_web_ctx(&background[0].tabs[0]), &ctx_b), "B 的 ctx_b Arc 存活");
-
-    // switch 回 B:ctx_b 回到 flat,Arc 存活;switch 到未知 id 失败;switch 到当前 active 是 no-op。
-    assert!(switch_active_workspace(
-        &mut flat_tabs,
-        &mut flat_active_tab,
-        &mut active_id,
-        &mut active_name,
-        &mut background,
-        ws_b,
-    ));
-    assert!(Arc::ptr_eq(&tier_web_ctx(&flat_tabs[0]), &ctx_b), "switch 回 B:ctx_b Arc 存活");
-    assert!(
-        !switch_active_workspace(
-            &mut flat_tabs,
-            &mut flat_active_tab,
-            &mut active_id,
-            &mut active_name,
-            &mut background,
-            WorkspaceId(999),
-        ),
-        "switch 到未知 workspace 失败"
-    );
-    assert_eq!(active_id, ws_b, "失败的 switch 不改 active");
-    assert!(
-        switch_active_workspace(
-            &mut flat_tabs,
-            &mut flat_active_tab,
-            &mut active_id,
-            &mut active_name,
-            &mut background,
-            ws_b,
-        ),
-        "switch 到当前 active 是 no-op,返回 true"
-    );
-}
+// (T2b-1 已坍缩:hybrid flat↔background swap 模型被纯 `Window` 指针切换取代;
+//  「切换不丢 Surface Arc」不变量仍由上面的 `switch_workspace_preserves_inactive_workspace_surface`
+//  覆盖。原 `tier_web_*` fixture 与 `hybrid_swap_preserves_surface_arc_across_create_and_switch`
+//  随 `workspace_tier.rs` 一并删除。)
 
 // ── detached 折叠不变量(T2a 增量切片) ──────────────────────────────────
 // 旧 `DetachedWindow { window_id, tab }` 折叠进 `Window` 抽象:detached 窗口 =

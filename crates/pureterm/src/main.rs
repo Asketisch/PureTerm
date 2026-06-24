@@ -51,8 +51,6 @@ mod search;
 mod session_restore;
 mod split_tree;
 mod status_bar;
-/// GAP-2.1: hybrid workspace tier(flat-active + background-swap 纯函数)。
-mod workspace_tier;
 mod surface_snapshot;
 #[cfg(target_os = "macos")]
 mod macos_menu;
