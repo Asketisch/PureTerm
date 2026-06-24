@@ -128,7 +128,8 @@ impl Workspace {
 
 /// 顶级窗口:持有若干 Workspace,同一时刻只渲染 active_workspace 的 tabs。
 /// `is_main` 驱动标题前缀与首窗语义;`show_tab_bar=false` 用于旧 detached
-/// 单 pane 窗口的对等行为(GAP-2.1 把 `detached_windows` 统一进此抽象)。
+/// 单 pane 窗口的对等行为(GAP-2.1 Phase 4:主窗 + detached 统一折叠进此抽象,
+/// `windows: Vec<Window>` 是窗口的唯一真源)。
 pub(crate) struct Window {
     pub(crate) window_id: window::Id,
     pub(crate) workspaces: Vec<Workspace>,
@@ -326,8 +327,6 @@ pub struct PureTermApp {
     ssh_credential_store: Option<crate::ssh::credential::CredentialStore>,
     // Command palette (P5 GAP-5.9)
     command_palette: Option<CommandPaletteState>,
-    // Detached windows(GAP-2.1 Phase 4:折叠进 `Window` 抽象 —— 单 workspace 单 tab)
-    detached_windows: Vec<Window>,
     // Split pane drag state
     drag_state: Option<DragState>,
     /// 文本选择拖动状态：按下时开启，松手时清。`term.selection` 本身保留。
@@ -1302,7 +1301,6 @@ impl PureTermApp {
             renaming_tab: None,
             color_picker_tab: None,
             tab_list: None,
-            detached_windows: Vec::new(),
             drag_state: None,
             selection_drag: None,
             click_tracker: None,
@@ -3076,27 +3074,25 @@ impl PureTermApp {
             }
             Message::WindowResized(win_id, size) => {
                 if Some(win_id) != self.main_window {
-                    // Resize detached windows too
-                    for dw in &self.detached_windows {
-                        if dw.window_id == win_id {
-                            let terminal_height = terminal_content_height(size.height);
-                            let gs = self.glyph_state.borrow();
-                            let cols =
-                                (size.width / gs.cell_width).floor().max(1.0) as usize;
-                            let rows =
-                                (terminal_height / gs.cell_height).floor().max(1.0) as usize;
-                            let cw = gs.cell_width as u16;
-                            let ch = gs.cell_height as u16;
-                            drop(gs);
-                            // Resize all panes in the detached tab(单 workspace 单 tab)
-                            if let Some(tab) = dw.active_tab() {
-                                for pane in tab.panes.values() {
-                                    if let Some(ctx) = pane.terminal() {
-                                        ctx.resize(cols, rows, cw, ch);
-                                    }
+                    // 非 main 窗口(= detached):resize 其活跃 tab 的 panes。
+                    if let Some(w) = self.window_for(win_id) {
+                        debug_assert!(!w.is_main, "非 main 分支却命中 main 窗口");
+                        let terminal_height = terminal_content_height(size.height);
+                        let gs = self.glyph_state.borrow();
+                        let cols =
+                            (size.width / gs.cell_width).floor().max(1.0) as usize;
+                        let rows =
+                            (terminal_height / gs.cell_height).floor().max(1.0) as usize;
+                        let cw = gs.cell_width as u16;
+                        let ch = gs.cell_height as u16;
+                        drop(gs);
+                        // Resize all panes in the detached tab(单 workspace 单 tab)
+                        if let Some(tab) = w.active_tab() {
+                            for pane in tab.panes.values() {
+                                if let Some(ctx) = pane.terminal() {
+                                    ctx.resize(cols, rows, cw, ch);
                                 }
                             }
-                            return Task::none();
                         }
                     }
                     return Task::none();
@@ -3147,9 +3143,8 @@ impl PureTermApp {
                     self.settings_state = None;
                     return Task::done(Message::ConfigReloaded);
                 }
-                // Clean up detached windows
-                self.detached_windows.retain(|dw| dw.window_id != win_id);
-                if Some(win_id) == self.main_window {
+                let is_main = self.window_for(win_id).map_or(false, |w| w.is_main);
+                if is_main {
                     // GAP-5.6: persist the layout before tearing down so the
                     // next launch recovers the very last state (the debounced
                     // tick may not have fired for the most recent change).
@@ -3159,7 +3154,8 @@ impl PureTermApp {
                         crate::session_restore::save_atomic(&snapshot);
                     }
                     self.main_window = None;
-                    self.tabs_mut().clear();
+                    // 主窗的 tab 随下面 retain 从 windows 移除而销毁,无需 clear
+                    // (合并后 active_window_id=主窗,clear 会 panic)。
                     // GAP-6.7: main window closed.
                     self.events.emit(
                         crate::events::Category::Window,
@@ -3168,13 +3164,15 @@ impl PureTermApp {
                         serde_json::json!({}),
                     );
                 }
+                // 从统一 vec 移除已关窗口(main 或 detached)。
+                self.windows.retain(|w| w.window_id != win_id);
                 // PureTerm: 全部窗口（主终端 + 设置 + detached）都关闭时退出进程
                 // （Alacritty 上游规范行为）。这样 16ms TerminalWakeup 循环里
                 // 的 dock-reopen 消费逻辑再也跑不到——也就不会"关闭后又自动
                 // 开新窗口"了。下次点 dock 由 macOS 重新启动一个新进程。
                 if self.main_window.is_none()
                     && self.settings_window.is_none()
-                    && self.detached_windows.is_empty()
+                    && self.windows.is_empty()
                 {
                     // GAP-6.7: the app is quitting.
                     self.events.emit(
@@ -4153,7 +4151,7 @@ impl PureTermApp {
                                     Some(Size::new(cw, ch)),
                                 )
                             };
-                            self.detached_windows.push(Window::new_detached(
+                            self.windows.push(Window::new_detached(
                                 win_id_for_task,
                                 tab,
                             ));
@@ -4359,7 +4357,7 @@ impl PureTermApp {
                         drop(gs);
                         window::set_resize_increments(win_id, Some(Size::new(cw, ch)))
                     };
-                    self.detached_windows.push(Window::new_detached(win_id, tab));
+                    self.windows.push(Window::new_detached(win_id, tab));
                     return Task::batch(vec![
                         task.map(|_| Message::TerminalWakeup),
                         resize_task.map(|_: ()| Message::TerminalWakeup),
@@ -8434,34 +8432,36 @@ impl PureTermApp {
         }
 
         // Detached windows render their own terminal(单 workspace 单 tab)
-        for dw in &self.detached_windows {
-            if dw.window_id == id {
+        // GAP-2.1 Phase 4:detached 已折叠进统一 `windows`,用 window_for 查找,
+        // !w.is_main 守卫避免误命中主窗(id == main_window 时直接走主窗路径)。
+        if let Some(w) = self.window_for(id) {
+            if !w.is_main {
                 // Use the active tab's first pane terminal context for detached windows
-                let ctx = dw
+                let ctx = w
                     .active_tab()
                     .and_then(|t| t.panes.values().next())
                     .and_then(|p| p.terminal().cloned());
-                let Some(ctx) = ctx else { continue };
+                if let Some(ctx) = ctx {
+                    let shader = Shader::new(TerminalProgram {
+                        ctx,
+                        glyph_state: self.glyph_state.clone(),
+                        background_color: self.config.background_color,
+                        foreground_color: self.config.foreground_color,
+                        opacity: self.config.opacity,
+                        viewport_scale_factor: self.viewport_scale_factor.clone(),
+                        vi_search_pattern: self.vi_search_pattern.clone(),
+                        cached_search: self.cached_search.clone(),
+                    })
+                    .width(Length::Fill)
+                    .height(Length::Fill);
 
-                let shader = Shader::new(TerminalProgram {
-                    ctx,
-                    glyph_state: self.glyph_state.clone(),
-                    background_color: self.config.background_color,
-                    foreground_color: self.config.foreground_color,
-                    opacity: self.config.opacity,
-                    viewport_scale_factor: self.viewport_scale_factor.clone(),
-                    vi_search_pattern: self.vi_search_pattern.clone(),
-                    cached_search: self.cached_search.clone(),
-                })
-                .width(Length::Fill)
-                .height(Length::Fill);
-
-                return crate::ime_widget::ImeWrapper::new(
-                    mouse_area(shader)
-                        .on_scroll(Message::MouseScroll)
-                        .on_move(Message::CursorMoved)
-                        .into(),
-                ).into();
+                    return crate::ime_widget::ImeWrapper::new(
+                        mouse_area(shader)
+                            .on_scroll(Message::MouseScroll)
+                            .on_move(Message::CursorMoved)
+                            .into(),
+                    ).into();
+                }
             }
         }
 
