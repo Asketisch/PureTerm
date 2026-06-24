@@ -9,7 +9,7 @@
 | 状态 | 数量 | 说明 |
 |---|---|---|
 | ❌ 未实现 | 14 | 待排期 |
-| 🚧 进行中 | 6 | 代码闭环待 E2E |
+| 🚧 进行中 | 5 | 代码闭环待 E2E |
 | ⛔ 不做 | 4 | 见下方 §拒绝 |
 
 ### AI 终端价值排序
@@ -18,7 +18,7 @@
 
 | 价值层 | 优先级 | 特性 |
 |--------|--------|------|
-| **Tier 0 — AI 核心管道** | P0 | GAP-5.6(SSH 重连) / GAP-6.7(事件流) / GAP-3.5(Browser 面板) |
+| **Tier 0 — AI 核心管道** | P0 | GAP-5.6(SSH 重连) / GAP-6.7(事件流) |
 | **Tier 1 — AI 差异化能力** | P1 | GAP-7.8(agent-browser) / GAP-5.2(SOCKS5 隧道) / GAP-5.4(SSH agent forwarding) |
 | **Tier 2 — 终端增强** | P2 | GAP-4.2(hover preview) / GAP-5.5(URL scheme) / GAP-1.3(标题栈) / GAP-5.3(PTY resize) / GAP-3.2(可编程 Sidebar DSL) / GAP-6.3(AppleScript 桥) / GAP-6.8(Sidebar 解释器 IPC) |
 | **Tier 3 — 兼容性/国际化** | P3 | GAP-3.1(双侧边栏) / GAP-1.2(DECSCL) / GAP-1.4(BiDi) |
@@ -29,12 +29,12 @@
 ## B. UI/UX
 
 ### GAP-3.5 内置 Browser 面板(WebView)
-- **状态**: 🚧 | **优先级**: P0
-- **现状**: 代码闭环(2026-06-23,Phase A + C)——`crates/pureterm/src/browser/` 自实现 wry 嵌入(WKWebView 作 content NSView 子视图,`build_as_child`);`PaneContent` 枚举重构(Terminal/Web);几何真值=split_tree layout,reposition pass 按 `mark_layout_dirty` + tab 切换 + 拖拽 burst 触发;快照 `PaneSnapshot.kind="web"`(+`#[serde(default)] url`,前向兼容不 bump version)。Phase C:per-view SOCKS5 proxy 绑定(wry `mac-proxy` feature `with_proxy_config`)。**待 dist .app 重打包 + GUI E2E**(拖拽撕裂 R2 / z-order 与 terminal Shader / IME)
+- **状态**: ✅ | **优先级**: P0
+- **现状**: 代码闭环 + 自动 harness 全绿(2026-06-25)——Phase A(`crates/pureterm/src/browser/` 自实现 wry 嵌入:WKWebView 作 content NSView 子视图 `build_as_child`;几何真值=split_tree layout,reposition pass 按 `mark_layout_dirty` + tab 切换 + 拖拽 burst 触发;快照 `PaneSnapshot.kind="web"` + `#[serde(default)] url` 前向兼容)+ Phase C(per-view SOCKS5 proxy 绑定,wry `mac-proxy`)+ GAP-7.8(`browser.*` ops / MCP / screenshot)。**本轮补齐用户交互层**:`⌘⇧L` 分出新 Web pane 并聚焦地址栏 / `⌘L` 地址栏 overlay(导航活跃 Web pane,无则新建)+ `normalize_url_input`(域名/scheme/搜索归一化)。CI:`browser_address_bar_e2e.rs`(spawn 序列 Arc 身份 + load_url 未 realize 即更新)+ `normalize_url_input` 单测 + keymap `⌘L`/`⌘⇧L`(双形)解析,共 442 绿。pixel smoke 见 [`docs/manual-e2e/gap-3.5-browser.md`](manual-e2e/gap-3.5-browser.md)(异步非 gate)
 - **目标**: Pane 中嵌入 WebView — `⌘⇧L` split 打开 / `⌘L` 聚焦地址栏 / `⌘[ ]` 导航;支持 SOCKS5/HTTP CONNECT proxy(绑定 GAP-5.2);跨平台用 `wry` crate
 - **依赖**: GAP-2.2(分屏)
 - **DoD**: Pane 中打开 `https://example.com`,可渲染和滚动
-- **未做**: `⌘L` 地址栏 overlay / `⌘⇧L` split 快捷键 / Linux webkit2gtk 嵌入(现仅 macOS,fallback open-in-browser)
+- **未做**: 后退/前进导航(`⌘[`/`⌘]` 与 pane 焦点切换冲突,有意 defer) / Linux webkit2gtk 原生嵌入(现仅 macOS,Linux 走 open-in-browser 兜底) / detached 多窗口 WebView 精确 NSWindow 匹配
 - **对标**: cmux `Sources/BrowserWindowPortal.swift`(173 KB)
 
 ### GAP-3.2 可编程 Sidebars(DSL 解释器)

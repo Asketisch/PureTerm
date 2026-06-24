@@ -51,6 +51,9 @@ pub enum Action {
     // ── Split pane ──────────────────────────────────────────────────
     SplitHorizontal,
     SplitVertical,
+    /// GAP-3.5: split a new Web pane (wry WebView) beside the active pane,
+    /// then focus the ⌘L address bar so the user types a URL immediately.
+    SplitWeb,
     EqualizeSplits,
     SwapPane,
     ToggleZoom,
@@ -66,6 +69,9 @@ pub enum Action {
     OpenSshDialog,
     OpenCommandPalette,
     OpenSettings,
+    /// GAP-3.5: focus the Browser address-bar overlay (⌘L). Navigates the
+    /// active Web pane, or spawns one if no Web pane is focused.
+    FocusAddressBar,
 
     // ── Font / window (TOML-declared but not yet wired) ─────────────
     IncreaseFontSize,
@@ -307,6 +313,13 @@ impl Keymap {
             (cmd, BindingKey::Character("D".into())),
             Action::SplitVertical,
         );
+        // GAP-3.5: ⌘⇧L → SplitWeb (split a new Web pane + focus address bar).
+        // macOS dual-form: "l" with shift, or "L" without (mirrors ⌘⇧D above).
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("l".into())),
+            Action::SplitWeb,
+        );
+        bindings.insert((cmd, BindingKey::Character("L".into())), Action::SplitWeb);
         // ⌘= → EqualizeSplits
         bindings.insert(
             (cmd, BindingKey::Character("=".into())),
@@ -377,6 +390,13 @@ impl Keymap {
         bindings.insert(
             (cmd, BindingKey::Character("p".into())),
             Action::OpenCommandPalette,
+        );
+
+        // ── Browser (GAP-3.5) ──────────────────────────────────────
+        // ⌘L → FocusAddressBar (navigate the active Web pane / spawn one).
+        bindings.insert(
+            (cmd, BindingKey::Character("l".into())),
+            Action::FocusAddressBar,
         );
 
         // ── Cmd+Option+Arrow → PaneFocusAdjacent ────────────────────
@@ -762,6 +782,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         // Split pane
         "SplitHorizontal" | "NewPaneHorizontal" => Ok(Action::SplitHorizontal),
         "SplitVertical" | "NewPaneVertical" => Ok(Action::SplitVertical),
+        "SplitWeb" | "SplitPaneWeb" => Ok(Action::SplitWeb),
         "EqualizeSplits" => Ok(Action::EqualizeSplits),
         "SwapPane" => Ok(Action::SwapPane),
         "ToggleZoom" | "ToggleMaximize" => Ok(Action::ToggleZoom),
@@ -777,6 +798,8 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "OpenSshDialog" => Ok(Action::OpenSshDialog),
         "OpenCommandPalette" | "ToggleCommandPalette" => Ok(Action::OpenCommandPalette),
         "OpenSettings" => Ok(Action::OpenSettings),
+        // Browser (GAP-3.5)
+        "FocusAddressBar" | "FocusUrlBar" => Ok(Action::FocusAddressBar),
 
         // Font / window
         "IncreaseFontSize" | "FontLarger" => Ok(Action::IncreaseFontSize),
@@ -816,6 +839,8 @@ pub fn action_from_palette_id(id: &str) -> Option<Action> {
         "prev_tab" => Some(Action::PrevTab),
         "split_h" => Some(Action::SplitHorizontal),
         "split_v" => Some(Action::SplitVertical),
+        "split_web" => Some(Action::SplitWeb),
+        "browser.focus_address" => Some(Action::FocusAddressBar),
         "split.equalize" => Some(Action::EqualizeSplits),
         "split.swap" => Some(Action::SwapPane),
         "split.zoom" => Some(Action::ToggleZoom),
@@ -956,6 +981,46 @@ mod tests {
             Instant::now(),
         );
         assert_eq!(result, ResolveResult::Action(Action::EqualizeSplits));
+    }
+
+    // ── GAP-3.5: Browser address bar + split-web bindings ────────────
+
+    #[test]
+    fn test_cmd_l_focus_address_bar() {
+        let mut km = make_keymap();
+        let result = km.resolve(
+            &Key::Character("l".into()),
+            Modifiers::COMMAND,
+            Instant::now(),
+        );
+        assert_eq!(result, ResolveResult::Action(Action::FocusAddressBar));
+    }
+
+    #[test]
+    fn test_cmd_shift_l_split_web_dual_form() {
+        let mut km = make_keymap();
+        // macOS may report ⌘⇧L as "L" without shift…
+        let r1 = km.resolve(
+            &Key::Character("L".into()),
+            Modifiers::COMMAND,
+            Instant::now(),
+        );
+        assert_eq!(r1, ResolveResult::Action(Action::SplitWeb));
+        // …or as "l" with shift.
+        let r2 = km.resolve(
+            &Key::Character("l".into()),
+            Modifiers::COMMAND | Modifiers::SHIFT,
+            Instant::now(),
+        );
+        assert_eq!(r2, ResolveResult::Action(Action::SplitWeb));
+    }
+
+    #[test]
+    fn test_parse_browser_actions() {
+        assert_eq!(parse_action("FocusAddressBar"), Ok(Action::FocusAddressBar));
+        assert_eq!(parse_action("FocusUrlBar"), Ok(Action::FocusAddressBar));
+        assert_eq!(parse_action("SplitWeb"), Ok(Action::SplitWeb));
+        assert_eq!(parse_action("SplitPaneWeb"), Ok(Action::SplitWeb));
     }
 
     // ── GAP-3.8 / GAP-4.3: search action parsing + bindings ──────────

@@ -12,6 +12,10 @@ mod workspace_e2e;
 /// GAP-2.1: detached 键盘路由「焦点指针决定按键落点」不变量(headless,无 GUI)。
 #[cfg(all(test, unix))]
 mod keyboard_routing_e2e;
+/// GAP-3.5: Browser 地址栏 ⌘⇧L/⌘L — spawn-web 插入序列 + confirm load_url
+/// 往返(headless,无 PTY/GUI)。
+#[cfg(all(test, unix))]
+mod browser_address_bar_e2e;
 mod agent_hooks;
 mod agent_sessions;
 mod app_config;
@@ -211,6 +215,7 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::ActivateWorkspaceByIndex(i) => format!("Workspace {}", i + 1),
         keymap::Action::SplitHorizontal => "Split Horizontal".into(),
         keymap::Action::SplitVertical => "Split Vertical".into(),
+        keymap::Action::SplitWeb => "Split Browser Pane".into(),
         keymap::Action::EqualizeSplits => "Equalize Splits".into(),
         keymap::Action::SwapPane => "Swap Pane".into(),
         keymap::Action::ToggleZoom => "Toggle Zoom".into(),
@@ -230,6 +235,7 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::OpenSshDialog => "SSH Dialog".into(),
         keymap::Action::OpenCommandPalette => "Command Palette".into(),
         keymap::Action::OpenSettings => "Settings".into(),
+        keymap::Action::FocusAddressBar => "Browser Address Bar".into(),
         keymap::Action::IncreaseFontSize => "Font +".into(),
         keymap::Action::DecreaseFontSize => "Font −".into(),
         keymap::Action::ResetFontSize => "Font Reset".into(),

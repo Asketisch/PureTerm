@@ -363,6 +363,8 @@ pub struct PureTermApp {
     /// via the shared `vi_search_pattern` (the overlay writes its transformed
     /// pattern there so it reuses the cached `RegexSearch` from Phase 0).
     surface_search: Option<SearchState>,
+    /// GAP-3.5: ⌘L Browser address-bar overlay state. `None` = closed.
+    address_bar: Option<AddressBarState>,
     /// GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay state.
     dir_search: Option<DirectorySearchState>,
     /// Shared search pattern between app and GPU shader.
@@ -828,6 +830,11 @@ pub enum Message {
     SurfaceSearchToggleRegex,
     SurfaceSearchToggleWholeWord,
     SurfaceSearchToggleFollow,
+    // GAP-3.5: ⌘L Browser address-bar overlay
+    AddressBarOpen,
+    AddressBarQuery(String),
+    AddressBarConfirm,
+    AddressBarClose,
     // GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay
     DirSearchOpen,
     DirSearchQuery(String),
@@ -946,6 +953,69 @@ impl SearchState {
             last_tail_bottom: None,
         }
     }
+}
+
+/// GAP-3.5: State for the ⌘L Browser address-bar overlay.
+///
+/// `target` is the Web pane the typed URL will navigate:
+/// - `Some(id)` — load the URL into that existing Web pane (prefilled with
+///   its current URL when the overlay opened).
+/// - `None` — no Web pane was focused/open; confirm spawns a new Web pane
+///   beside the active pane (mirrors ⌘⇧L `SplitWeb`).
+struct AddressBarState {
+    query: String,
+    target: Option<PaneId>,
+}
+
+/// GAP-3.5: Normalize a raw address-bar input into a loadable URL.
+///
+/// - already has a scheme (`contains "://"`) → as-is;
+/// - looks like a bare domain (no spaces, contains a `.`) → prefix `https://`;
+/// - otherwise treat as a search query → Google search URL (percent-encoded).
+///
+/// Dependency-free (no `url`/`reqwest`); the heuristic covers the common
+/// cases. Pure function so the harness can unit-test it directly.
+pub(crate) fn normalize_url_input(input: &str) -> String {
+    let s = input.trim();
+    if s.is_empty() {
+        return String::new();
+    }
+    if s.contains("://") {
+        return s.to_string();
+    }
+    // Bare scheme like "about:blank" (no "://") — pass through.
+    if let Some((lhs, rhs)) = s.split_once(':') {
+        if !lhs.is_empty()
+            && lhs.chars().all(|c| c.is_ascii_alphabetic())
+            && !rhs.starts_with("//")
+            && !lhs.contains('.')
+        {
+            return s.to_string();
+        }
+    }
+    // Looks like a domain: has a dot, no whitespace.
+    if !s.chars().any(char::is_whitespace) && s.contains('.') {
+        return format!("https://{s}");
+    }
+    // Fall back to a web search.
+    let encoded = percent_encode_query(s);
+    format!("https://www.google.com/search?q={encoded}")
+}
+
+/// Minimal percent-encoding for the search-query fallback (unreserved chars
+/// pass through; everything else becomes `%XX`). Avoids pulling in a crate.
+fn percent_encode_query(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char);
+            }
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// GAP-3.8: State for the ⌘⇧F working-directory (ripgrep) search overlay.
@@ -1319,6 +1389,7 @@ impl PureTermApp {
             status_bar_last_poll: Instant::now(),
             vi_search: None,
             surface_search: None,
+            address_bar: None,
             dir_search: None,
             vi_search_pattern: std::sync::Arc::new(std::sync::Mutex::new(None)),
             cached_search: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -3649,6 +3720,66 @@ impl PureTermApp {
             Message::SurfaceSearchClose => {
                 self.close_surface_search();
             }
+            // GAP-3.5: ⌘L Browser address-bar overlay
+            Message::AddressBarOpen => {
+                // ⌘L toggles: if already open, close (mirrors ⌘F).
+                if self.address_bar.is_some() {
+                    self.address_bar = None;
+                    return Task::none();
+                }
+                // Resolve target: active pane if it's a Web pane; else the
+                // first Web pane in the active tab; else None (confirm will
+                // spawn a new Web pane, like ⌘⇧L). Prefill with the target's
+                // current URL so ⌘L acts like a browser's "edit current URL".
+                let (target, prefill) = self
+                    .active_tab_ref()
+                    .and_then(|tab| {
+                        if let Some(p) = tab.panes.get(&tab.active_pane) {
+                            if let Some(ctx) = p.web() {
+                                return Some((Some(tab.active_pane), ctx.url()));
+                            }
+                        }
+                        tab.panes
+                            .iter()
+                            .find_map(|(id, p)| p.web().map(|ctx| (*id, ctx.url())))
+                            .map(|(id, url)| (Some(id), url))
+                    })
+                    .unwrap_or((None, String::new()));
+                self.address_bar = Some(AddressBarState {
+                    query: prefill,
+                    target,
+                });
+            }
+            Message::AddressBarQuery(q) => {
+                if let Some(ref mut s) = self.address_bar {
+                    s.query = q;
+                }
+            }
+            Message::AddressBarConfirm => {
+                // `take()` so the overlay closes regardless of outcome.
+                if let Some(state) = self.address_bar.take() {
+                    let url = normalize_url_input(&state.query);
+                    let spawned = state.target.is_none();
+                    if !url.is_empty() {
+                        if let Some(target) = state.target {
+                            if let Some(ctx) = self.pane_browser_ctx(target) {
+                                ctx.load_url(&url);
+                            }
+                        } else {
+                            self.spawn_web_pane(SplitDirection::Horizontal, url.clone());
+                        }
+                    }
+                    self.events.emit(
+                        crate::events::Category::Browser,
+                        "browser.address_bar",
+                        None,
+                        serde_json::json!({ "url": url, "spawned": spawned }),
+                    );
+                }
+            }
+            Message::AddressBarClose => {
+                self.address_bar = None;
+            }
             Message::SurfaceSearchToggleCase => {
                 if let Some(ref mut s) = self.surface_search {
                     s.flags.case_sensitive = !s.flags.case_sensitive;
@@ -5177,6 +5308,11 @@ impl PureTermApp {
                 if self.vi_search.is_some() {
                     return Task::done(Message::ViSearchClose);
                 }
+                // GAP-3.5: Escape closes the ⌘L address-bar overlay.
+                if self.address_bar.is_some() {
+                    self.address_bar = None;
+                    return Task::none();
+                }
                 // GAP-3.8: Escape closes the ⌘F surface-search overlay.
                 if self.surface_search.is_some() {
                     self.close_surface_search();
@@ -5330,7 +5466,8 @@ impl PureTermApp {
                         || self.tab_list.is_some()
                         || self.vi_search.is_some()
                         || self.surface_search.is_some()
-                        || self.dir_search.is_some())
+                        || self.dir_search.is_some()
+                        || self.address_bar.is_some())
                 {
                     // GAP-4.1: Forward printable text to vi search bar
                     if self.vi_search.is_some() {
@@ -5466,6 +5603,17 @@ impl PureTermApp {
             // Split pane
             Action::SplitHorizontal => Task::done(Message::SplitHorizontal),
             Action::SplitVertical => Task::done(Message::SplitVertical),
+            // GAP-3.5: split a new Web pane + focus the address bar so the
+            // user types a URL immediately. Direct call (mirrors NewTab).
+            Action::SplitWeb => {
+                if let Some(new_id) = self.spawn_web_pane(SplitDirection::Horizontal, String::new()) {
+                    self.address_bar = Some(AddressBarState {
+                        query: String::new(),
+                        target: Some(new_id),
+                    });
+                }
+                Task::none()
+            }
             Action::EqualizeSplits => Task::done(Message::EqualizeSplits),
             Action::SwapPane => Task::done(Message::SwapPane),
             Action::ToggleZoom => Task::done(Message::ToggleZoom),
@@ -5510,6 +5658,8 @@ impl PureTermApp {
             }
             Action::OpenCommandPalette => Task::done(Message::OpenCommandPalette),
             Action::OpenSettings => Task::done(Message::OpenSettings),
+            // GAP-3.5: ⌘L address bar.
+            Action::FocusAddressBar => Task::done(Message::AddressBarOpen),
 
             // Font / window — not yet wired, no-op
             Action::IncreaseFontSize
@@ -6622,11 +6772,12 @@ impl PureTermApp {
     }
 
     /// GAP-3.5: 在活跃 tab 的活跃 pane 旁分出一个 Web pane,加载 `url`。
-    /// 与 `split_pane` 对称,但内容载体是 `BrowserContext`(无 PTY)。
-    fn spawn_web_pane(&mut self, direction: SplitDirection, url: String) {
+    /// 与 `split_pane` 对称,但内容载体是 `BrowserContext`(无 PTY)。返回新 pane
+    /// 的 id(失败/无可分位置时 `None`),供 ⌘⇧L 把地址栏 target 绑到它。
+    fn spawn_web_pane(&mut self, direction: SplitDirection, url: String) -> Option<PaneId> {
         let active_tab_id = self.active_tab_id();
         let active_pane_id = self.active_tab_ref().map(|t| t.active_pane);
-        let Some(active_pane_id) = active_pane_id else { return };
+        let Some(active_pane_id) = active_pane_id else { return None };
         let new_pane_id = PaneId::next();
 
         let browser_ctx = crate::browser::BrowserContext::new(url);
@@ -6642,7 +6793,7 @@ impl PureTermApp {
             .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == active_tab_id))
         {
             Some(t) => t,
-            None => return,
+            None => return None,
         };
 
         // GAP-2.2 zoom 不变量:split 前先还原原树(同 split_pane)。
@@ -6666,6 +6817,7 @@ impl PureTermApp {
             None,
             serde_json::json!({ "pane_id": new_pane_id.0 }),
         );
+        Some(new_pane_id)
     }
 
     /// Split the active pane in the given direction.
@@ -8338,6 +8490,49 @@ impl PureTermApp {
         Some(iced::widget::pin(bar).x(cx).y(y).into())
     }
 
+    /// GAP-3.5: ⌘L Browser address-bar overlay — a URL field pinned to the
+    /// top-center (just below the tab bar). Enter loads the normalized URL
+    /// into the target Web pane (or spawns one); × / Esc closes. Mirrors
+    /// `view_surface_search`'s construction.
+    fn view_address_bar(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, container, row, text, text_input};
+        use iced::Alignment;
+        use iced::Length;
+
+        let s = self.address_bar.as_ref()?;
+
+        let input = text_input("Enter URL or search…", &s.query)
+            .on_input(Message::AddressBarQuery)
+            .on_submit(Message::AddressBarConfirm)
+            .width(Length::Fill);
+
+        let close = button(text("×").size(14)).on_press(Message::AddressBarClose);
+
+        let bar = container(
+            row![input, close]
+                .spacing(6)
+                .align_y(Alignment::Center),
+        )
+        .padding([6, 10])
+        .width(Length::Fixed(560.0))
+        .style(|_theme: &Theme| container::Style {
+            background: Some(Background::Color(Color::from_rgba(0.15, 0.15, 0.18, 0.95))),
+            border: Border {
+                color: Color::from_rgba(0.3, 0.6, 1.0, 0.6),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        });
+
+        // Top-center, just below the tab bar.
+        let w = 560.0;
+        let y = TAB_BAR_HEIGHT + 4.0;
+        let cx = (self.viewport_size.width - w).max(0.0) / 2.0;
+
+        Some(iced::widget::pin(bar).x(cx).y(y).into())
+    }
+
     /// GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay. A centered
     /// dialog with a query input + scrollable result list; clicking a result
     /// opens it in `$EDITOR` at the line.
@@ -8575,6 +8770,7 @@ impl PureTermApp {
             || self.vi_search.is_some()
             || self.surface_search.is_some()
             || self.dir_search.is_some()
+            || self.address_bar.is_some()
             || self.feed_panel_visible()
             || self.hibernate_panel_visible()
             || self.detect_panel_visible();
@@ -8652,6 +8848,11 @@ impl PureTermApp {
             // GAP-3.8: ⌘⇧F directory (ripgrep) search overlay
             if let Some(search_el) = self.view_dir_search() {
                 layers.push(search_el);
+            }
+
+            // GAP-3.5: ⌘L Browser address-bar overlay
+            if let Some(ab_el) = self.view_address_bar() {
+                layers.push(ab_el);
             }
 
             stack(layers)
@@ -9126,5 +9327,58 @@ mod tests {
     #[test]
     fn agent_indicator_none_when_empty_and_no_pending() {
         assert!(super::agent_indicator("", false, 0).is_none());
+    }
+
+    // ── GAP-3.5: address-bar URL normalization ──────────────────────
+
+    #[test]
+    fn normalize_url_passes_through_scheme() {
+        assert_eq!(
+            super::normalize_url_input("https://example.com/a?b=c"),
+            "https://example.com/a?b=c"
+        );
+        assert_eq!(
+            super::normalize_url_input("http://localhost:8080"),
+            "http://localhost:8080"
+        );
+    }
+
+    #[test]
+    fn normalize_url_prefixes_bare_domain() {
+        assert_eq!(
+            super::normalize_url_input("example.com"),
+            "https://example.com"
+        );
+        assert_eq!(
+            super::normalize_url_input("www.google.com/search"),
+            "https://www.google.com/search"
+        );
+    }
+
+    #[test]
+    fn normalize_url_search_fallback() {
+        let out = super::normalize_url_input("how do i exit vim");
+        assert!(out.starts_with("https://www.google.com/search?q="));
+        // spaces → '+'
+        assert!(out.contains("how+do+i+exit+vim"));
+    }
+
+    #[test]
+    fn normalize_url_about_blank_passthrough() {
+        // No "://", but a bare scheme like about:blank passes through.
+        assert_eq!(super::normalize_url_input("about:blank"), "about:blank");
+    }
+
+    #[test]
+    fn normalize_url_empty_is_empty() {
+        assert_eq!(super::normalize_url_input(""), "");
+        assert_eq!(super::normalize_url_input("   "), "");
+    }
+
+    #[test]
+    fn percent_encode_query_unreserved_and_special() {
+        // unreserved pass through; space → '+'; others → %XX.
+        assert_eq!(super::percent_encode_query("a Z_-.~"), "a+Z_-.~");
+        assert_eq!(super::percent_encode_query("?&="), "%3F%26%3D");
     }
 }

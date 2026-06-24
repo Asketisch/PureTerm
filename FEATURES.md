@@ -52,6 +52,15 @@
 - 2026-06-22 GAP-7.6 加 agent 指示:`⚡ kind` / `❄ kind` / `⏳ N`
 - 留后续迭代:顶部 title bar shortcut hint pills / 菜单栏 extra badge / CPU 内存
 
+### GAP-3.5 内置 Browser 面板 / WebView(2026-06-25)
+- Pane 的第二种内容载体:自实现 wry 嵌入(macOS WKWebView 作 content NSView 子视图 `build_as_child`);几何真值=split_tree layout,reposition pass 按 `mark_layout_dirty` + tab 切换 + 拖拽 burst 触发;快照 `PaneSnapshot.kind="web"` + `#[serde(default)] url` 前向兼容
+- **快捷键**:`⌘⇧L` 分出新 Web pane 并聚焦地址栏;`⌘L` 地址栏 overlay(导航活跃 Web pane,无则新建)+ `normalize_url_input`(裸域名→`https://` / scheme 原样 / 含空格→Google 搜索)
+- Phase C per-view SOCKS5 proxy 绑定(wry `mac-proxy`,绑定 GAP-5.2 隧道);GAP-7.8 `browser.*` ops + MCP + screenshot 复用此 pane
+- CLI:`pureterm pane split-web --url <url>`;IPC `pane.split_web`
+- 自动 E2E harness 全绿:`browser_address_bar_e2e`(spawn 序列 Arc 身份 + load_url 未 realize 即更新)+ `normalize_url_input` + keymap `⌘L`/`⌘⇧L`(双形),共 442 单测
+- Linux 走 open-in-browser 兜底(webkit2gtk 原生嵌入未做);后退/前进导航 defer(`⌘[`/`⌘]` 与 pane 焦点冲突)
+- 实现:`crates/pureterm/src/browser/` + `iced_app.rs`(`spawn_web_pane` / 地址栏 overlay);pixel smoke 见 `docs/manual-e2e/gap-3.5-browser.md`
+
 ### GAP-3.7 完整快捷键自定义 + 模板(2026-06-12)
 - Action 30 变体 + Keymap HashMap + TOML 解析 + CLI `pureterm shortcuts`
 - 6 套预设模板:vim / tmux / iterm / vscode / agent-triage / custom
@@ -295,12 +304,12 @@ action = { Ssh = "ListProfiles" }
 | 类别 | 已实现数 |
 |---|---|
 | A. 核心架构 | 5 |
-| B. UI/UX | 5 |
+| B. UI/UX | 6 |
 | C. 终端交互 | 2 |
 | D. SSH | 5 |
 | E. 集成与可编程 | 4 |
 | F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **31** |
+| **总计** | **32** |
 
 ---
