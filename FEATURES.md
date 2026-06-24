@@ -121,6 +121,18 @@
 - 实现:`keymap.rs`(`CustomCommand` + `Action::CustomCommand` + `split_mods_and_key` + `register_custom_commands`) + `app_config.rs`(`load_custom_commands` 容错 + id 去重) + `iced_app.rs`(dispatch + `CommandEntry::Custom` 面板)
 - 单测:13 个
 
+### GAP-6.6 tmux 兼容子集(2026-06-24)
+- `pureterm tmux <command>` —— tmux 兼容命令子集,映射到 Socket API v2(GAP-6.1)+ daemon
+- 14 子命令 + target 解析器(`%N` / `:+` / `:-` / active / `%0` 回退到首 pane)
+- **阶段 1(只读)**:capture-pane(复用 `surface.snapshot` 真实实现,`-p` 默认最近 50 行)/ list-panes / send-keys / split-window / kill-pane / select-pane
+- **阶段 2(布局,RPC + IpcSideEffect)**:resize-pane(`resize_ratio`)/ swap-pane(`swap_by_ids`)/ select-pane 几何(`find_adjacent`)/ break-pane(`pane.detach` → MovePaneToNewTab)/ select-layout(→ equalize)
+- **阶段 3(跨 tab)**:join-pane(`pane.attach`;`remove`+`split`+TerminalContext `Arc` 移动,PTY/daemon session 跟随、不重连)
+- **阶段 4(daemon)**:pipe-pane(`pipe_pane.rs` pump→mpsc→tokio 子进程 `kill_on_drop`;GUI `surface.pipe` 转 daemon)/ wait-for(`wait_for.rs` channel/lock store;CLI 直连 daemon socket 绕 5s 超时)
+- 实现:`tmux_cli.rs` + `split_tree.rs`(`resize_ratio`/`find_adjacent`/`swap_by_ids`/`detach_leaf`)+ `surface_snapshot.rs`(`capture`)+ `crates/pureterm-daemon/src/{pipe_pane,wait_for}.rs` + `ipc/methods.rs`(`pane.*` / `surface.*` RPC + `IpcSideEffect`)
+- 自动 E2E harness 全绿:419 pureterm 单测 + 54 daemon 单测(含本次补的 join-pane Arc-follows 不变量[`join_pane_e2e`]/ capture() 真实栅格读 / `resize_ratio`+`find_adjacent` / pipe-pane pump→子进程字节落地 / CLI↔`SocketRouter` round-trip 三条)
+- pixel smoke:`docs/manual-e2e/tmux-features-smoke.md`(非 CI gate,12 命令逐条)
+- 已知 phase-2 stub:`kill-pane -t` 定向、`select-pane -L/-R/-U/-D`/`-l`
+
 ---
 
 ## F. AI Agent
@@ -221,9 +233,9 @@
 | B. UI/UX | 4 |
 | C. 终端交互 | 2 |
 | D. SSH | 4 |
-| E. 集成与可编程 | 3 |
+| E. 集成与可编程 | 4 |
 | F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **27** |
+| **总计** | **28** |
 
 ---

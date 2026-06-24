@@ -2,6 +2,10 @@ mod agent_adapters;
 mod agent_detect;
 #[cfg(all(test, unix))]
 mod agent_e2e;
+/// GAP-6.6: join-pane Arc-follows invariant (headless, no PTY) — the
+/// cross-module seam `apply_attach_pane` drives on the split tree + pane map.
+#[cfg(all(test, unix))]
+mod join_pane_e2e;
 mod agent_hooks;
 mod agent_sessions;
 mod app_config;

@@ -1119,4 +1119,105 @@ mod tests {
             _ => panic!("root must be a Split"),
         }
     }
+
+    // ── GAP-6.6: resize_ratio / find_adjacent (resize-pane / select-pane geom) ──
+    //
+    // These two ops back `tmux resize-pane` and the (stubbed) geometric
+    // `select-pane -L/-R/-U/-D`. `resize_ratio` was previously untested and
+    // `find_adjacent` only exercised indirectly via layout; both are load-
+    // bearing for the manual pixel-smoke resize/focus steps.
+
+    /// `resize_ratio` clamps the shallowest ancestor Split's ratio to
+    /// [MIN_RATIO, MAX_RATIO] — a huge delta must not panic or overflow.
+    #[test]
+    fn resize_ratio_clamps_to_min_and_max() {
+        let (mut tree, ids) = build_nested();
+        // ids[0] sits in root.first → resize_ratio moves the ROOT ratio
+        // (the shallowest ancestor Split containing the pane). Root is 0.2.
+        let mut ratios = Vec::new();
+
+        tree.resize_ratio(ids[0], 100.0);
+        collect_ratios(&tree, &mut ratios);
+        assert!((ratios[0] - MAX_RATIO).abs() < 1e-6, "delta > MAX clamps: {}", ratios[0]);
+
+        ratios.clear();
+        tree.resize_ratio(ids[0], -100.0);
+        collect_ratios(&tree, &mut ratios);
+        assert!((ratios[0] - MIN_RATIO).abs() < 1e-6, "delta < MIN clamps: {}", ratios[0]);
+    }
+
+    /// A small delta only touches the shallowest Split; deeper splits on the
+    /// path are left alone (guards against a future "resize everything" bug).
+    #[test]
+    fn resize_ratio_small_delta_only_touches_shallowest_split() {
+        let (mut tree, ids) = build_nested();
+        // [root=0.2, inner_v1=0.3, inner_h=0.7, inner_v2=0.4]
+        tree.resize_ratio(ids[0], 0.1); // root 0.2 → 0.3
+        let mut ratios = Vec::new();
+        collect_ratios(&tree, &mut ratios);
+        assert!((ratios[0] - 0.3).abs() < 1e-6, "root ratio moved: {}", ratios[0]);
+        assert!((ratios[1] - 0.3).abs() < 1e-6, "deeper inner_v1 unchanged: {}", ratios[1]);
+        assert!((ratios[2] - 0.7).abs() < 1e-6, "unrelated inner_h unchanged: {}", ratios[2]);
+    }
+
+    /// `find_adjacent` returns the geometric neighbor in the matching split
+    /// direction (the op behind `select-pane -L/-R/-U/-D`).
+    #[test]
+    fn find_adjacent_returns_neighbor_in_matching_direction() {
+        // build_nested: H[ V[a,b], H[c, V[d,e]] ]
+        let (tree, ids) = build_nested();
+        // a 的水平(右)邻居:跨根 H 分割线 → c (root.second.first_pane)
+        assert_eq!(tree.find_adjacent(ids[0], SplitDirection::Horizontal), Some(ids[2]));
+        // a 的垂直(下)邻居:同 inner_v1 → b
+        assert_eq!(tree.find_adjacent(ids[0], SplitDirection::Vertical), Some(ids[1]));
+        // c 的水平(左)邻居 → b (root.first.last_pane)
+        assert_eq!(tree.find_adjacent(ids[2], SplitDirection::Horizontal), Some(ids[1]));
+    }
+
+    /// When no Split exists in the requested direction, `find_adjacent`
+    /// returns None (the pane is on that edge of the layout).
+    #[test]
+    fn find_adjacent_none_when_no_split_in_that_direction() {
+        // 纯水平树:无垂直分割,任何 pane 的 Vertical 邻居为 None
+        let tree = SplitNode::Split {
+            split_id: 1,
+            direction: SplitDirection::Horizontal,
+            ratio: 0.5,
+            first: Box::new(SplitNode::Leaf(PaneId(1))),
+            second: Box::new(SplitNode::Leaf(PaneId(2))),
+        };
+        assert_eq!(tree.find_adjacent(PaneId(1), SplitDirection::Vertical), None);
+        assert_eq!(tree.find_adjacent(PaneId(1), SplitDirection::Horizontal), Some(PaneId(2)));
+    }
+
+    /// join-pane tree op sequence: detach a leaf from tree A (collapsing its
+    /// parent Split) and insert it as a sibling in tree B. Both trees must
+    /// remain valid; A keeps ≥1 pane. This is the split-tree half of
+    /// `apply_attach_pane` (the Arc-follows half is in `join_pane_e2e`).
+    #[test]
+    fn remove_then_split_into_other_tree_yields_valid_shape() {
+        let a = PaneId(10);
+        let b = PaneId(11);
+        let c = PaneId(20);
+        let mut tree_a = SplitNode::Split {
+            split_id: 1,
+            direction: SplitDirection::Vertical,
+            ratio: 0.5,
+            first: Box::new(SplitNode::Leaf(a)),
+            second: Box::new(SplitNode::Leaf(b)),
+        };
+        let mut tree_b = SplitNode::single(c);
+
+        // 源侧:detach a → A 折叠为单叶 b,仍 ≥1 pane
+        assert_eq!(tree_a.remove(a), Some(b));
+        assert_eq!(tree_a.pane_count(), 1);
+        assert!(matches!(tree_a, SplitNode::Leaf(PaneId(11))));
+        assert!(!tree_a.contains(a));
+
+        // 目标侧:把 a 作为 c 的 sibling 插入(split 把 new_pane 放 second)
+        assert!(tree_b.split(c, a, SplitDirection::Horizontal));
+        assert_eq!(tree_b.pane_count(), 2);
+        assert!(tree_b.contains(a) && tree_b.contains(c));
+        assert_eq!(tree_b.pane_ids(), vec![c, a]);
+    }
 }

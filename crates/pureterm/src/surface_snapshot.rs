@@ -105,7 +105,27 @@ pub fn capture(
 
 #[cfg(test)]
 mod tests {
-    use super::tail_lines;
+    use super::{capture, tail_lines};
+    use crate::terminal_context::{ChannelEventListener, TerminalEvent};
+    use alacritty_terminal::sync::FairMutex;
+    use alacritty_terminal::term::test::TermSize;
+    use alacritty_terminal::term::{Config, Term};
+    use alacritty_terminal::vte::ansi;
+    use crossbeam_channel::bounded;
+    use std::sync::Arc;
+
+    /// Build a `Term<ChannelEventListener>` grid with `text` written into it
+    /// (CR-LF newlines, the way a PTY delivers bytes), wrapped for `capture()`.
+    /// Uses a `ChannelEventListener` over a throwaway channel — we never read
+    /// events; the listener only needs to satisfy `Term`'s type parameter.
+    fn term_with(text: &str) -> Arc<FairMutex<Term<ChannelEventListener>>> {
+        let (tx, _rx) = bounded::<TerminalEvent>(16);
+        let size = TermSize::new(80, 24);
+        let mut term = Term::new(Config::default(), &size, ChannelEventListener::new(tx));
+        let mut parser: ansi::Processor = ansi::Processor::new();
+        parser.advance(&mut term, text.as_bytes());
+        Arc::new(FairMutex::new(term))
+    }
 
     #[test]
     fn below_count_returns_all_untruncated() {
@@ -141,5 +161,54 @@ mod tests {
         let (out, trunc) = tail_lines("", 3);
         assert_eq!(out, "");
         assert!(!trunc);
+    }
+
+    // ── capture(): real grid read (GAP-6.6 capture-pane DoD) ──────────────
+    //
+    // The router's `surface.snapshot` handler is a stub; the real capture path
+    // is `iced_app.rs` → `capture()`. These exercise `capture()` directly so
+    // the grid-serialization logic has coverage without a live iced window.
+
+    #[test]
+    fn capture_returns_text_written_into_grid() {
+        let term = term_with("hello\r\nworld\r\n");
+        let resp = capture(term, false, None, 1);
+        let v = resp.result.expect("ok response");
+        let text = v["text"].as_str().expect("text field");
+        assert!(text.contains("hello"), "missing hello: {text:?}");
+        assert!(text.contains("world"), "missing world: {text:?}");
+        assert_eq!(v["truncated"], false, "full capture is not truncated");
+    }
+
+    #[test]
+    fn capture_visible_only_returns_viewport_content() {
+        // `visible_only` computes the start line from `display_offset`; with no
+        // scrollback the viewport still contains the freshly-written tail, so
+        // the capture must include it (guards the visible-only branch + that it
+        // doesn't return an empty/garbage range).
+        let term = term_with("fresh\r\nline\r\n");
+        let resp = capture(term, true, None, 2);
+        let v = resp.result.expect("ok response");
+        let text = v["text"].as_str().expect("text field");
+        assert!(text.contains("fresh") || text.contains("line"), "visible capture: {text:?}");
+    }
+
+    #[test]
+    fn capture_lines_cap_truncates_full_grid_and_keeps_tail() {
+        let term = term_with("a\r\nb\r\nc\r\nd\r\ne\r\n");
+        // The full capture spans the whole viewport (the 5 written lines plus
+        // trailing blank rows), so it holds more than the cap. Which exact
+        // lines `tail_lines` keeps is covered by the `tail_lines` unit tests;
+        // here we only prove `capture` wires `lines_cap` end-to-end.
+        let full = capture(Arc::clone(&term), false, None, 1);
+        let full_text = full.result.unwrap()["text"].as_str().unwrap().to_string();
+        let full_lines = full_text.lines().count();
+        assert!(full_lines >= 5, "full capture must hold the ≥5 written lines: {full_lines}");
+
+        // Cap to 2 ⇒ marked truncated and ≤2 lines retained.
+        let capped = capture(term, false, Some(2), 2);
+        let v = capped.result.unwrap();
+        assert_eq!(v["truncated"], true, "capping a >2-line grid must truncate");
+        assert!(v["text"].as_str().unwrap().lines().count() <= 2, "capped should have ≤2 lines");
     }
 }

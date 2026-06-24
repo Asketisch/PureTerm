@@ -93,3 +93,43 @@ pub fn clear(manager: &SessionManager, sid: &str) {
 pub fn list(manager: &SessionManager) -> Vec<String> {
     manager.pipe_status()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The core pipe-pane contract: bytes pushed onto the feeder channel reach
+    /// the spawned command's stdin. `start` is the standalone entry (no
+    /// `SessionManager` needed), so this exercises the pump→drain→child path
+    /// directly — the part the dispatch-level `set`/`clear` tests don't cover.
+    #[tokio::test]
+    async fn start_feeds_bytes_to_child_stdin() {
+        let out =
+            std::env::temp_dir().join(format!("pt_pipe_test_{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let rt = tokio::runtime::Handle::current();
+        // `dd bs=1` writes each byte via its own write() syscall (no block
+        // buffering), so the payload is committed to the file as soon as it
+        // arrives — independent of the child exiting or being reaped. (`cat`
+        // would block-buffer to a regular file, and the drain task's
+        // `kill_on_drop` reaps the child immediately after closing its stdin,
+        // racing — and losing to — `cat`'s EOF flush.)
+        let cmd = format!("dd bs=1 of={} 2>/dev/null", out.display());
+        let tx = start(&rt, &cmd).expect("start pipe");
+        tx.send(b"payload-bytes".to_vec()).expect("send chunk");
+
+        let mut got = String::new();
+        for _ in 0..100 {
+            if let Ok(s) = std::fs::read_to_string(&out) {
+                if s.contains("payload-bytes") {
+                    got = s;
+                    break;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        drop(tx); // stop the pipe (drain task ends, child reaped)
+        let _ = std::fs::remove_file(&out);
+        assert!(got.contains("payload-bytes"), "child stdin never received bytes: {got:?}");
+    }
+}
