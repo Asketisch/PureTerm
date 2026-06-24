@@ -174,3 +174,24 @@ fn window_workspace_neighbor_wraps() {
     let mut single = Window::new_main(iced::window::Id::unique());
     assert_eq!(single.workspace_neighbor(1), None);
 }
+
+// ── 多窗口统一模型(T2b-2:windows 唯一真源) ───────────────────────────────
+// DoD #1:主窗 + detached 同处一个 `windows: Vec<Window>`,按 `is_main` 区分;
+// `retain` 移除 detached 不影响主窗(detached 的 tab 随 `Window` 销毁)。这是
+// T2b-2 合并后的数据模型不变量。PureTermApp 级真实关窗/退出由 GUI runbook 覆盖。
+
+#[test]
+fn multi_window_main_plus_detached_unified_in_one_vec() {
+    let (det_tab, _ctx) = web_tab(9, "https://detached.example");
+    let main = Window::new_main(iced::window::Id::unique());
+    let det = Window::new_detached(iced::window::Id::unique(), det_tab);
+
+    let mut wins = vec![main, det];
+    assert_eq!(wins.iter().filter(|w| w.is_main).count(), 1, "恰一个主窗");
+    assert_eq!(wins.iter().filter(|w| !w.is_main).count(), 1, "恰一个 detached");
+
+    // 关 detached:retain 后仍恰一个主窗。
+    wins.retain(|w| w.is_main);
+    assert_eq!(wins.len(), 1);
+    assert!(wins[0].is_main, "关 detached 后剩主窗");
+}
