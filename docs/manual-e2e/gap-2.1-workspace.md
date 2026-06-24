@@ -85,20 +85,38 @@ open dist/PureTerm.app
 - [ ] **关主窗**:全部窗口(主 + detached)+ 设置窗都关时才退出(Alacritty 规范)。
 - [ ] 切 workspace / 切 detached **不丢 Surface 状态**(同 workspace 不变量)。
 
-> 焦点保持 **main-centric**:`active_window_id` 始终 = 主窗;按窗口路由键盘是独立
-> 增强(设计 §10,未在本 cutover 引入)。
+- [ ] **detached 键盘路由(2026-06-25)**:点 detached 窗口使其获焦 → 在其中按键 /
+  输中文(IME)→ 字符落 **detached 的 pane**(不再 main-centric)。点回主窗获焦 →
+  按键回主窗。关掉当前焦点窗后路由弹回主窗(`WindowFocused` → `active_window_id`)。
+
+## 跨重启恢复(2026-06-25 — workspaces.json v2)
+
+退出 app 重启后,workspace/window 结构应恢复(daemon 存活时 PTY/session/滚动历史
+全保留)。捕获走完整 `windows → workspaces → tabs` 树;恢复时所有窗口的 workspace
+**折叠进主窗**(窗口拓扑不跨重启,但每个会话都在)。v1 `gui-sessions.json` 首次
+启动一次性迁移(旧文件重命名 `.bak`,永不删)。
+
+- [ ] 建立状态:主窗 2 个 workspace(各跑过长命令留滚动历史)+ 1 个 detached 窗口。
+- [ ] 退出 app(`⌘Q` 或关全部窗)→ `open dist/PureTerm.app` 重启。
+- [ ] 主窗的 workspace 列表恢复;切到非活跃 workspace,**滚动历史仍在**。
+- [ ] detached 窗口的 tab 作为额外 workspace 并入主窗(拓扑折叠,会话保留)。
+- [ ] (daemon 存活)tab 的 shell 历史经 daemon SCROLLBACK 帧重放重建。
+- [ ] 首次从 v1 升级:`data_dir/gui-sessions.json` 被重命名为 `.bak`,`workspaces.json`
+  生成且含完整 workspace 树。
 
 ## 已知限制(非 DoD 阻塞)
 
-- **跨重启不恢复**:workspace 是会话内的,退出 app 后下次启动只有「默认 workspace」
-  里的 tab 会经 GAP-5.6 snapshot 恢复;background workspace 的 daemon session 会作
-  为孤儿会话被接回成额外 tab。`workspaces.json` 持久化是后续工作。
 - **无侧边栏切换器**:依赖 GAP-3.1 双侧边栏框架,目前只能用键位 / 命令面板切。
 - **新建 workspace 的首个 tab 用默认 cwd**:不继承前一个 workspace active pane 的
   cwd(GAP-5.x 的 cwd 继承在跨 workspace 边界处不适用)。
+- **detached 窗口拓扑不跨重启**:重启后 detached 的 workspace 折叠进主窗(不重 spawn
+  独立 OS 窗口)—— 会话全保留,仅丢失「曾是独立窗口」的拓扑(有意取舍)。
 
 ## 签字
 
 每次相关代码改动后跑一遍,勾选 + 日期:
 
 - [ ] 2026-06-25 Phase 4 cutover 后 —— *(待执行;GUI 验证延后。CI 不变量已绿 `cargo test workspace_e2e`,含多窗口模型测试)*
+- [ ] 2026-06-25 detached 键盘路由 + workspaces.json v2 持久化 —— *(待执行;GUI
+  验证延后。CI 已绿:`keyboard_routing_e2e`、`session_restore` v2 round-trip +
+  v1→v2 迁移、`build_layout_snapshot` 捕获全窗口,共 430 单测)*

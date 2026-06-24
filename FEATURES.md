@@ -29,6 +29,16 @@
 - CLAUDE.md/AGENTS.md 一致描述"主路径=Iced";`pureterm-alacritty-runtime` 仅含 `glyph_atlas`(964 行)
 - 新贡献者无歧义
 
+### GAP-2.1 Surface/Pane/Workspace/Window 抽象层(2026-06-25)
+- 4 层抽象:`Surface`(单 PTY/Web 内容载体)/ `Pane`(容器)/ `Workspace`(命名工作区)/ `Window`(顶级窗口);`PureTermApp.windows: Vec<Window>` 唯一真源(主窗 `is_main=true` + detached),每个 Window 持 `workspaces: Vec<Workspace>`,切 workspace = 改 `active_workspace` 指针(数据不移动 → Arc 平凡存活 = 后端 PTY/session 不丢)
+- UX:键 ⌃1..9(按索引切 ws)/ ⌘⌃←→(prev/next)/ ⌘⌃N(新建)/ `⌘⇧N`(split pane 进 detached);命令面板 `workspace.{new,next,prev}`;多 ws 时标题带 `[name]` 前缀
+- **detached 键盘路由**:获焦窗口(`iced::window::Event::Focused`)→ `active_window_id` → 按键/IME 落该窗活跃 terminal(此前 main-centric:detached 能渲染但收不到独立按键)
+- **workspaces.json v2 持久化**:workspace/window 结构跨重启存活(PTY/session/scrollback 全保留);v1 `gui-sessions.json` 一次性迁移(`wrap_v1_into_v2`,旧文件重命名 `.bak` 永不 unlink);恢复时 detached 折叠进主窗(窗口拓扑不跨重启,会话全保留)
+- 实现:`crates/pureterm/src/iced_app.rs`(`Window`/`Workspace` 模型 + `build_layout_snapshot` + 焦点路由)+ `session_restore.rs`(v2 快照树 + `restore_one_tab` + 折叠恢复)+ `keymap.rs`(Action/键位)
+- 自动 E2E harness 全绿:430 pureterm 单测(`workspace_e2e` 切换不丢 Surface Arc 身份 + 多窗口模型 / `keyboard_routing_e2e` 焦点指针路由 / `session_restore` v2 round-trip + v1→v2 迁移 / `build_layout_snapshot` 捕获全窗口)
+- pixel smoke:`docs/manual-e2e/gap-2.1-workspace.md`(非 CI gate,detached 真实焦点 + 跨重启恢复待人工执行)
+- **未做(独立后续)**:侧边栏切换器(GAP-3.1 阻塞)/ CLI `workspace` 命令组(独立 phase)
+
 ---
 
 ## B. UI/UX
@@ -284,13 +294,13 @@ action = { Ssh = "ListProfiles" }
 
 | 类别 | 已实现数 |
 |---|---|
-| A. 核心架构 | 4 |
+| A. 核心架构 | 5 |
 | B. UI/UX | 5 |
 | C. 终端交互 | 2 |
 | D. SSH | 5 |
 | E. 集成与可编程 | 4 |
 | F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **30** |
+| **总计** | **31** |
 
 ---

@@ -26,18 +26,6 @@
 
 ---
 
-## A. 核心架构
-
-### GAP-2.1 Surface/Pane/Workspace/Window 抽象层
-- **状态**: 🚧 | **优先级**: P0
-- **现状**: DoD 闭环(2026-06-24 混合式 Phase 1-3;**2026-06-25 Phase 4 全量 cutover 完成**,commits `c9a4598`→`baa16d8`,5 个独立绿检查点)。**统一模型**:`PureTermApp` 持 `windows: Vec<Window>`(唯一真源 —— `windows[0]`=主窗 `is_main=true`,其余=detached `is_main=false`)+ `active_window_id`;每个 `Window` 持 `workspaces: Vec<Workspace>`,切 workspace = 改 `active_workspace` 指针(数据不移动 → Arc 平凡存活 = 后端 PTY/session 不丢,`workspace_e2e` 纯模型测试覆盖);全局 `next_tab_id` 保 TabId 跨窗口/workspace 唯一。**借出墙已解**:先前「全量 cutover 撞 30+ handler disjoint-borrow 墙」是 method-accessor 伪命题(`fn tabs_mut(&mut self)` 借整个 `self` 才撞);真·同时借站点用 field-path(`let aw=self.active_window_id` 取 Copy → `self.windows.iter_mut().find(...)` 只借 `self.windows` 一个顶层字段,与 `ssh_manager`/`viewport_size` 等 disjoint)。旧 flat `tabs`/`active_tab`/`background_workspaces`/`detached_windows`/`DetachedWindow` + `workspace_tier.rs`(`mem::swap` 舞蹈)全删。UX:`Action::{NewWorkspace,NextWorkspace,PrevWorkspace,ActivateWorkspaceByIndex}` + `Message` + handler;键 ⌃1..9(按索引切 ws)/ ⌘⌃←→(prev/next)/ ⌘⌃N(新建)/ `⌘⇧N`(MovePaneToNewWindow split 进 detached);命令面板 `workspace.{new,next,prev}`;多 ws 时标题带 `[name]` 前缀;焦点 main-centric。`cargo test -p pureterm` → 425 绿。**待 dist .app 重打包 + GUI E2E**(见 `docs/manual-e2e/gap-2.1-workspace.md`,已更新到统一模型)。**未做**:侧边栏切换器(依赖 GAP-3.1)/ `workspaces.json` 持久化(workspace 会话内,跨重启不恢复)/ 按窗口路由键盘(detached 焦点)
-- **目标**: 引入 4 层抽象 — Surface(单 PTY) / Pane(容器) / Workspace(命名工作区) / Window(顶级窗口);持久化 `workspaces.json`
-- **依赖**: 无
-- **DoD**: 用户可创建 2 个 Workspace,各含 1 个 Tab,每个 Tab 1 个 Pane;切换不丢 Surface 状态
-- **对标**: cmux `Sources/TerminalController.swift`(21540 行)
-
----
-
 ## B. UI/UX
 
 ### GAP-3.5 内置 Browser 面板(WebView)
