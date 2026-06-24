@@ -8,7 +8,7 @@
 
 | 状态 | 数量 | 说明 |
 |---|---|---|
-| ❌ 未实现 | 15 | 待排期 |
+| ❌ 未实现 | 14 | 待排期 |
 | 🚧 进行中 | 6 | 代码闭环待 E2E |
 | ⛔ 不做 | 4 | 见下方 §拒绝 |
 
@@ -18,7 +18,7 @@
 
 | 价值层 | 优先级 | 特性 |
 |--------|--------|------|
-| **Tier 0 — AI 核心管道** | P0 | GAP-2.1(Workspace 抽象) / GAP-5.6(SSH 重连) / GAP-6.7(事件流) / GAP-3.5(Browser 面板) |
+| **Tier 0 — AI 核心管道** | P0 | GAP-5.6(SSH 重连) / GAP-6.7(事件流) / GAP-3.5(Browser 面板) |
 | **Tier 1 — AI 差异化能力** | P1 | GAP-7.8(agent-browser) / GAP-5.2(SOCKS5 隧道) / GAP-5.4(SSH agent forwarding) |
 | **Tier 2 — 终端增强** | P2 | GAP-4.2(hover preview) / GAP-5.5(URL scheme) / GAP-1.3(标题栈) / GAP-5.3(PTY resize) / GAP-3.2(可编程 Sidebar DSL) / GAP-6.3(AppleScript 桥) / GAP-6.8(Sidebar 解释器 IPC) |
 | **Tier 3 — 兼容性/国际化** | P3 | GAP-3.1(双侧边栏) / GAP-1.2(DECSCL) / GAP-1.4(BiDi) |
