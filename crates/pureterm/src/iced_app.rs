@@ -1538,63 +1538,89 @@ impl PureTermApp {
         let snapshot = snapshot.unwrap_or_else(|| LayoutSnapshot {
             version: SNAPSHOT_VERSION,
             viewport: ViewportSnapshot { w: 0.0, h: 0.0 },
-            active_tab: 0,
-            tabs: Vec::new(),
+            windows: Vec::new(),
         });
         let Some(outcome) = crate::session_restore::restore(&snapshot, &self.ssh_profiles) else {
             return false;
         };
 
-        for (idx, rtab) in outcome.tabs.into_iter().enumerate() {
-            let tab_id = TabId(self.next_tab_id);
-            self.next_tab_id += 1;
+        // GAP-2.1: 用恢复出的 workspace 重建主窗的 workspace 列表(覆盖 new() 预置的
+        // Default)。detached 窗口的 workspace 已由 restore() 折叠进此列表(窗口拓扑
+        // 不跨重启,但 PTY/session/scrollback 全保留)。
+        let mut new_workspaces: Vec<Workspace> = Vec::with_capacity(outcome.workspaces.len());
+        let mut active_ws_id = WorkspaceId(0);
+        for (ws_idx, rws) in outcome.workspaces.into_iter().enumerate() {
+            let ws_id = WorkspaceId(ws_idx as u64);
+            let mut ws = Workspace::new(ws_id, rws.name);
+            let mut active_tab_id = TabId(0);
+            let mut has_tab = false;
+            for (tab_idx, rtab) in rws.tabs.into_iter().enumerate() {
+                let tab_id = TabId(self.next_tab_id);
+                self.next_tab_id += 1;
 
-            let leaf_ids = rtab.split_tree.pane_ids();
-            let active_pane_id = leaf_ids
-                .get(rtab.active_pane_index)
-                .copied()
-                .or_else(|| leaf_ids.first().copied())
-                .unwrap_or_else(PaneId::next);
-
-            let mut panes = HashMap::new();
-            let rtab_panes = rtab.panes;
-            for (pane_idx, rpane) in rtab_panes.into_iter().enumerate() {
-                let pane_id = leaf_ids
-                    .get(pane_idx)
+                let leaf_ids = rtab.split_tree.pane_ids();
+                let active_pane_id = leaf_ids
+                    .get(rtab.active_pane_index)
                     .copied()
+                    .or_else(|| leaf_ids.first().copied())
                     .unwrap_or_else(PaneId::next);
-                panes.insert(
-                    pane_id,
-                    Pane {
-                        id: pane_id,
-                        content: rpane.content,
-                        title: rpane.title,
-                    },
+
+                let mut panes = HashMap::new();
+                for (pane_idx, rpane) in rtab.panes.into_iter().enumerate() {
+                    let pane_id = leaf_ids
+                        .get(pane_idx)
+                        .copied()
+                        .unwrap_or_else(PaneId::next);
+                    panes.insert(
+                        pane_id,
+                        Pane { id: pane_id, content: rpane.content, title: rpane.title },
+                    );
+                }
+
+                if tab_idx == rws.active_tab {
+                    active_tab_id = tab_id;
+                }
+                ws.tabs.push(Tab {
+                    id: tab_id,
+                    title: rtab.title,
+                    panes,
+                    split_tree: rtab.split_tree,
+                    active_pane: active_pane_id,
+                    tab_color: None,
+                    created_at: Instant::now(),
+                    zoom_state: None,
+                    vi_sub_mode: None,
+                });
+                has_tab = true;
+                // GAP-6.7: reattaching to a surviving daemon session (distinct from
+                // a fresh spawn, so the audit log isn't flooded on every launch).
+                self.events.emit(
+                    crate::events::Category::Session,
+                    "session.reattached",
+                    None,
+                    serde_json::json!({ "tab_id": tab_id.0 }),
                 );
             }
-
-            if idx == outcome.active_tab_index {
-                self.set_active_tab(tab_id);
+            if !has_tab {
+                continue; // 整 workspace 的 tab 全被 restore 过滤掉
             }
-            self.tabs_mut().push(Tab {
-                id: tab_id,
-                title: rtab.title,
-                panes,
-                split_tree: rtab.split_tree,
-                active_pane: active_pane_id,
-                tab_color: None,
-                created_at: Instant::now(),
-                zoom_state: None,
-                vi_sub_mode: None,
-            });
-            // GAP-6.7: reattaching to a surviving daemon session (distinct from
-            // a fresh spawn, so the audit log isn't flooded on every launch).
-            self.events.emit(
-                crate::events::Category::Session,
-                "session.reattached",
-                None,
-                serde_json::json!({ "tab_id": tab_id.0 }),
-            );
+            ws.active_tab = active_tab_id;
+            if ws_idx == outcome.active_workspace {
+                active_ws_id = ws_id;
+            }
+            new_workspaces.push(ws);
+        }
+
+        if new_workspaces.is_empty() {
+            return false;
+        }
+
+        // 替换主窗 workspaces(覆盖 new() 预置的 Default workspace)+ 设活跃指针。
+        if let Some(main) = self.active_window_mut() {
+            let max_ws_id = new_workspaces.iter().map(|ws| ws.id.0).max().unwrap_or(0);
+            main.workspaces = new_workspaces;
+            main.active_workspace = active_ws_id;
+            main.next_workspace_id = max_ws_id + 1;
         }
 
         // Resize every restored pane to the real window geometry. The daemon
@@ -1620,107 +1646,129 @@ impl PureTermApp {
         }
 
         log::info!(
-            "GAP-5.6: restored {} tab(s) from previous session",
-            self.tabs().len()
+            "GAP-5.6: restored {} workspace(s) from previous session",
+            self.active_window().map_or(0, |w| w.workspaces.len())
         );
         true
     }
 
-    /// GAP-5.6: snapshot the current tab/pane layout for cross-restart
-    /// recovery. Panes whose terminal context has no daemon `session_id`
-    /// (direct PTY fallback) are recorded with `session_id = None` and pruned
-    /// on restore (they cannot survive a GUI restart).
-    #[cfg(unix)]
-    fn capture_layout(&self) -> crate::session_restore::LayoutSnapshot {
-        use crate::session_restore::{LayoutSnapshot, PaneSnapshot, TabSnapshot, ViewportSnapshot};
+    /// GAP-2.1 v2: 把单个 pane 拍成 `PaneSnapshot`(纯函数,从 capture_layout 抽出)。
+    /// `pid` 是该 pane 在 split_tree 里的叶子 id(也用作 agent_sessions 查表键)。
+    fn build_pane_snapshot(
+        pid: PaneId,
+        pane: Option<&Pane>,
+        agent_sessions: &HashMap<PaneId, (String, String)>,
+    ) -> crate::session_restore::PaneSnapshot {
+        use crate::session_restore::PaneSnapshot;
+        let (session_id, kind, ssh_profile, title, agent_session_id, agent_kind, url) = match pane {
+            Some(p) => {
+                // GAP-3.5: terminal pane → local/ssh; web pane → "web"
+                // (无 session_id,持久化 url 供重启重建)。
+                let (sid, kind, prof, url) = match p.terminal() {
+                    Some(ctx) => {
+                        let sid = ctx.session_id().map(|s| s.to_string());
+                        let kind = if ctx.is_ssh() { "ssh" } else { "local" };
+                        let prof = ctx.profile_display().map(|s| s.to_string());
+                        (sid, kind.to_string(), prof, None)
+                    }
+                    None => {
+                        // web pane: 记录当前 url(供 restore 重建)。
+                        let url = p.web().map(|c| c.url());
+                        (None, "web".to_string(), None, url)
+                    }
+                };
+                // GAP-7.5: agent session id + kind learned from the agent's
+                // SessionStart hook (see handle_agent_session_started)。
+                let (a_sid, a_kind) = agent_sessions
+                    .get(&pid)
+                    .cloned()
+                    .map(|(s, k)| (Some(s), Some(k)))
+                    .unwrap_or((None, None));
+                (sid, kind, prof, p.title.clone(), a_sid, a_kind, url)
+            }
+            None => (None, "local".to_string(), None, String::new(), None, None, None),
+        };
+        PaneSnapshot { session_id, kind, ssh_profile, title, agent_session_id, agent_kind, url }
+    }
 
-        let tabs = self
-            .tabs()
+    /// GAP-2.1 v2: 把单个 tab 拍成 `TabSnapshot`(split_tree + DFS 叶子序 panes)。
+    fn build_tab_snapshot(
+        tab: &Tab,
+        agent_sessions: &HashMap<PaneId, (String, String)>,
+    ) -> crate::session_restore::TabSnapshot {
+        use crate::session_restore::TabSnapshot;
+        let leaf_ids = tab.split_tree.pane_ids();
+        let active_pane_leaf_index =
+            leaf_ids.iter().position(|p| *p == tab.active_pane).unwrap_or(0);
+        let panes = leaf_ids
             .iter()
-            .map(|tab| {
-                let leaf_ids = tab.split_tree.pane_ids();
-                let active_pane_leaf_index = leaf_ids
+            .map(|pid| Self::build_pane_snapshot(*pid, tab.panes.get(pid), agent_sessions))
+            .collect();
+        TabSnapshot {
+            title: tab.title.clone(),
+            active_pane_leaf_index,
+            split_tree: tab.split_tree.clone(),
+            panes,
+        }
+    }
+
+    /// GAP-2.1 v2: 遍历 **所有** window/workspace/tab 构建完整快照树(替换 v1 仅走
+    /// 活跃 workspace 的扁平 capture)。纯函数 —— 提取出来让「捕获每个窗口」不变量
+    /// 可 headless 单测(无需完整 PureTermApp)。latent bug 修复:detached + 非活跃
+    /// workspace 此前从不入快照,现在全量捕获。
+    pub(crate) fn build_layout_snapshot(
+        windows: &[Window],
+        viewport: crate::session_restore::ViewportSnapshot,
+        agent_sessions: &HashMap<PaneId, (String, String)>,
+    ) -> crate::session_restore::LayoutSnapshot {
+        use crate::session_restore::{LayoutSnapshot, WindowSnapshot, WorkspaceSnapshot};
+        let windows_snap = windows
+            .iter()
+            .map(|win| {
+                let active_workspace = win
+                    .workspaces
                     .iter()
-                    .position(|p| *p == tab.active_pane)
+                    .position(|ws| ws.id == win.active_workspace)
                     .unwrap_or(0);
-                let panes = leaf_ids
+                let workspaces = win
+                    .workspaces
                     .iter()
-                    .map(|pid| {
-                        let (session_id, kind, ssh_profile, title, agent_session_id, agent_kind, url) =
-                            match tab.panes.get(pid) {
-                                Some(p) => {
-                                    // GAP-3.5: terminal pane → local/ssh; web pane
-                                    // → "web"(无 session_id,持久化 url 供重启重建)。
-                                    let (sid, kind, prof, url) = match p.terminal() {
-                                        Some(ctx) => {
-                                            let sid = ctx.session_id().map(|s| s.to_string());
-                                            let kind = if ctx.is_ssh() { "ssh" } else { "local" };
-                                            let prof =
-                                                ctx.profile_display().map(|s| s.to_string());
-                                            (sid, kind.to_string(), prof, None)
-                                        }
-                                        None => {
-                                            // web pane: 记录当前 url(供 restore 重建)。
-                                            let url = p.web().map(|c| c.url());
-                                            (None, "web".to_string(), None, url)
-                                        }
-                                    };
-                                    // GAP-7.5: agent session id + kind learned from
-                                    // the agent's SessionStart hook (see
-                                    // handle_agent_session_started).
-                                    let (a_sid, a_kind) = self
-                                        .agent_sessions
-                                        .get(pid)
-                                        .cloned()
-                                        .map(|(s, k)| (Some(s), Some(k)))
-                                        .unwrap_or((None, None));
-                                    (sid, kind, prof, p.title.clone(), a_sid, a_kind, url)
-                                }
-                                None => (
-                                    None,
-                                    "local".to_string(),
-                                    None,
-                                    String::new(),
-                                    None,
-                                    None,
-                                    None,
-                                ),
-                            };
-                        PaneSnapshot {
-                            session_id,
-                            kind,
-                            ssh_profile,
-                            title,
-                            agent_session_id,
-                            agent_kind,
-                            url,
-                        }
+                    .map(|ws| {
+                        let active_tab =
+                            ws.tabs.iter().position(|t| t.id == ws.active_tab).unwrap_or(0);
+                        let tabs = ws
+                            .tabs
+                            .iter()
+                            .map(|tab| Self::build_tab_snapshot(tab, agent_sessions))
+                            .collect();
+                        WorkspaceSnapshot { name: ws.name.clone(), active_tab, tabs }
                     })
                     .collect();
-                TabSnapshot {
-                    title: tab.title.clone(),
-                    active_pane_leaf_index,
-                    split_tree: tab.split_tree.clone(),
-                    panes,
-                }
+                WindowSnapshot { is_main: win.is_main, active_workspace, workspaces }
             })
             .collect();
-
-        let active_tab = self
-            .tabs()
-            .iter()
-            .position(|t| t.id == self.active_tab_id())
-            .unwrap_or(0);
-
         LayoutSnapshot {
             version: crate::session_restore::SNAPSHOT_VERSION,
-            viewport: ViewportSnapshot {
+            viewport,
+            windows: windows_snap,
+        }
+    }
+
+    /// GAP-5.6: snapshot the current window/workspace/tab layout for cross-restart
+    /// recovery. Panes whose terminal context has no daemon `session_id` (direct
+    /// PTY fallback) are recorded with `session_id = None` and pruned on restore
+    /// (they cannot survive a GUI restart). GAP-2.1: 走完整 windows 树(见
+    /// `build_layout_snapshot`)。
+    #[cfg(unix)]
+    fn capture_layout(&self) -> crate::session_restore::LayoutSnapshot {
+        Self::build_layout_snapshot(
+            &self.windows,
+            crate::session_restore::ViewportSnapshot {
                 w: self.viewport_size.width,
                 h: self.viewport_size.height,
             },
-            active_tab,
-            tabs,
-        }
+            &self.agent_sessions,
+        )
     }
 
     /// GAP-5.6: mark the layout as changed; the debounced `LayoutSaveTick`

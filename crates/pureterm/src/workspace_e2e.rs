@@ -195,3 +195,59 @@ fn multi_window_main_plus_detached_unified_in_one_vec() {
     assert_eq!(wins.len(), 1);
     assert!(wins[0].is_main, "关 detached 后剩主窗");
 }
+
+// ── GAP-2.1 v2:capture_layout 遍历所有窗口/workspace(回归锁) ───────────────
+// `build_layout_snapshot`(capture_layout 的纯函数内核)必须遍历 **所有** 窗口
+// (含 detached)与 **所有** workspace(含非活跃),而非仅活跃窗口的活跃 workspace。
+// 这是 capture latent bug(detached + 非活跃 workspace 此前从 v1 扁平 capture 漏掉)
+// 的回归锁。纯函数 → headless 可验,无需完整 PureTermApp。
+
+/// `build_layout_snapshot` 捕获每个窗口的每个 workspace(含 detached + 非活跃),
+/// 每个被捕获的 web pane 仍带其 url。latent bug 的回归 gate。
+#[test]
+fn build_layout_snapshot_captures_all_windows_and_workspaces() {
+    use crate::iced_app::PureTermApp;
+    use crate::session_restore::ViewportSnapshot;
+
+    let main_id = iced::window::Id::unique();
+    let det_id = iced::window::Id::unique();
+
+    // 主窗:Default + Work 两个 workspace,各 1 web tab;切回 Default 让 Work 非活跃。
+    let mut main = Window::new_main(main_id);
+    let (tab_default, _) = web_tab(1, "https://default.example");
+    main.active_workspace_mut().unwrap().push_tab(tab_default);
+    let work_ws = main.create_workspace("Work");
+    let (tab_work, _) = web_tab(2, "https://work.example");
+    main.workspace_mut(work_ws).unwrap().push_tab(tab_work);
+    assert!(main.switch_to(WorkspaceId(0)), "切回 Default → Work 成为非活跃 workspace");
+
+    // detached 窗口:1 web tab。
+    let (det_tab, _) = web_tab(3, "https://detached.example");
+    let det = Window::new_detached(det_id, det_tab);
+
+    let snap = PureTermApp::build_layout_snapshot(
+        &vec![main, det],
+        ViewportSnapshot { w: 1024.0, h: 768.0 },
+        &HashMap::new(),
+    );
+
+    // 两个窗口都进快照。
+    assert_eq!(snap.windows.len(), 2, "主窗 + detached 都进快照");
+
+    // 主窗两个 workspace(含非活跃 Work)都被捕获 —— latent bug 的核心断言。
+    let main_snap = snap.windows.iter().find(|w| w.is_main).expect("有主窗快照");
+    assert_eq!(main_snap.workspaces.len(), 2, "主窗两个 workspace 都进快照(含非活跃)");
+    assert_eq!(main_snap.workspaces[0].name, "Default");
+    assert_eq!(main_snap.workspaces[1].name, "Work");
+
+    // detached 的 tab 也进快照。
+    let det_snap = snap.windows.iter().find(|w| !w.is_main).expect("有 detached 快照");
+    assert_eq!(det_snap.workspaces.len(), 1);
+    assert_eq!(det_snap.workspaces[0].tabs.len(), 1);
+
+    // 被捕获的 web pane 仍带其 url(供 restore 重建)。
+    let captured_work_url = main_snap.workspaces[1].tabs[0].panes[0].url.as_deref();
+    assert_eq!(captured_work_url, Some("https://work.example"), "非活跃 workspace 的 pane url 被捕获");
+    let captured_det_url = det_snap.workspaces[0].tabs[0].panes[0].url.as_deref();
+    assert_eq!(captured_det_url, Some("https://detached.example"), "detached pane url 被捕获");
+}
