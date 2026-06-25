@@ -185,6 +185,18 @@ impl SshStateSnapshot {
     }
 }
 
+/// GAP-5.6: 首个远端字节到达时的状态机决策(poll 循环 `TerminalEvent::Wakeup`
+/// arm 调用)。返回 (是否翻 `Connected`, 是否注入重连分隔线)。仅
+/// `Authenticating`(重连成功)盖分隔线;`Connecting`(初始连接)翻 `Connected`
+/// 但**不**盖分隔线——以此区分"首次连接"与"重连",无需额外标志位。
+pub fn on_first_remote_byte(prior: SshStateSnapshot) -> (bool, bool) {
+    match prior {
+        SshStateSnapshot::Authenticating => (true, true),
+        SshStateSnapshot::Connecting => (true, false),
+        _ => (false, false),
+    }
+}
+
 /// All parameters the reconnect worker needs to re-spawn the ssh PTY.
 /// Cloned out of `SshCtx` at reconnect-trigger time so the worker is
 /// self-contained (no borrow into the iced-owned `TerminalContext`).
@@ -523,6 +535,45 @@ mod tests {
         assert!(!SshState::Connecting.is_terminal_for_reconnect());
         assert!(!SshState::Authenticating.is_terminal_for_reconnect());
         assert!(!SshState::Reconnecting { attempt: 1, next_retry: Instant::now() }.is_terminal_for_reconnect());
+    }
+
+    #[test]
+    fn first_byte_flips_authenticating_with_separator() {
+        // 重连:Authenticating → Connected,且盖一条重连分隔线。
+        assert_eq!(
+            on_first_remote_byte(SshStateSnapshot::Authenticating),
+            (true, true)
+        );
+    }
+
+    #[test]
+    fn first_byte_flips_connecting_without_separator() {
+        // 初始连接:Connecting → Connected,但**不**盖分隔线(分隔线仅重连注入)。
+        assert_eq!(
+            on_first_remote_byte(SshStateSnapshot::Connecting),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn first_byte_noop_on_connected_or_terminal() {
+        // 已连/终态:首字节到达不应再触发翻转,也不盖分隔线。
+        assert_eq!(
+            on_first_remote_byte(SshStateSnapshot::Connected),
+            (false, false)
+        );
+        assert_eq!(
+            on_first_remote_byte(SshStateSnapshot::Disconnected),
+            (false, false)
+        );
+        assert_eq!(
+            on_first_remote_byte(SshStateSnapshot::Reconnecting { attempt: 1 }),
+            (false, false)
+        );
+        assert_eq!(
+            on_first_remote_byte(SshStateSnapshot::Failed { kind: SshFailureKind::Auth }),
+            (false, false)
+        );
     }
 
     #[test]

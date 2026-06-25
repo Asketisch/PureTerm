@@ -1496,6 +1496,26 @@ mod tests {
         assert!(resp.result.is_some());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn ssh_disconnect_with_pane_id() {
+        // GAP-5.6: `--pane-id` 透传到 ssh.disconnect RPC —— 副作用带上 pane_id
+        // (锁 CLI `Disconnect { --pane-id }` 修复;此前 Disconnect 是无参单元变体)。
+        let router = SocketRouter::new();
+        let snap = test_snap();
+        let (resp, fx) = router.dispatch(
+            35,
+            "ssh.disconnect",
+            Some(serde_json::json!({ "pane_id": 7 })),
+            &snap,
+        );
+        assert!(resp.result.is_some());
+        assert!(
+            matches!(fx, Some(IpcSideEffect::SshDisconnect { pane_id: Some(7) })),
+            "expected SshDisconnect{{pane_id: Some(7)}}, got {fx:?}"
+        );
+    }
+
     #[test]
     fn ssh_state_returns_pane_states() {
         // GAP-5.6: `ssh.state` is the read-only Socket API surface for SSH

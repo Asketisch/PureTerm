@@ -503,8 +503,12 @@ pub enum SshSub {
         #[arg(short = 'A', long)]
         forward_agent: bool,
     },
-    /// Disconnect (close the SSH tab)
-    Disconnect,
+    /// Disconnect (close the SSH tab). GAP-5.6: `--pane-id` targets a specific
+    /// pane; omit to disconnect the active pane.
+    Disconnect {
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
     /// GAP-5.6: query every SSH pane's connection state (`ssh.state` Socket API).
     /// Shows connected / reconnecting / failed (+ typed failure kind) per pane.
     State,
@@ -554,7 +558,9 @@ impl SshSub {
                 ("ssh.connect", Some(json!({ "index": i })))
             }
             SshSub::Connect { .. } => ("ssh.connect", None),
-            SshSub::Disconnect => ("ssh.disconnect", None),
+            SshSub::Disconnect { pane_id } => {
+                ("ssh.disconnect", pane_id.map(|p| json!({ "pane_id": p })))
+            }
             SshSub::State => ("ssh.state", None),
             // GAP-5.2: daemon-direct (handled in `run` before the GUI-IPC fallback).
             // These arms are unreachable from the IPC path but keep the match total.

@@ -132,7 +132,7 @@
 - `terminal_context.rs::SshCtx::reattach()`:同 terminal `Arc` 重建 `PtyEventLoop`,保留滚动历史
 - 指数退避 3→60s × 8,Condvar 可唤醒;退出按**用户意图**分类(`user_initiated_close` + `>5s` grace)
 - 状态栏指示:`SSH` / `SSH ↻ n` / `SSH ✗` / `SSH ⏻`
-- `ssh.disconnect` IPC 真实落地(`pureterm ssh disconnect`)
+- `ssh.disconnect` IPC 真实落地:置 `Disconnected` 终态 + emit `ssh.state_changed → disconnected`(Vanish:随后 teardown 移除 pane);`pureterm ssh disconnect [--pane-id N]`(无 `--pane-id` 断开活跃 pane)
 - **daemon 化跨重启恢复(2026-06-17)**:GUI 重启后自动重连 daemon 存活会话 + 重建 tabs/分屏布局
 - `session_restore.rs`:`LayoutSnapshot` 持久化 → `data_dir()/gui-sessions.json`,`NamedTempFile::persist` 原子写,变更去抖 `time::every(250ms)` + ≥500ms 空闲落盘 + 关窗 flush
 - `iced_app::new()` 启动 `load → session.list 校验存活 → attach_existing 重连 → scrollback 回放重建 grid`
@@ -145,6 +145,10 @@
   - Socket API:`ssh.state_changed` 事件(复用 `Category::Session`,5 切换点 emit)+ 只读 `ssh.state` RPC(`AppSnapshot::ssh_pane_states: Vec<SshPaneState>`)+ `pureterm ssh state` CLI
   - 多 pane tab SSH 退出重连:撤销 `pane_count<=1` 门控,遍历本 tick 全部 `exited_panes`,SSH 非用户发起退出任意 pane_count 都 `trigger_ssh_reconnect`(保留 pane 在 `split_tree`),不再被 `PtyExitedPane` 移除/取消
   - 重连成功分隔线:`TerminalContext::inject_reconnect_marker`(`ansi::Processor::advance` 向 alacritty `Term` 网格注入持久 `── Reconnected to <host> ──`,scrollback 内旧/新会话分界;同 `surface_snapshot.rs:121` 的 VT 注入模式)
+- **disconnect 半边 + 初始连接收尾(2026-06-25 第二轮,待 GUI 真机 E2E flip)**:
+  - disconnect 真状态机:`Fx::SshDisconnect` 置 `SshState::Disconnected` + emit `ssh.state_changed → disconnected`(Vanish 语义:状态机/事件流忠实反映,随后走现有 teardown 移除 pane;重连被 `user_initiated_close` 标志抑制)。此前 `Disconnected` 是运行时死代码(定义/快照/slug/颜色/单测齐全但从未赋值)、`ssh disconnect` 无 `--pane-id`、断开不发事件且不可见于 `ssh.state`
+  - 初始连接走 `Connecting`(此前直跳 `Connected`):`push_ssh_tab` emit `→ connecting`,Wakeup handler 经纯函数 `on_first_remote_byte(prior)→(flip,inject_separator)` 决策——`Authenticating`(重连)盖分隔线、`Connecting`(初始连接)不盖(变体本身区分,无需新字段)
+  - 455 harness 绿(+4 新单测:`on_first_remote_byte`×3 + `ssh_disconnect_with_pane_id`)
 - 实现:`crates/pureterm/src/ssh/reconnect.rs` + `session_restore.rs` + `terminal_context.rs` + `iced_app.rs`
 
 ### GAP-5.4 SSH Agent Forwarding(2026-06-25)

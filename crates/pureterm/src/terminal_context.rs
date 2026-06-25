@@ -252,7 +252,7 @@ fn wire_ssh_daemon(
         ssh_port: profile.port,
         ssh_key_path: profile.key_path.clone(),
         ssh_password: password,
-        reconnect_state: Arc::new(Mutex::new(SshState::Connected)),
+        reconnect_state: Arc::new(Mutex::new(SshState::Connecting)),
         user_initiated_close: Arc::new(AtomicBool::new(false)),
         session_id: Some(session_id),
     })
@@ -462,7 +462,7 @@ impl TerminalContext {
             ssh_port: profile.port,
             ssh_key_path: profile.key_path.clone(),
             ssh_password: password,
-            reconnect_state: Arc::new(Mutex::new(SshState::Connected)),
+            reconnect_state: Arc::new(Mutex::new(SshState::Connecting)),
             user_initiated_close: Arc::new(AtomicBool::new(false)),
             session_id: None,
         }))

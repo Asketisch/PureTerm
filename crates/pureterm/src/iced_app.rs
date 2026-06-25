@@ -1987,6 +1987,17 @@ impl PureTermApp {
             .and_then(|pane| pane.terminal().cloned())
     }
 
+    /// GAP-5.6: like [`active_terminal_ctx`](Self::active_terminal_ctx) but also
+    /// returns the pane id, so callers that need to address the pane (e.g. emit
+    /// a per-pane `ssh.state_changed` event on user-initiated disconnect) don't
+    /// have to re-resolve it separately.
+    fn active_terminal_ctx_and_id(&self) -> Option<(PaneId, Arc<TerminalContext>)> {
+        let tab = self.active_tab_ref()?;
+        let pane_id = tab.active_pane;
+        let ctx = tab.panes.get(&pane_id)?.terminal().cloned()?;
+        Some((pane_id, ctx))
+    }
+
     /// The cwd to inherit when spawning a new local tab/pane: the active
     /// tab's active pane cwd, provided that pane is local (an SSH pane's
     /// remote cwd is unusable for a local shell) and the path still exists.
@@ -2554,6 +2565,16 @@ impl PureTermApp {
             self.i18n.t_fmt("tab.title.ssh", &[("name", &profile_name)]);
         let tab_title =
             self.i18n.t_fmt("tab.title.ssh_locked", &[("name", &profile_name)]);
+        // GAP-5.6: 初始连接走 Connecting(而非直跳 Connected);首个远端字节
+        // (Wakeup)到达后才翻 Connected。emit → connecting 与重连 → authenticating
+        // 对称。分隔线仅在重连(Authenticating)注入,见 on_first_remote_byte。
+        // (须在 terminal_ctx 被 move 进 Pane 之前 emit。)
+        self.emit_ssh_state_changed(
+            pane_id,
+            &terminal_ctx,
+            crate::ssh::reconnect::SshStateSnapshot::Connecting,
+        );
+
         let mut panes = HashMap::new();
         panes.insert(
             pane_id,
@@ -3147,15 +3168,23 @@ impl PureTermApp {
                             match event {
                                 TerminalEvent::Wakeup => {
                                     // GAP-5.6: 首个远端字节 = ssh 认证成功 / 会话已活。
-                                    // 仅重连路径会进入 Authenticating(Spawned→reattach 后);
-                                    // 命中即翻 Connected 并盖一条重连分隔线(scrollback 分界)。
+                                    // Authenticating(重连)→盖分隔线 + 翻 Connected;
+                                    // Connecting(初始连接)→翻 Connected,不盖分隔线。
+                                    // 决策集中在 on_first_remote_byte(纯函数,可单测)。
                                     #[cfg(unix)]
                                     if ctx.is_ssh() {
-                                        use crate::ssh::reconnect::SshStateSnapshot;
-                                        if matches!(ctx.ssh_state_snapshot(), Some(SshStateSnapshot::Authenticating)) {
-                                            ctx.inject_reconnect_marker();
-                                            ctx.set_ssh_state(crate::ssh::reconnect::SshState::Connected);
-                                            self.emit_ssh_state_changed(*pane_id, ctx, SshStateSnapshot::Connected);
+                                        use crate::ssh::reconnect::{
+                                            on_first_remote_byte, SshState, SshStateSnapshot,
+                                        };
+                                        if let Some(snap) = ctx.ssh_state_snapshot() {
+                                            let (flip, inject_separator) = on_first_remote_byte(snap);
+                                            if flip {
+                                                if inject_separator {
+                                                    ctx.inject_reconnect_marker();
+                                                }
+                                                ctx.set_ssh_state(SshState::Connected);
+                                                self.emit_ssh_state_changed(*pane_id, ctx, SshStateSnapshot::Connected);
+                                            }
                                         }
                                     }
                                 }
@@ -6230,13 +6259,24 @@ impl PureTermApp {
                 // exit\r (order is load-bearing: the exit handler checks the
                 // flag to decide whether to auto-reconnect), then ask the
                 // remote shell to exit cleanly. None ⇒ active pane.
-                let ctx = match pane_id {
-                    Some(id) => self.pane_terminal_ctx(PaneId(id)),
-                    None => self.active_terminal_ctx(),
+                // 进入 Disconnected 终态并 emit ssh.state_changed → disconnected
+                // (Vanish 语义:状态机/事件流忠实反映断开,随后走现有 teardown
+                // 移除 pane;重连被 user_initiated_close 标志正确抑制)。
+                let resolved: Option<(PaneId, Arc<TerminalContext>)> = match pane_id {
+                    Some(id) => self
+                        .pane_terminal_ctx(PaneId(id))
+                        .map(|ctx| (PaneId(id), ctx)),
+                    None => self.active_terminal_ctx_and_id(),
                 };
-                if let Some(ctx) = ctx {
+                if let Some((pid, ctx)) = resolved {
                     if ctx.is_ssh() {
                         ctx.mark_user_initiated_close();
+                        ctx.set_ssh_state(crate::ssh::reconnect::SshState::Disconnected);
+                        self.emit_ssh_state_changed(
+                            pid,
+                            &ctx,
+                            crate::ssh::reconnect::SshStateSnapshot::Disconnected,
+                        );
                         ctx.write_to_pty(b"exit\r");
                     }
                 }
