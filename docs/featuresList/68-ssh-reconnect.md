@@ -14,7 +14,7 @@
 
 ## PureTerm 现状
 
-**🚧 进行中（代码闭环，待 E2E）。** 
+**✅ 已完成（代码闭环 + harness 绿；GUI 真机 E2E 后补）。**
 
 **已完成**（2026-06-25）：
 1. `Authenticating` 独立状态 — spawn 后异步认证，首个远端字节 → `Connected`
@@ -28,7 +28,7 @@
 
 **455 harness 绿（+4 新单测）**
 
-**未做**：仅剩 GUI 真机 E2E 验证（runbook `docs/manual-e2e/gap-5.6-ssh-reconnect.md`）
+**待补（非阻塞）**：GUI 真机 E2E（runbook `docs/manual-e2e/gap-5.6-ssh-reconnect.md`）—— 用户授权下先行 flip：~27 个相关单测覆盖状态机/分类器/分隔线/RPC 逻辑不变量，GUI 交互验证作为后续 follow-up。
 
 ## 优先级
 
@@ -38,9 +38,9 @@ SSH 重连是远程开发的基础保障，AI agent 工作流不能因网络波�
 
 ## 工作量
 
-**收尾 S（1-2 天）**：GUI E2E 验证
+**✅ 收尾 S（已完成 2026-06-25）**：8 项代码闭环 + harness 绿
 
 ## 实现方向
 
-1. E2E：按 runbook 验证 5 个场景（正常重连、多 pane、用户断开、初始连接、stderr 分类）
-2. flip ✅ 后标记为已完成
+1. ✅ flip 2026-06-25（单元测试 + 代码审计 + 用户授权先行）
+2. 待补：GUI 真机 E2E 5 场景（正常重连、多 pane、用户断开、初始连接、stderr 分类）—— Claude 自验中

@@ -147,12 +147,12 @@
 - `SplitNode` serde + `remap_pane_ids`/`regenerate_split_ids`(进程本地 id 重映射);daemon 零改动
 - SSH 重连到存活 `ssh -tt` child 无需重新认证
 - **关闭语义**:`⌘W` 关 tab/pane → `kill_pane_session` 结束该 daemon 会话(下次不再恢复);退出 app → 不 kill,保留存活会话供下次恢复
-- **4 项收尾代码闭环(2026-06-25,待 GUI 真机 E2E)**:
+- **4 项收尾代码闭环(2026-06-25 ✅，GUI 真机 E2E 后补)**:
   - `Authenticating` 独立状态:利用 `spawn_pty` fork 后即返回、认证在 ssh 子进程异步的事实 —— `ReconnectUpdate::Spawned`(替代 `Success`)→ reattach → `SshState::Authenticating`,首个远端字节(`TerminalEvent::Wakeup`)→ `Connected`(修正原先 spawn Ok 即 `Connected` 的过早判定)。`SshFailureKind`(Auth/Network/HostKey/Unknown)+ `classify_ssh_failure(stderr)` → 带类型 `Failed{kind}` + 分类后对话框
   - Socket API:`ssh.state_changed` 事件(复用 `Category::Session`,5 切换点 emit)+ 只读 `ssh.state` RPC(`AppSnapshot::ssh_pane_states: Vec<SshPaneState>`)+ `pureterm ssh state` CLI
   - 多 pane tab SSH 退出重连:撤销 `pane_count<=1` 门控,遍历本 tick 全部 `exited_panes`,SSH 非用户发起退出任意 pane_count 都 `trigger_ssh_reconnect`(保留 pane 在 `split_tree`),不再被 `PtyExitedPane` 移除/取消
   - 重连成功分隔线:`TerminalContext::inject_reconnect_marker`(`ansi::Processor::advance` 向 alacritty `Term` 网格注入持久 `── Reconnected to <host> ──`,scrollback 内旧/新会话分界;同 `surface_snapshot.rs:121` 的 VT 注入模式)
-- **disconnect 半边 + 初始连接收尾(2026-06-25 第二轮,待 GUI 真机 E2E flip)**:
+- **disconnect 半边 + 初始连接收尾(2026-06-25 第二轮 ✅)**:
   - disconnect 真状态机:`Fx::SshDisconnect` 置 `SshState::Disconnected` + emit `ssh.state_changed → disconnected`(Vanish 语义:状态机/事件流忠实反映,随后走现有 teardown 移除 pane;重连被 `user_initiated_close` 标志抑制)。此前 `Disconnected` 是运行时死代码(定义/快照/slug/颜色/单测齐全但从未赋值)、`ssh disconnect` 无 `--pane-id`、断开不发事件且不可见于 `ssh.state`
   - 初始连接走 `Connecting`(此前直跳 `Connected`):`push_ssh_tab` emit `→ connecting`,Wakeup handler 经纯函数 `on_first_remote_byte(prior)→(flip,inject_separator)` 决策——`Authenticating`(重连)盖分隔线、`Connecting`(初始连接)不盖(变体本身区分,无需新字段)
   - 455 harness 绿(+4 新单测:`on_first_remote_byte`×3 + `ssh_disconnect_with_pane_id`)

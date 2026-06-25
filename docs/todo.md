@@ -10,8 +10,8 @@
 
 | 状态 | 数量 | 说明 |
 |------|------|------|
-| ✅ 已完成 | 5 | 代码闭环，待或已完成 E2E |
-| 🚧 进行中 | 5 | 代码闭环待 E2E / 部分实现 |
+| ✅ 已完成 | 6 | 代码闭环，待或已完成 E2E |
+| 🚧 进行中 | 4 | 代码闭环待 E2E / 部分实现 |
 | ❌ 未实现 | 59 | 待排期 |
 | ⛔ 不做 | 0 | — |
 
@@ -27,23 +27,23 @@
 
 ---
 
-## ✅ 已完成（5 个）
+## ✅ 已完成（6 个）
 
 | GAP | 功能 | 状态 | 文档 |
 |-----|------|------|------|
 | GAP-3.5 | [Browser 面板](featuresList/67-browser-panel.md) | ✅ 代码闭环 + harness 全绿 | `crates/pureterm/src/browser/` |
 | GAP-1.3 | 标题栈 (CSI 22/23t) | ✅ GUI E2E 通过 | `crates/pureterm/src/terminal_context.rs` |
 | GAP-5.4 | [SSH Agent Forwarding](featuresList/40-ssh-forwarding.md) | ✅ Track A DoD 闭环 | `crates/pureterm/src/ssh/` |
+| GAP-5.6 | [SSH Reconnect 状态机](featuresList/68-ssh-reconnect.md) | ✅ 代码闭环 + harness 绿（GUI 真机 E2E 后补） | `crates/pureterm/src/ssh/` |
 | — | Settings Panel | ✅ 已有 | `crates/pureterm-settings/src/app.rs` |
 | — | [Dual Close](featuresList/) | ✅ 已有 | `crates/pureterm/src/iced_app.rs` |
 
 ---
 
-## 🚧 进行中（5 个）
+## 🚧 进行中（4 个）
 
 | GAP | 功能 | 优先级 | 文档 |
 |-----|------|--------|------|
-| GAP-5.6 | [SSH Reconnect 状态机](featuresList/68-ssh-reconnect.md) | P0 | 代码闭环，待 GUI 真机 E2E |
 | GAP-6.7 | [Event Stream](featuresList/66-event-stream.md) | P0 | 代码闭环，270 单测绿，待 dist 重打包 |
 | GAP-7.8 | [Agent-Browser 兼容](featuresList/67-browser-panel.md) | P1 | 代码闭环，9 browser tool，待用户页面 E2E |
 | GAP-5.2 | [SOCKS5 隧道](featuresList/69-socks5-tunnel.md) | P1 | 代码闭环，待真实 SSH 网关 E2E |
@@ -59,7 +59,7 @@
 | 02 | — | [Error Recovery](featuresList/02-error-recovery.md) | AI Agent | M | 命令失败时自动分析并建议修复 |
 | 09 | — | [Notification System](featuresList/09-notification-system.md) | 终端交互 | M | OSC 9/99/777 通知，视觉提示哪个 pane 需关注 |
 | 15 | — | [Shell Integration](featuresList/15-shell-integration.md) | 终端交互 | L | 自动注入 shell 脚本，marks + command tracking |
-| GAP-5.6 | 🚧 | [SSH Reconnect](featuresList/68-ssh-reconnect.md) | SSH | S | 完整 reconnect/disconnect 状态机（收尾） |
+| GAP-5.6 | ✅ | [SSH Reconnect](featuresList/68-ssh-reconnect.md) | SSH | S | 完整 reconnect/disconnect 状态机（收尾） |
 | GAP-6.7 | 🚧 | [Event Stream](featuresList/66-event-stream.md) | 集成 | S | 事件流 + 持久 JSONL 日志（收尾） |
 
 ## P1 — AI 差异化能力（6 个）
