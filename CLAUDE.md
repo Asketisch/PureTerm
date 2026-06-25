@@ -26,7 +26,7 @@ cargo build --release
 - **项目导航**：[AGENTS.md](AGENTS.md)
 - **工作区总览**：[crates/AGENTS.md](crates/AGENTS.md)
 - **已实现特性**：[FEATURES.md](FEATURES.md)
-- **规划中特性**：[docs/TODOLIST.md](docs/TODOLIST.md)
+- **规划中特性**：[docs/todo.md](docs/todo.md)
 - **已移除的 legacy 功能**：[docs/removed-legacy-features.md](docs/removed-legacy-features.md)
 
 ## 维护规则
@@ -35,7 +35,7 @@ cargo build --release
 - 新功能应在主路径（`crates/pureterm/src/`）实现；`pureterm-alacritty-runtime` 已精简为只承载 `glyph_atlas`，不再扩展
 - 修改 alacritty 源码时在修改处添加注释说明原因
 - 已实现特性维护在 [FEATURES.md](FEATURES.md)，新特性闭环后同步更新
-- 规划中特性维护在 [docs/TODOLIST.md](docs/TODOLIST.md)
+- 规划中特性维护在 [docs/todo.md](docs/todo.md)
 
 ## graphify
 

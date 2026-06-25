@@ -501,7 +501,7 @@ PureTerm 扩展段:
 - Browser 面板(WebView + SOCKS5 隧道)
 - 双侧边栏 + Workspace 抽象层
 
-**完整路线图**:见 [`docs/TODOLIST.md`](docs/TODOLIST.md)(按 7 大类别 × P0-P3 优先级排序,49 项)。
+**完整路线图**:见 [`docs/todo.md`](docs/todo.md)(按优先级排序,67 项)。
 
 ---
 
