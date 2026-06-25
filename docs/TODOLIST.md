@@ -8,8 +8,8 @@
 
 | 状态 | 数量 | 说明 |
 |---|---|---|
-| ❌ 未实现 | 13 | 待排期 |
-| 🚧 进行中 | 5 | 代码闭环待 E2E |
+| ❌ 未实现 | 12 | 待排期 |
+| 🚧 进行中 | 6 | 代码闭环待 E2E |
 | ⛔ 不做 | 4 | 见下方 §拒绝 |
 
 ### AI 终端价值排序
@@ -70,7 +70,9 @@
 - **对标**: cmux `Sources/SemanticHistory.swift` + iTerm2 `iTermSemanticHistoryController.m`
 
 ### GAP-1.3 标题栈(CSI 22/23t)
-- **状态**: ❌ | **优先级**: P2
+- **状态**: 🚧 | **优先级**: P2
+- **现状**: 代码闭环(2026-06-25,待 GUI 真机 E2E flip)。**关键发现:核心栈本就是上游 alacritty_terminal 功能**——`Term::push_title/pop_title/set_title` + `title_stack`(深度 4096)+ vte 的 `22t→push_title` / `23t→pop_title` / `OSC 0,2→set_title` 分发早已就位且已单测覆盖。真正缺口在 app 桥接:`ChannelEventListener::send_event` 此前用 `_ => return` **丢弃了 `Event::Title`/`ResetTitle`**,程序设标题(含 push/pop)在 PureTerm 无任何可见效果。本轮闭环:① 桥接转发 `Title(String)`/`ResetTitle`(改一处覆盖 local/SSH/daemon 全部 spawn 路径);② `pane_osc_title: HashMap<PaneId,String>` side-map(仿 `pane_cwds`,不改 `Pane` 结构体);③ 事件循环两 arm(镜像 `CwdChanged` 的 disjoint-field 写法);④ `resolve_display_title` 纯函数(OSC 优先 / 空或 reset 回退派生,符合 iTerm2/Ghostty/Alacritty 语义)+ `tab_display_title` 接线窗口标题 / Tab 栏 / Tab 切换器 / AppSnapshot。461 harness 绿(+6 新单测:桥接转发 3 + `resolve_display_title` 3)。**dist `.app` 已重打包(release 编译过 + 29M .app 生成);待 GUI 真机 E2E flip ✅**
+- **未做**: 仅剩 GUI 真机 E2E(我无法跑 GUI,是 flip ✅ 唯一门槛;runbook [`docs/manual-e2e/gap-1.3-title-stack.md`](manual-e2e/gap-1.3-title-stack.md))。后续非目标:icon title(`CSI ;1`/`OSC 1`——vte 不区分 ;0/;1/;2 且 OSC1 unhandled,需 patch vte)/ alt-screen 标题栈镜像(`keyboard_mode_stack` 有 `inactive_` 镜像、`title_stack` 无)/ daemon thin-mirror 会话标题回传(DoD 走 in-process `LocalCtx` 已覆盖)/ 高频设标题节流 / `osc_title` 持久化(运行时态,不入 `PaneSnapshot`)
 - **目标**: 实现 CSI 22t(push title)/ 23t(pop title)
 - **DoD**: `echo -e "\e[22;0t" && echo -e "\e[23;0t"` 标题栈正常 push/pop
 - **对标**: Ghostty `src/terminal/Terminal.zig`

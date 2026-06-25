@@ -30,11 +30,15 @@ use crate::ssh::pty::SshPty;
 use crate::ssh::reconnect::{ReconnectParams, SshState, SshStateSnapshot};
 
 /// Terminal event types sent from PTY thread to Iced.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
     Wakeup,
     Exit,
     CwdChanged(String),
+    /// GAP-1.3: window title set via OSC 0/2, or restored by CSI 23t (pop).
+    Title(String),
+    /// GAP-1.3: title cleared (OSC reset) — fall back to the derived tab title.
+    ResetTitle,
 }
 
 /// Bridge: implements `EventListener` by sending through a crossbeam channel.
@@ -57,6 +61,11 @@ impl EventListener for ChannelEventListener {
             TEvent::Exit => TerminalEvent::Exit,
             TEvent::ChildExit(_) => TerminalEvent::Exit,
             TEvent::CwdChanged(path) => TerminalEvent::CwdChanged(path),
+            // GAP-1.3: surface the program-set window title (OSC 0/2 + CSI
+            // 22t/23t push/pop, all routed through `Term::set_title` upstream)
+            // so the GUI can show it instead of only the derived tab title.
+            TEvent::Title(title) => TerminalEvent::Title(title),
+            TEvent::ResetTitle => TerminalEvent::ResetTitle,
             _ => return,
         };
         let _ = self.tx.send(mapped);
@@ -865,5 +874,34 @@ mod tests {
         let s = grid_string(&term);
         assert!(s.contains("prior scrollback line"), "prior content lost: {s:?}");
         assert!(s.contains("Reconnected"), "marker missing: {s:?}");
+    }
+
+    #[test]
+    fn gap13_title_event_forwards_through_bridge() {
+        // GAP-1.3: OSC 0/2 set + CSI 23t pop both route through upstream
+        // `Term::set_title` → `Event::Title`; the bridge must forward it
+        // (previously dropped by the `_ => return` catch-all).
+        let (tx, rx) = bounded::<TerminalEvent>(16);
+        let listener = ChannelEventListener::new(tx);
+        listener.send_event(alacritty_terminal::event::Event::Title("hello".into()));
+        assert_eq!(rx.try_recv(), Ok(TerminalEvent::Title("hello".into())));
+    }
+
+    #[test]
+    fn gap13_reset_title_event_forwards_through_bridge() {
+        let (tx, rx) = bounded::<TerminalEvent>(16);
+        let listener = ChannelEventListener::new(tx);
+        listener.send_event(alacritty_terminal::event::Event::ResetTitle);
+        assert_eq!(rx.try_recv(), Ok(TerminalEvent::ResetTitle));
+    }
+
+    #[test]
+    fn gap13_unmapped_events_still_dropped() {
+        // Events we don't map must still be dropped (regression guard for the
+        // catch-all `_ => return`).
+        let (tx, rx) = bounded::<TerminalEvent>(16);
+        let listener = ChannelEventListener::new(tx);
+        listener.send_event(alacritty_terminal::event::Event::MouseCursorDirty);
+        assert!(rx.try_recv().is_err(), "MouseCursorDirty should be dropped");
     }
 }

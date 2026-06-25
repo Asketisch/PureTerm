@@ -347,6 +347,13 @@ pub struct PureTermApp {
     /// Last-known cwd per pane, reported via OSC 7. Drives cwd inheritance
     /// for new tabs/panes and status-bar restoration on tab/pane switch.
     pane_cwds: HashMap<PaneId, String>,
+    /// GAP-1.3: OSC-set window title per pane. A program sets it via OSC 0/2
+    /// (`\e]0;title\a`), and CSI 22t/23t push/pop also flow through the same
+    /// upstream `Term::set_title` → `Event::Title`. Presence (non-empty) means
+    /// the program set a title and it takes precedence over the derived tab
+    /// title; `ResetTitle`/absence falls back. Mirrors the `pane_cwds` side-map
+    /// pattern so the event loop can mutate it without touching `Pane`.
+    pane_osc_title: HashMap<PaneId, String>,
     /// GAP-7.5: agent session id + kind per pane, learned from the agent's
     /// SessionStart hook (`agent.session_started`). `capture_layout` reads this
     /// to persist `PaneSnapshot.agent_session_id` for cold resume
@@ -1383,6 +1390,7 @@ impl PureTermApp {
             // Status bar (GAP-3.4)
             status_bar_cwd: None,
             pane_cwds: HashMap::new(),
+            pane_osc_title: HashMap::new(),
             agent_sessions: HashMap::new(),
             status_bar_git_branch: None,
             status_bar_process_name: None,
@@ -3023,7 +3031,7 @@ impl PureTermApp {
             None
         };
         if let Some(tab) = self.active_tab_ref() {
-            format!("PureTerm — {}{}", prefix.unwrap_or_default(), tab.title)
+            format!("PureTerm — {}{}", prefix.unwrap_or_default(), self.tab_display_title(tab))
         } else if ws_count > 1 {
             format!(
                 "PureTerm — [{}]",
@@ -3032,6 +3040,13 @@ impl PureTermApp {
         } else {
             "PureTerm".to_string()
         }
+    }
+
+    /// GAP-1.3: title shown for a tab — the OSC-set title of the active pane
+    /// wins, else the derived `tab.title`. See [`resolve_display_title`].
+    fn tab_display_title(&self, tab: &Tab) -> String {
+        let osc = self.pane_osc_title.get(&tab.active_pane).map(String::as_str);
+        resolve_display_title(osc, &tab.title).to_string()
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -3206,6 +3221,18 @@ impl PureTermApp {
                                                 );
                                         }
                                     }
+                                }
+                                // GAP-1.3: program (OSC 0/2) or 23t-pop set the
+                                // window title — remember it so the tab/window
+                                // title can display it. iced re-runs `title()`
+                                // after each update, so no explicit refresh is
+                                // needed (mirrors how CwdChanged updates state).
+                                TerminalEvent::Title(title) => {
+                                    self.pane_osc_title.insert(*pane_id, title);
+                                }
+                                // GAP-1.3: title cleared — drop back to derived.
+                                TerminalEvent::ResetTitle => {
+                                    self.pane_osc_title.remove(pane_id);
                                 }
                             }
                         }
@@ -4037,7 +4064,7 @@ impl PureTermApp {
                 // Build a rich snapshot from live app state.
                 let snap = crate::ipc::methods::AppSnapshot {
                     window_count: if self.main_window.is_some() { 1 } else { 0 },
-                    tab_titles: self.tabs().iter().map(|t| t.title.clone()).collect(),
+                    tab_titles: self.tabs().iter().map(|t| self.tab_display_title(t)).collect(),
                     tab_ids: self.tabs().iter().map(|t| t.id.0).collect(),
                     pane_counts: self.tabs().iter().map(|t| t.panes.len()).collect(),
                     active_tab_index: self.tabs().iter().position(|t| t.id == self.active_tab_id()).unwrap_or(0),
@@ -5446,6 +5473,7 @@ impl PureTermApp {
                     }
                     tab.panes.remove(&pane_id);
                     self.pane_cwds.remove(&pane_id);
+                    self.pane_osc_title.remove(&pane_id);
                     tab.active_pane = new_active;
                     // Resize remaining panes
                     let terminal_height = terminal_content_height(self.viewport_size.height);
@@ -7185,6 +7213,7 @@ impl PureTermApp {
             }
             tab.panes.remove(&active_pane_id);
             self.pane_cwds.remove(&active_pane_id);
+            self.pane_osc_title.remove(&active_pane_id);
             tab.active_pane = new_active;
             // Resize remaining panes
             let terminal_height = terminal_content_height(self.viewport_size.height);
@@ -7520,7 +7549,7 @@ impl PureTermApp {
             };
 
             let center = container(
-                text(&tab.title).size(12).wrapping(text::Wrapping::None),
+                text(self.tab_display_title(tab)).size(12).wrapping(text::Wrapping::None),
             )
             .width(Length::Fill)
             .align_x(iced::alignment::Horizontal::Center);
@@ -8818,12 +8847,12 @@ impl PureTermApp {
             .enumerate()
             .filter(|(_, tab)| {
                 state.query.is_empty()
-                    || tab
-                        .title
+                    || self
+                        .tab_display_title(*tab)
                         .to_lowercase()
                         .contains(&state.query.to_lowercase())
             })
-            .map(|(i, tab)| (tab.id, tab.title.clone(), i))
+            .map(|(i, tab)| (tab.id, self.tab_display_title(tab), i))
             .collect();
 
         let list_items: Vec<Element<'_, Message, Theme, iced::Renderer>> = filtered
@@ -9505,6 +9534,17 @@ pub fn run() -> iced::Result {
     .run()
 }
 
+/// GAP-1.3: choose the displayed window/tab title. A non-empty OSC title set
+/// by the program (OSC 0/2, or restored by a CSI 23t pop) takes precedence;
+/// an empty or absent title falls back to PureTerm's derived title (tab number
+/// / SSH profile). Mirrors iTerm2 / Ghostty / Alacritty semantics.
+fn resolve_display_title<'a>(osc: Option<&'a str>, derived: &'a str) -> &'a str {
+    match osc {
+        Some(s) if !s.is_empty() => s,
+        _ => derived,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -9590,5 +9630,23 @@ mod tests {
         // unreserved pass through; space → '+'; others → %XX.
         assert_eq!(super::percent_encode_query("a Z_-.~"), "a+Z_-.~");
         assert_eq!(super::percent_encode_query("?&="), "%3F%26%3D");
+    }
+
+    #[test]
+    fn resolve_display_title_prefers_osc_when_set() {
+        // GAP-1.3: program-set title wins.
+        assert_eq!(super::resolve_display_title(Some("vim"), "#1"), "vim");
+    }
+
+    #[test]
+    fn resolve_display_title_falls_back_when_absent() {
+        // No OSC title → derived tab title.
+        assert_eq!(super::resolve_display_title(None, "#1"), "#1");
+    }
+
+    #[test]
+    fn resolve_display_title_treats_empty_as_reset() {
+        // Empty OSC title (e.g. `\e]0;\a`) is treated as reset → fall back.
+        assert_eq!(super::resolve_display_title(Some(""), "#1"), "#1");
     }
 }

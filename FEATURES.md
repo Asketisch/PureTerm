@@ -101,6 +101,14 @@
 - rotation-safe vi cursor 复用为锚
 - 196 测试绿 + dist .app 重打包;待手动 GUI E2E
 
+### GAP-1.3 标题栈 / OSC 动态标题(CSI 22t/23t + OSC 0/2)(2026-06-25)
+- 程序设标题(OSC 0/2 `\e]0;title\a`)与压弹栈(CSI 22t push / 23t pop)真实反映到窗口标题 + Tab 标题(此前标题事件在事件桥被丢弃,程序设标题无任何可见效果)
+- 显示策略:OSC 动态标题优先;空 / `None` / `ResetTitle` 回退 PureTerm 派生标题(`#1` / `🔒 SSH: <name>`),与 iTerm2 / Ghostty / Alacritty 一致
+- 核心栈复用上游 alacritty_terminal(`Term::{push,pop,set}_title` + `title_stack`,深度上限 4096;vte 已接好 `22t→push_title` / `23t→pop_title` / `OSC 0,2→set_title`),不改 vendored 源码
+- 实现:`terminal_context.rs::ChannelEventListener` 转发 `Event::Title`/`ResetTitle`(此前 `_ => return` 丢弃)+ `iced_app.rs` `pane_osc_title` side-map(仿 `pane_cwds`,不改 `Pane` 结构体)+ 事件循环两 arm + `resolve_display_title` 纯函数 + `tab_display_title` 接线(窗口标题 / Tab 栏 / Tab 切换器 / AppSnapshot)
+- 单测:桥接转发 3 + `resolve_display_title` 3;全 461 绿
+- 待手动 GUI E2E flip ✅(runbook [`docs/manual-e2e/gap-1.3-title-stack.md`](docs/manual-e2e/gap-1.3-title-stack.md))
+
 ---
 
 ## D. SSH
