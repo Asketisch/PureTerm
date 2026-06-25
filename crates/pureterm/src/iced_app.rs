@@ -2419,6 +2419,119 @@ impl PureTermApp {
         log::info!("GAP-5.6: SSH pane {:?} dropped → reconnecting", pane_id);
     }
 
+    /// GAP-5.6: emit a `ssh.state_changed` event on the EventBus for external
+    /// consumers (`pureterm events tail --type session`, MCP, GAP-6.8 sidebar).
+    /// The GUI itself reads `ssh_state_snapshot()` directly; this event is the
+    /// "Socket API event SshStateChanged" surface. Reuses `Category::Session`
+    /// so all SSH lifecycle events live alongside `session.spawned/exited`.
+    #[cfg(unix)]
+    fn emit_ssh_state_changed(
+        &self,
+        pane_id: PaneId,
+        ctx: &crate::terminal_context::TerminalContext,
+        to: crate::ssh::reconnect::SshStateSnapshot,
+    ) {
+        use crate::ssh::reconnect::SshStateSnapshot;
+        let mut payload = serde_json::json!({
+            "pane_id": pane_id.0,
+            "to": to.as_str(),
+        });
+        if let Some(att) = to.attempt() {
+            payload["attempt"] = serde_json::json!(att);
+        }
+        if let SshStateSnapshot::Failed { kind } = to {
+            payload["failure_kind"] = serde_json::json!(kind.as_str());
+        }
+        self.events.emit(
+            crate::events::Category::Session,
+            "ssh.state_changed",
+            ctx.session_id().map(|s| s.to_string()),
+            payload,
+        );
+    }
+
+    /// GAP-5.6: read a pane's SSH exit flags under a short immutable borrow, so
+    /// the exit-dispatch loop can release `self` before any `&mut` call (e.g.
+    /// [`Self::trigger_ssh_reconnect`]). Returns `(is_ssh, is_user_initiated_close)`;
+    /// `(false, true)` if the tab/pane/terminal is already gone.
+    #[cfg(unix)]
+    fn ssh_exit_flags(&self, tab_id: TabId, pane_id: PaneId) -> (bool, bool) {
+        let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) else {
+            return (false, true);
+        };
+        let Some(ctx) = tab.panes.get(&pane_id).and_then(|p| p.terminal()) else {
+            return (false, true);
+        };
+        (ctx.is_ssh(), ctx.is_user_initiated_close())
+    }
+
+    /// GAP-5.6: handle a single-pane SSH tab that exited within the 5s grace
+    /// period — the connection almost certainly failed. Classify ssh stderr
+    /// ([`crate::ssh::reconnect::classify_ssh_failure`]) for a typed dialog
+    /// message + a `ssh.state_changed → failed` event, release the connection
+    /// pool entry, remove the tab, and surface the error in the SSH dialog.
+    #[cfg(unix)]
+    fn handle_ssh_quick_exit(&mut self, tab_id: TabId, pane_id: PaneId) {
+        // Collect everything needed from the pane under an immutable borrow,
+        // then release it before the `&mut` tab removal below.
+        let (stderr_msg, release_key, session_id) = {
+            let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) else {
+                return;
+            };
+            let Some(pane) = tab.panes.get(&pane_id) else { return };
+            let Some(ctx) = pane.terminal() else { return };
+            let stderr = ctx.read_stderr().filter(|s| !s.is_empty());
+            let key = ctx
+                .ssh_release_key()
+                .map(|(h, u, p)| (h.to_string(), u.map(|x| x.to_string()), p));
+            (stderr, key, ctx.session_id().map(|s| s.to_string()))
+        };
+
+        use crate::ssh::reconnect::{classify_ssh_failure, SshFailureKind};
+        let kind = stderr_msg
+            .as_deref()
+            .map(classify_ssh_failure)
+            .unwrap_or(SshFailureKind::Unknown);
+        let error_msg = match stderr_msg.as_deref() {
+            Some(err) => match kind {
+                SshFailureKind::Auth => format!("SSH authentication failed: {}", err.trim()),
+                SshFailureKind::Network => format!("SSH network error: {}", err.trim()),
+                SshFailureKind::HostKey => {
+                    format!("SSH host key verification failed: {}", err.trim())
+                }
+                SshFailureKind::Unknown => format!("SSH connection failed: {}", err.trim()),
+            },
+            None => "SSH connection failed. Check host, port, and credentials.".to_string(),
+        };
+
+        // Release the SSH connection-pool entry.
+        if let Some((host, user, port)) = release_key {
+            if let Some(ref manager) = self.ssh_manager {
+                manager.release(&host, user.as_deref(), port);
+            }
+        }
+
+        // GAP-5.6 ssh.state_changed → failed (typed), for the event stream / MCP.
+        self.events.emit(
+            crate::events::Category::Session,
+            "ssh.state_changed",
+            session_id,
+            serde_json::json!({
+                "pane_id": pane_id.0,
+                "to": "failed",
+                "failure_kind": kind.as_str(),
+            }),
+        );
+
+        // Remove the failed tab and re-seat the active tab if it was active.
+        self.tabs_mut().retain(|t| t.id != tab_id);
+        if self.active_tab_id() == tab_id {
+            self.set_active_tab(self.tabs().first().map(|t| t.id).unwrap_or(tab_id));
+        }
+
+        self.show_ssh_error(error_msg);
+    }
+
     /// P3: create a new Tab wrapping an already-constructed SSH context.
     #[cfg(unix)]
     fn push_ssh_tab(&mut self, profile_name: String, ctx: TerminalContext) -> TabId {
@@ -3032,7 +3145,20 @@ impl PureTermApp {
                         let Some(ctx) = pane.terminal() else { continue };
                         while let Some(event) = ctx.poll_terminal_event() {
                             match event {
-                                TerminalEvent::Wakeup => { /* PTY 有新数据，重绘已在进行 */ }
+                                TerminalEvent::Wakeup => {
+                                    // GAP-5.6: 首个远端字节 = ssh 认证成功 / 会话已活。
+                                    // 仅重连路径会进入 Authenticating(Spawned→reattach 后);
+                                    // 命中即翻 Connected 并盖一条重连分隔线(scrollback 分界)。
+                                    #[cfg(unix)]
+                                    if ctx.is_ssh() {
+                                        use crate::ssh::reconnect::SshStateSnapshot;
+                                        if matches!(ctx.ssh_state_snapshot(), Some(SshStateSnapshot::Authenticating)) {
+                                            ctx.inject_reconnect_marker();
+                                            ctx.set_ssh_state(crate::ssh::reconnect::SshState::Connected);
+                                            self.emit_ssh_state_changed(*pane_id, ctx, SshStateSnapshot::Connected);
+                                        }
+                                    }
+                                }
                                 TerminalEvent::Exit => {
                                     exited_panes.push((tab.id, *pane_id, tab.created_at, tab.panes.len()));
                                 }
@@ -3065,94 +3191,59 @@ impl PureTermApp {
                         serde_json::json!({ "tab_id": tab_id.0, "pane_id": pane_id.0 }),
                     );
                 }
-                // 处理退出事件：关闭已退出的 pane（如果只有一个 pane 则关闭整个 tab）
-                if let Some((tab_id, pane_id, created_at, pane_count)) = exited_panes.first() {
-                    let tab_id = *tab_id;
-                    let pane_id = *pane_id;
-                    let created_at = *created_at;
-                    let pane_count = *pane_count;
-                    let tab = self.tabs().iter().find(|t| t.id == tab_id);
-                    if let Some(tab) = tab {
-                        if pane_count <= 1 {
-                            // SSH grace period: if an SSH tab exits within 5 seconds
-                            // of creation, the connection almost certainly failed.
-                            // Instead of silently closing, remove the tab and show the
-                            // SSH dialog with the error from stderr.
-                            let is_ssh_quick_exit = {
-                                let pane = tab.panes.get(&pane_id);
-                                pane.map_or(false, |p| {
-                                    p.terminal().map_or(false, |c| c.is_ssh())
-                                        && created_at.elapsed() < Duration::from_secs(5)
-                                })
-                            };
+                // 处理退出事件。GAP-5.6:遍历本 tick 所有退出 pane(共享 ControlMaster
+                // 死亡可能让多个 SSH pane 同 tick 退出),各自独立判定。多 pane tab 的
+                // 已建立 SSH 连接非用户主动退出 → 原地重连(保留 pane 在 split_tree),
+                // 不再被 PtyExitedPane 移除/取消。
+                let mut close_tab_msg: Option<TabId> = None;
+                let mut pane_exit_msgs: Vec<(TabId, PaneId)> = Vec::new();
+                let mut handled_exit = false;
+                'exit: for &(tab_id, pane_id, created_at, pane_count) in &exited_panes {
+                    #[cfg(unix)]
+                    let (is_ssh, is_user_close) = self.ssh_exit_flags(tab_id, pane_id);
+                    #[cfg(not(unix))]
+                    let (is_ssh, is_user_close) = (false, true);
 
-                            if is_ssh_quick_exit {
-                                // Read stderr for the error reason.
-                                let pane = tab.panes.get(&pane_id).unwrap();
-                                let ctx = pane.terminal().expect("ssh pane must be terminal");
-                                let stderr_msg = ctx.read_stderr()
-                                    .filter(|s| !s.is_empty());
-                                let error_msg = match stderr_msg {
-                                    Some(err) => format!(
-                                        "SSH connection failed: {}",
-                                        err.trim()
-                                    ),
-                                    None => "SSH connection failed. \
-                                             Check host, port, and credentials."
-                                        .to_string(),
-                                };
+                    let is_quick_exit = is_ssh && created_at.elapsed() < Duration::from_secs(5);
 
-                                // Release SSH connection pool entry.
-                                let release_key = ctx.ssh_release_key();
-                                if let Some((host, user, port)) = release_key {
-                                    if let Some(ref manager) = self.ssh_manager {
-                                        manager.release(host, user, port);
-                                    }
-                                }
+                    // GAP-5.6:已建立(>5s)的 SSH 连接非用户主动退出 = 网络掉线/远端
+                    // 重启 → 原地重连,任意 pane_count 都成立(保留 pane 在 split_tree)。
+                    #[cfg(unix)]
+                    let is_reconnect_candidate = is_ssh && !is_quick_exit && !is_user_close;
+                    #[cfg(not(unix))]
+                    let is_reconnect_candidate = false;
 
-                                // Remove the failed tab.
-                                self.tabs_mut().retain(|t| t.id != tab_id);
-                                if self.active_tab_id() == tab_id {
-                                    self.set_active_tab(
-                                        self.tabs()
-                                            .first()
-                                            .map(|t| t.id)
-                                            .unwrap_or(tab_id),
-                                    );
-                                }
-
-                                // Show the error in the SSH dialog.
-                                self.show_ssh_error(error_msg);
-                                return Task::none();
-                            } else {
-                                // 最后一个 pane 退出（已过 grace period）。
-                                #[cfg(unix)]
-                                {
-                                    // GAP-5.6: an established SSH connection
-                                    // (>5s) that exits WITHOUT user intent =
-                                    // network drop / remote reboot → auto-
-                                    // reconnect in place instead of closing.
-                                    let is_reconnect_candidate = tab
-                                        .panes
-                                        .get(&pane_id)
-                                        .map_or(false, |p| {
-                                            p.terminal().map_or(false, |c| {
-                                                c.is_ssh() && !c.is_user_initiated_close()
-                                            })
-                                        });
-                                    if is_reconnect_candidate {
-                                        self.trigger_ssh_reconnect(tab_id, pane_id);
-                                        return Task::none();
-                                    }
-                                }
-                                // 非 SSH，或用户主动断开 → 关闭整个 tab
-                                return Task::done(Message::CloseTab(tab_id));
-                            }
-                        } else {
-                            // 关闭特定 pane
-                            return Task::done(Message::PtyExitedPane(tab_id, pane_id));
-                        }
+                    if is_reconnect_candidate {
+                        self.trigger_ssh_reconnect(tab_id, pane_id);
+                        handled_exit = true;
+                        continue;
                     }
+
+                    if is_quick_exit && pane_count <= 1 {
+                        // 单 pane tab 的 SSH 快速失败(<5s,几乎肯定是连接/认证失败):
+                        // 读 stderr 分类,释放连接池,移除 tab,弹错误对话框。首个生效。
+                        self.handle_ssh_quick_exit(tab_id, pane_id);
+                        handled_exit = true;
+                        break 'exit;
+                    }
+
+                    // 其余:local / 用户主动断开 SSH / 多 pane 非 SSH 退出。
+                    if pane_count <= 1 {
+                        close_tab_msg.get_or_insert(tab_id);
+                    } else {
+                        pane_exit_msgs.push((tab_id, pane_id));
+                    }
+                }
+
+                if let Some(tab_id) = close_tab_msg {
+                    return Task::done(Message::CloseTab(tab_id));
+                }
+                if let Some(&(tab_id, pane_id)) = pane_exit_msgs.first() {
+                    return Task::done(Message::PtyExitedPane(tab_id, pane_id));
+                }
+                if handled_exit {
+                    // 重连 / quick-exit 已就地处理,无 Message 需派发。
+                    return Task::none();
                 }
 
                 // Status bar periodic poll (every 30s): refresh git branch + process name.
@@ -3950,6 +4041,49 @@ impl PureTermApp {
                             t.split_tree.pane_ids().into_iter().map(|p| p.0).collect()
                         })
                         .collect(),
+                    // GAP-5.6: per-SSH-pane connection state for `ssh.state`.
+                    ssh_pane_states: {
+                        #[cfg(unix)]
+                        {
+                            use crate::ipc::methods::SshPaneState;
+                            use crate::ssh::reconnect::SshStateSnapshot;
+                            let mut out = Vec::new();
+                            for tab in self.tabs().iter() {
+                                for pid in tab.split_tree.pane_ids() {
+                                    let Some(ctx) = tab
+                                        .panes
+                                        .get(&pid)
+                                        .and_then(|p| p.terminal())
+                                    else {
+                                        continue;
+                                    };
+                                    if !ctx.is_ssh() {
+                                        continue;
+                                    }
+                                    let snap = ctx.ssh_state_snapshot().unwrap_or(
+                                        SshStateSnapshot::Disconnected,
+                                    );
+                                    out.push(SshPaneState {
+                                        pane_id: pid.0,
+                                        tab_id: tab.id.0,
+                                        session_id: ctx.session_id().map(|s| s.to_string()),
+                                        host: ctx.ssh_release_key().map(|(h, _, _)| h.to_string()),
+                                        state: snap.as_str().to_string(),
+                                        attempt: snap.attempt(),
+                                        failure_kind: match snap {
+                                            SshStateSnapshot::Failed { kind } => {
+                                                Some(kind.as_str().to_string())
+                                            }
+                                            _ => None,
+                                        },
+                                    });
+                                }
+                            }
+                            out
+                        }
+                        #[cfg(not(unix))]
+                        { Vec::new() }
+                    },
                 };
 
                 let (resp, side_effect) = self.ipc_router.dispatch(
@@ -4092,9 +4226,14 @@ impl PureTermApp {
                                     next_retry: std::time::Instant::now() + next_retry_in,
                                 },
                             );
+                            self.emit_ssh_state_changed(
+                                pane_id,
+                                &ctx,
+                                crate::ssh::reconnect::SshStateSnapshot::Reconnecting { attempt },
+                            );
                         }
                     }
-                    ReconnectUpdate::Success { pane_id } => {
+                    ReconnectUpdate::Spawned { pane_id } => {
                         // Claim the spawned PTY and reattach. If the pane is
                         // gone (closed meanwhile), the hub already drained it.
                         let claimed = self.reconnect_hub.take_success(pane_id);
@@ -4112,8 +4251,18 @@ impl PureTermApp {
                         };
                         match ctx.reattach(*ssh_pty, stderr) {
                             Ok(()) => {
+                                // GAP-5.6: reattach to the freshly-spawned PTY, then mark
+                                // Authenticating — the ssh child is forked but auth/first
+                                // remote byte is still pending. The Wakeup handler in the
+                                // poll loop flips this to Connected + stamps the separator
+                                // line on the first remote byte.
                                 ctx.set_ssh_state(
-                                    crate::ssh::reconnect::SshState::Connected,
+                                    crate::ssh::reconnect::SshState::Authenticating,
+                                );
+                                self.emit_ssh_state_changed(
+                                    pane_id,
+                                    &ctx,
+                                    crate::ssh::reconnect::SshStateSnapshot::Authenticating,
                                 );
                                 // Re-apply the current pane size to the fresh PTY.
                                 let gs = self.glyph_state.borrow();
@@ -4127,19 +4276,32 @@ impl PureTermApp {
                                     .max(1.0) as usize;
                                 ctx.resize(cols, rows, gs.cell_width as u16, gs.cell_height as u16);
                                 drop(gs);
-                                log::info!("GAP-5.6: SSH pane {:?} reconnected", pane_id);
+                                log::info!("GAP-5.6: SSH pane {:?} reattached, awaiting auth", pane_id);
                             }
                             Err(e) => {
                                 log::error!("GAP-5.6: reattach failed for pane {:?}: {}", pane_id, e);
                                 ctx.set_ssh_state(crate::ssh::reconnect::SshState::Failed {
+                                    kind: crate::ssh::reconnect::SshFailureKind::Unknown,
                                     reason: format!("reattach failed: {e}"),
                                 });
+                                self.emit_ssh_state_changed(
+                                    pane_id,
+                                    &ctx,
+                                    crate::ssh::reconnect::SshStateSnapshot::Failed {
+                                        kind: crate::ssh::reconnect::SshFailureKind::Unknown,
+                                    },
+                                );
                             }
                         }
                     }
-                    ReconnectUpdate::Failed { pane_id, reason } => {
+                    ReconnectUpdate::Failed { pane_id, kind, reason } => {
                         if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
-                            ctx.set_ssh_state(crate::ssh::reconnect::SshState::Failed { reason });
+                            ctx.set_ssh_state(crate::ssh::reconnect::SshState::Failed { kind, reason });
+                            self.emit_ssh_state_changed(
+                                pane_id,
+                                &ctx,
+                                crate::ssh::reconnect::SshStateSnapshot::Failed { kind },
+                            );
                         }
                     }
                 }
@@ -7497,7 +7659,12 @@ impl PureTermApp {
                                 format!("  SSH ↻ {}", attempt),
                                 Color::from_rgba(0.95, 0.75, 0.3, 1.0),
                             ),
-                            SshStateSnapshot::Failed => (
+                            // GAP-5.6: ssh forked, awaiting auth/first remote byte.
+                            SshStateSnapshot::Authenticating => (
+                                "  SSH 🔑".to_string(),
+                                Color::from_rgba(0.95, 0.75, 0.3, 1.0),
+                            ),
+                            SshStateSnapshot::Failed { .. } => (
                                 "  SSH ✗".to_string(),
                                 Color::from_rgba(0.6, 0.6, 0.6, 1.0),
                             ),

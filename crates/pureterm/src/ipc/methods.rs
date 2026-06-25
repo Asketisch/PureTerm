@@ -130,6 +130,26 @@ pub struct AppSnapshot {
     /// `active_pane_ids` only gave the focused pane per tab) so tmux `%N`
     /// targeting can address any pane.
     pub pane_ids: Vec<Vec<u64>>,
+    /// GAP-5.6: per-SSH-pane connection state (DFS order across tabs). Empty
+    /// on non-unix (no SSH panes). Surfaced via the `ssh.state` Socket API
+    /// method so agents / MCP / CLI can query which panes are connected.
+    pub ssh_pane_states: Vec<SshPaneState>,
+}
+
+/// GAP-5.6: one SSH pane's connection state for the `ssh.state` Socket API
+/// method. Cross-platform struct (uses owned `String`s); SSH panes only exist
+/// on unix so the snapshot vec is empty elsewhere. `state` / `failure_kind`
+/// are the lowercase slugs from [`crate::ssh::reconnect`] (`connected`,
+/// `reconnecting`, `failed`, ... / `auth`, `network`, ...).
+#[derive(Debug, Clone, Default)]
+pub struct SshPaneState {
+    pub pane_id: u64,
+    pub tab_id: u64,
+    pub session_id: Option<String>,
+    pub state: String,
+    pub attempt: Option<u8>,
+    pub failure_kind: Option<String>,
+    pub host: Option<String>,
 }
 
 impl Default for AppSnapshot {
@@ -146,6 +166,7 @@ impl Default for AppSnapshot {
             tab_cwds: Vec::new(),
             active_pane_ids: Vec::new(),
             pane_ids: Vec::new(),
+            ssh_pane_states: Vec::new(),
         }
     }
 }
@@ -669,6 +690,38 @@ impl SocketRouter {
                     Some(IpcSideEffect::SshDisconnect { pane_id }),
                 )
             });
+
+            // GAP-5.6: read-only Socket API surface for SSH connection state.
+            // Returns every SSH pane's state (connected / reconnecting /
+            // failed / ...) plus typed failure_kind + session_id + host, so
+            // agents / MCP / CLI can observe connectivity without the GUI.
+            router.register("ssh.state", |_params, snap| {
+                let panes: Vec<Value> = snap
+                    .ssh_pane_states
+                    .iter()
+                    .map(|s| {
+                        let mut o = serde_json::json!({
+                            "pane_id": s.pane_id,
+                            "tab_id": s.tab_id,
+                            "state": s.state,
+                        });
+                        if let Some(sid) = &s.session_id {
+                            o["session_id"] = Value::String(sid.clone());
+                        }
+                        if let Some(att) = s.attempt {
+                            o["attempt"] = Value::from(att);
+                        }
+                        if let Some(k) = &s.failure_kind {
+                            o["failure_kind"] = Value::String(k.clone());
+                        }
+                        if let Some(h) = &s.host {
+                            o["host"] = Value::String(h.clone());
+                        }
+                        o
+                    })
+                    .collect();
+                (Ok(serde_json::json!({ "panes": panes })), None)
+            });
         }
 
         // Non-unix stubs for ssh.* methods
@@ -677,6 +730,7 @@ impl SocketRouter {
             router.register_noop("ssh.list_profiles", "SSH not available on this platform");
             router.register_noop("ssh.connect", "SSH not available on this platform");
             router.register_noop("ssh.disconnect", "SSH not available on this platform");
+            router.register_noop("ssh.state", "SSH not available on this platform");
         }
 
         // ── debug.* (2 methods) ───────────────────────────────────────
@@ -913,6 +967,7 @@ mod tests {
             tab_cwds: vec![Some("/home/user".into()), None],
             active_pane_ids: vec![10, 20],
             pane_ids: vec![vec![10, 11], vec![20]],
+            ssh_pane_states: Vec::new(),
         }
     }
 
@@ -1439,6 +1494,31 @@ mod tests {
         let snap = test_snap();
         let (resp, _) = router.dispatch(34, "ssh.disconnect", None, &snap);
         assert!(resp.result.is_some());
+    }
+
+    #[test]
+    fn ssh_state_returns_pane_states() {
+        // GAP-5.6: `ssh.state` is the read-only Socket API surface for SSH
+        // connection state (agents / MCP / CLI query which panes are connected).
+        let router = SocketRouter::new();
+        let mut snap = test_snap();
+        snap.ssh_pane_states = vec![SshPaneState {
+            pane_id: 20,
+            tab_id: 2,
+            session_id: Some("sess-1".into()),
+            state: "connected".into(),
+            attempt: None,
+            failure_kind: None,
+            host: Some("prod".into()),
+        }];
+        let (resp, _) = router.dispatch(37, "ssh.state", None, &snap);
+        let r = resp.result.unwrap();
+        let panes = r["panes"].as_array().expect("panes array");
+        assert_eq!(panes.len(), 1);
+        assert_eq!(panes[0]["pane_id"], 20);
+        assert_eq!(panes[0]["state"], "connected");
+        assert_eq!(panes[0]["host"], "prod");
+        assert_eq!(panes[0]["session_id"], "sess-1");
     }
 
     // ── debug.* ───────────────────────────────────────────────────────

@@ -19,6 +19,7 @@ use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term};
 use alacritty_terminal::tty::{self, Options as PtyOptions};
+use alacritty_terminal::vte::ansi;
 use crossbeam_channel::{bounded, Receiver, Sender};
 
 #[cfg(unix)]
@@ -546,6 +547,20 @@ impl TerminalContext {
         }
     }
 
+    /// GAP-5.6: stamp a "reconnected" separator line into this SSH pane's grid
+    /// on a successful reconnect. No-op for local panes. See
+    /// [`inject_reconnect_marker_into`].
+    pub fn inject_reconnect_marker(&self) {
+        match self {
+            #[cfg(unix)]
+            TerminalContext::Ssh(ctx) => {
+                inject_reconnect_marker_into(&ctx.terminal, &ctx.ssh_host);
+            },
+            // Local pane (or non-unix): nothing to mark.
+            _ => {},
+        }
+    }
+
     /// Resize the terminal grid and notify the PTY.
     pub fn resize(&self, cols: usize, rows: usize, cell_w: u16, cell_h: u16) {
         let size = TermSize::new(cols, rows);
@@ -781,5 +796,74 @@ impl TerminalContext {
         rt.io_thread = Some(io_thread);
         rt.stderr_file = stderr;
         Ok(())
+    }
+}
+
+/// GAP-5.6: inject a persistent "reconnected" separator line into the terminal
+/// grid via the VT parser — the same path PTY output takes — so it survives in
+/// scrollback as a boundary between the old session's output and the new one.
+/// Used on the `Authenticating → Connected` transition after a successful
+/// reconnect. [`TerminalContext::write_to_pty`] is the wrong tool here: it
+/// forwards bytes to the remote shell's stdin, not the local grid.
+pub(crate) fn inject_reconnect_marker_into(
+    term: &Arc<FairMutex<Term<ChannelEventListener>>>,
+    host: &str,
+) {
+    // Bright-black (SGR 90) line wrapped in CR-LF so it lands on its own row
+    // regardless of the cursor column when the reconnect completed.
+    let line = format!("\r\n\x1b[90m── Reconnected to {host} ──\x1b[0m\r\n");
+    let mut parser: ansi::Processor = ansi::Processor::new();
+    let mut guard = term.lock_unfair();
+    parser.advance(&mut *guard, line.as_bytes());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alacritty_terminal::index::{Column, Point};
+    use alacritty_terminal::sync::FairMutex;
+    use alacritty_terminal::term::test::TermSize;
+    use alacritty_terminal::term::{Config, Term};
+    use alacritty_terminal::vte::ansi;
+    use crossbeam_channel::bounded;
+    use std::sync::Arc;
+
+    fn blank_term() -> Arc<FairMutex<Term<ChannelEventListener>>> {
+        let (tx, _rx) = bounded::<TerminalEvent>(16);
+        let size = TermSize::new(80, 24);
+        let term = Term::new(Config::default(), &size, ChannelEventListener::new(tx));
+        Arc::new(FairMutex::new(term))
+    }
+
+    fn grid_string(term: &Arc<FairMutex<Term<ChannelEventListener>>>) -> String {
+        let t = term.lock();
+        let start = Point::new(t.topmost_line(), Column(0));
+        let end = Point::new(t.bottommost_line(), t.last_column());
+        t.bounds_to_string(start, end)
+    }
+
+    #[test]
+    fn reconnect_marker_writes_into_grid() {
+        let term = blank_term();
+        inject_reconnect_marker_into(&term, "example.com");
+        let s = grid_string(&term);
+        assert!(s.contains("Reconnected"), "grid missing 'Reconnected': {s:?}");
+        assert!(s.contains("example.com"), "grid missing host: {s:?}");
+    }
+
+    #[test]
+    fn reconnect_marker_preserves_prior_content() {
+        // GAP-5.6: the marker is injected into the SAME terminal Arc (scrollback
+        // preserved on reattach), so prior output must survive the injection.
+        let term = blank_term();
+        {
+            let mut parser: ansi::Processor = ansi::Processor::new();
+            let mut t = term.lock();
+            parser.advance(&mut *t, b"prior scrollback line\r\n");
+        }
+        inject_reconnect_marker_into(&term, "host");
+        let s = grid_string(&term);
+        assert!(s.contains("prior scrollback line"), "prior content lost: {s:?}");
+        assert!(s.contains("Reconnected"), "marker missing: {s:?}");
     }
 }

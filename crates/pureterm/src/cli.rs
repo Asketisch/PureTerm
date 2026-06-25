@@ -505,6 +505,9 @@ pub enum SshSub {
     },
     /// Disconnect (close the SSH tab)
     Disconnect,
+    /// GAP-5.6: query every SSH pane's connection state (`ssh.state` Socket API).
+    /// Shows connected / reconnecting / failed (+ typed failure kind) per pane.
+    State,
     /// GAP-5.2: open a russh-backed SOCKS5 tunnel through a gateway (daemon-owned).
     /// `curl --socks5-hostname 127.0.0.1:<local-port> https://...` then routes via
     /// the gateway, reaching hosts only it can see.
@@ -552,6 +555,7 @@ impl SshSub {
             }
             SshSub::Connect { .. } => ("ssh.connect", None),
             SshSub::Disconnect => ("ssh.disconnect", None),
+            SshSub::State => ("ssh.state", None),
             // GAP-5.2: daemon-direct (handled in `run` before the GUI-IPC fallback).
             // These arms are unreachable from the IPC path but keep the match total.
             SshSub::Tunnel { .. } => ("tunnel.start", None),

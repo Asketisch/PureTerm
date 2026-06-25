@@ -107,8 +107,8 @@
 
 ### GAP-5.6 完整 reconnect/disconnect 状态机
 - **状态**: 🚧 | **优先级**: P0
-- **现状**: 进程内子集闭环(2026-06-14):SshState 状态机 + 指数退避(3→60s×8) + ssh.disconnect IPC 真实落地 + reattach;10 单测。**daemon 化跨重启恢复已实现(2026-06-17,待 GUI E2E)**:session_restore 持久化 + iced_app 启动重连 + 孤儿接回 + split_tree serde/remap;daemon 零改动;5 新单测
-- **未做**: `Authenticating` 独立状态 / Socket API event `SshStateChanged` / 多 pane tab SSH 退出重连 / 重连成功分隔线
+- **现状**: 进程内子集闭环(2026-06-14)+ daemon 跨重启恢复(2026-06-17)。**4 项收尾代码闭环(2026-06-25,待 GUI 真机 E2E)**:① `Authenticating` 独立状态——利用"`spawn_pty` fork 后即返回、认证在 ssh 子进程异步"的事实,`Spawned`→reattach→`Authenticating`,首个远端字节(`TerminalEvent::Wakeup`)→`Connected`(修正原先 spawn Ok 即 `Connected` 的过早判定);② Socket API event `ssh.state_changed`(复用 `Category::Session`,5 切换点 emit)+ 只读 `ssh.state` RPC(快照 `SshPaneState`)+ `pureterm ssh state` CLI;③ 多 pane tab SSH 退出重连——撤销 `pane_count<=1` 门控 + 遍历本 tick 全部 `exited_panes`,SSH 非用户发起退出任意 pane_count 都 `trigger_ssh_reconnect`(保留 split);④ 重连成功分隔线——`inject_reconnect_marker`(`ansi::Processor::advance` 向 alacritty 网格注入持久 `── Reconnected ──`)。外加 stderr 分类器 `classify_ssh_failure`(Auth/Network/HostKey/Unknown)→ 带类型 `Failed{kind}` + 分类后对话框。451 harness 绿(+7 新单测)。**待 dist `.app` 重打包 + GUI 真机 E2E**
+- **未做**: GUI 真机 E2E 验证(我无法跑 GUI,是 flip ✅ 门槛;runbook 见 [`docs/manual-e2e/gap-5.6-ssh-reconnect.md`](manual-e2e/gap-5.6-ssh-reconnect.md)) / 初始连接路径也接入 `Authenticating`(现仅重连路径用;为保分隔线"仅重连注入"的干净语义有意延后)
 - **依赖**: GAP-5.1(daemon 化);进程内子集无新依赖
 - **对标**: cmux 完整事件流状态机;iTerm2 / Termius
 

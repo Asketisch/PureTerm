@@ -49,6 +49,56 @@ pub const BACKOFF: [Duration; 8] = [
     Duration::from_secs(60),
 ];
 
+/// Classified reason an SSH connection attempt failed. GAP-5.6 收尾:因为
+/// spawn 走 OS `ssh` 二进制,Rust 侧只能从 ssh 的 stderr 文本推断失败类别。
+/// 用分类结果给 [`SshState::Failed`] 带类型,让状态栏 / 事件 / 对话框能显示
+/// "认证失败" 而非笼统的 "连接失败"。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SshFailureKind {
+    /// `Permission denied` — 凭证错误 / 公钥未授权。
+    Auth,
+    /// `Connection refused` / `Connection timed out` / `Could not resolve
+    /// hostname` / `Network is unreachable` — 网络层不可达。
+    Network,
+    /// `Host key verification failed` / `REMOTE HOST IDENTIFICATION HAS
+    /// CHANGED` — 主机密钥不匹配 / 首次连接 TOFU 拒绝。
+    HostKey,
+    /// 未匹配任何已知 ssh stderr 模式。
+    Unknown,
+}
+
+/// 把 ssh 进程的 stderr 文本归类成 [`SshFailureKind`]。匹配大小写敏感(ssh
+/// 实际输出即这些固定字符串),对未知内容返回 [`SshFailureKind::Unknown`]。
+pub fn classify_ssh_failure(stderr: &str) -> SshFailureKind {
+    if stderr.contains("Permission denied") {
+        SshFailureKind::Auth
+    } else if stderr.contains("Connection refused")
+        || stderr.contains("Connection timed out")
+        || stderr.contains("Could not resolve hostname")
+        || stderr.contains("Network is unreachable")
+    {
+        SshFailureKind::Network
+    } else if stderr.contains("Host key verification failed")
+        || stderr.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")
+    {
+        SshFailureKind::HostKey
+    } else {
+        SshFailureKind::Unknown
+    }
+}
+
+impl SshFailureKind {
+    /// Stable lowercase slug for event payloads / IPC.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SshFailureKind::Auth => "auth",
+            SshFailureKind::Network => "network",
+            SshFailureKind::HostKey => "host_key",
+            SshFailureKind::Unknown => "unknown",
+        }
+    }
+}
+
 /// Connection lifecycle for a single SSH pane.
 #[derive(Debug, Clone)]
 pub enum SshState {
@@ -56,6 +106,14 @@ pub enum SshState {
     Disconnected,
     /// First connection in progress (synchronous spawn phase in `connect_ssh_tab`).
     Connecting,
+    /// GAP-5.6: the `ssh` child has been forked (spawn returned Ok) but no
+    /// remote byte has arrived yet — the ssh process is in the middle of its
+    /// TCP connect / handshake / authentication. Surfaced as a distinct UI
+    /// state because the spawn boundary itself cannot observe the auth step
+    /// (it all happens inside the ssh child); the iced loop flips this to
+    /// [`SshState::Connected`] on the first remote byte, or to [`SshState::Failed`]
+    /// if the child exits before speaking.
+    Authenticating,
     /// Connected and live.
     Connected,
     /// Reconnecting after a drop; `attempt` is 1-based.
@@ -64,7 +122,9 @@ pub enum SshState {
         next_retry: Instant,
     },
     /// Gave up after [`BACKOFF`] attempts, or a quick (<5s) auth failure.
+    /// `kind` is derived from ssh stderr via [`classify_ssh_failure`].
     Failed {
+        kind: SshFailureKind,
         reason: String,
     },
 }
@@ -84,9 +144,10 @@ impl SshState {
 pub enum SshStateSnapshot {
     Disconnected,
     Connecting,
+    Authenticating,
     Connected,
     Reconnecting { attempt: u8 },
-    Failed,
+    Failed { kind: SshFailureKind },
 }
 
 impl From<&SshState> for SshStateSnapshot {
@@ -94,9 +155,32 @@ impl From<&SshState> for SshStateSnapshot {
         match s {
             SshState::Disconnected => SshStateSnapshot::Disconnected,
             SshState::Connecting => SshStateSnapshot::Connecting,
+            SshState::Authenticating => SshStateSnapshot::Authenticating,
             SshState::Connected => SshStateSnapshot::Connected,
             SshState::Reconnecting { attempt, .. } => SshStateSnapshot::Reconnecting { attempt: *attempt },
-            SshState::Failed { .. } => SshStateSnapshot::Failed,
+            SshState::Failed { kind, .. } => SshStateSnapshot::Failed { kind: *kind },
+        }
+    }
+}
+
+impl SshStateSnapshot {
+    /// Stable lowercase slug for event payloads / IPC / status-bar debugging.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SshStateSnapshot::Disconnected => "disconnected",
+            SshStateSnapshot::Connecting => "connecting",
+            SshStateSnapshot::Authenticating => "authenticating",
+            SshStateSnapshot::Connected => "connected",
+            SshStateSnapshot::Reconnecting { .. } => "reconnecting",
+            SshStateSnapshot::Failed { .. } => "failed",
+        }
+    }
+
+    /// Reconnect attempt number when in `Reconnecting`, else `None`.
+    pub fn attempt(self) -> Option<u8> {
+        match self {
+            SshStateSnapshot::Reconnecting { attempt } => Some(attempt),
+            _ => None,
         }
     }
 }
@@ -136,11 +220,16 @@ pub enum ReconnectUpdate {
         attempt: u8,
         next_retry_in: Duration,
     },
-    /// A new ssh PTY was successfully spawned. The iced loop should call
-    /// [`ReconnectHub::take_success`] to claim it, then `SshCtx::reattach`.
-    Success { pane_id: PaneId },
-    /// All backoff attempts exhausted.
-    Failed { pane_id: PaneId, reason: String },
+    /// A new ssh PTY was spawned (ssh child forked). GAP-5.6: this is NOT yet
+    /// "connected" — the ssh child is still connecting/authenticating. The iced
+    /// loop should call [`ReconnectHub::take_success`] to claim the PTY, then
+    /// `SshCtx::reattach`, and set [`SshState::Authenticating`]; it flips to
+    /// [`SshState::Connected`] on the first remote byte.
+    Spawned { pane_id: PaneId },
+    /// All backoff attempts exhausted. `kind` is [`SshFailureKind::Unknown`]
+    /// here (the worker's `spawn_pty` `Err` carries no ssh stderr; classified
+    /// failures surface via the GUI-side quick-exit path instead).
+    Failed { pane_id: PaneId, kind: SshFailureKind, reason: String },
 }
 
 /// Per-pane cancellation handle. The worker sleeps on the `Condvar` so a
@@ -351,7 +440,7 @@ fn reconnect_worker(
                         return;
                     }
                     completed.lock().unwrap().insert(pane_id, (Box::new(ssh_pty), stderr));
-                    let _ = updates_tx.send(ReconnectUpdate::Success { pane_id });
+                    let _ = updates_tx.send(ReconnectUpdate::Spawned { pane_id });
                     return;
                 }
                 Err(e) => {
@@ -381,6 +470,7 @@ fn reconnect_worker(
     // Exhausted all attempts.
     let _ = updates_tx.send(ReconnectUpdate::Failed {
         pane_id,
+        kind: SshFailureKind::Unknown,
         reason: format!(
             "could not reconnect to {} after {} attempts",
             params.host,
@@ -407,16 +497,18 @@ mod tests {
         let cases: Vec<SshState> = vec![
             SshState::Disconnected,
             SshState::Connecting,
+            SshState::Authenticating,
             SshState::Connected,
             SshState::Reconnecting { attempt: 3, next_retry: Instant::now() },
-            SshState::Failed { reason: "x".into() },
+            SshState::Failed { kind: SshFailureKind::Auth, reason: "x".into() },
         ];
         let snaps = vec![
             SshStateSnapshot::Disconnected,
             SshStateSnapshot::Connecting,
+            SshStateSnapshot::Authenticating,
             SshStateSnapshot::Connected,
             SshStateSnapshot::Reconnecting { attempt: 3 },
-            SshStateSnapshot::Failed,
+            SshStateSnapshot::Failed { kind: SshFailureKind::Auth },
         ];
         for (state, snap) in cases.iter().zip(snaps.iter()) {
             assert_eq!(SshStateSnapshot::from(state), *snap);
@@ -426,9 +518,10 @@ mod tests {
     #[test]
     fn is_terminal_for_reconnect_classification() {
         assert!(SshState::Disconnected.is_terminal_for_reconnect());
-        assert!(SshState::Failed { reason: "x".into() }.is_terminal_for_reconnect());
+        assert!(SshState::Failed { kind: SshFailureKind::Unknown, reason: "x".into() }.is_terminal_for_reconnect());
         assert!(!SshState::Connected.is_terminal_for_reconnect());
         assert!(!SshState::Connecting.is_terminal_for_reconnect());
+        assert!(!SshState::Authenticating.is_terminal_for_reconnect());
         assert!(!SshState::Reconnecting { attempt: 1, next_retry: Instant::now() }.is_terminal_for_reconnect());
     }
 
@@ -481,14 +574,28 @@ mod tests {
         let mut rx = hub.take_updates_receiver().expect("receiver present");
         let _ = hub.updates_tx.send(ReconnectUpdate::Failed {
             pane_id: PaneId(1),
+            kind: SshFailureKind::Auth,
             reason: "test".into(),
         });
         match rx.try_recv() {
-            Ok(ReconnectUpdate::Failed { pane_id, reason }) => {
+            Ok(ReconnectUpdate::Failed { pane_id, kind, reason }) => {
                 assert_eq!(pane_id, PaneId(1));
+                assert_eq!(kind, SshFailureKind::Auth);
                 assert_eq!(reason, "test");
             }
             other => panic!("expected Ok(Failed), got {:?}", other.map(|_| "ok")),
+        }
+    }
+
+    #[test]
+    fn reconnect_update_spawned_travels_channel() {
+        // GAP-5.6: Spawned replaces Success — ssh forked but not yet connected.
+        let hub = ReconnectHub::new();
+        let mut rx = hub.take_updates_receiver().expect("receiver present");
+        let _ = hub.updates_tx.send(ReconnectUpdate::Spawned { pane_id: PaneId(7) });
+        match rx.try_recv() {
+            Ok(ReconnectUpdate::Spawned { pane_id }) => assert_eq!(pane_id, PaneId(7)),
+            other => panic!("expected Ok(Spawned), got {:?}", other.map(|_| "ok")),
         }
     }
 
@@ -514,5 +621,70 @@ mod tests {
         assert_eq!(k.host, "h");
         assert_eq!(k.port, 22);
         assert_eq!(k.user, "");
+    }
+
+    // --- GAP-5.6 收尾:stderr 失败分类器 -------------------------------------
+
+    #[test]
+    fn classify_ssh_failure_recognizes_auth() {
+        assert_eq!(classify_ssh_failure("Permission denied (publickey)."), SshFailureKind::Auth);
+        assert_eq!(
+            classify_ssh_failure("admin@host: Permission denied (publickey,password)."),
+            SshFailureKind::Auth
+        );
+    }
+
+    #[test]
+    fn classify_ssh_failure_recognizes_network() {
+        assert_eq!(
+            classify_ssh_failure("ssh: connect to host 10.0.0.1 port 22: Connection refused"),
+            SshFailureKind::Network
+        );
+        assert_eq!(
+            classify_ssh_failure("ssh: connect to host 10.0.0.1 port 22: Connection timed out"),
+            SshFailureKind::Network
+        );
+        assert_eq!(
+            classify_ssh_failure("ssh: Could not resolve hostname foo: nodename nor servname"),
+            SshFailureKind::Network
+        );
+        assert_eq!(
+            classify_ssh_failure("ssh: connect to host 10.0.0.1 port 22: Network is unreachable"),
+            SshFailureKind::Network
+        );
+    }
+
+    #[test]
+    fn classify_ssh_failure_recognizes_host_key() {
+        assert_eq!(classify_ssh_failure("Host key verification failed."), SshFailureKind::HostKey);
+        assert_eq!(
+            classify_ssh_failure("@@    REMOTE HOST IDENTIFICATION HAS CHANGED    @@"),
+            SshFailureKind::HostKey
+        );
+    }
+
+    #[test]
+    fn classify_ssh_failure_unknown_for_unrelated() {
+        assert_eq!(classify_ssh_failure(""), SshFailureKind::Unknown);
+        assert_eq!(classify_ssh_failure("something else entirely"), SshFailureKind::Unknown);
+    }
+
+    #[test]
+    fn failure_kind_and_snapshot_slugs_are_stable() {
+        // GAP-5.6: slugs are a wire contract for events / IPC — lock them.
+        assert_eq!(SshFailureKind::Auth.as_str(), "auth");
+        assert_eq!(SshFailureKind::Network.as_str(), "network");
+        assert_eq!(SshFailureKind::HostKey.as_str(), "host_key");
+        assert_eq!(SshFailureKind::Unknown.as_str(), "unknown");
+        assert_eq!(SshStateSnapshot::Authenticating.as_str(), "authenticating");
+        assert_eq!(
+            SshStateSnapshot::Failed { kind: SshFailureKind::Auth }.as_str(),
+            "failed"
+        );
+        assert_eq!(
+            SshStateSnapshot::Reconnecting { attempt: 2 }.attempt(),
+            Some(2)
+        );
+        assert_eq!(SshStateSnapshot::Connected.attempt(), None);
     }
 }

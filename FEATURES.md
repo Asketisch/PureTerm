@@ -140,6 +140,11 @@
 - `SplitNode` serde + `remap_pane_ids`/`regenerate_split_ids`(进程本地 id 重映射);daemon 零改动
 - SSH 重连到存活 `ssh -tt` child 无需重新认证
 - **关闭语义**:`⌘W` 关 tab/pane → `kill_pane_session` 结束该 daemon 会话(下次不再恢复);退出 app → 不 kill,保留存活会话供下次恢复
+- **4 项收尾代码闭环(2026-06-25,待 GUI 真机 E2E)**:
+  - `Authenticating` 独立状态:利用 `spawn_pty` fork 后即返回、认证在 ssh 子进程异步的事实 —— `ReconnectUpdate::Spawned`(替代 `Success`)→ reattach → `SshState::Authenticating`,首个远端字节(`TerminalEvent::Wakeup`)→ `Connected`(修正原先 spawn Ok 即 `Connected` 的过早判定)。`SshFailureKind`(Auth/Network/HostKey/Unknown)+ `classify_ssh_failure(stderr)` → 带类型 `Failed{kind}` + 分类后对话框
+  - Socket API:`ssh.state_changed` 事件(复用 `Category::Session`,5 切换点 emit)+ 只读 `ssh.state` RPC(`AppSnapshot::ssh_pane_states: Vec<SshPaneState>`)+ `pureterm ssh state` CLI
+  - 多 pane tab SSH 退出重连:撤销 `pane_count<=1` 门控,遍历本 tick 全部 `exited_panes`,SSH 非用户发起退出任意 pane_count 都 `trigger_ssh_reconnect`(保留 pane 在 `split_tree`),不再被 `PtyExitedPane` 移除/取消
+  - 重连成功分隔线:`TerminalContext::inject_reconnect_marker`(`ansi::Processor::advance` 向 alacritty `Term` 网格注入持久 `── Reconnected to <host> ──`,scrollback 内旧/新会话分界;同 `surface_snapshot.rs:121` 的 VT 注入模式)
 - 实现:`crates/pureterm/src/ssh/reconnect.rs` + `session_restore.rs` + `terminal_context.rs` + `iced_app.rs`
 
 ### GAP-5.4 SSH Agent Forwarding(2026-06-25)
