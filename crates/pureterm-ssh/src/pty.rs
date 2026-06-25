@@ -105,6 +105,20 @@ impl SshPty {
         self.child.id()
     }
 
+    /// The value for OpenSSH's `SSH_ASKPASS_REQUIRE`.
+    ///
+    /// Must be `force`, **not** `prefer`. We give the ssh child a controlling
+    /// terminal (`pre_exec` → `set_controlling_terminal`), and OpenSSH's
+    /// `=prefer` mode only consults `SSH_ASKPASS` when there is **no** tty.
+    /// With a tty present, `=prefer` prompts on the terminal and the saved
+    /// password is never supplied — so password-auth hosts connect, emit the
+    /// prompt as their first byte (→ spurious `Connected`), then get closed by
+    /// the server and fail with `failure_kind: unknown`. `=force` always uses
+    /// the askpass helper regardless of tty, so the saved password is supplied.
+    fn askpass_require_mode() -> &'static str {
+        "force"
+    }
+
     /// Spawn a new SSH session with a real kernel PTY.
     ///
     /// Uses `openpty()` to create a PTY master/slave pair. The ssh child
@@ -174,7 +188,7 @@ impl SshPty {
             fs::set_permissions(&script_path, Permissions::from_mode(0o700))?;
 
             builder.env("SSH_ASKPASS", script_path);
-            builder.env("SSH_ASKPASS_REQUIRE", "prefer");
+            builder.env("SSH_ASKPASS_REQUIRE", Self::askpass_require_mode());
             // DISPLAY is required by SSH even on macOS for SSH_ASKPASS.
             if std::env::var("DISPLAY").is_err() {
                 builder.env("DISPLAY", ":0");
@@ -478,5 +492,16 @@ mod tests {
         let cmd = vec!["cat".to_string()];
         let (pty, _stderr) = SshPty::spawn(&cmd, Some((80, 24)), None, None).expect("spawn cat");
         assert!(pty.askpass_tempdir.is_none());
+    }
+
+    /// Regression guard: `SSH_ASKPASS_REQUIRE` must be `force`. With the
+    /// controlling terminal PureTerm gives ssh, `=prefer` never invokes the
+    /// askpass helper, so saved passwords are silently ignored and
+    /// password-auth hosts fail to connect (connect-then-die,
+    /// `failure_kind: unknown`). Manually verified: the same host authenticates
+    /// fine under `=force`. Guard against reverting to `prefer`.
+    #[test]
+    fn askpass_require_is_force_not_prefer() {
+        assert_eq!(SshPty::askpass_require_mode(), "force");
     }
 }
