@@ -142,6 +142,15 @@
 - **关闭语义**:`⌘W` 关 tab/pane → `kill_pane_session` 结束该 daemon 会话(下次不再恢复);退出 app → 不 kill,保留存活会话供下次恢复
 - 实现:`crates/pureterm/src/ssh/reconnect.rs` + `session_restore.rs` + `terminal_context.rs` + `iced_app.rs`
 
+### GAP-5.4 SSH Agent Forwarding(2026-06-25)
+- `ssh-add` 后远程免密:`SshProfile.forward_agent = true` / CLI `-A` → daemon `ssh -tt … -o ForwardAgent=yes` 子进程 + 显式注入 `SSH_AUTH_SOCK`
+- **agent 套接字解析器**(`pureterm-ssh::agent_sock`,两轨共用):优先级 配置覆盖 > 继承 `$SSH_AUTH_SOCK` > macOS `launchctl getenv` 回退(GUI 启动常缺 shell env);`resolve_pure` 纯函数 7 单测
+- **双轨**:Track A(PTY `ssh`,闭 DoD)+ Track B(daemon russh 隧道:`Channel::agent_forward` + 重写 `server_channel_open_agent_forward` 做 Unix socket 字节泵 + `authenticate_publickey_with` agent 免密认证)
+- 默认关(不可信主机 agent 被盗用风险,与 OpenSSH 一致),profile / `-A` 显式开
+- **DoD 真机 E2E**(本地 sshd,可复现):跑 PureTerm `build()` 原样 argv(`-o ExitOnForwardFailure=yes -o ForwardAgent=yes`)→ 远端 `ssh-add -l` 见转发 key(指纹一致)、ssh exit 0(`ExitOnForwardFailure` 覆盖 agent 转发,0=服务器已接受);对照 `ForwardAgent=no` 远端无 `SSH_AUTH_SOCK`。442(harness)+ 21(pureterm-ssh)绿
+- 实现:`crates/pureterm-ssh/src/{agent_sock,command,pty,session}.rs` + `crates/pureterm-daemon/src/{tunnel,session,control}.rs` + `crates/pureterm/src/{ssh/config,daemon_client,ssh_cli,tunnel_cli,cli}.rs`
+- Track B(daemon russh)真机 E2E 待补(需重启 puretermd 验新 daemon 的 `-A`;非 DoD,与 GAP-5.2 同属待真机网关验证)
+
 ### SSH Profile 配置示例(alacritty.toml)
 
 ```toml
@@ -155,6 +164,7 @@ port = 22
 name = "跳板机"
 host = "bastion"
 key_path = "~/.ssh/bastion_key"
+forward_agent = true   # GAP-5.4: 远程免密 git push(默认 false,仅在可信主机开)
 ```
 
 ### SSH Action 键盘绑定示例
@@ -306,10 +316,10 @@ action = { Ssh = "ListProfiles" }
 | A. 核心架构 | 5 |
 | B. UI/UX | 6 |
 | C. 终端交互 | 2 |
-| D. SSH | 5 |
+| D. SSH | 6 |
 | E. 集成与可编程 | 4 |
 | F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **32** |
+| **总计** | **33** |
 
 ---

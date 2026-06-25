@@ -8,7 +8,7 @@
 
 | 状态 | 数量 | 说明 |
 |---|---|---|
-| ❌ 未实现 | 14 | 待排期 |
+| ❌ 未实现 | 13 | 待排期 |
 | 🚧 进行中 | 5 | 代码闭环待 E2E |
 | ⛔ 不做 | 4 | 见下方 §拒绝 |
 
@@ -122,10 +122,12 @@
 - **对标**: cmux `Sources/SSH/Tunnel.swift`
 
 ### GAP-5.4 SSH agent forwarding
-- **状态**: ❌ | **优先级**: P1
+- **状态**: ✅ | **优先级**: P1
+- **现状**: 双轨实现 + **Track A DoD 已闭环**(2026-06-25,本地 sshd 真机 E2E)。**Track A(PTY ssh,闭 DoD)**:`SshCommandBuilder.with_forward_agent`→`-o ForwardAgent=yes`;`SshPty::spawn` 显式注入 `SSH_AUTH_SOCK`;新增 `pureterm-ssh::agent_sock`(优先级:配置覆盖 > 继承 env > macOS `launchctl getenv` 回退,`resolve_pure` 纯函数 7 单测);沿 daemon `create_ssh`→ `session.create` RPC → `daemon_client::create_ssh` → GUI `SshProfile.forward_agent`(serde default false)+ 直连 fallback + CLI `ssh connect -A`。**Track A E2E 证据**:起本地 sshd + 临时 key → 跑 PureTerm **`build()` 原样 argv**(`-tt … -o ExitOnForwardFailure=yes -o ForwardAgent=yes -l admin -p 2222 host`)→ 远端 `ssh-add -l` 见转发 key(指纹一致)、ssh exit 0(`ExitOnForwardFailure=yes` 覆盖 agent 转发,0=服务器已接受);对照 `ForwardAgent=no` 远端无 `SSH_AUTH_SOCK`、`ssh-add -l` 失败。远程 `git push` 经同一转发 agent 即免密 = DoD。**Track B(daemon russh)**:`tunnel.rs` `ClientHandler` 带 `agent_sock`、`run_tunnel` 认证后 `channel_open_session`+`Channel::agent_forward`、重写 `server_channel_open_agent_forward` 做转发通道↔Unix socket 字节泵;`authenticate()` 加 `try_agent_auth`(`authenticate_publickey_with`+`AgentClient` 作 `Signer`,无 `--identity` 免密认证隧道);`tunnel.start` RPC + CLI `ssh tunnel -A`。代码闭环 + 编译过(核对 russh 0.60.3 API);**Track B 真机 E2E 待补**(需重启运行中的 puretermd 才能验新 daemon 的 `-A`,非 DoD,与 GAP-5.2 同属"待真机网关验证")。442(harness)+ 21(ssh)绿,daemon 54/55(1 例 `instance_lock` 因运行中的 puretermd 占锁,环境非回归)。
 - **目标**: 自动检测 `$SSH_AUTH_SOCK`;`-o ForwardAgent=yes`;`russh::Agent` 协议;转发到 SSH channel
 - **依赖**: GAP-5.1
 - **DoD**: `ssh-add` 后远程 `git push` 不需输密码
+- **未做**: Track B(daemon russh)真机 E2E(需重启 puretermd 验新 daemon 的 `-A`;非 DoD) / 跨 reconnect 保透传(需把 `forward_agent` 存进 `SshCtx`) / `ssh.agent_sock` 配置覆盖的 GUI 读取接线(resolver 已就绪,各 spawn 点暂传 None) / 对存活隧道动态开关 agent 转发(需 `Arc<AsyncMutex<Handle>>` 上提进 `TunnelEntry`)
 - **对标**: cmux 标准 ForwardAgent
 
 ### GAP-5.5 `pureterm://` URL scheme
