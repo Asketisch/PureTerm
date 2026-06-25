@@ -50,7 +50,19 @@
 ### GAP-3.4 状态栏(2026-06-12)
 - 底部 24px:CWD(OSC 7) · Git 分支(30s 轮询) · SSH 连接指示 · 前台进程名 · 光标位置(row:col)
 - 2026-06-22 GAP-7.6 加 agent 指示:`⚡ kind` / `❄ kind` / `⏳ N`
-- 留后续迭代:顶部 title bar shortcut hint pills / 菜单栏 extra badge / CPU 内存
+- 留后续迭代:顶部 title bar shortcut hint pills / 菜单栏 extra badge(CPU/内存已于 GAP-24 完成)
+
+### GAP-24 Enhanced Status Bar(2026-06-26)
+- 把原 monolithic `view_bottom_bar`(6 段 inline `text`)重构为 `StatusBarComponent` trait + `Vec<Box<dyn StatusBarComponent>>` 注册表;每段自渲染 `iced::Element<'static>`,`view_bottom_bar` 只组装 `BarData` 快照(SSH/Vi/agent 的 cfg-gated 格式化留在 in-module)
+- 新增段:**CPU / Memory / Network(带 sparkline)+ Clock + Battery**;原有 Cwd/Git/Ssh/ViMode/Process/Agent/Cursor 全部移植上 trait
+- **Sparkline**:`iced::widget::canvas` 自定义 `SparklineProgram`,移植 iTerm2 `bezierPathWithValues` 数学(右锚定 / 自动缩放 ceiling floor 1.0 防 /0 / 60 点窗口;`path::Builder` 非 Clone 故 stroke/fill 两 builder 共享点集)
+- **系统指标**:单一长生命周期 `iced::stream::channel` 发布者,持唯一 `sysinfo::System`/`Networks` + `battery::Manager`,1 Hz(可配)采样 + 120 点 ring buffer → `Message::StatusBarStats`;macOS `battery::Manager` 持 `Rc<IoKitManager>`(!Send),故每 tick 用 sync IIFE 重建并在 `.await` 前释放,保 future Send
+- **Git 增强**:`git status --porcelain=v2 --branch` 一条子进程出 branch + dirty(●)+ ahead/behind(↑↓);`Task::perform` 跑在 GUI 线程外;`git` 缺失/非 repo 回退纯 FS `read_git_branch`(行为不回退)
+- **配置**:`[statusbar]` 段(`components` 顺序列表 / `refresh_interval_secs` / `show_sparklines` / `bar_height`);sparkline 开时 `effective_height()` 自动 ≥28px;`terminal_content_height` 改为运行时高度参数(26 处调用点更新)
+- 刷新模型:专用 `StatusBarTick`(进程名 sync + git 异步)+ `StatusBarStats`(指标扇出)+ `GitStatusResult`(异步 git 回流,仅当 cwd 仍属活跃 pane 才 apply);删除原 30s piggy-back 轮询
+- 实现:`crates/pureterm/src/status_bar/`(mod/component/components/sparkline/publisher/stats/git)+ `app_config.rs`(`StatusBarConfig`/`load_statusbar`)+ `iced_app.rs`;新依赖 `sysinfo`/`battery`/`chrono` + tokio `process` feature
+- 单测:`status_bar::git::tests` 10 个(porcelain v2:clean/dirty/untracked/ahead-behind/detached/no-upstream/non-git + `parse_head` 3);dev check 干净;release + `dist/PureTerm.app` 打包通过(30M arm64)
+- **DoD 待人工**:GUI 真机 E2E(sparkline 动 / git dirty 标记 ~1s 出现 / 切 pane cwd/git 跟随 / 无电池优雅降级);MVP 范围 — 搜索框/snippet/composer/triggers/progress defer 后续
 
 ### GAP-3.5 内置 Browser 面板 / WebView(2026-06-25)
 - Pane 的第二种内容载体:自实现 wry 嵌入(macOS WKWebView 作 content NSView 子视图 `build_as_child`);几何真值=split_tree layout,reposition pass 按 `mark_layout_dirty` + tab 切换 + 拖拽 burst 触发;快照 `PaneSnapshot.kind="web"` + `#[serde(default)] url` 前向兼容

@@ -21,3 +21,16 @@ save_to_clipboard = false
 
 [mouse]
 hide_when_typing = false
+
+# GAP-24: Enhanced Status Bar. `components` is the ordered list of segments
+# rendered left-to-right (with a flexible spacer before any `align_right`
+# segment). Recognized ids: cwd, git, ssh, vimode, process, agent, cpu,
+# memory, network, clock, battery, cursor. Unknown ids are skipped (warn).
+# `refresh_interval_secs` bounds system-stat sampling + git subprocess cadence.
+# `show_sparklines` toggles the canvas mini-graphs (cpu/memory/network); when
+# on, the bar auto-grows to >=28px for legibility (`bar_height` is the floor).
+[statusbar]
+components = ["cwd", "git", "ssh", "vimode", "process", "agent", "cpu", "memory", "network", "clock", "battery", "cursor"]
+refresh_interval_secs = 1
+show_sparklines = true
+bar_height = 24
