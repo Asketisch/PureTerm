@@ -249,6 +249,8 @@ pub fn create_ssh(
     password: Option<&str>,
     cols: u16,
     rows: u16,
+    forward_agent: bool,
+    agent_sock_override: Option<&str>,
 ) -> io::Result<(String, PathBuf)> {
     let mut params = serde_json::json!({
         "kind": "ssh",
@@ -267,6 +269,13 @@ pub fn create_ssh(
     }
     if let Some(pw) = password {
         params["password"] = serde_json::Value::String(pw.to_string());
+    }
+    // GAP-5.4: ssh-agent forwarding toggle (+ optional explicit agent socket).
+    if forward_agent {
+        params["forward_agent"] = serde_json::Value::Bool(true);
+    }
+    if let Some(s) = agent_sock_override {
+        params["agent_sock"] = serde_json::Value::String(s.to_string());
     }
 
     let resp = rpc(socket, "session.create", Some(params))?;
@@ -394,6 +403,7 @@ pub fn tunnel_start(
     password: Option<&str>,
     local_port: u16,
     remote_dns: bool,
+    forward_agent: bool,
 ) -> io::Result<String> {
     let mut params = serde_json::json!({
         "host": host,
@@ -411,6 +421,10 @@ pub fn tunnel_start(
     }
     if let Some(pw) = password {
         params["password"] = serde_json::Value::String(pw.to_string());
+    }
+    // GAP-5.4: request ssh-agent forwarding + agent-key auth on the tunnel.
+    if forward_agent {
+        params["forward_agent"] = serde_json::Value::Bool(true);
     }
     let resp = rpc(socket, "tunnel.start", Some(params))?;
     if let Some(err) = &resp.error {

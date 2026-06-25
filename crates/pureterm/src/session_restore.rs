@@ -621,6 +621,7 @@ fn synthetic_ssh_profile(name: Option<&str>) -> SshProfile {
         password: None,
         key_path: None,
         shortcut: None,
+        forward_agent: false,
     }
 }
 

@@ -495,6 +495,11 @@ impl TerminalContext {
             password.as_deref(),
             num_cols,
             num_lines,
+            profile.forward_agent,
+            // ssh.agent_sock config override wiring is a follow-up; the
+            // resolver already honors it (override > $SSH_AUTH_SOCK >
+            // launchctl) — pass None to use inherited env / launchctl.
+            None,
         )?;
 
         let ctx = wire_ssh_daemon(&data_path, size, profile, password, session_id)?;
@@ -717,6 +722,10 @@ impl TerminalContext {
                 port: ctx.ssh_port,
                 key_path: ctx.ssh_key_path.clone(),
                 password: ctx.ssh_password.clone(),
+                // GAP-5.4 (follow-up): preserve agent forwarding across
+                // reconnect by storing it on SshCtx. For now a re-spawned
+                // session drops forwarding (forwarding is opt-in per profile).
+                forward_agent: false,
             }),
         }
     }

@@ -11,6 +11,11 @@ pub struct SshProfile {
     pub password: Option<String>, // encrypted
     pub key_path: Option<String>,
     pub shortcut: Option<String>,
+    /// GAP-5.4: forward the local ssh-agent to the remote host (`-o
+    /// ForwardAgent=yes`). Default off — agent forwarding is a trust risk on
+    /// untrusted/compromised hosts (OpenSSH defaults off for the same reason).
+    #[serde(default)]
+    pub forward_agent: bool,
 }
 
 impl SshProfile {

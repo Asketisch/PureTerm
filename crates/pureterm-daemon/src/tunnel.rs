@@ -20,10 +20,14 @@
 
 use std::collections::HashMap;
 use std::net::TcpListener as StdTcpListener;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use russh::client::{self, Handle, Handler};
+use pureterm_ssh::agent_sock;
+use russh::client::{self, Handle, Handler, Msg, Session};
+use russh::keys::agent::client::AgentClient;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
+use russh::Channel;
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
@@ -110,6 +114,7 @@ impl TunnelManager {
         password: Option<String>,
         local_port: u16,
         remote_dns: bool,
+        forward_agent: bool,
     ) -> Result<String, String> {
         // Bind first so a port clash fails fast (before we touch the network).
         let listener = StdTcpListener::bind(("127.0.0.1", local_port))
@@ -144,6 +149,7 @@ impl TunnelManager {
             identity_file,
             password,
             remote_dns,
+            forward_agent,
         ));
         entry.lock().unwrap().abort = Some(join.abort_handle());
 
@@ -210,9 +216,15 @@ impl TunnelManager {
     }
 }
 
-/// The russh client handler. Only `check_server_key` is overridden — the
-/// default rejects every host key, which would block all connections.
-struct ClientHandler;
+/// The russh client handler. `check_server_key` is overridden (the default
+/// rejects every host key); `server_channel_open_agent_forward` is overridden
+/// for GAP-5.4 to bridge the server-opened `auth-agent@openssh.com` channel to
+/// the local ssh-agent socket.
+struct ClientHandler {
+    /// Resolved `$SSH_AUTH_SOCK` path; present only when agent forwarding is
+    /// requested for this tunnel. The callback clones it to spawn the bridge.
+    agent_sock: Option<PathBuf>,
+}
 
 impl Handler for ClientHandler {
     type Error = russh::Error;
@@ -225,6 +237,38 @@ impl Handler for ClientHandler {
         _server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
         Ok(true)
+    }
+
+    /// GAP-5.4: the server opened an `auth-agent@openssh.com` channel back to
+    /// us (i.e. the remote wants to use our agent). Splice it to the local
+    /// ssh-agent Unix socket with a bidirectional copy, mirroring `serve_socks5`.
+    /// If no agent socket was resolved (forwarding not requested), drop the
+    /// channel — russh's default is a no-op, so this is best-effort.
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: Channel<Msg>,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let Some(sock) = self.agent_sock.clone() else {
+            return Ok(());
+        };
+        let agent = match tokio::net::UnixStream::connect(&sock).await {
+            Ok(a) => a,
+            Err(e) => {
+                log::debug!("agent_forward: connect {}: {e}", sock.display());
+                return Ok(());
+            }
+        };
+        // Bidirectional copy: SSH channel stream ↔ agent Unix socket.
+        let stream = channel.into_stream();
+        let (mut ar, mut aw) = tokio::io::split(agent);
+        let (mut sr, mut sw) = tokio::io::split(stream);
+        tokio::spawn(async move {
+            let c2a = tokio::io::copy(&mut sr, &mut aw);
+            let a2c = tokio::io::copy(&mut ar, &mut sw);
+            let _ = tokio::join!(c2a, a2c); // finish when either direction ends
+        });
+        Ok(())
     }
 }
 
@@ -248,6 +292,7 @@ async fn run_tunnel(
     identity_file: Option<String>,
     password: Option<String>,
     _remote_dns: bool,
+    forward_agent: bool,
 ) {
     let listener = match TcpListener::from_std(std_listener) {
         Ok(l) => l,
@@ -265,7 +310,18 @@ async fn run_tunnel(
     let config = Arc::new(config);
 
     let addr = format!("{host}:{port}");
-    let mut handle = match client::connect(config, &addr, ClientHandler).await {
+    // GAP-5.4: resolve the local agent socket up front (config override →
+    // inherited $SSH_AUTH_SOCK → macOS launchctl) so the handler can bridge
+    // server-opened agent channels, and so agent-key auth (below) can reach it.
+    let agent_sock = if forward_agent {
+        agent_sock::resolve_agent_sock(None)
+    } else {
+        None
+    };
+    let handler = ClientHandler {
+        agent_sock: agent_sock.clone(),
+    };
+    let mut handle = match client::connect(config, &addr, handler).await {
         Ok(h) => h,
         Err(e) => {
             set_status(&entry, TunnelLive::Failed(format!("connect: {e}")));
@@ -295,6 +351,35 @@ async fn run_tunnel(
     // a tokio Mutex to share across per-connection tasks. The guard is held only
     // for the brief `channel_open_direct_tcpip` call, never during the copy.
     let session: Arc<AsyncMutex<Handle<ClientHandler>>> = Arc::new(AsyncMutex::new(handle));
+
+    // GAP-5.4 B3: request agent forwarding on a session channel so the server
+    // can open `auth-agent@openssh.com` channels back to us (bridged in
+    // `ClientHandler::server_channel_open_agent_forward`). Hold the channel for
+    // the tunnel's lifetime so the request stays in force.
+    let _agent_channel = if forward_agent {
+        let ch = {
+            let g = session.lock().await;
+            g.channel_open_session().await
+        };
+        match ch {
+            Ok(ch) => match ch.agent_forward(true).await {
+                Ok(()) => {
+                    log::debug!("agent_forward requested for {user}@{host}");
+                    Some(ch)
+                }
+                Err(e) => {
+                    log::warn!("agent_forward request failed for {user}@{host}: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                log::warn!("channel_open_session for agent forward failed: {e}");
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     loop {
         match listener.accept().await {
@@ -342,34 +427,68 @@ async fn authenticate(
                 None
             }
         }
-    } else if let Some(pw) = password.as_ref() {
-        match handle.authenticate_password(user.to_string(), pw.clone()).await {
-            Ok(r) => Some(r.success()),
-            Err(e) => {
-                set_status(entry, TunnelLive::Failed(format!("password auth: {e}")));
-                None
-            }
-        }
     } else {
-        // No credential supplied → park in NeedAuth until `provide_auth`.
-        set_status(entry, TunnelLive::NeedAuth);
-        let (tx, rx) = oneshot::channel();
-        entry.lock().unwrap().auth_tx = Some(tx);
-        let secret = match rx.await {
-            Ok(s) => s,
-            Err(_) => {
-                set_status(entry, TunnelLive::Failed("auth cancelled".into()));
-                return None;
+        // GAP-5.4 B2: try a local ssh-agent key (passwordless) before falling
+        // back to password / NeedAuth. Falls through if the agent is
+        // unavailable, has no identities, or none of its keys are authorized.
+        if let Some(true) = try_agent_auth(handle, user).await {
+            return Some(true);
+        }
+        if let Some(pw) = password.as_ref() {
+            match handle.authenticate_password(user.to_string(), pw.clone()).await {
+                Ok(r) => Some(r.success()),
+                Err(e) => {
+                    set_status(entry, TunnelLive::Failed(format!("password auth: {e}")));
+                    None
+                }
             }
-        };
-        match handle.authenticate_password(user.to_string(), secret).await {
-            Ok(r) => Some(r.success()),
-            Err(e) => {
-                set_status(entry, TunnelLive::Failed(format!("auth: {e}")));
-                None
+        } else {
+            // No credential supplied → park in NeedAuth until `provide_auth`.
+            set_status(entry, TunnelLive::NeedAuth);
+            let (tx, rx) = oneshot::channel();
+            entry.lock().unwrap().auth_tx = Some(tx);
+            let secret = match rx.await {
+                Ok(s) => s,
+                Err(_) => {
+                    set_status(entry, TunnelLive::Failed("auth cancelled".into()));
+                    return None;
+                }
+            };
+            match handle.authenticate_password(user.to_string(), secret).await {
+                Ok(r) => Some(r.success()),
+                Err(e) => {
+                    set_status(entry, TunnelLive::Failed(format!("auth: {e}")));
+                    None
+                }
             }
         }
     }
+}
+
+/// GAP-5.4 B2: authenticate using a key held by the local ssh-agent
+/// (`authenticate_publickey_with` with the agent as the `Signer`). Returns
+/// `Some(true)` on success; `None` if the agent is unavailable, holds no
+/// identities, or none of its keys are accepted — so the caller falls through
+/// to password / NeedAuth.
+async fn try_agent_auth(handle: &mut Handle<ClientHandler>, user: &str) -> Option<bool> {
+    let sock = agent_sock::resolve_agent_sock(None)?;
+    let mut agent = AgentClient::connect_uds(&sock).await.ok()?;
+    let identities = agent.request_identities().await.ok()?;
+    for id in identities {
+        let pubkey = id.public_key().into_owned();
+        match handle
+            .authenticate_publickey_with(user.to_string(), pubkey, None, &mut agent)
+            .await
+        {
+            Ok(r) if r.success() => return Some(true),
+            Ok(_) => continue, // this key wasn't authorized; try the next
+            Err(e) => {
+                log::debug!("agent auth sign error for {user}: {e}");
+                continue;
+            }
+        }
+    }
+    None
 }
 
 /// Serve one SOCKS5 client: negotiate no-auth, parse CONNECT, open the SSH

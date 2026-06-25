@@ -2330,6 +2330,8 @@ impl PureTermApp {
             key_path.as_deref(),
             Some((80, 24)),
             password.as_deref(),
+            profile.forward_agent,
+            None,
         );
 
         match spawn_result {
@@ -4939,6 +4941,7 @@ impl PureTermApp {
                     password: None,
                     key_path: None,
                     shortcut: None,
+                    forward_agent: false,
                 };
                 self.ssh_profiles.push(new_profile.clone());
                 if let Some(ref mut s) = self.ssh_settings {

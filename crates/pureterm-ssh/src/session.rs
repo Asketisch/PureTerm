@@ -175,6 +175,8 @@ impl SshSessionManager {
         identity_file: Option<&str>,
         window_size: Option<(u16, u16)>,
         password: Option<&str>,
+        forward_agent: bool,
+        agent_sock_override: Option<&Path>,
     ) -> std::io::Result<(SshPty, PathBuf, Option<std::fs::File>)> {
         let socket_path = self.get_or_create(host, user, port);
 
@@ -190,8 +192,18 @@ impl SshSessionManager {
             builder = builder.with_identity_file(identity);
         }
 
+        // GAP-5.4: forward the local ssh-agent when requested. Resolve the
+        // socket now (config override → inherited env → macOS launchctl) so we
+        // can inject it explicitly into the child env.
+        let agent_sock = if forward_agent {
+            builder = builder.with_forward_agent(true);
+            crate::agent_sock::resolve_agent_sock(agent_sock_override)
+        } else {
+            None
+        };
+
         let cmd = builder.build();
-        let (pty, stderr) = SshPty::spawn(&cmd, window_size, password)?;
+        let (pty, stderr) = SshPty::spawn(&cmd, window_size, password, agent_sock.as_deref())?;
         Ok((pty, socket_path, stderr))
     }
 }
@@ -270,7 +282,7 @@ mod tests {
         // We don't expect this to succeed (no sshd in test), but the call
         // signature must accept identity_file. The first error is
         // "No such file or directory" for ssh, not a type error.
-        let result = manager.spawn_pty("nonexistent.invalid", None, None, Some("/tmp/key"), None, None);
+        let result = manager.spawn_pty("nonexistent.invalid", None, None, Some("/tmp/key"), None, None, false, None);
         // Either Ok (sandbox allows ssh) or Err; both are acceptable for
         // this plumbing test.
         let _ = result;

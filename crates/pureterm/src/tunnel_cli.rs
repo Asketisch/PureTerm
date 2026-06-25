@@ -24,8 +24,9 @@ pub fn start(
     password: Option<String>,
     local_port: u16,
     remote_dns: bool,
+    forward_agent: bool,
 ) {
-    if let Err(msg) = run_start(target, port, identity, password, local_port, remote_dns) {
+    if let Err(msg) = run_start(target, port, identity, password, local_port, remote_dns, forward_agent) {
         eprintln!("[pureterm tunnel] {msg}");
         std::process::exit(1);
     }
@@ -38,6 +39,7 @@ fn run_start(
     mut password: Option<String>,
     local_port: u16,
     remote_dns: bool,
+    forward_agent: bool,
 ) -> Result<(), String> {
     let (user, host) = parse_target(target)
         .ok_or_else(|| format!("invalid target {target:?}; expected [user@]host"))?;
@@ -45,8 +47,9 @@ fn run_start(
     // If neither a key nor a password was given, prompt on stdin (echoed — MVP;
     // supply --password or --identity to avoid the prompt). The CLI always
     // hands the daemon a credential, so the daemon-side need_auth park is only
-    // reachable via raw JSON-RPC / a future GUI.
-    if identity.is_none() && password.is_none() {
+    // reachable via raw JSON-RPC / a future GUI. With `-A` the daemon will try
+    // ssh-agent keys, so skip the prompt.
+    if identity.is_none() && password.is_none() && !forward_agent {
         print!("[pureterm tunnel] password for {target}: ");
         io::stdout().flush().ok();
         let mut line = String::new();
@@ -69,6 +72,7 @@ fn run_start(
         password.as_deref(),
         local_port,
         remote_dns,
+        forward_agent,
     )
     .map_err(|e| format!("tunnel start failed: {e}"))?;
 

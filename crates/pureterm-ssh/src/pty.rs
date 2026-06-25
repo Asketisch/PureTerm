@@ -37,6 +37,7 @@ use std::os::fd::{AsRawFd as _, FromRawFd, IntoRawFd, OwnedFd};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -117,6 +118,7 @@ impl SshPty {
         cmd: &[String],
         window_size: Option<(u16, u16)>,
         password: Option<&str>,
+        agent_sock: Option<&Path>,
     ) -> io::Result<(Self, Option<File>)> {
         // Build initial winsize for openpty.
         let winsize = window_size.map(|(cols, rows)| Winsize {
@@ -143,6 +145,14 @@ impl SshPty {
         builder.stdout(slave_fd);
         // Keep stderr as a pipe for error detection.
         builder.stderr(Stdio::piped());
+
+        // GAP-5.4: explicitly set SSH_AUTH_SOCK on the child when agent
+        // forwarding is requested. `Command` inherits our env already, but the
+        // resolved socket (config override / macOS `launchctl getenv` fallback)
+        // may differ from what we inherited, so set it explicitly.
+        if let Some(p) = agent_sock {
+            builder.env("SSH_AUTH_SOCK", p);
+        }
 
         // SSH_ASKPASS setup for saved password auto-fill.
         let askpass_tempdir = if let Some(pw) = password {
@@ -423,7 +433,7 @@ mod tests {
     fn test_resize_succeeds_after_spawn() {
         let cmd = vec!["cat".to_string()];
         let (mut pty, _stderr) =
-            SshPty::spawn(&cmd, Some((80, 24)), None).expect("spawn cat");
+            SshPty::spawn(&cmd, Some((80, 24)), None, None).expect("spawn cat");
         pty.resize(132, 50).expect("resize must not error");
     }
 
@@ -432,7 +442,7 @@ mod tests {
     #[test]
     fn test_graceful_close_does_not_panic() {
         let cmd = vec!["cat".to_string()];
-        let (mut pty, _stderr) = SshPty::spawn(&cmd, None, None).expect("spawn cat");
+        let (mut pty, _stderr) = SshPty::spawn(&cmd, None, None, None).expect("spawn cat");
         let result = pty.graceful_close(Duration::from_millis(50));
         let _ = result;
     }
@@ -441,7 +451,7 @@ mod tests {
     #[test]
     fn test_reader_writer_are_same_fd() {
         let cmd = vec!["cat".to_string()];
-        let (mut pty, _stderr) = SshPty::spawn(&cmd, None, None).expect("spawn cat");
+        let (mut pty, _stderr) = SshPty::spawn(&cmd, None, None, None).expect("spawn cat");
         use std::os::fd::AsRawFd;
         assert_eq!(
             pty.reader().as_raw_fd(),
@@ -455,7 +465,7 @@ mod tests {
     fn test_askpass_tempdir_created_with_password() {
         let cmd = vec!["cat".to_string()];
         let (pty, _stderr) =
-            SshPty::spawn(&cmd, Some((80, 24)), Some("test_password")).expect("spawn cat");
+            SshPty::spawn(&cmd, Some((80, 24)), Some("test_password"), None).expect("spawn cat");
         assert!(pty.askpass_tempdir.is_some());
         let dir = pty.askpass_tempdir.as_ref().unwrap();
         assert!(dir.path().join("askpass.sh").exists());
@@ -466,7 +476,7 @@ mod tests {
     #[test]
     fn test_no_askpass_without_password() {
         let cmd = vec!["cat".to_string()];
-        let (pty, _stderr) = SshPty::spawn(&cmd, Some((80, 24)), None).expect("spawn cat");
+        let (pty, _stderr) = SshPty::spawn(&cmd, Some((80, 24)), None, None).expect("spawn cat");
         assert!(pty.askpass_tempdir.is_none());
     }
 }

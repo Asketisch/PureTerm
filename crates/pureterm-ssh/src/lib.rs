@@ -11,6 +11,8 @@
 //! The child-process side is Unix-only.
 
 #[cfg(unix)]
+pub mod agent_sock;
+#[cfg(unix)]
 pub mod command;
 #[cfg(unix)]
 pub mod pty;

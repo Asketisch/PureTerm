@@ -7,6 +7,7 @@ pub struct SshCommandBuilder {
     user: Option<String>,
     port: Option<u16>,
     identity_file: Option<String>,
+    forward_agent: bool,
 }
 
 impl SshCommandBuilder {
@@ -17,6 +18,7 @@ impl SshCommandBuilder {
             user: None,
             port: None,
             identity_file: None,
+            forward_agent: false,
         }
     }
 
@@ -32,6 +34,14 @@ impl SshCommandBuilder {
 
     pub fn with_identity_file(mut self, path: &str) -> Self {
         self.identity_file = Some(path.to_string());
+        self
+    }
+
+    /// GAP-5.4: request `-o ForwardAgent=yes` so the local ssh-agent is
+    /// forwarded to the remote host (enables passwordless remote `git push`
+    /// etc. after `ssh-add`). Default off (trust risk on untrusted hosts).
+    pub fn with_forward_agent(mut self, on: bool) -> Self {
+        self.forward_agent = on;
         self
     }
 
@@ -54,6 +64,12 @@ impl SshCommandBuilder {
             "ConnectTimeout=10".to_string(),
         ];
 
+        // GAP-5.4: forward the local ssh-agent to the remote host when asked.
+        if self.forward_agent {
+            cmd.push("-o".to_string());
+            cmd.push("ForwardAgent=yes".to_string());
+        }
+
         if let Some(ref user) = self.user {
             cmd.push("-l".to_string());
             cmd.push(user.clone());
@@ -71,5 +87,37 @@ impl SshCommandBuilder {
 
         cmd.push(self.host.clone());
         cmd
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn builder() -> SshCommandBuilder {
+        SshCommandBuilder::new(PathBuf::from("/tmp/socket"), "host".to_string())
+    }
+
+    #[test]
+    fn forward_agent_off_by_default() {
+        let cmd = builder().build();
+        assert!(!cmd.iter().any(|a| a == "ForwardAgent=yes"));
+    }
+
+    #[test]
+    fn forward_agent_on_emits_option() {
+        let cmd = builder().with_forward_agent(true).build();
+        let i = cmd
+            .iter()
+            .position(|a| a == "ForwardAgent=yes")
+            .expect("ForwardAgent=yes should be present");
+        // Must be preceded by `-o`.
+        assert_eq!(cmd[i - 1], "-o");
+    }
+
+    #[test]
+    fn forward_agent_explicit_false_omits_option() {
+        let cmd = builder().with_forward_agent(false).build();
+        assert!(!cmd.iter().any(|a| a == "ForwardAgent=yes"));
     }
 }

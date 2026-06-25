@@ -154,6 +154,9 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                 let port = uparam(request, "port");
                 let identity_file = sparam(request, "identity_file");
                 let password = sparam(request, "password");
+                // GAP-5.4: optional ssh-agent forwarding + explicit agent socket.
+                let forward_agent = bparam(request, "forward_agent").unwrap_or(false);
+                let agent_sock = sparam(request, "agent_sock");
                 state.manager.create_ssh(
                     &host,
                     user.as_deref(),
@@ -162,6 +165,8 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                     password.as_deref(),
                     cols,
                     rows,
+                    forward_agent,
+                    agent_sock.as_deref(),
                 )
             } else {
                 let cwd = sparam(request, "working_directory").map(PathBuf::from);
@@ -247,8 +252,10 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
             let password = sparam(request, "password");
             let local_port = uparam(request, "local_port").unwrap_or(1080);
             let remote_dns = bparam(request, "remote_dns").unwrap_or(true);
+            // GAP-5.4: optional ssh-agent forwarding on the tunnel's session.
+            let forward_agent = bparam(request, "forward_agent").unwrap_or(false);
             match state.tunnels.start(
-                &rt, host, user, port, identity_file, password, local_port, remote_dns,
+                &rt, host, user, port, identity_file, password, local_port, remote_dns, forward_agent,
             ) {
                 Ok(tid) => Ok(serde_json::json!({ "tunnel_id": tid, "status": "connecting" })),
                 Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("tunnel start failed: {e}"))),

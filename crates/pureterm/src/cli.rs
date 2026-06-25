@@ -498,6 +498,10 @@ pub enum SshSub {
         /// Identity file / private key path (daemon-direct path only).
         #[arg(long)]
         identity: Option<String>,
+        /// GAP-5.4: forward the local ssh-agent to the remote host
+        /// (`-o ForwardAgent=yes`). Default off (trust risk on untrusted hosts).
+        #[arg(short = 'A', long)]
+        forward_agent: bool,
     },
     /// Disconnect (close the SSH tab)
     Disconnect,
@@ -524,6 +528,10 @@ pub enum SshSub {
         /// resolves, i.e. socks5h / `--socks5-hostname`).
         #[arg(long)]
         no_remote_dns: bool,
+        /// GAP-5.4: forward the local ssh-agent over the tunnel's session and
+        /// prefer ssh-agent keys for auth (no `--identity` needed). Default off.
+        #[arg(short = 'A', long)]
+        forward_agent: bool,
     },
     /// GAP-5.2: stop a tunnel by id.
     TunnelStop {
@@ -922,11 +930,11 @@ pub fn run(cli: Cli) {
         #[cfg(unix)]
         Command::Ssh { cmd } => match &cmd {
             // Daemon-direct interactive client (GAP-5.1 M3 DoD).
-            SshSub::Connect { target: Some(t), port, identity, .. } => {
-                crate::ssh_cli::connect(t, *port, identity.clone());
+            SshSub::Connect { target: Some(t), port, identity, forward_agent, .. } => {
+                crate::ssh_cli::connect(t, *port, identity.clone(), *forward_agent);
             }
             // GAP-5.2: daemon-direct SOCKS5 tunnel control.
-            SshSub::Tunnel { target, port, identity, local_port, password, no_remote_dns } => {
+            SshSub::Tunnel { target, port, identity, local_port, password, no_remote_dns, forward_agent } => {
                 crate::tunnel_cli::start(
                     target,
                     *port,
@@ -934,6 +942,7 @@ pub fn run(cli: Cli) {
                     password.clone(),
                     local_port.unwrap_or(1080),
                     !*no_remote_dns,
+                    *forward_agent,
                 );
             }
             SshSub::TunnelStop { id } => crate::tunnel_cli::stop(id),
@@ -1331,7 +1340,7 @@ mod tests {
     fn ssh_connect_positional_target_is_daemon_direct() {
         // `pureterm ssh connect user@host` -> daemon-direct (target set, no GUI-IPC index).
         let cli = parse(&["ssh", "connect", "admin@10.0.0.5", "--port", "2222"]);
-        let Command::Ssh { cmd: SshSub::Connect { target, index, port, identity } } = cli.command
+        let Command::Ssh { cmd: SshSub::Connect { target, index, port, identity, .. } } = cli.command
         else {
             panic!("expected Ssh Connect");
         };

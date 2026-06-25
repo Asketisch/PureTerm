@@ -111,6 +111,8 @@ pub struct ReconnectParams {
     pub port: Option<u16>,
     pub key_path: Option<String>,
     pub password: Option<String>,
+    /// GAP-5.4: re-spawn with agent forwarding if the original session had it.
+    pub forward_agent: bool,
 }
 
 impl ReconnectParams {
@@ -333,6 +335,8 @@ fn reconnect_worker(
                 params.key_path.as_deref(),
                 Some((80, 24)),
                 params.password.as_deref(),
+                params.forward_agent,
+                None,
             );
 
             match spawn_result {
@@ -504,6 +508,7 @@ mod tests {
             port: None,
             key_path: None,
             password: None,
+            forward_agent: false,
         };
         let k = p.connection_key();
         assert_eq!(k.host, "h");

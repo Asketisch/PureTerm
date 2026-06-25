@@ -17,7 +17,7 @@ use std::fs::File;
 use std::io::{self, ErrorKind};
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -26,6 +26,7 @@ use std::time::Instant;
 use alacritty_terminal::event::WindowSize;
 use alacritty_terminal::tty;
 use polling::{Event, PollMode, Poller};
+use pureterm_ssh::agent_sock;
 use pureterm_ssh::{SshCommandBuilder, SshPty};
 
 use crate::discovery;
@@ -214,6 +215,8 @@ impl SessionManager {
         password: Option<&str>,
         cols: u16,
         rows: u16,
+        forward_agent: bool,
+        agent_sock_override: Option<&str>,
     ) -> io::Result<String> {
         let id = new_session_id();
 
@@ -236,9 +239,16 @@ impl SessionManager {
         if let Some(k) = identity_file {
             builder = builder.with_identity_file(k);
         }
+        // GAP-5.4: forward the local ssh-agent to the remote host when asked.
+        let agent_sock = if forward_agent {
+            builder = builder.with_forward_agent(true);
+            agent_sock::resolve_agent_sock(agent_sock_override.map(Path::new))
+        } else {
+            None
+        };
         let argv = builder.build();
 
-        let (ssh_pty, _stderr) = SshPty::spawn(&argv, Some((cols, rows)), password)?;
+        let (ssh_pty, _stderr) = SshPty::spawn(&argv, Some((cols, rows)), password, agent_sock.as_deref())?;
         let child_pid = ssh_pty.child_pid();
 
         let data_socket_path = discovery::sessions_dir().join(format!("s-{id}.sock"));

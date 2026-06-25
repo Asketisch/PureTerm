@@ -28,15 +28,20 @@ const DATA_KEY: usize = 1;
 const WINCH_KEY: usize = 2;
 
 /// Connect the current terminal to a persistent daemon SSH session.
-pub fn connect(target: &str, port: Option<u16>, identity: Option<String>) {
-    if let Err(msg) = run_connect(target, port, identity) {
+pub fn connect(target: &str, port: Option<u16>, identity: Option<String>, forward_agent: bool) {
+    if let Err(msg) = run_connect(target, port, identity, forward_agent) {
         // Make sure errors are visible even after (attempted) raw-mode teardown.
         eprintln!("\n[pureterm ssh] {msg}");
         std::process::exit(1);
     }
 }
 
-fn run_connect(target: &str, port: Option<u16>, identity: Option<String>) -> Result<(), String> {
+fn run_connect(
+    target: &str,
+    port: Option<u16>,
+    identity: Option<String>,
+    forward_agent: bool,
+) -> Result<(), String> {
     let (user, host) = parse_target(target).ok_or_else(|| {
         format!("invalid target {target:?}; expected [user@]host")
     })?;
@@ -54,6 +59,8 @@ fn run_connect(target: &str, port: Option<u16>, identity: Option<String>) -> Res
         None,
         cols,
         rows,
+        forward_agent,
+        None,
     )
     .map_err(|e| format!("create ssh session failed: {e}"))?;
 
