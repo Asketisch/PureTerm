@@ -18,6 +18,9 @@ mod keyboard_routing_e2e;
 mod browser_address_bar_e2e;
 mod agent_hooks;
 mod agent_sessions;
+/// GAP-01: built-in AI Chat Panel — LLM provider abstraction (Anthropic +
+/// OpenAI-compatible), SSE streaming, Markdown rendering, dockable panel.
+mod ai_chat;
 mod app_config;
 /// GAP-3.5: 内置 Browser 面板(WebView)— pane 的第二种内容载体。
 mod browser;
