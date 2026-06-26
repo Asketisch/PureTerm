@@ -564,7 +564,7 @@ const TAB_BAR_HEIGHT: f32 = 32.0;
 
 /// 终端内容可用高度 = 视口高度 - 标签栏 - 状态栏。
 /// `status_bar_height` is the runtime effective bar height (configurable via
-/// `[statusbar]`; auto-grows to >=28px when sparklines are on).
+/// `[statusbar]`; auto-grows to ≥28px when sparklines are on).
 #[inline]
 fn terminal_content_height(viewport_height: f32, status_bar_height: f32) -> f32 {
     (viewport_height - TAB_BAR_HEIGHT - status_bar_height).max(0.0)
@@ -2423,6 +2423,13 @@ impl PureTermApp {
     /// connection dropped. Transitions the pane to `Reconnecting` and spawns
     /// the hub worker; the worker's `ReconnectUpdate`s come back via
     /// [`Message::SshReconnect`].
+    ///
+    /// Anti-hammer (GAP-5.6 follow-up): if the pane has tripped the flap cap
+    /// (`FLAP_WINDOW` / `MAX_FLAPS`) — a connect-then-die host that would
+    /// otherwise reconnect forever at ~min-backoff, hammering the host — the
+    /// hub refuses to spawn and we instead mark the pane `Failed(flapping)`
+    /// synchronously so the user can reconnect manually once the host is
+    /// stable.
     #[cfg(unix)]
     fn trigger_ssh_reconnect(&mut self, tab_id: TabId, pane_id: PaneId) {
         use crate::ssh::reconnect::{SpawnDecision, SshFailureKind};

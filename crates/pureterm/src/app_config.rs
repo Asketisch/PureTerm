@@ -190,7 +190,7 @@ impl Default for StatusBarConfig {
 
 impl StatusBarConfig {
     /// Effective bar height in pixels: the configured floor, auto-grown to
-    /// >=28 when sparklines are on so the canvas mini-graphs stay legible.
+    /// ≥28 when sparklines are on so the canvas mini-graphs stay legible.
     pub fn effective_height(&self) -> f32 {
         if self.show_sparklines {
             (self.bar_height as f32).max(28.0)
@@ -499,7 +499,7 @@ impl AppConfig {
     }
 
     /// Load the `[statusbar]` table (GAP-24). A missing/malformed table yields
-    /// `Default`. Mirrors `load_mcp`: read_to_string -> toml::from_str -> walk
+    /// `Default`. Mirrors `load_mcp`: read_to_string → toml::from_str → walk
     /// `value.get("statusbar").as_table()`; each key is independently optional.
     pub fn load_statusbar(path: &Path) -> StatusBarConfig {
         let mut cfg = StatusBarConfig::default();
