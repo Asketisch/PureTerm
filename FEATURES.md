@@ -245,6 +245,15 @@ action = { Ssh = "ListProfiles" }
 - pixel smoke:`docs/manual-e2e/tmux-features-smoke.md`(非 CI gate,12 命令逐条)
 - 已知 phase-2 stub:`kill-pane -t` 定向、`select-pane -L/-R/-U/-D`/`-l`
 
+### GAP-6.7 Event Stream(事件流 + 持久 JSONL 日志)(2026-06-26)
+- `EventBus` 双写:每条 `AppEvent` 落 `events.jsonl`(16MiB rotation + `.1` 归档)+ broadcast(4096);12 类 category(Window/Workspace/Surface/Pane/Session/Notification/Feed/Agent/Sidebar/Browser/App/Config),~42 个 emit 点集中在 `iced_app.rs`
+- CLI:`pureterm events list [--limit N] [--type cat|cat.kind]`(newest-first 回读 + dotted-kind 过滤)/ `pureterm events tail [--type ...]`(follow,rotation inode 检测重读 + 半行跨次缓冲)
+- 收尾(本次 flip):① 修 workspace producer 误分类(`workspace.created`/`workspace.switched` 从 `Surface` 修正为 `Workspace`);② `tail_follow` 读路径抽出可单测的 `drain_once` + 轮询 75ms→150ms(≈ 空闲唤醒减半);③ `events.rs` doc 注释更新(Workspace/Browser 已由 GAP-2.1/3.5 产出)
+- 实现:`crates/pureterm/src/{events.rs,events_bus.rs,events_log.rs}` + `iced_app.rs`(emit 点)+ `cli.rs`(`EventsSub`)
+- 单测:495 pureterm 全绿(events 模块 11 个:EventBus 双写 / AppEvent JSONL round-trip / TypeFilter / read_recent / drain_once 完整行+半行+rotation / tail_follow 端到端送达 + rotation 存活)
+- pixel smoke:`docs/manual-e2e/gap-6.7-event-stream.md`(非 CI gate,实时跟随 + workspace 过滤 + list 回读 + tail 延迟)
+- **未做(独立后续)**:`events.subscribe` 流式 MCP 工具(需独立流式传输设计)/ `notification.*` producer(被 GAP-09 阻塞)/ sidebar producer(被 GAP-6.8 阻塞);`notify`(kqueue/inotify)替轮询经实测评估弃用 —— macOS `RecommendedWatcher` 走 FSEvents,事件 ~1s 才到(比 150ms 轮询还慢)且其 runloop 会拖住同进程其它线程的 sleep,主平台无收益反有害(详见 `events_log.rs::TAIL_FALLBACK_MS` 注释)
+
 ---
 
 ## F. AI Agent
@@ -345,9 +354,9 @@ action = { Ssh = "ListProfiles" }
 | B. UI/UX | 6 |
 | C. 终端交互 | 2 |
 | D. SSH | 6 |
-| E. 集成与可编程 | 4 |
+| E. 集成与可编程 | 5 |
 | F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **33** |
+| **总计** | **34** |
 
 ---

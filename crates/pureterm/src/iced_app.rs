@@ -2027,7 +2027,7 @@ impl PureTermApp {
             self.reposition_web_panes();
             self.mark_layout_dirty();
             self.events.emit(
-                crate::events::Category::Surface,
+                crate::events::Category::Workspace,
                 "workspace.switched",
                 None,
                 serde_json::json!({ "workspace": self.active_ws().map(|ws| ws.name.clone()).unwrap_or_default() }),
@@ -3933,7 +3933,7 @@ impl PureTermApp {
                 self.reposition_web_panes();
                 self.mark_layout_dirty();
                 self.events.emit(
-                    crate::events::Category::Surface,
+                    crate::events::Category::Workspace,
                     "workspace.created",
                     None,
                     serde_json::json!({ "workspace": self.active_ws().map(|ws| ws.name.clone()).unwrap_or_default() }),

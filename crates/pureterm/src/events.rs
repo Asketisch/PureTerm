@@ -15,8 +15,9 @@ use serde_json::Value;
 /// `Session` carries PTY/daemon-session lifecycle (spawned/exited/reattached/
 /// hibernated/resumed) as a first-class concern, rather than folding it under
 /// `Surface` — which GAP-2.1 will redefine, so aliasing now would force a rename.
-/// `Notification`/`Workspace`/`Sidebar`/`Browser` are reserved: their producers
-/// land with future GAPs (Bell handling, GAP-2.1/3.1/3.5).
+/// `Notification`/`Sidebar` are reserved: their producers land with future
+/// GAPs (Notification System / programmable sidebar). `Workspace`/`Browser`
+/// are produced by GAP-2.1 / GAP-3.5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Category {

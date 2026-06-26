@@ -10,8 +10,8 @@
 
 | 状态 | 数量 | 说明 |
 |------|------|------|
-| ✅ 已完成 | 6 | 代码闭环，待或已完成 E2E |
-| 🚧 进行中 | 5 | 代码闭环待 E2E / 部分实现 |
+| ✅ 已完成 | 7 | 代码闭环，待或已完成 E2E |
+| 🚧 进行中 | 4 | 代码闭环待 E2E / 部分实现 |
 | ❌ 未实现 | 58 | 待排期 |
 | ⛔ 不做 | 0 | — |
 
@@ -35,6 +35,7 @@
 | GAP-1.3 | 标题栈 (CSI 22/23t) | ✅ GUI E2E 通过 | `crates/pureterm/src/terminal_context.rs` |
 | GAP-5.4 | [SSH Agent Forwarding](featuresList/40-ssh-forwarding.md) | ✅ Track A DoD 闭环 | `crates/pureterm/src/ssh/` |
 | GAP-5.6 | [SSH Reconnect 状态机](featuresList/68-ssh-reconnect.md) | ✅ 代码闭环 + harness 绿（GUI 真机 E2E 后补） | `crates/pureterm/src/ssh/` |
+| GAP-6.7 | [Event Stream](featuresList/66-event-stream.md) | ✅ 代码闭环 + harness 绿（GUI E2E 后补） | `crates/pureterm/src/events_log.rs` |
 | — | Settings Panel | ✅ 已有 | `crates/pureterm-settings/src/app.rs` |
 | — | [Dual Close](featuresList/) | ✅ 已有 | `crates/pureterm/src/iced_app.rs` |
 
@@ -44,7 +45,6 @@
 
 | GAP | 功能 | 优先级 | 文档 |
 |-----|------|--------|------|
-| GAP-6.7 | [Event Stream](featuresList/66-event-stream.md) | P0 | 代码闭环，270 单测绿，待 dist 重打包 |
 | GAP-7.8 | [Agent-Browser 兼容](featuresList/67-browser-panel.md) | P1 | 代码闭环，9 browser tool，待用户页面 E2E |
 | GAP-5.2 | [SOCKS5 隧道](featuresList/69-socks5-tunnel.md) | P1 | 代码闭环，待真实 SSH 网关 E2E |
 | GAP-4.2 | [Hover Preview](featuresList/16-hover-preview.md) | P2 | 智能选择已实现，无 hover preview |
@@ -61,7 +61,7 @@
 | 09 | — | [Notification System](featuresList/09-notification-system.md) | 终端交互 | M | OSC 9/99/777 通知，视觉提示哪个 pane 需关注 |
 | 15 | — | [Shell Integration](featuresList/15-shell-integration.md) | 终端交互 | L | 自动注入 shell 脚本，marks + command tracking |
 | GAP-5.6 | ✅ | [SSH Reconnect](featuresList/68-ssh-reconnect.md) | SSH | S | 完整 reconnect/disconnect 状态机（收尾） |
-| GAP-6.7 | 🚧 | [Event Stream](featuresList/66-event-stream.md) | 集成 | S | 事件流 + 持久 JSONL 日志（收尾） |
+| GAP-6.7 | ✅ | [Event Stream](featuresList/66-event-stream.md) | 集成 | S | 事件流 + 持久 JSONL 日志（收尾） |
 
 ## P1 — AI 差异化能力（6 个）
 
@@ -157,9 +157,9 @@
 | **开发者工具** | 0 | 1 | 3 | 1 | 1 | 0 | 1 | **6** |
 | **SSH/网络** | 1 | 1 | 3 | 3 | 1 | 1 | 1 | **10** |
 | **平台** | 0 | 0 | 2 | 1 | 2 | 0 | 0 | **5** |
-| **集成** | 1 | 0 | 1 | 0 | 4 | 0 | 1 | **7** |
+| **集成** | 1 | 0 | 1 | 0 | 4 | 1 | 0 | **7** |
 | **视觉** | 0 | 0 | 0 | 0 | 8 | 0 | 0 | **8** |
-| **合计** | **6** | **6** | **19** | **12** | **23** | **1** | **3** | **67** |
+| **合计** | **6** | **6** | **19** | **12** | **23** | **2** | **2** | **67** |
 
 ---
 
@@ -179,7 +179,7 @@
 
 ### Phase 1（P0 收尾 + 核心，2-3 周）
 1. SSH Reconnect E2E（S, 1-2 天）
-2. Event Stream E2E（S, 1-2 天）
+2. ~~Event Stream E2E（S, 1-2 天）~~ ✅ 已完成（2026-06-26）
 3. Error Recovery（M, 1 周）
 4. Shell Integration（L, 1.5 周）
 
