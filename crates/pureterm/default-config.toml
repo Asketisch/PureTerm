@@ -34,3 +34,11 @@ components = ["cwd", "git", "ssh", "vimode", "process", "agent", "cpu", "memory"
 refresh_interval_secs = 1
 show_sparklines = true
 bar_height = 24
+
+# GAP-32: Git Integration — status-bar counts come from [statusbar] above; this
+# section controls the ⌘⇧B overlay panel and the `gh` PR subprocess.
+[git]
+panel_enabled = true       # ⌘⇧B toggles the Git overlay panel
+show_pr = true             # query the linked PR via `gh` (needs `gh auth`)
+pr_refresh_ticks = 30      # PR refresh cadence in status-bar ticks (~30s)
+# lazygit_cmd = "lazygit"  # override the lazygit binary name for the panel button

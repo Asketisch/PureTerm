@@ -200,6 +200,31 @@ impl StatusBarConfig {
     }
 }
 
+/// GAP-32: `[git]` settings — Git Integration. A missing/malformed table yields
+/// `Default` so a bad config never breaks startup. `panel_enabled` gates the
+/// `⌘⇧B` overlay panel; `show_pr` gates the `gh` PR subprocess; `pr_refresh_ticks`
+/// throttles PR refreshes against the status-bar tick (gh is slow/networked);
+/// `lazygit_cmd` overrides the lazygit binary name (default `lazygit`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitConfig {
+    pub panel_enabled: bool,
+    pub show_pr: bool,
+    pub pr_refresh_ticks: u64,
+    pub lazygit_cmd: Option<String>,
+}
+
+impl Default for GitConfig {
+    fn default() -> Self {
+        Self {
+            panel_enabled: true,
+            show_pr: true,
+            // ~30 status-bar ticks (default 1s) between PR refreshes.
+            pr_refresh_ticks: 30,
+            lazygit_cmd: None,
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Self {
         let mut config = Self::default();
@@ -534,6 +559,41 @@ impl AppConfig {
         if let Some(h) = table.get("bar_height").and_then(|v| v.as_integer()) {
             // Clamp to a sane readable range (18px minimum, 48px maximum).
             cfg.bar_height = h.clamp(18, 48) as u16;
+        }
+        cfg
+    }
+
+    /// Load the `[git]` table (GAP-32). A missing/malformed table yields
+    /// `Default`. Mirrors `load_statusbar`: read_to_string → toml::from_str →
+    /// walk `value.get("git").as_table()`; each key is independently optional.
+    pub fn load_git(path: &Path) -> GitConfig {
+        let mut cfg = GitConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("git").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("panel_enabled").and_then(|v| v.as_bool()) {
+            cfg.panel_enabled = b;
+        }
+        if let Some(b) = table.get("show_pr").and_then(|v| v.as_bool()) {
+            cfg.show_pr = b;
+        }
+        if let Some(n) = table.get("pr_refresh_ticks").and_then(|v| v.as_integer()) {
+            // Clamp to ≥1 so the modulo throttle never divides by zero.
+            cfg.pr_refresh_ticks = (n.max(1)) as u64;
+        }
+        if let Some(s) = table.get("lazygit_cmd").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.lazygit_cmd = Some(s.to_string());
+            }
         }
         cfg
     }

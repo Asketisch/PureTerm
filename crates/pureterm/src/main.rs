@@ -29,6 +29,8 @@ mod events;
 mod events_bus;
 /// GAP-6.7: pure file I/O for the event log (append/rotate/read/tail).
 mod events_log;
+/// GAP-32: GitHub PR status via the `gh` CLI (reuses the user's `gh auth`).
+mod gh_pr;
 #[cfg(unix)]
 mod feed_client;
 /// GAP-7.6: read-only feed audit log viewer (`pureterm feed list`).
@@ -77,6 +79,8 @@ mod tunnel_cli;
 mod resume_bindings;
 /// GAP-6.6: `pureterm tmux …` — tmux-compatible command subset.
 mod tmux_cli;
+/// GAP-32: Git overlay panel state + quick-action enum (view lives in iced_app).
+mod git_panel;
 mod terminal_context;
 mod terminal_shader;
 mod vi_mode_handler;
@@ -236,6 +240,8 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::OpenCommandPalette => "Command Palette".into(),
         keymap::Action::OpenSettings => "Settings".into(),
         keymap::Action::FocusAddressBar => "Browser Address Bar".into(),
+        keymap::Action::ToggleGitPanel => "Git Panel".into(),
+        keymap::Action::OpenLazygit => "Open Lazygit".into(),
         keymap::Action::IncreaseFontSize => "Font +".into(),
         keymap::Action::DecreaseFontSize => "Font −".into(),
         keymap::Action::ResetFontSize => "Font Reset".into(),

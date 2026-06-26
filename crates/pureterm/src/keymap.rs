@@ -72,6 +72,10 @@ pub enum Action {
     /// GAP-3.5: focus the Browser address-bar overlay (⌘L). Navigates the
     /// active Web pane, or spawns one if no Web pane is focused.
     FocusAddressBar,
+    /// GAP-32: toggle the Git overlay panel (⌘⇧B).
+    ToggleGitPanel,
+    /// GAP-32: open lazygit in the active pane (panel button / command palette).
+    OpenLazygit,
 
     // ── Font / window (TOML-declared but not yet wired) ─────────────
     IncreaseFontSize,
@@ -397,6 +401,18 @@ impl Keymap {
         bindings.insert(
             (cmd, BindingKey::Character("l".into())),
             Action::FocusAddressBar,
+        );
+
+        // ── Git panel (GAP-32) ─────────────────────────────────────
+        // ⌘⇧B → ToggleGitPanel. macOS dual-form (⌘⇧B may report as ⌘B-uppercase).
+        // Plain ⌘B is intentionally left free.
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("b".into())),
+            Action::ToggleGitPanel,
+        );
+        bindings.insert(
+            (cmd, BindingKey::Character("B".into())),
+            Action::ToggleGitPanel,
         );
 
         // ── Cmd+Option+Arrow → PaneFocusAdjacent ────────────────────
@@ -800,6 +816,9 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "OpenSettings" => Ok(Action::OpenSettings),
         // Browser (GAP-3.5)
         "FocusAddressBar" | "FocusUrlBar" => Ok(Action::FocusAddressBar),
+        // Git panel (GAP-32)
+        "ToggleGitPanel" | "GitPanel" => Ok(Action::ToggleGitPanel),
+        "OpenLazygit" | "Lazygit" => Ok(Action::OpenLazygit),
 
         // Font / window
         "IncreaseFontSize" | "FontLarger" => Ok(Action::IncreaseFontSize),

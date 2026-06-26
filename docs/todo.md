@@ -11,8 +11,8 @@
 | 状态 | 数量 | 说明 |
 |------|------|------|
 | ✅ 已完成 | 6 | 代码闭环，待或已完成 E2E |
-| 🚧 进行中 | 4 | 代码闭环待 E2E / 部分实现 |
-| ❌ 未实现 | 59 | 待排期 |
+| 🚧 进行中 | 5 | 代码闭环待 E2E / 部分实现 |
+| ❌ 未实现 | 58 | 待排期 |
 | ⛔ 不做 | 0 | — |
 
 ### 优先级分布
@@ -40,7 +40,7 @@
 
 ---
 
-## 🚧 进行中（4 个）
+## 🚧 进行中（5 个）
 
 | GAP | 功能 | 优先级 | 文档 |
 |-----|------|--------|------|
@@ -48,6 +48,7 @@
 | GAP-7.8 | [Agent-Browser 兼容](featuresList/67-browser-panel.md) | P1 | 代码闭环，9 browser tool，待用户页面 E2E |
 | GAP-5.2 | [SOCKS5 隧道](featuresList/69-socks5-tunnel.md) | P1 | 代码闭环，待真实 SSH 网关 E2E |
 | GAP-4.2 | [Hover Preview](featuresList/16-hover-preview.md) | P2 | 智能选择已实现，无 hover preview |
+| GAP-32 | [Git Integration](featuresList/32-git-integration.md) | P2 | 代码闭环，490 单测绿（porcelain 分计数 + gh PR 面板 + lazygit/快捷操作），待 GUI E2E |
 
 ---
 
@@ -85,7 +86,7 @@
 | 16 | 🚧 | [Hover Preview](featuresList/16-hover-preview.md) | 终端交互 | M | 悬停 URL/路径显示 tooltip |
 | 24 | ✅ | [Enhanced Status Bar](featuresList/24-status-bar-enhanced.md) | UI/外壳 | L | 40+ 组件：CPU/内存/网络/Git/电池 |
 | 25 | — | [Multi-Window](featuresList/25-multi-window.md) | UI/外壳 | L | 多独立窗口 + 跨窗口通信 |
-| 32 | — | [Git Integration](featuresList/32-git-integration.md) | 开发者工具 | M | 分支/dirty/PR 状态/快捷操作 |
+| 32 | 🚧 | [Git Integration](featuresList/32-git-integration.md) | 开发者工具 | M | 分支/dirty 分计数 + gh PR + 面板 + lazygit/快捷操作（代码闭环，待 GUI E2E） |
 | 33 | — | [Port Scanner](featuresList/33-port-scanner.md) | 开发者工具 | S | 侧边栏显示监听端口 |
 | 36 | — | [Semantic History](featuresList/36-semantic-history.md) | 开发者工具 | M | Cmd-click 路径在编辑器中打开 |
 | 40 | — | [SSH Forwarding](featuresList/40-ssh-forwarding.md) | SSH/网络 | M | 端口转发（本地/远程/动态） |
@@ -153,12 +154,12 @@
 | **AI Agent** | 2 | 1 | 3 | 1 | 1 | 0 | 0 | **8** |
 | **终端交互** | 2 | 1 | 3 | 3 | 1 | 0 | 0 | **10** |
 | **UI/外壳** | 0 | 1 | 4 | 3 | 5 | 0 | 0 | **13** |
-| **开发者工具** | 0 | 1 | 3 | 1 | 1 | 0 | 0 | **6** |
+| **开发者工具** | 0 | 1 | 3 | 1 | 1 | 0 | 1 | **6** |
 | **SSH/网络** | 1 | 1 | 3 | 3 | 1 | 1 | 1 | **10** |
 | **平台** | 0 | 0 | 2 | 1 | 2 | 0 | 0 | **5** |
 | **集成** | 1 | 0 | 1 | 0 | 4 | 0 | 1 | **7** |
 | **视觉** | 0 | 0 | 0 | 0 | 8 | 0 | 0 | **8** |
-| **合计** | **6** | **6** | **19** | **12** | **23** | **1** | **2** | **67** |
+| **合计** | **6** | **6** | **19** | **12** | **23** | **1** | **3** | **67** |
 
 ---
 

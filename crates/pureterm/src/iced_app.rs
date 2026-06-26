@@ -368,6 +368,11 @@ pub struct PureTermApp {
     status_bar_cfg: crate::app_config::StatusBarConfig,
     status_bar_registry: Vec<Box<dyn crate::status_bar::StatusBarComponent>>,
     status_bar_git_status: Option<crate::status_bar::GitStatus>,
+    // GAP-32: Git Integration — config (`[git]`) + overlay panel state.
+    git_cfg: crate::app_config::GitConfig,
+    git_panel: crate::git_panel::GitPanelState,
+    /// GAP-32: transient toast `(message, shown_at)`. None ⇒ no toast.
+    toast: Option<(String, Instant)>,
     // GAP-4.1 Vi search
     vi_search: Option<ViSearchState>,
     /// GAP-3.8 / GAP-4.3: standalone ⌘F surface-search overlay state.
@@ -668,6 +673,19 @@ pub enum Message {
     StatusBarStats(crate::status_bar::StatSnapshot),
     /// GAP-24: async git-status upgrade result `(cwd, status)`.
     GitStatusResult(String, crate::status_bar::GitStatus),
+    /// GAP-32: Git overlay panel — toggle/close/manual-refresh.
+    ToggleGitPanel,
+    CloseGitPanel,
+    RefreshGitPanel,
+    /// GAP-32: recent-commits result `(cwd, [(short_sha, subject), …])`.
+    GitPanelLogResult(String, Vec<(String, String)>),
+    /// GAP-32: `gh pr view` result `(cwd, pr, banner)`.
+    GhPrResult(String, Option<crate::gh_pr::PrInfo>, Option<String>),
+    /// GAP-32: a quick git action from the panel button row → write to the PTY.
+    GitQuickAction(crate::git_panel::GitQuickAction),
+    /// GAP-32: lightweight transient toast (e.g. "lazygit not installed").
+    Toast(String),
+    ToastDismissed,
     NewTab,
     CloseTab(TabId),
     ActivateTab(TabId),
@@ -1289,6 +1307,9 @@ impl PureTermApp {
         let status_bar_cfg = AppConfig::load_statusbar(&config_path);
         let status_bar_registry = crate::status_bar::build_registry(&status_bar_cfg);
 
+        // GAP-32: Git Integration config (panel toggle, PR refresh, lazygit cmd).
+        let git_cfg = AppConfig::load_git(&config_path);
+
         // GAP-5.6: peek the saved layout so the window reopens at its last
         // size (unix-only — recovery depends on the daemon path). The same
         // snapshot is passed to `try_restore_layout` below (single disk read).
@@ -1409,6 +1430,10 @@ impl PureTermApp {
             status_bar_cfg,
             status_bar_registry,
             status_bar_git_status: None,
+            // GAP-32: Git Integration config + overlay panel state.
+            git_cfg,
+            git_panel: crate::git_panel::GitPanelState::new(),
+            toast: None,
             pane_cwds: HashMap::new(),
             pane_osc_title: HashMap::new(),
             agent_sessions: HashMap::new(),
@@ -3374,9 +3399,37 @@ impl PureTermApp {
                     .active_terminal_ctx()
                     .and_then(|ctx| ctx.child_pid())
                     .and_then(crate::status_bar::get_foreground_process);
-                if let Some(cwd) = self.status_bar_cwd.clone() {
-                    return crate::status_bar::spawn_git_status(cwd);
+                let Some(cwd) = self.status_bar_cwd.clone() else {
+                    return Task::none();
+                };
+                let mut tasks = vec![crate::status_bar::spawn_git_status(cwd.clone())];
+                // GAP-32: keep the open panel pointed at the focused repo, and
+                // throttle `gh pr view` (slow/networked) against this tick.
+                if self.git_panel.open && self.git_cfg.panel_enabled {
+                    if self.git_panel.cwd.as_deref() != Some(cwd.as_str()) {
+                        // Focused pane moved to a different repo → repoint + refresh.
+                        self.git_panel.open_for(&cwd);
+                        self.git_panel.pr_refreshing = self.git_cfg.show_pr;
+                        tasks.push(crate::gh_pr::spawn_git_log(cwd.clone()));
+                        if self.git_cfg.show_pr {
+                            tasks.push(crate::gh_pr::spawn_gh_pr(cwd.clone()));
+                        }
+                    } else if self.git_cfg.show_pr {
+                        self.git_panel.pr_tick_counter =
+                            self.git_panel.pr_tick_counter.wrapping_add(1);
+                        let period = self.git_cfg.pr_refresh_ticks.max(1);
+                        if self.git_panel.pr_tick_counter % period == 0 {
+                            tasks.push(crate::gh_pr::spawn_gh_pr(cwd));
+                        }
+                    }
                 }
+                // Auto-expire a stale toast (>4s) as a safety net.
+                if let Some((_, at)) = self.toast {
+                    if Instant::now().duration_since(at) > Duration::from_secs(4) {
+                        self.toast = None;
+                    }
+                }
+                return Task::batch(tasks);
             }
             Message::StatusBarStats(snap) => {
                 // GAP-24: fan the system-stat snapshot out to the registry.
@@ -3386,8 +3439,101 @@ impl PureTermApp {
                 // GAP-24: apply only if still the active pane's cwd (the pane
                 // may have switched while the subprocess was in flight).
                 if self.status_bar_cwd.as_deref() == Some(cwd.as_str()) {
-                    self.status_bar_git_status = Some(status);
+                    // GAP-32: porcelain always yields `pr: None`, so preserve the
+                    // last PR resolved by `GhPrResult` to avoid a flickering pill.
+                    let mut status = status;
+                    if status.pr.is_none() {
+                        if let Some(existing) = &self.status_bar_git_status {
+                            status.pr = existing.pr.clone();
+                        }
+                    }
+                    self.status_bar_git_status = Some(status.clone());
+                    if self.git_panel.open && self.git_panel.cwd.as_deref() == Some(cwd.as_str()) {
+                        self.git_panel.status = Some(status);
+                    }
                 }
+            }
+            Message::ToggleGitPanel => {
+                if !self.git_cfg.panel_enabled {
+                    return Task::none();
+                }
+                if self.git_panel.open {
+                    self.git_panel.close();
+                    return Task::none();
+                }
+                let Some(cwd) = self.active_pane_cwd() else {
+                    // OSC 7 only fires for zsh/bash — fish/nu/remote panes have
+                    // no known cwd, so the panel can't resolve a repo.
+                    return Task::done(Message::Toast(
+                        "Git panel needs a pane with a known cwd (zsh/bash).".to_string(),
+                    ));
+                };
+                let cwd = cwd.to_string_lossy().to_string();
+                self.git_panel.open_for(&cwd);
+                self.git_panel.pr_refreshing = self.git_cfg.show_pr;
+                let mut tasks = vec![
+                    crate::status_bar::spawn_git_status(cwd.clone()),
+                    crate::gh_pr::spawn_git_log(cwd.clone()),
+                ];
+                if self.git_cfg.show_pr {
+                    tasks.push(crate::gh_pr::spawn_gh_pr(cwd));
+                }
+                return Task::batch(tasks);
+            }
+            Message::CloseGitPanel => {
+                self.git_panel.close();
+            }
+            Message::RefreshGitPanel => {
+                if let Some(cwd) = self.git_panel.cwd.clone() {
+                    self.git_panel.pr_refreshing = self.git_cfg.show_pr;
+                    let mut tasks = vec![
+                        crate::status_bar::spawn_git_status(cwd.clone()),
+                        crate::gh_pr::spawn_git_log(cwd.clone()),
+                    ];
+                    if self.git_cfg.show_pr {
+                        tasks.push(crate::gh_pr::spawn_gh_pr(cwd));
+                    }
+                    return Task::batch(tasks);
+                }
+            }
+            Message::GitPanelLogResult(cwd, log) => {
+                // Staleness guard: only the panel's current repo's log applies.
+                if self.git_panel.open && self.git_panel.cwd.as_deref() == Some(cwd.as_str()) {
+                    self.git_panel.last_log = log;
+                }
+            }
+            Message::GhPrResult(cwd, pr, err) => {
+                let matches_bar = self.status_bar_cwd.as_deref() == Some(cwd.as_str());
+                let matches_panel =
+                    self.git_panel.cwd.as_deref() == Some(cwd.as_str()) && self.git_panel.open;
+                if matches_panel {
+                    self.git_panel.pr = pr.clone();
+                    self.git_panel.pr_error = err.clone();
+                    self.git_panel.pr_refreshing = false;
+                }
+                // Drive the status-bar PR pill from the single source of truth
+                // (`status_bar_git_status.pr`).
+                if matches_bar {
+                    if let Some(g) = self.status_bar_git_status.as_mut() {
+                        g.pr = pr;
+                    }
+                }
+            }
+            Message::GitQuickAction(action) => {
+                return self.run_git_quick_action(action);
+            }
+            Message::Toast(msg) => {
+                self.toast = Some((msg, Instant::now()));
+                // Auto-dismiss after 3.5s (plus a 4s safety net on StatusBarTick).
+                return Task::perform(
+                    async {
+                        tokio::time::sleep(Duration::from_millis(3500)).await;
+                    },
+                    |_| Message::ToastDismissed,
+                );
+            }
+            Message::ToastDismissed => {
+                self.toast = None;
             }
             Message::LayoutSaveTick => {
                 // GAP-4.3: tail-find re-anchor on new output (~4 Hz cadence).
@@ -5602,6 +5748,11 @@ impl PureTermApp {
                     self.command_palette = None;
                     return Task::none();
                 }
+                // GAP-32: Escape closes the Git overlay panel.
+                if self.git_panel.open {
+                    self.git_panel.close();
+                    return Task::none();
+                }
                 // GAP-4.1: Escape in vi mode → close search bar first, then exit visual/vi mode
                 if self.vi_search.is_some() {
                     return Task::done(Message::ViSearchClose);
@@ -5861,6 +6012,54 @@ impl PureTermApp {
         Task::none()
     }
 
+    /// GAP-32: run a quick git action from the panel button row. Writes the
+    /// command into the focused pane's PTY (so it runs in-pane). lazygit on an
+    /// SSH pane is deferred (different notifier path); a missing binary toasts
+    /// instead of writing. The panel stays open for the non-interactive actions
+    /// (`add`/`commit`/`push`/`pull`) and closes for lazygit (its TUI needs the
+    /// pane visible).
+    fn run_git_quick_action(
+        &mut self,
+        action: crate::git_panel::GitQuickAction,
+    ) -> Task<Message> {
+        use crate::git_panel::GitQuickAction;
+        let Some(ctx) = self.active_terminal_ctx() else {
+            return Task::done(Message::Toast("No active pane.".to_string()));
+        };
+        let cmd: Option<String> = match action {
+            GitQuickAction::StageAll => Some("git add -A".into()),
+            GitQuickAction::Commit => Some("git commit".into()),
+            GitQuickAction::Push => Some("git push".into()),
+            GitQuickAction::Pull => Some("git pull".into()),
+            GitQuickAction::Lazygit => {
+                if ctx.is_ssh() {
+                    return Task::done(Message::Toast(
+                        "lazygit isn't supported on SSH panes yet.".to_string(),
+                    ));
+                }
+                let bin = self
+                    .git_cfg
+                    .lazygit_cmd
+                    .clone()
+                    .unwrap_or_else(|| "lazygit".to_string());
+                if !crate::status_bar::is_binary_available(&bin) {
+                    return Task::done(Message::Toast(format!(
+                        "{bin} not installed — try `brew install lazygit`."
+                    )));
+                }
+                // The TUI needs the pane visible.
+                self.git_panel.close();
+                Some(bin)
+            }
+        };
+        if let Some(cmd) = cmd {
+            let mut bytes = cmd.into_bytes();
+            bytes.push(b'\n');
+            ctx.write_to_pty(&bytes);
+        }
+        Task::none()
+    }
+
     /// GAP-3.7: Convert an `Action` to the corresponding `Task<Message>`.
     ///
     /// This is the unified dispatch path shared by keyboard shortcuts,
@@ -5958,6 +6157,11 @@ impl PureTermApp {
             Action::OpenSettings => Task::done(Message::OpenSettings),
             // GAP-3.5: ⌘L address bar.
             Action::FocusAddressBar => Task::done(Message::AddressBarOpen),
+            // GAP-32: ⌘⇧B Git panel / lazygit.
+            Action::ToggleGitPanel => Task::done(Message::ToggleGitPanel),
+            Action::OpenLazygit => {
+                Task::done(Message::GitQuickAction(crate::git_panel::GitQuickAction::Lazygit))
+            }
 
             // Font / window — not yet wired, no-op
             Action::IncreaseFontSize
@@ -6232,6 +6436,8 @@ impl PureTermApp {
         let rebuild = new_sb.components != self.status_bar_cfg.components
             || new_sb.show_sparklines != self.status_bar_cfg.show_sparklines;
         self.status_bar_cfg = new_sb;
+        // GAP-32: reload `[git]` config (panel toggle / PR refresh / lazygit cmd).
+        self.git_cfg = AppConfig::load_git(&self.config_path);
         if rebuild {
             self.status_bar_registry = crate::status_bar::build_registry(&self.status_bar_cfg);
         }
@@ -8580,6 +8786,170 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(x).y(48.0).into())
     }
 
+    /// GAP-32: render the Git overlay panel (`⌘⇧B`). Read-only repo view —
+    /// branch / upstream / ahead-behind / per-category counts / recent commits /
+    /// in-progress op / linked PR — plus a quick-action button row that writes
+    /// git commands into the focused pane's PTY. Returns `None` when closed.
+    fn view_git_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use crate::git_panel::GitQuickAction;
+        use crate::status_bar::GitOp;
+        use iced::widget::{button, column, container, row, scrollable, space, text};
+        use iced::Length;
+
+        if !self.git_panel.open {
+            return None;
+        }
+
+        let mut body = column![].spacing(5).padding(10);
+
+        // Header: title + refresh + close.
+        body = body.push(row![
+            text("Git").size(14),
+            space().width(Length::Fill),
+            button(text("\u{21bb}").size(12))
+                .on_press(Message::RefreshGitPanel)
+                .padding([2, 6])
+                .style(button::secondary),
+            button(text("\u{d7}").size(14))
+                .on_press(Message::CloseGitPanel)
+                .padding([2, 8])
+                .style(button::secondary),
+        ]
+        .spacing(4));
+
+        let amber = iced::Color::from_rgba(0.95, 0.75, 0.3, 1.0);
+        let dim = iced::Color::from_rgba(0.55, 0.55, 0.55, 1.0);
+
+        // Branch / upstream / ahead-behind / op / counts.
+        if let Some(g) = self.git_panel.status.as_ref() {
+            let branch = g.branch.clone().unwrap_or_else(|| "(unknown)".to_string());
+            body = body.push(text(format!("\u{e0a0} {}", branch)).size(12));
+            if let Some(u) = &g.upstream {
+                let mut line = format!("  \u{2194} {}", u);
+                if let Some(a) = g.ahead {
+                    if a > 0 {
+                        line.push_str(&format!("  \u{2191}{}", a));
+                    }
+                }
+                if let Some(b) = g.behind {
+                    if b > 0 {
+                        line.push_str(&format!("  \u{2193}{}", b));
+                    }
+                }
+                body = body.push(text(line).size(11).color(dim));
+            }
+            if let Some(h) = &g.head_short {
+                body = body.push(text(format!("  HEAD {}", h)).size(10).color(dim));
+            }
+            body = body.push(text(format!(
+                "  \u{25cf}{} staged   ~{} modified   +{} untracked   !{} unmerged",
+                g.staged, g.unstaged, g.untracked, g.unmerged,
+            ))
+            .size(11));
+            if g.op != GitOp::None {
+                body = body.push(text(format!("\u{21bb} {} in progress", g.op.as_str())).size(11).color(amber));
+            }
+        } else {
+            body = body.push(text("Resolving repo…").size(11).color(dim));
+        }
+
+        // Recent commits.
+        if !self.git_panel.last_log.is_empty() {
+            body = body.push(space().height(2));
+            body = body.push(text("Recent commits").size(10).color(dim));
+            for (h, s) in &self.git_panel.last_log {
+                body = body.push(text(format!("{} {}", h, s)).size(10));
+            }
+        }
+
+        // PR block.
+        if self.git_cfg.show_pr {
+            body = body.push(space().height(2));
+            if let Some(pr) = &self.git_panel.pr {
+                let ci = &pr.checks;
+                let color = match pr.state.as_str() {
+                    "MERGED" => iced::Color::from_rgba(0.65, 0.45, 0.85, 1.0),
+                    "CLOSED" => iced::Color::from_rgba(0.9, 0.45, 0.45, 1.0),
+                    _ if ci.failure > 0 => iced::Color::from_rgba(0.9, 0.45, 0.45, 1.0),
+                    _ if ci.pending > 0 => amber,
+                    _ => iced::Color::from_rgba(0.5, 0.8, 0.55, 1.0),
+                };
+                body = body.push(
+                    text(format!(
+                        "\u{29c9}#{} {}  (\u{2713}{} \u{00b7} \u{2026}{} \u{00b7} \u{2717}{})",
+                        pr.number, pr.state, ci.success, ci.pending, ci.failure,
+                    ))
+                    .size(11)
+                    .color(color),
+                );
+            } else if self.git_panel.pr_refreshing {
+                body = body.push(text("PR:  refreshing…").size(11).color(dim));
+            } else if let Some(err) = &self.git_panel.pr_error {
+                body = body.push(text(format!("PR:  {}", err)).size(11).color(dim));
+            } else {
+                body = body.push(text("PR:  none").size(11).color(dim));
+            }
+        }
+
+        // Quick-action buttons → write the command into the focused pane's PTY.
+        body = body.push(space().height(2));
+        body = body.push(
+            row![
+                button(text("Stage all").size(11))
+                    .on_press(Message::GitQuickAction(GitQuickAction::StageAll))
+                    .padding([3, 6])
+                    .style(button::secondary),
+                button(text("Commit").size(11))
+                    .on_press(Message::GitQuickAction(GitQuickAction::Commit))
+                    .padding([3, 6])
+                    .style(button::secondary),
+                button(text("Push").size(11))
+                    .on_press(Message::GitQuickAction(GitQuickAction::Push))
+                    .padding([3, 6])
+                    .style(button::secondary),
+                button(text("Pull").size(11))
+                    .on_press(Message::GitQuickAction(GitQuickAction::Pull))
+                    .padding([3, 6])
+                    .style(button::secondary),
+                button(text("Lazygit").size(11))
+                    .on_press(Message::GitQuickAction(GitQuickAction::Lazygit))
+                    .padding([3, 6])
+                    .style(button::secondary),
+            ]
+            .spacing(4),
+        );
+
+        // Cwd footer (tail-truncated path).
+        if let Some(cwd) = &self.git_panel.cwd {
+            let chars: Vec<char> = cwd.chars().collect();
+            let short: String = if chars.len() > 32 {
+                chars[chars.len() - 32..].iter().collect()
+            } else {
+                cwd.clone()
+            };
+            body = body.push(text(short).size(9).color(dim));
+        }
+
+        let panel = container(scrollable(body))
+            .width(Length::Fixed(340.0))
+            .max_height(self.viewport_size.height * 0.8)
+            .style(container::bordered_box);
+        let x = (self.viewport_size.width - 340.0).max(0.0);
+        Some(iced::widget::pin(panel).x(x).y(48.0).into())
+    }
+
+    /// GAP-32: transient toast pill (bottom-center), shown for ~3.5s.
+    fn view_toast(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{container, text};
+        let (msg, _) = self.toast.as_ref()?;
+        let pill = container(text(msg.clone()).size(12))
+            .padding([6, 12])
+            .style(container::bordered_box);
+        let x = (self.viewport_size.width * 0.5 - 150.0).max(0.0);
+        let y = (self.viewport_size.height - 60.0).max(0.0);
+        Some(iced::widget::pin(pill).x(x).y(y).into())
+    }
+
     /// P5 GAP-5.9: render the command palette as a centered overlay.
     /// Two modes:
     /// - `Mode::Actions` — fuzzy-searchable list of registered actions.
@@ -9081,9 +9451,11 @@ impl PureTermApp {
             || self.address_bar.is_some()
             || self.feed_panel_visible()
             || self.hibernate_panel_visible()
-            || self.detect_panel_visible();
+            || self.detect_panel_visible()
+            // GAP-32: Git overlay panel (⌘⇧B) — not unix-gated (git/gh are cross-platform).
+            || self.git_panel.open;
 
-        if has_overlay {
+        if has_overlay || self.toast.is_some() {
             // No full-screen `dismiss` overlay here. The previous design
             // used `opaque(mouse_area.on_press(Dismiss))` to catch
             // outside-clicks, but iced 0.14's `MouseArea` calls
@@ -9139,6 +9511,10 @@ impl PureTermApp {
             if let Some(detect_el) = self.view_detect_panel() {
                 layers.push(detect_el);
             }
+            // GAP-32: Git overlay panel.
+            if let Some(git_el) = self.view_git_panel() {
+                layers.push(git_el);
+            }
             if let Some(palette_el) = self.view_command_palette() {
                 layers.push(palette_el);
             }
@@ -9161,6 +9537,11 @@ impl PureTermApp {
             // GAP-3.5: ⌘L Browser address-bar overlay
             if let Some(ab_el) = self.view_address_bar() {
                 layers.push(ab_el);
+            }
+
+            // GAP-32: transient toast (top-most layer).
+            if let Some(toast_el) = self.view_toast() {
+                layers.push(toast_el);
             }
 
             stack(layers)

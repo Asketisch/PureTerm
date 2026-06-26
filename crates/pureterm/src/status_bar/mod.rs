@@ -19,7 +19,10 @@ pub mod stats;
 use crate::app_config::StatusBarConfig;
 
 pub use component::{BarData, StatusBarComponent};
-pub use git::{parse_porcelain_v2, read_git_branch, spawn_git_status, GitStatus};
+pub use git::{
+    detect_git_op, find_git_dir, is_binary_available, parse_porcelain_v2, read_git_branch,
+    spawn_git_status, GitOp, GitStatus,
+};
 pub use publisher::stats_subscription;
 pub use stats::{StatSnapshot, StatsKey};
 

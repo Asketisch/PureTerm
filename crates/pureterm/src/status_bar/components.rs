@@ -62,6 +62,39 @@ impl StatusBarComponent for Cwd {
     }
 }
 
+/// Build the base status-bar label for a git segment: branch + ahead/behind +
+/// per-category counts. Pure + unit-tested; the coloured op/PR suffixes are
+/// added as separate widgets in [`Git::view`]. Format:
+/// ` main ↑2↓1 ●2 ~1 +3 !1` (segments with a 0 count are omitted).
+fn git_bar_label(branch: &str, g: Option<&super::git::GitStatus>) -> String {
+    let mut label = format!("  \u{e0a0} {}", branch);
+    if let Some(g) = g {
+        if let Some(a) = g.ahead {
+            if a > 0 {
+                label.push_str(&format!(" \u{2191}{}", a)); // ↑
+            }
+        }
+        if let Some(b) = g.behind {
+            if b > 0 {
+                label.push_str(&format!(" \u{2193}{}", b)); // ↓
+            }
+        }
+        if g.staged > 0 {
+            label.push_str(&format!(" \u{25cf}{}", g.staged)); // ●
+        }
+        if g.unstaged > 0 {
+            label.push_str(&format!(" ~{}", g.unstaged));
+        }
+        if g.untracked > 0 {
+            label.push_str(&format!(" +{}", g.untracked));
+        }
+        if g.unmerged > 0 {
+            label.push_str(&format!(" !{}", g.unmerged));
+        }
+    }
+    label
+}
+
 pub struct Git;
 impl StatusBarComponent for Git {
     fn id(&self) -> &'static str {
@@ -78,23 +111,42 @@ impl StatusBarComponent for Git {
             return text(String::new()).size(11).into();
         };
 
-        let mut label = format!("  \u{e0a0} {}", branch);
-        if let Some(g) = data.git_status {
-            if g.dirty {
-                label.push_str(" \u{25cf}"); // ●
-            }
-            if let Some(a) = g.ahead {
-                if a > 0 {
-                    label.push_str(&format!(" \u{2191}{}", a));
-                } // ↑
-            }
-            if let Some(b) = g.behind {
-                if b > 0 {
-                    label.push_str(&format!(" \u{2193}{}", b));
-                } // ↓
-            }
+        let base = Color::from_rgba(0.6, 0.65, 0.8, 1.0);
+        let amber = Color::from_rgba(0.95, 0.75, 0.3, 1.0);
+        let green = Color::from_rgba(0.5, 0.8, 0.55, 1.0);
+        let red = Color::from_rgba(0.9, 0.45, 0.45, 1.0);
+        let purple = Color::from_rgba(0.65, 0.45, 0.85, 1.0);
+
+        let g = data.git_status;
+        let label = git_bar_label(&branch, g);
+
+        // Coloured suffixes (own text widgets so they can differ from the base):
+        // in-progress op (amber) + linked PR pill (state-coloured).
+        let op_seg = g.and_then(|g| {
+            (g.op != super::git::GitOp::None)
+                .then(|| text_seg(format!(" \u{21bb}{}", g.op.as_str()), amber)) // ⟳
+        });
+        let pr_seg = g.and_then(|g| {
+            g.pr.as_ref().map(|pr| {
+                let color = match pr.state.as_str() {
+                    "MERGED" => purple,
+                    "CLOSED" => red,
+                    _ if pr.checks.failure > 0 => red,
+                    _ if pr.checks.pending > 0 => amber,
+                    _ => green,
+                };
+                text_seg(format!(" \u{29c9}#{}", pr.number), color) // ⧉
+            })
+        });
+
+        let mut r = row![text_seg(label, base)];
+        if let Some(s) = op_seg {
+            r = r.push(s);
         }
-        text_seg(label, Color::from_rgba(0.6, 0.65, 0.8, 1.0))
+        if let Some(s) = pr_seg {
+            r = r.push(s);
+        }
+        r.into()
     }
 }
 
@@ -321,5 +373,54 @@ impl StatusBarComponent for Battery {
     fn apply_stats(&mut self, snap: &StatSnapshot) {
         self.pct = snap.battery_pct;
         self.charging = snap.battery_charging;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::status_bar::git::GitStatus;
+
+    #[test]
+    fn git_bar_label_clean() {
+        let g = GitStatus { branch: Some("main".into()), ..Default::default() };
+        assert_eq!(git_bar_label("main", Some(&g)), "  \u{e0a0} main");
+    }
+
+    #[test]
+    fn git_bar_label_counts() {
+        let g = GitStatus {
+            branch: Some("main".into()),
+            ahead: Some(2),
+            behind: Some(1),
+            staged: 3,
+            unstaged: 1,
+            untracked: 4,
+            unmerged: 1,
+            ..Default::default()
+        };
+        let label = git_bar_label("main", Some(&g));
+        assert!(label.contains("\u{2191}2"), "ahead: {label}");
+        assert!(label.contains("\u{2193}1"), "behind: {label}");
+        assert!(label.contains("\u{25cf}3"), "staged: {label}");
+        assert!(label.contains("~1"), "unstaged: {label}");
+        assert!(label.contains("+4"), "untracked: {label}");
+        assert!(label.contains("!1"), "unmerged: {label}");
+    }
+
+    #[test]
+    fn git_bar_label_omits_zero_counts() {
+        let g = GitStatus { branch: Some("main".into()), ..Default::default() };
+        let label = git_bar_label("main", Some(&g));
+        assert!(!label.contains('\u{25cf}'));
+        assert!(!label.contains('~'));
+        assert!(!label.contains('+'));
+        assert!(!label.contains('!'));
+    }
+
+    #[test]
+    fn git_bar_label_no_status_uses_branch_only() {
+        // Branch known but porcelain not yet resolved → branch-only label.
+        assert_eq!(git_bar_label("dev", None), "  \u{e0a0} dev");
     }
 }
