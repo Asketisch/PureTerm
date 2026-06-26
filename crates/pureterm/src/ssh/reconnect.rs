@@ -49,6 +49,38 @@ pub const BACKOFF: [Duration; 8] = [
     Duration::from_secs(60),
 ];
 
+/// Anti-hammer rolling window (GAP-5.6 follow-up). A connect-then-die host
+/// evades the per-worker [`BACKOFF`] cap: each successful spawn ends the
+/// worker, so every drop calls [`ReconnectHub::spawn_reconnect`] again and
+/// starts a fresh worker back at `BACKOFF[0]` — reconnecting forever at
+/// ~min-backoff and hammering the host (observed on a CGNAT relay: a steady
+/// ~10s connect→drop→reconnect loop). Instead we count reconnect *triggers*
+/// per pane within this window; past [`MAX_FLAPS`] we refuse to spawn and
+/// mark the pane `Failed(flapping)`. The window self-decays, so a healthy
+/// host that drops occasionally never accumulates — no dwell timer needed.
+pub const FLAP_WINDOW: Duration = Duration::from_secs(120);
+
+/// Max reconnect triggers within [`FLAP_WINDOW`] before we stop. At a ~10s
+/// flap cycle a truly flapping host is stopped within roughly
+/// `MAX_FLAPS × 10s`; a healthy host almost never drops this many times in
+/// two minutes.
+pub const MAX_FLAPS: usize = 6;
+
+/// Reason surfaced when the flap cap trips (status bar / dialog / event).
+pub const FLAP_REASON: &str =
+    "connection kept dropping (flapping); reconnect manually when the host is stable";
+
+/// Whether [`ReconnectHub::spawn_reconnect`] actually started a worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpawnDecision {
+    /// A reconnect worker was started.
+    Spawned,
+    /// Refused: the pane flapped past [`MAX_FLAPS`] within [`FLAP_WINDOW`].
+    /// The caller should mark the pane `Failed(flapping)` instead of waiting
+    /// for a worker update.
+    Flapping,
+}
+
 /// Classified reason an SSH connection attempt failed. GAP-5.6 收尾:因为
 /// spawn 走 OS `ssh` 二进制,Rust 侧只能从 ssh 的 stderr 文本推断失败类别。
 /// 用分类结果给 [`SshState::Failed`] 带类型,让状态栏 / 事件 / 对话框能显示
@@ -309,6 +341,10 @@ pub struct ReconnectHub {
     /// storm). Only one worker per key spawns at a time; the rest reuse the
     /// new ControlMaster socket cheaply.
     per_key_lock: Mutex<HashMap<ConnectionKey, Arc<Mutex<()>>>>,
+    /// Anti-hammer: rolling window of reconnect-trigger timestamps per pane
+    /// (see [`FLAP_WINDOW`] / [`MAX_FLAPS`]). Keyed by pane id, so a manual
+    /// reconnect (always a fresh pane id via `push_ssh_tab`) starts clean.
+    flap_history: Mutex<HashMap<PaneId, Vec<Instant>>>,
 }
 
 impl ReconnectHub {
@@ -323,6 +359,7 @@ impl ReconnectHub {
             completed: Arc::new(Mutex::new(HashMap::new())),
             slots: Mutex::new(HashMap::new()),
             per_key_lock: Mutex::new(HashMap::new()),
+            flap_history: Mutex::new(HashMap::new()),
         }
     }
 
@@ -340,13 +377,47 @@ impl ReconnectHub {
             .clone()
     }
 
+    /// Record a reconnect trigger for `pane_id` at `now` and decide whether to
+    /// spawn a worker. Evicts timestamps older than [`FLAP_WINDOW`]; returns
+    /// [`SpawnDecision::Flapping`] once the in-window count exceeds
+    /// [`MAX_FLAPS`]. Pure w.r.t. worker spawning (does NOT start a thread),
+    /// so it is unit-testable with synthetic clocks.
+    fn record_reconnect_trigger(&self, pane_id: PaneId, now: Instant) -> SpawnDecision {
+        let mut hist = self.flap_history.lock().unwrap();
+        let ts = hist.entry(pane_id).or_default();
+        ts.retain(|&t| now.checked_duration_since(t).map_or(false, |d| d <= FLAP_WINDOW));
+        ts.push(now);
+        if ts.len() > MAX_FLAPS {
+            SpawnDecision::Flapping
+        } else {
+            SpawnDecision::Spawned
+        }
+    }
+
     /// Spawn (or replace) the reconnect worker for `pane_id`.
+    ///
+    /// Returns [`SpawnDecision::Flapping`] (without spawning) when the pane has
+    /// tripped the anti-hammer cap ([`FLAP_WINDOW`] / [`MAX_FLAPS`]) — a
+    /// connect-then-die host that would otherwise reconnect forever. The caller
+    /// is responsible for marking the pane `Failed(flapping)`.
     pub fn spawn_reconnect(
         &self,
         pane_id: PaneId,
         manager: Arc<SshSessionManager>,
         params: ReconnectParams,
-    ) {
+    ) -> SpawnDecision {
+        // Anti-hammer gate: refuse before touching the worker slots so a
+        // flapping host cannot start yet another backoff-3s cycle.
+        if self.record_reconnect_trigger(pane_id, Instant::now()) == SpawnDecision::Flapping {
+            log::warn!(
+                "GAP-5.6: SSH pane {:?} flapped >{} times within {:?}; refusing to reconnect",
+                pane_id,
+                MAX_FLAPS,
+                FLAP_WINDOW
+            );
+            return SpawnDecision::Flapping;
+        }
+
         let signal = CancelSignal::new();
         let key = params.connection_key();
         let key_lock = self.key_lock(&key);
@@ -371,6 +442,8 @@ impl ReconnectHub {
                 reconnect_worker(pane_id, manager, params, signal, key_lock, completed, updates_tx);
             })
             .expect("spawn reconnect worker");
+
+        SpawnDecision::Spawned
     }
 
     /// Cancel the worker for `pane_id` (if any). The worker thread is
@@ -383,6 +456,9 @@ impl ReconnectHub {
     /// Also drains any completed-but-unclaimed PTY for the pane (the pane was
     /// closed between Success-send and reattach).
     pub fn cancel(&self, pane_id: PaneId) {
+        // Anti-hammer: forget the flap history too, so a pane that the user
+        // gave up on (close / disconnect) and later reconnects starts fresh.
+        self.flap_history.lock().unwrap().remove(&pane_id);
         if let Some(slot) = self.slots.lock().unwrap().remove(&pane_id) {
             slot.signal.cancel();
         }
@@ -737,5 +813,104 @@ mod tests {
             Some(2)
         );
         assert_eq!(SshStateSnapshot::Connected.attempt(), None);
+    }
+
+    // --- GAP-5.6 follow-up: anti-hammer (flap) detector ----------------------
+
+    #[test]
+    fn flap_constants_are_sane() {
+        // Window must be long enough to catch a flapper but the cap low enough
+        // to stop it quickly; cap must be high enough to spare a recovering
+        // host from false positives.
+        assert!(FLAP_WINDOW >= Duration::from_secs(30), "window too short: {:?}", FLAP_WINDOW);
+        assert!(MAX_FLAPS >= 3, "cap too low (false positives): {}", MAX_FLAPS);
+        assert!(MAX_FLAPS <= 12, "cap too high (flapper hammers too long): {}", MAX_FLAPS);
+    }
+
+    #[test]
+    fn flap_first_n_triggers_spawn() {
+        // The first MAX_FLAPS triggers within the window all spawn.
+        let hub = ReconnectHub::new();
+        let mut t = Instant::now();
+        for i in 0..MAX_FLAPS {
+            assert_eq!(
+                hub.record_reconnect_trigger(PaneId(1), t),
+                SpawnDecision::Spawned,
+                "trigger {} should spawn",
+                i,
+            );
+            t += Duration::from_secs(10);
+        }
+    }
+
+    #[test]
+    fn flap_exceeding_max_within_window_refuses() {
+        // MAX_FLAPS triggers spawn; the next trigger, still inside the window,
+        // is refused (Flapping) instead of starting another min-backoff cycle.
+        let hub = ReconnectHub::new();
+        let mut t = Instant::now();
+        for _ in 0..MAX_FLAPS {
+            assert_eq!(hub.record_reconnect_trigger(PaneId(1), t), SpawnDecision::Spawned);
+            t += Duration::from_secs(10);
+        }
+        assert_eq!(
+            hub.record_reconnect_trigger(PaneId(1), t),
+            SpawnDecision::Flapping,
+            "trigger over the cap within the window must flap",
+        );
+    }
+
+    #[test]
+    fn flap_window_self_decays_for_healthy_host() {
+        // A host that drops occasionally must NOT accumulate toward the cap:
+        // triggers older than FLAP_WINDOW age out, so a later drop starts fresh.
+        let hub = ReconnectHub::new();
+        let t0 = Instant::now();
+        let mut t = t0;
+        for _ in 0..MAX_FLAPS {
+            assert_eq!(hub.record_reconnect_trigger(PaneId(1), t), SpawnDecision::Spawned);
+            t += Duration::from_secs(10);
+        }
+        // Advance well past the window so every prior trigger is stale.
+        let later = t0 + FLAP_WINDOW + Duration::from_secs(1);
+        assert_eq!(
+            hub.record_reconnect_trigger(PaneId(1), later),
+            SpawnDecision::Spawned,
+            "after the window, a fresh trigger must not flap",
+        );
+    }
+
+    #[test]
+    fn flap_cancel_clears_history() {
+        // A user giving up (close / disconnect) must forget the flap history so
+        // a later reconnect of the same pane id is not unfairly throttled.
+        let hub = ReconnectHub::new();
+        let mut t = Instant::now();
+        for _ in 0..MAX_FLAPS {
+            assert_eq!(hub.record_reconnect_trigger(PaneId(1), t), SpawnDecision::Spawned);
+            t += Duration::from_secs(10);
+        }
+        hub.cancel(PaneId(1));
+        assert_eq!(
+            hub.record_reconnect_trigger(PaneId(1), t),
+            SpawnDecision::Spawned,
+            "after cancel, the same pane must reconnect fresh",
+        );
+    }
+
+    #[test]
+    fn flap_counter_is_per_pane() {
+        // One pane flapping must not poison a different pane's reconnect.
+        let hub = ReconnectHub::new();
+        let mut t = Instant::now();
+        for _ in 0..MAX_FLAPS {
+            assert_eq!(hub.record_reconnect_trigger(PaneId(1), t), SpawnDecision::Spawned);
+            t += Duration::from_secs(10);
+        }
+        assert_eq!(
+            hub.record_reconnect_trigger(PaneId(2), t),
+            SpawnDecision::Spawned,
+            "a different pane must be independent of pane 1's flap history",
+        );
     }
 }

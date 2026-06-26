@@ -2404,6 +2404,7 @@ impl PureTermApp {
     /// [`Message::SshReconnect`].
     #[cfg(unix)]
     fn trigger_ssh_reconnect(&mut self, tab_id: TabId, pane_id: PaneId) {
+        use crate::ssh::reconnect::{SpawnDecision, SshFailureKind};
         // Gather the pane's reconnect params (limits the immutable borrow of
         // self to this block so the ssh_manager mutation below is clean).
         let params = {
@@ -2416,13 +2417,6 @@ impl PureTermApp {
             let Some(params) = ctx.ssh_reconnect_params() else {
                 return;
             };
-            // Mark Reconnecting now so the status bar updates immediately.
-            ctx.set_ssh_state(
-                crate::ssh::reconnect::SshState::Reconnecting {
-                    attempt: 0,
-                    next_retry: std::time::Instant::now(),
-                },
-            );
             params
         };
 
@@ -2434,8 +2428,47 @@ impl PureTermApp {
             self.ssh_manager = Some(Arc::new(SshSessionManager::new(socket_dir, 30)));
         }
         let manager = self.ssh_manager.clone().unwrap();
-        self.reconnect_hub.spawn_reconnect(pane_id, manager, params);
-        log::info!("GAP-5.6: SSH pane {:?} dropped → reconnecting", pane_id);
+
+        match self.reconnect_hub.spawn_reconnect(pane_id, manager, params) {
+            SpawnDecision::Spawned => {
+                if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
+                    ctx.set_ssh_state(crate::ssh::reconnect::SshState::Reconnecting {
+                        attempt: 0,
+                        next_retry: std::time::Instant::now(),
+                    });
+                    self.emit_ssh_state_changed(
+                        pane_id,
+                        &ctx,
+                        crate::ssh::reconnect::SshStateSnapshot::Reconnecting { attempt: 0 },
+                    );
+                }
+                log::info!("GAP-5.6: SSH pane {:?} dropped → reconnecting", pane_id);
+            }
+            SpawnDecision::Flapping => {
+                // Refused by the anti-hammer cap: stop hammering the host and
+                // surface a typed failure. The status bar / event consumers
+                // see `Failed`, and a manual reconnect (new pane id) starts
+                // with a fresh flap history.
+                if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
+                    ctx.set_ssh_state(crate::ssh::reconnect::SshState::Failed {
+                        kind: SshFailureKind::Unknown,
+                        reason: crate::ssh::reconnect::FLAP_REASON.to_string(),
+                    });
+                    self.emit_ssh_state_changed(
+                        pane_id,
+                        &ctx,
+                        crate::ssh::reconnect::SshStateSnapshot::Failed {
+                            kind: SshFailureKind::Unknown,
+                        },
+                    );
+                }
+                log::warn!(
+                    "GAP-5.6: SSH pane {:?} flapped past the reconnect cap → stopped \
+                     (reconnect manually once the host is stable)",
+                    pane_id
+                );
+            }
+        }
     }
 
     /// GAP-5.6: emit a `ssh.state_changed` event on the EventBus for external
