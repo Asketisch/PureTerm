@@ -83,7 +83,7 @@
 | 11 | — | [Instant Replay](featuresList/11-instant-replay.md) | 终端交互 | L | DVR 风格会话回放 |
 | 12 | — | [Annotations & Marks](featuresList/12-annotations-marks.md) | 终端交互 | M | 行内注释 + shell prompt 标记 |
 | 16 | 🚧 | [Hover Preview](featuresList/16-hover-preview.md) | 终端交互 | M | 悬停 URL/路径显示 tooltip |
-| 24 | — | [Enhanced Status Bar](featuresList/24-status-bar-enhanced.md) | UI/外壳 | L | 40+ 组件：CPU/内存/网络/Git/电池 |
+| 24 | ✅ | [Enhanced Status Bar](featuresList/24-status-bar-enhanced.md) | UI/外壳 | L | 40+ 组件：CPU/内存/网络/Git/电池 |
 | 25 | — | [Multi-Window](featuresList/25-multi-window.md) | UI/外壳 | L | 多独立窗口 + 跨窗口通信 |
 | 32 | — | [Git Integration](featuresList/32-git-integration.md) | 开发者工具 | M | 分支/dirty/PR 状态/快捷操作 |
 | 33 | — | [Port Scanner](featuresList/33-port-scanner.md) | 开发者工具 | S | 侧边栏显示监听端口 |

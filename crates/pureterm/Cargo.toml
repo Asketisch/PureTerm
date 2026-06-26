@@ -34,7 +34,12 @@ bytemuck = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 crossfont = "0.8.1"
 notify = "8.0.0"
-tokio = { version = "1", features = ["sync", "time", "net", "io-util"] }
+tokio = { version = "1", features = ["sync", "time", "net", "io-util", "process"] }
+# GAP-24 Enhanced Status Bar: system metrics (CPU/Memory/Network), battery,
+# and local-time clock formatting for the new status-bar segments.
+sysinfo = "0.32"
+battery = "0.7"
+chrono = "0.4"
 env_logger = "0.11"
 log = "0.4"
 parking_lot = "0.12"

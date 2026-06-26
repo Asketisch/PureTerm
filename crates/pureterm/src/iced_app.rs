@@ -363,6 +363,11 @@ pub struct PureTermApp {
     status_bar_git_branch: Option<String>,
     status_bar_process_name: Option<String>,
     status_bar_last_poll: Instant,
+    // GAP-24: Enhanced Status Bar — config + ordered component registry +
+    // enriched git status (branch/dirty/ahead-behind) resolved async by tick.
+    status_bar_cfg: crate::app_config::StatusBarConfig,
+    status_bar_registry: Vec<Box<dyn crate::status_bar::StatusBarComponent>>,
+    status_bar_git_status: Option<crate::status_bar::GitStatus>,
     // GAP-4.1 Vi search
     vi_search: Option<ViSearchState>,
     /// GAP-3.8 / GAP-4.3: standalone ⌘F surface-search overlay state.
@@ -557,13 +562,12 @@ struct TabListState {
 
 const TAB_BAR_HEIGHT: f32 = 32.0;
 
-/// 底部状态栏高度（GAP-3.4）。
-const STATUS_BAR_HEIGHT: f32 = 24.0;
-
 /// 终端内容可用高度 = 视口高度 - 标签栏 - 状态栏。
+/// `status_bar_height` is the runtime effective bar height (configurable via
+/// `[statusbar]`; auto-grows to >=28px when sparklines are on).
 #[inline]
-fn terminal_content_height(viewport_height: f32) -> f32 {
-    (viewport_height - TAB_BAR_HEIGHT - STATUS_BAR_HEIGHT).max(0.0)
+fn terminal_content_height(viewport_height: f32, status_bar_height: f32) -> f32 {
+    (viewport_height - TAB_BAR_HEIGHT - status_bar_height).max(0.0)
 }
 
 /// GAP-7.6: status-bar agent indicator. Returns the label + color to render,
@@ -656,6 +660,14 @@ pub enum Message {
     Settings(SettingsMessage),
     SettingsWindowOpened(window::Id),
     ConfigReloaded,
+    /// GAP-24: status-bar periodic tick — refresh process name + fire the
+    /// async git-status upgrade (off the GUI thread).
+    StatusBarTick,
+    /// GAP-24: system-stat snapshot from the shared publisher (CPU/Memory/
+    /// Network/Battery). Fanned out to the stat-holding registry components.
+    StatusBarStats(crate::status_bar::StatSnapshot),
+    /// GAP-24: async git-status upgrade result `(cwd, status)`.
+    GitStatusResult(String, crate::status_bar::GitStatus),
     NewTab,
     CloseTab(TabId),
     ActivateTab(TabId),
@@ -1272,6 +1284,11 @@ impl PureTermApp {
         // GAP-6.4: load user-defined [[commands]] before building the keymap.
         let custom_commands = AppConfig::load_custom_commands(&config_path);
 
+        // GAP-24: status-bar config + component registry. Computed before the
+        // struct literal so the registry can borrow the cfg.
+        let status_bar_cfg = AppConfig::load_statusbar(&config_path);
+        let status_bar_registry = crate::status_bar::build_registry(&status_bar_cfg);
+
         // GAP-5.6: peek the saved layout so the window reopens at its last
         // size (unix-only — recovery depends on the daemon path). The same
         // snapshot is passed to `try_restore_layout` below (single disk read).
@@ -1387,8 +1404,11 @@ impl PureTermApp {
             click_tracker: None,
             command_palette: None,
             last_self_write: None,
-            // Status bar (GAP-3.4)
+            // Status bar (GAP-3.4 / GAP-24)
             status_bar_cwd: None,
+            status_bar_cfg,
+            status_bar_registry,
+            status_bar_git_status: None,
             pane_cwds: HashMap::new(),
             pane_osc_title: HashMap::new(),
             agent_sessions: HashMap::new(),
@@ -1450,7 +1470,8 @@ impl PureTermApp {
         // local PTY when puretermd is unavailable.
         let terminal_ctx = Arc::new(TerminalContext::new_local_auto(cwd.as_deref()));
 
-        let terminal_height = terminal_content_height(viewport_height);
+        let terminal_height =
+            terminal_content_height(viewport_height, self.status_bar_cfg.effective_height());
 
         let gs = self.glyph_state.borrow();
         let cols = (viewport_width / gs.cell_width).floor().max(1.0) as usize;
@@ -1519,7 +1540,7 @@ impl PureTermApp {
 
         let (cols, rows, cw, ch) = {
             let gs = self.glyph_state.borrow();
-            let terminal_height = terminal_content_height(self.viewport_size.height);
+            let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
             let cols = (self.viewport_size.width / gs.cell_width).floor().max(1.0) as usize;
             let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
             (cols, rows, gs.cell_width as u16, gs.cell_height as u16)
@@ -1708,7 +1729,7 @@ impl PureTermApp {
         // WindowResized event.
         let cw = self.glyph_state.borrow().cell_width as u16;
         let ch = self.glyph_state.borrow().cell_height as u16;
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访 self.windows
         // 遍历活跃 workspace 的 tabs(只借 self.windows,不借 *self)。
         let vw = self.viewport_size.width;
@@ -2221,7 +2242,7 @@ impl PureTermApp {
         display_offset: usize,
     ) -> Option<(TermPoint, Side)> {
         let tab = self.tabs().iter().find(|t| t.panes.contains_key(&pane_id))?;
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let layout = tab.split_tree.compute_layout(
             0.0,
             0.0,
@@ -2594,7 +2615,7 @@ impl PureTermApp {
 
         // Apply initial size
         let gs = self.glyph_state.borrow();
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let cols = (self.viewport_size.width / gs.cell_width).floor().max(1.0) as usize;
         let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
         terminal_ctx.resize(cols, rows, gs.cell_width as u16, gs.cell_height as u16);
@@ -3335,18 +3356,30 @@ impl PureTermApp {
                     return Task::none();
                 }
 
-                // Status bar periodic poll (every 30s): refresh git branch + process name.
-                if self.status_bar_last_poll.elapsed() > Duration::from_secs(30) {
-                    self.status_bar_last_poll = Instant::now();
-                    if let Some(ref cwd) = self.status_bar_cwd {
-                        self.status_bar_git_branch =
-                            crate::status_bar::read_git_branch(std::path::Path::new(cwd));
-                    }
-                    // Foreground process name from child PID.
-                    self.status_bar_process_name = self
-                        .active_terminal_ctx()
-                        .and_then(|ctx| ctx.child_pid())
-                        .and_then(crate::status_bar::get_foreground_process);
+                // GAP-24: status-bar refresh moved to the dedicated
+                // `Message::StatusBarTick` subscription (configurable cadence).
+            }
+            Message::StatusBarTick => {
+                // GAP-24: periodic refresh — process name (cheap, sync) + the
+                // enriched git-status subprocess (off the GUI thread via Task).
+                self.status_bar_last_poll = Instant::now();
+                self.status_bar_process_name = self
+                    .active_terminal_ctx()
+                    .and_then(|ctx| ctx.child_pid())
+                    .and_then(crate::status_bar::get_foreground_process);
+                if let Some(cwd) = self.status_bar_cwd.clone() {
+                    return crate::status_bar::spawn_git_status(cwd);
+                }
+            }
+            Message::StatusBarStats(snap) => {
+                // GAP-24: fan the system-stat snapshot out to the registry.
+                crate::status_bar::apply_stats(&mut self.status_bar_registry, &snap);
+            }
+            Message::GitStatusResult(cwd, status) => {
+                // GAP-24: apply only if still the active pane's cwd (the pane
+                // may have switched while the subprocess was in flight).
+                if self.status_bar_cwd.as_deref() == Some(cwd.as_str()) {
+                    self.status_bar_git_status = Some(status);
                 }
             }
             Message::LayoutSaveTick => {
@@ -3382,7 +3415,10 @@ impl PureTermApp {
                     // 非 main 窗口(= detached):resize 其活跃 tab 的 panes。
                     if let Some(w) = self.window_for(win_id) {
                         debug_assert!(!w.is_main, "非 main 分支却命中 main 窗口");
-                        let terminal_height = terminal_content_height(size.height);
+                        let terminal_height = terminal_content_height(
+                            size.height,
+                            self.status_bar_cfg.effective_height(),
+                        );
                         let gs = self.glyph_state.borrow();
                         let cols =
                             (size.width / gs.cell_width).floor().max(1.0) as usize;
@@ -3425,7 +3461,7 @@ impl PureTermApp {
                     let ch = gs.cell_height as u16;
                     drop(gs);
                     let terminal_height =
-                        terminal_content_height(self.viewport_size.height);
+                        terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                     // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访
                     // self.windows 遍历活跃 workspace 的 tabs(只借 self.windows)。
                     let vw = self.viewport_size.width;
@@ -4356,7 +4392,7 @@ impl PureTermApp {
                                 // Re-apply the current pane size to the fresh PTY.
                                 let gs = self.glyph_state.borrow();
                                 let terminal_height =
-                                    terminal_content_height(self.viewport_size.height);
+                                    terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                                 let cols = (self.viewport_size.width / gs.cell_width)
                                     .floor()
                                     .max(1.0) as usize;
@@ -5355,7 +5391,7 @@ impl PureTermApp {
             Message::DividerPress(mut drag) => {
                 // 在按下时通过 split_id 找到分割线屏幕位置和可用大小
                 if let Some(tab) = self.tabs().iter().find(|t| t.id == drag.tab_id) {
-                    let terminal_height = terminal_content_height(self.viewport_size.height);
+                    let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                     if let Some(divider) = tab.split_tree.compute_divider_by_split_id(
                         drag.split_id,
                         0.0, 0.0,
@@ -5402,7 +5438,7 @@ impl PureTermApp {
                     let ch: u16 = self.glyph_state.borrow().cell_height as u16;
                     let viewport_w = self.viewport_size.width;
                     let terminal_height =
-                        terminal_content_height(self.viewport_size.height);
+                        terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
 
                     // T2b-1:field-path 直访 self.windows → 活跃 workspace。
                     let aw = self.active_window_id;
@@ -5434,7 +5470,7 @@ impl PureTermApp {
                         .and_then(|w| w.active_workspace_mut())
                         .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == drag.tab_id));
                     if let Some(tab) = tab_opt {
-                        let terminal_height = terminal_content_height(self.viewport_size.height);
+                        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                         let layout = tab.split_tree.compute_layout(
                             0.0, 0.0, self.viewport_size.width, terminal_height,
                         );
@@ -5509,7 +5545,7 @@ impl PureTermApp {
                     self.pane_osc_title.remove(&pane_id);
                     tab.active_pane = new_active;
                     // Resize remaining panes
-                    let terminal_height = terminal_content_height(self.viewport_size.height);
+                    let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                     let layout = tab.split_tree.compute_layout(
                         0.0, 0.0, self.viewport_size.width, terminal_height,
                     );
@@ -6182,6 +6218,17 @@ impl PureTermApp {
             self.vault_agents = AppConfig::load_vault_agents(&self.config_path);
         }
 
+        // GAP-24: reload status-bar config; rebuild the registry only if the
+        // component list or sparkline toggle changed (the publisher's ring
+        // buffer survives and repopulates new components on the next tick).
+        let new_sb = AppConfig::load_statusbar(&self.config_path);
+        let rebuild = new_sb.components != self.status_bar_cfg.components
+            || new_sb.show_sparklines != self.status_bar_cfg.show_sparklines;
+        self.status_bar_cfg = new_sb;
+        if rebuild {
+            self.status_bar_registry = crate::status_bar::build_registry(&self.status_bar_cfg);
+        }
+
         if font_changed {
             let mut gs = self.glyph_state.borrow_mut();
             gs.reconfigure_scaled(
@@ -6194,7 +6241,7 @@ impl PureTermApp {
             drop(gs);
 
             let terminal_height =
-                terminal_content_height(self.viewport_size.height);
+                terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
             let viewport_w = self.viewport_size.width;
 
             for tab in self.tabs_mut() {
@@ -6979,7 +7026,7 @@ impl PureTermApp {
         }
         let cw: u16 = self.glyph_state.borrow().cell_width as u16;
         let ch: u16 = self.glyph_state.borrow().cell_height as u16;
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访 self.windows。
         let vw = self.viewport_size.width;
         let aw = self.active_window_id;
@@ -7009,7 +7056,7 @@ impl PureTermApp {
     /// `self.tabs()`,故可在不可变遍历中调用。
     fn reposition_web_panes(&self) {
         let vw = self.viewport_size.width;
-        let terminal_h = terminal_content_height(self.viewport_size.height);
+        let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         for tab in self.tabs() {
             // 纯终端 tab 快速跳过,避免无谓的 compute_layout。
             if !tab.panes.values().any(|p| p.is_web()) {
@@ -7123,7 +7170,7 @@ impl PureTermApp {
         tab.restore_zoom_if_any();
 
         // Calculate new pane dimensions from layout
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let layout = tab.split_tree.compute_layout(
             0.0, 0.0, self.viewport_size.width, terminal_height,
         );
@@ -7249,7 +7296,7 @@ impl PureTermApp {
             self.pane_osc_title.remove(&active_pane_id);
             tab.active_pane = new_active;
             // Resize remaining panes
-            let terminal_height = terminal_content_height(self.viewport_size.height);
+            let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
             let layout = tab.split_tree.compute_layout(
                 0.0, 0.0, self.viewport_size.width, terminal_height,
             );
@@ -7281,7 +7328,7 @@ impl PureTermApp {
     fn resize_active_tab_panes(&mut self) {
         let active_tab_id = self.active_tab_id();
         let viewport_w = self.viewport_size.width;
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let (cw, ch) = {
             let gs = self.glyph_state.borrow();
             (gs.cell_width as u16, gs.cell_height as u16)
@@ -7329,7 +7376,7 @@ impl PureTermApp {
             let gs = self.glyph_state.borrow();
             (gs.cell_width as u16, gs.cell_height as u16)
         };
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let viewport_w = self.viewport_size.width;
         for tab in self.tabs_mut() {
             if tab.split_tree.contains(pid) {
@@ -7431,7 +7478,7 @@ impl PureTermApp {
             let gs = self.glyph_state.borrow();
             (gs.cell_width as u16, gs.cell_height as u16)
         };
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let viewport_w = self.viewport_size.width;
         if let Some(tab) = self.tabs_mut().get_mut(dst_tab_index) {
             let at = tab.active_pane;
@@ -7464,7 +7511,7 @@ impl PureTermApp {
 
     /// Resize all panes in a tab according to the current split layout.
     fn resize_tab_panes(&mut self, tab: &mut Tab) {
-        let terminal_height = terminal_content_height(self.viewport_size.height);
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let layout = tab.split_tree.compute_layout(
             0.0, 0.0, self.viewport_size.width, terminal_height,
         );
@@ -7722,129 +7769,111 @@ impl PureTermApp {
     }
 
     fn view_bottom_bar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        use iced::widget::{container, row, space, text};
+        use iced::widget::{container, row, space};
         use iced::{Background, Border, Length, Shadow};
 
-        let mut bar = row![].spacing(0).align_y(iced::Alignment::Center);
-
-        // CWD
-        let cwd_text = self
-            .status_bar_cwd
-            .as_deref()
-            .unwrap_or("~");
-        bar = bar.push(
-            text(cwd_text).size(11).color(Color::from_rgba(0.65, 0.75, 0.65, 1.0)),
-        );
-
-        // Git branch
-        if let Some(ref branch) = self.status_bar_git_branch {
-            bar = bar.push(
-                text(format!("  \u{e0a0} {}", branch))
-                    .size(11)
-                    .color(Color::from_rgba(0.6, 0.65, 0.8, 1.0)),
-            );
-        }
-
-        // SSH indicator (GAP-5.6: reconnect-state-aware)
-        #[cfg(unix)]
-        {
-            use crate::ssh::reconnect::SshStateSnapshot;
-            if let Some(tab) = self.active_tab_ref() {
-                if let Some(pane) = tab.panes.get(&tab.active_pane) {
-                    if let Some(snap) = pane.terminal().and_then(|c| c.ssh_state_snapshot()) {
-                        let (label, color): (String, Color) = match snap {
-                            SshStateSnapshot::Connected => (
-                                "  SSH".to_string(),
-                                Color::from_rgba(0.9, 0.5, 0.5, 1.0),
-                            ),
-                            SshStateSnapshot::Reconnecting { attempt } => (
-                                format!("  SSH ↻ {}", attempt),
-                                Color::from_rgba(0.95, 0.75, 0.3, 1.0),
-                            ),
-                            // GAP-5.6: ssh forked, awaiting auth/first remote byte.
-                            SshStateSnapshot::Authenticating => (
-                                "  SSH 🔑".to_string(),
-                                Color::from_rgba(0.95, 0.75, 0.3, 1.0),
-                            ),
-                            SshStateSnapshot::Failed { .. } => (
-                                "  SSH ✗".to_string(),
-                                Color::from_rgba(0.6, 0.6, 0.6, 1.0),
-                            ),
-                            SshStateSnapshot::Disconnected => (
-                                "  SSH ⏻".to_string(),
-                                Color::from_rgba(0.6, 0.6, 0.6, 1.0),
-                            ),
-                            SshStateSnapshot::Connecting => (
-                                "  SSH …".to_string(),
-                                Color::from_rgba(0.9, 0.5, 0.5, 1.0),
-                            ),
-                        };
-                        bar = bar.push(text(label).size(11).color(color));
+        // GAP-24: pre-compute the live per-pane/per-frame values into a portable
+        // `BarData` snapshot (cfg-gated SSH/Vi/agent formatting stays here,
+        // in-module), then let each registry component render itself.
+        let ssh: Option<(String, Color)> = 'ssh: {
+            #[cfg(unix)]
+            {
+                use crate::ssh::reconnect::SshStateSnapshot;
+                if let Some(tab) = self.active_tab_ref() {
+                    if let Some(pane) = tab.panes.get(&tab.active_pane) {
+                        if let Some(snap) = pane.terminal().and_then(|c| c.ssh_state_snapshot()) {
+                            break 'ssh Some(match snap {
+                                // GAP-5.6: reconnect-state-aware indicator.
+                                SshStateSnapshot::Connected => (
+                                    "  SSH".to_string(),
+                                    Color::from_rgba(0.9, 0.5, 0.5, 1.0),
+                                ),
+                                SshStateSnapshot::Reconnecting { attempt } => (
+                                    format!("  SSH ↻ {}", attempt),
+                                    Color::from_rgba(0.95, 0.75, 0.3, 1.0),
+                                ),
+                                SshStateSnapshot::Authenticating => (
+                                    "  SSH 🔑".to_string(),
+                                    Color::from_rgba(0.95, 0.75, 0.3, 1.0),
+                                ),
+                                SshStateSnapshot::Failed { .. } => (
+                                    "  SSH ✗".to_string(),
+                                    Color::from_rgba(0.6, 0.6, 0.6, 1.0),
+                                ),
+                                SshStateSnapshot::Disconnected => (
+                                    "  SSH ⏻".to_string(),
+                                    Color::from_rgba(0.6, 0.6, 0.6, 1.0),
+                                ),
+                                SshStateSnapshot::Connecting => (
+                                    "  SSH …".to_string(),
+                                    Color::from_rgba(0.9, 0.5, 0.5, 1.0),
+                                ),
+                            });
+                        }
                     }
                 }
             }
-        }
-        #[cfg(not(unix))]
-        if let Some(tab) = self.active_tab_ref() {
-            if let Some(pane) = tab.panes.get(&tab.active_pane) {
-                if pane.terminal_ctx.is_ssh() {
-                    bar = bar.push(
-                        text("  SSH")
-                            .size(11)
-                            .color(Color::from_rgba(0.9, 0.5, 0.5, 1.0)),
-                    );
+            #[cfg(not(unix))]
+            {
+                if let Some(tab) = self.active_tab_ref() {
+                    if let Some(pane) = tab.panes.get(&tab.active_pane) {
+                        if pane.terminal_ctx.is_ssh() {
+                            break 'ssh Some((
+                                "  SSH".to_string(),
+                                Color::from_rgba(0.9, 0.5, 0.5, 1.0),
+                            ));
+                        }
+                    }
                 }
             }
-        }
+            None
+        };
 
-        // GAP-4.1: Vi/Copy mode indicator
-        if let Some(tab) = self.active_tab_ref() {
-            if let Some(ref sub_mode) = tab.vi_sub_mode {
-                let label = match sub_mode {
-                    crate::vi_mode_handler::ViSubMode::Normal => "  -- COPY --",
-                    crate::vi_mode_handler::ViSubMode::Visual => "  -- VISUAL --",
-                    crate::vi_mode_handler::ViSubMode::VisualLine => "  -- VLINE --",
-                    crate::vi_mode_handler::ViSubMode::VisualBlock => "  -- VBLOCK --",
-                };
-                bar = bar.push(
-                    text(label)
-                        .size(11)
-                        .color(Color::from_rgba(0.2, 0.85, 0.7, 1.0)),
-                );
-            }
-        }
-
-        // Process name
-        if let Some(ref proc) = self.status_bar_process_name {
-            bar = bar.push(
-                text(format!("  {}", proc))
-                    .size(11)
-                    .color(Color::from_rgba(0.55, 0.55, 0.55, 1.0)),
-            );
-        }
+        // GAP-4.1: Vi/Copy mode indicator.
+        let vi_mode: Option<&'static str> = self
+            .active_tab_ref()
+            .and_then(|tab| tab.vi_sub_mode)
+            .map(|sub_mode| match sub_mode {
+                crate::vi_mode_handler::ViSubMode::Normal => "  -- COPY --",
+                crate::vi_mode_handler::ViSubMode::Visual => "  -- VISUAL --",
+                crate::vi_mode_handler::ViSubMode::VisualLine => "  -- VLINE --",
+                crate::vi_mode_handler::ViSubMode::VisualBlock => "  -- VBLOCK --",
+            });
 
         // GAP-7.6: agent indicator (⚡ active / ❄ hibernated / ⏳ feed pending).
         #[cfg(unix)]
-        {
-            if let Some((label, color)) = self.agent_indicator_for_active_pane() {
-                bar = bar.push(text(label).size(11).color(color));
+        let agent: Option<(String, Color)> = self.agent_indicator_for_active_pane();
+        #[cfg(not(unix))]
+        let agent: Option<(String, Color)> = None;
+
+        let data = crate::status_bar::BarData {
+            cwd: self.status_bar_cwd.as_deref(),
+            git_branch: self.status_bar_git_branch.as_deref(),
+            git_status: self.status_bar_git_status.as_ref(),
+            ssh,
+            vi_mode,
+            process: self.status_bar_process_name.as_deref(),
+            agent,
+            cursor: self.get_active_cursor_pos(),
+            show_sparklines: self.status_bar_cfg.show_sparklines,
+        };
+
+        // Iterate the configured component list; right-aligned components render
+        // after the flexible spacer (cursor/clock).
+        let mut left = row![].spacing(0).align_y(iced::Alignment::Center);
+        let mut right = row![].spacing(0).align_y(iced::Alignment::Center);
+        for comp in &self.status_bar_registry {
+            if comp.align_right() {
+                right = right.push(comp.view(&data));
+            } else {
+                left = left.push(comp.view(&data));
             }
         }
-
-        // Spacer to push cursor position right
-        bar = bar.push(space().width(Length::Fill));
-
-        // Cursor position (right-aligned)
-        let (row_num, col_num) = self.get_active_cursor_pos();
-        bar = bar.push(
-            text(format!("{}:{}", row_num + 1, col_num + 1))
-                .size(11)
-                .color(Color::from_rgba(0.5, 0.5, 0.5, 1.0)),
-        );
+        let bar = row![left, space().width(Length::Fill), right];
 
         container(bar.width(Length::Fill))
             .width(Length::Fill)
-            .height(STATUS_BAR_HEIGHT)
+            .height(self.status_bar_cfg.effective_height())
             .padding([2, 8])
             .style(|_| container::Style {
                 background: Some(Background::Color(Color::from_rgba(
@@ -8693,7 +8722,7 @@ impl PureTermApp {
         });
 
         // Pin to bottom-center of the terminal area
-        let terminal_h = terminal_content_height(self.viewport_size.height);
+        let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let y = terminal_h - 36.0;
         let cx = (self.viewport_size.width - 300.0).max(0.0) / 2.0;
 
@@ -8755,7 +8784,7 @@ impl PureTermApp {
         });
 
         // Bottom-center, same slot as the vi search bar.
-        let terminal_h = terminal_content_height(self.viewport_size.height);
+        let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let y = terminal_h - 36.0;
         let cx = (self.viewport_size.width - 520.0).max(0.0) / 2.0;
 
@@ -9138,7 +9167,7 @@ impl PureTermApp {
 
     /// Render the split tree for a tab.
     fn view_split_tree(&self, tab: &Tab) -> Element<'_, Message, Theme, iced::Renderer> {
-        let terminal_h = terminal_content_height(self.viewport_size.height);
+        let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         self.view_node(&tab.split_tree, tab.active_pane, tab.id, self.viewport_size.width, terminal_h)
     }
 
@@ -9483,6 +9512,16 @@ impl PureTermApp {
             events_stream_builder,
         );
 
+        // GAP-24: Enhanced Status Bar — shared system-stat publisher
+        // (CPU/Memory/Network/Battery) + periodic tick for git/process refresh.
+        // Both keyed on status_bar_cfg so editing `refresh_interval_secs` in the
+        // config restarts the sampler at the new cadence.
+        let status_bar_stats_sub =
+            crate::status_bar::stats_subscription(self.status_bar_cfg.clone());
+        let status_bar_tick_secs = self.status_bar_cfg.refresh_interval_secs.max(1);
+        let status_bar_tick_sub =
+            time::every(Duration::from_secs(status_bar_tick_secs)).map(|_| Message::StatusBarTick);
+
         #[cfg(unix)]
         let subs = vec![
             keyboard_sub,
@@ -9497,6 +9536,8 @@ impl PureTermApp {
             hibernation_countdown_sub,
             detect_sub,
             events_sub,
+            status_bar_stats_sub,
+            status_bar_tick_sub,
         ];
         #[cfg(not(unix))]
         let subs = vec![
@@ -9507,6 +9548,8 @@ impl PureTermApp {
             config_sub,
             ipc_sub,
             events_sub,
+            status_bar_stats_sub,
+            status_bar_tick_sub,
         ];
 
         Subscription::batch(subs)

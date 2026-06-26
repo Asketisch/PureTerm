@@ -157,6 +157,49 @@ impl Default for McpConfig {
     }
 }
 
+/// GAP-24: `[statusbar]` settings — Enhanced Status Bar. A missing/malformed
+/// table yields `Default` (all segments, 1s refresh, sparklines on, 24px bar)
+/// so a bad config never breaks startup. `components` is the ordered list of
+/// segment ids; `refresh_interval_secs` bounds stat sampling + git subprocess
+/// cadence; `show_sparklines` toggles canvas mini-graphs; `bar_height` is the
+/// pixel floor (auto-grows to 28 when sparklines are on, for legibility).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct StatusBarConfig {
+    pub components: Vec<String>,
+    pub refresh_interval_secs: u64,
+    pub show_sparklines: bool,
+    pub bar_height: u16,
+}
+
+impl Default for StatusBarConfig {
+    fn default() -> Self {
+        Self {
+            components: [
+                "cwd", "git", "ssh", "vimode", "process", "agent", "cpu",
+                "memory", "network", "clock", "battery", "cursor",
+            ]
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect(),
+            refresh_interval_secs: 1,
+            show_sparklines: true,
+            bar_height: 24,
+        }
+    }
+}
+
+impl StatusBarConfig {
+    /// Effective bar height in pixels: the configured floor, auto-grown to
+    /// >=28 when sparklines are on so the canvas mini-graphs stay legible.
+    pub fn effective_height(&self) -> f32 {
+        if self.show_sparklines {
+            (self.bar_height as f32).max(28.0)
+        } else {
+            self.bar_height as f32
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Self {
         let mut config = Self::default();
@@ -451,6 +494,46 @@ impl AppConfig {
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect();
+        }
+        cfg
+    }
+
+    /// Load the `[statusbar]` table (GAP-24). A missing/malformed table yields
+    /// `Default`. Mirrors `load_mcp`: read_to_string -> toml::from_str -> walk
+    /// `value.get("statusbar").as_table()`; each key is independently optional.
+    pub fn load_statusbar(path: &Path) -> StatusBarConfig {
+        let mut cfg = StatusBarConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("statusbar").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(arr) = table.get("components").and_then(|v| v.as_array()) {
+            let ids: Vec<String> = arr
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect();
+            // Only override defaults if the list is non-empty — an empty array
+            // would render a blank bar, which is almost certainly a config mistake.
+            if !ids.is_empty() {
+                cfg.components = ids;
+            }
+        }
+        if let Some(n) = table.get("refresh_interval_secs").and_then(|v| v.as_integer()) {
+            cfg.refresh_interval_secs = (n.max(1)) as u64;
+        }
+        if let Some(b) = table.get("show_sparklines").and_then(|v| v.as_bool()) {
+            cfg.show_sparklines = b;
+        }
+        if let Some(h) = table.get("bar_height").and_then(|v| v.as_integer()) {
+            // Clamp to a sane readable range (18px minimum, 48px maximum).
+            cfg.bar_height = h.clamp(18, 48) as u16;
         }
         cfg
     }
