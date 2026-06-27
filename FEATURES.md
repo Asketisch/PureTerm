@@ -191,6 +191,15 @@
 - 实现:`crates/pureterm-ssh/src/{agent_sock,command,pty,session}.rs` + `crates/pureterm-daemon/src/{tunnel,session,control}.rs` + `crates/pureterm/src/{ssh/config,daemon_client,ssh_cli,tunnel_cli,cli}.rs`
 - Track B(daemon russh)真机 E2E 待补(需重启 puretermd 验新 daemon 的 `-A`;非 DoD,与 GAP-5.2 同属待真机网关验证)
 
+### GAP-5.2 SOCKS5 隧道(2026-06-27)
+- daemon `puretermd` 持有 russh 0.60 SSH 会话 + 手写 SOCKS5 listener（`atyp=3` 域名透传 → 远端解析 DNS，`curl --socks5-hostname` 即用），三路认证（identity/agent/password→need_auth），30s keepalive（R6 死网关检测）
+- `tunnel.{start,list,stop,provide_auth}` JSON-RPC + `ssh tunnel/tunnel-stop/tunnel-list` CLI（daemon-direct）；与 PTY SSH 双轨（不复用 ControlMaster socket）
+- **TOFU host-key**（`known_hosts.rs`）：隔离文件 `data_dir()/known_hosts`（**不**动用户 `~/.ssh/known_hosts`），首连记录 / 复连 Match / 换 key 严格拒绝。`ClientHandler::check_server_key` 经纯函数 `decide_host_key` 决策；Mismatch 经既有 `Failed` 状态 + `tunnel.list` 浮现（无需新 RPC）。OpenSSH 行格式 `[host]:port algo blob`，仅字面 host 匹配（wildcard/hashed 非 MVP）
+- **持久化**（`persist.rs`）：daemon 自有 `data_dir()/tunnels.json`（不进 GUI 的 `workspaces.json` 全量覆写、不进 `pureterm.toml` 配置）。`TunnelConfig` **不存密码**（对齐 SSH-profile）；`start`/`stop` 写入点 + 启动**仅恢复配置**（注册为 `stopped`，用户手动重连；不自动重连以避免 hammering + 不泄漏密码）。原子写 `NamedTempFile::persist`
+- agent 转发复用 GAP-5.4 Track B（隧道路径本身），无需新增
+- flip 标准：代码闭环 + `cargo test -p pureterm-daemon` 单测绿（known_hosts 7 + persist 6 + tunnel host_key 4 + 既有，共 69 绿；`instance_lock_is_exclusive` 在 puretermd 运行时环境性失败、2 PTY 集成测试需真机）；真实网关 E2E 见 `docs/manual-e2e/gap-5.2-socks5-tunnel.md`，**非阻塞**人工 follow-up（GAP-5.6/5.4 先例）
+- 实现:`crates/pureterm-daemon/src/{tunnel,known_hosts,persist,control,runtime,discovery}.rs` + `crates/pureterm/src/tunnel_cli.rs`
+
 ### SSH Profile 配置示例(alacritty.toml)
 
 ```toml

@@ -42,6 +42,17 @@ pub fn sessions_dir() -> PathBuf {
     data_dir().join("sessions")
 }
 
+/// GAP-5.2: persisted tunnel configs (config-only restore across daemon
+/// restarts).
+pub fn tunnels_file() -> PathBuf {
+    data_dir().join("tunnels.json")
+}
+
+/// GAP-5.2: TOFU known_hosts store (isolated from the user's `~/.ssh/known_hosts`).
+pub fn known_hosts_file() -> PathBuf {
+    data_dir().join("known_hosts")
+}
+
 /// Path of the single-instance lock file (flock'd).
 pub fn lock_path() -> PathBuf {
     data_dir().join("puretermd.lock")

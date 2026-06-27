@@ -29,6 +29,7 @@ env_logger = "0.11"
 # `target/` (no fresh native build). russh-keys was merged into `russh::keys`
 # at 0.50, so no separate crate. SOCKS5 is hand-written (no fast-socks5 dep).
 russh = "0.60"
+# GAP-5.2: atomic (tempfile + rename) writes for tunnels.json persistence.
+tempfile = "3"
 
 [dev-dependencies]
-tempfile = "3"

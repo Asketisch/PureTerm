@@ -19,7 +19,9 @@ pub mod control;
 pub mod discovery;
 pub mod frame;
 pub mod idle_probe;
+pub mod known_hosts;
 pub mod osc7;
+pub mod persist;
 pub mod ring_buffer;
 pub mod runtime;
 pub mod session;
@@ -27,4 +29,4 @@ pub mod pipe_pane;
 pub mod tunnel;
 pub mod wait_for;
 
-pub use discovery::{data_dir, lock_path, sessions_dir, socket_path};
+pub use discovery::{data_dir, known_hosts_file, lock_path, sessions_dir, socket_path, tunnels_file};

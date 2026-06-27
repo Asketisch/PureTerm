@@ -10,8 +10,8 @@
 
 | 状态 | 数量 | 说明 |
 |------|------|------|
-| ✅ 已完成 | 8 | 代码闭环，待或已完成 E2E |
-| 🚧 进行中 | 3 | 代码闭环待 E2E / 部分实现 |
+| ✅ 已完成 | 9 | 代码闭环，待或已完成 E2E |
+| 🚧 进行中 | 2 | 代码闭环待 E2E / 部分实现 |
 | ❌ 未实现 | 58 | 待排期 |
 | ⛔ 不做 | 0 | — |
 
@@ -27,7 +27,7 @@
 
 ---
 
-## ✅ 已完成（8 个）
+## ✅ 已完成（9 个）
 
 | GAP | 功能 | 状态 | 文档 |
 |-----|------|------|------|
@@ -35,6 +35,7 @@
 | GAP-1.3 | 标题栈 (CSI 22/23t) | ✅ GUI E2E 通过 | `crates/pureterm/src/terminal_context.rs` |
 | GAP-5.4 | [SSH Agent Forwarding](featuresList/40-ssh-forwarding.md) | ✅ Track A DoD 闭环 | `crates/pureterm/src/ssh/` |
 | GAP-5.6 | [SSH Reconnect 状态机](featuresList/68-ssh-reconnect.md) | ✅ 代码闭环 + harness 绿（GUI 真机 E2E 后补） | `crates/pureterm/src/ssh/` |
+| GAP-5.2 | [SOCKS5 隧道](featuresList/69-socks5-tunnel.md) | ✅ 代码闭环 + 单测绿（真实网关 E2E 待人工） | `crates/pureterm-daemon/src/{tunnel,known_hosts,persist}.rs` |
 | GAP-6.7 | [Event Stream](featuresList/66-event-stream.md) | ✅ 代码闭环 + harness 绿（GUI E2E 后补） | `crates/pureterm/src/events_log.rs` |
 | GAP-32 | [Git Integration](featuresList/32-git-integration.md) | ✅ 代码闭环 + harness 绿（GUI E2E 后补） | `crates/pureterm/src/{status_bar/git.rs,gh_pr.rs,git_panel.rs}` |
 | — | Settings Panel | ✅ 已有 | `crates/pureterm-settings/src/app.rs` |
@@ -42,12 +43,11 @@
 
 ---
 
-## 🚧 进行中（3 个）
+## 🚧 进行中（2 个）
 
 | GAP | 功能 | 优先级 | 文档 |
 |-----|------|--------|------|
 | GAP-7.8 | [Agent-Browser 兼容](featuresList/67-browser-panel.md) | P1 | 代码闭环，9 browser tool，待用户页面 E2E |
-| GAP-5.2 | [SOCKS5 隧道](featuresList/69-socks5-tunnel.md) | P1 | 代码闭环，待真实 SSH 网关 E2E |
 | GAP-4.2 | [Hover Preview](featuresList/16-hover-preview.md) | P2 | 智能选择已实现，无 hover preview |
 
 ---
@@ -72,7 +72,7 @@
 | 19 | — | [Dual Sidebar](featuresList/19-dual-sidebar.md) | UI/外壳 | L | 左侧 Workspace + 右侧工具面板 |
 | 35 | — | [LSP Client](featuresList/35-lsp-client.md) | 开发者工具 | XL | 内置语言服务器，代码补全/诊断 |
 | GAP-7.8 | 🚧 | [Agent-Browser 兼容](featuresList/67-browser-panel.md) | AI Agent | S | browser.* ops + MCP + screenshot（收尾） |
-| GAP-5.2 | 🚧 | [SOCKS5 隧道](featuresList/69-socks5-tunnel.md) | SSH | M | SOCKS5/HTTP CONNECT 代理（收尾） |
+| GAP-5.2 | ✅ | [SOCKS5 隧道](featuresList/69-socks5-tunnel.md) | SSH | M | SOCKS5/HTTP CONNECT 代理（收尾：TOFU + 持久化闭环，真实网关 E2E 待人工） |
 
 ## P2 — 终端增强（18 个）
 
@@ -155,11 +155,11 @@
 | **终端交互** | 2 | 1 | 3 | 3 | 1 | 0 | 0 | **10** |
 | **UI/外壳** | 0 | 1 | 4 | 3 | 5 | 0 | 0 | **13** |
 | **开发者工具** | 0 | 1 | 3 | 1 | 1 | 1 | 0 | **6** |
-| **SSH/网络** | 1 | 1 | 3 | 3 | 1 | 1 | 1 | **10** |
+| **SSH/网络** | 1 | 1 | 3 | 3 | 1 | 2 | 0 | **10** |
 | **平台** | 0 | 0 | 2 | 1 | 2 | 0 | 0 | **5** |
 | **集成** | 1 | 0 | 1 | 0 | 4 | 1 | 0 | **7** |
 | **视觉** | 0 | 0 | 0 | 0 | 8 | 0 | 0 | **8** |
-| **合计** | **6** | **6** | **19** | **12** | **23** | **3** | **1** | **67** |
+| **合计** | **6** | **6** | **19** | **12** | **23** | **4** | **0** | **67** |
 
 ---
 
@@ -186,7 +186,7 @@
 ### Phase 2（P0 新功能 + P1，3-4 周）
 1. AI Chat Panel（XL, 2-3 周）
 2. Notification System（M, 1 周）
-3. Agent-Browser E2E + SOCKS5 E2E（S+M, 1.5 周）
+3. Agent-Browser E2E + ~~SOCKS5 隧道收尾~~ ✅ 已完成（2026-06-27，TOFU + 持久化闭环，真实网关 E2E 非阻塞待人工）
 4. Codebase Indexing（L, 1.5 周）
 
 ### Phase 3（P1 剩余 + P2 核心，4-6 周）
@@ -204,7 +204,7 @@
 
 ## 相关文件
 
-- **已实现特性**: [`FEATURES.md`](../FEATURES.md) — 35 个已闭环功能
+- **已实现特性**: [`FEATURES.md`](../FEATURES.md) — 36 个已闭环功能
 - **竞品分析**: [`cmux-comparison.md`](cmux-comparison.md), [`iterm2-comparison.md`](iterm2-comparison.md), [`tabby-comparison.md`](tabby-comparison.md), [`kaku-comparison.md`](kaku-comparison.md), [`warp-comparison.md`](warp-comparison.md)
 - **E2E 手册**: [`manual-e2e/`](manual-e2e/) 目录
 - **工作区规划**: [`gap-2.1-workspace-plan.md`](gap-2.1-workspace-plan.md)

@@ -26,12 +26,15 @@ use std::sync::{Arc, Mutex};
 use pureterm_ssh::agent_sock;
 use russh::client::{self, Handle, Handler, Msg, Session};
 use russh::keys::agent::client::AgentClient;
+use russh::keys::ssh_key::HashAlg;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg};
 use russh::Channel;
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
+
+use crate::known_hosts::{format_host_pattern, KeyCheck, KnownHosts};
 
 /// SOCKS5 protocol version byte.
 const SOCKS5: u8 = 5;
@@ -51,6 +54,9 @@ enum TunnelLive {
     Connected,
     NeedAuth,
     Failed(String),
+    /// GAP-5.2: a config restored from `tunnels.json` at daemon startup but not
+    /// yet (re)started. Config-only restore: no listener bound, no task.
+    Stopped,
 }
 
 impl TunnelLive {
@@ -60,6 +66,7 @@ impl TunnelLive {
             TunnelLive::Connected => "connected",
             TunnelLive::NeedAuth => "need_auth",
             TunnelLive::Failed(_) => "failed",
+            TunnelLive::Stopped => "stopped",
         }
     }
 }
@@ -86,6 +93,11 @@ struct TunnelEntry {
     user: Option<String>,
     port: u16,
     local_addr: String,
+    /// Bound local SOCKS5 port (carried so a live entry can be snapshotted to a
+    /// `TunnelConfig` for persistence, and a restored `Stopped` entry shows it).
+    local_port: u16,
+    remote_dns: bool,
+    forward_agent: bool,
     #[allow(dead_code)]
     identity_file: Option<String>,
     status: TunnelLive,
@@ -98,6 +110,10 @@ struct TunnelEntry {
 #[derive(Clone, Default)]
 pub struct TunnelManager {
     tunnels: Arc<Mutex<HashMap<String, Arc<Mutex<TunnelEntry>>>>>,
+    /// GAP-5.2 TOFU host-key store, set once at daemon startup. Cloned into
+    /// each tunnel's `ClientHandler`. `OnceLock` keeps `TunnelManager: Default`
+    /// (unset in unit tests) while letting `runtime` set it after construction.
+    known_hosts: Arc<std::sync::OnceLock<Arc<KnownHosts>>>,
 }
 
 impl TunnelManager {
@@ -133,6 +149,9 @@ impl TunnelManager {
             user: user.clone(),
             port,
             local_addr: local_addr.clone(),
+            local_port,
+            remote_dns,
+            forward_agent,
             identity_file: identity_file.clone(),
             status: TunnelLive::Connecting,
             auth_tx: None,
@@ -140,6 +159,7 @@ impl TunnelManager {
         }));
 
         let entry_for_task = entry.clone();
+        let known_hosts = self.known_hosts.get().cloned();
         let join = rt.spawn(run_tunnel(
             entry_for_task,
             listener,
@@ -150,6 +170,7 @@ impl TunnelManager {
             password,
             remote_dns,
             forward_agent,
+            known_hosts,
         ));
         entry.lock().unwrap().abort = Some(join.abort_handle());
 
@@ -214,6 +235,57 @@ impl TunnelManager {
             .ok_or_else(|| "tunnel is not awaiting auth".to_string())?;
         tx.send(secret).map_err(|_| "auth receiver dropped".to_string())
     }
+
+    /// Set the shared TOFU host-key store (called once from `runtime` at daemon
+    /// startup, before any tunnel is started). Subsequent tunnels consult it in
+    /// `ClientHandler::check_server_key`.
+    pub fn set_known_hosts(&self, kh: Arc<KnownHosts>) {
+        let _ = self.known_hosts.set(kh);
+    }
+
+    /// Snapshot all entries (live + restored-stopped) as serializable configs
+    /// for `tunnels.json` persistence.
+    pub fn snapshot_configs(&self) -> Vec<crate::persist::TunnelConfig> {
+        self.tunnels
+            .lock()
+            .unwrap()
+            .values()
+            .map(|e| {
+                let e = e.lock().unwrap();
+                crate::persist::TunnelConfig {
+                    host: e.host.clone(),
+                    user: e.user.clone(),
+                    port: e.port,
+                    identity_file: e.identity_file.clone(),
+                    local_port: e.local_port,
+                    remote_dns: e.remote_dns,
+                    forward_agent: e.forward_agent,
+                }
+            })
+            .collect()
+    }
+
+    /// GAP-5.2 config-only restore: register a persisted config as a `Stopped`
+    /// entry (visible in `tunnel.list`) with no listener/task. The user
+    /// re-starts it explicitly via `tunnel.start`.
+    pub fn register_stopped(&self, cfg: crate::persist::TunnelConfig) {
+        let id = new_tunnel_id();
+        let local_port = cfg.local_port;
+        let entry = Arc::new(Mutex::new(TunnelEntry {
+            host: cfg.host,
+            user: cfg.user,
+            port: cfg.port,
+            local_addr: format!("127.0.0.1:{local_port}"),
+            local_port,
+            remote_dns: cfg.remote_dns,
+            forward_agent: cfg.forward_agent,
+            identity_file: cfg.identity_file,
+            status: TunnelLive::Stopped,
+            auth_tx: None,
+            abort: None,
+        }));
+        self.tunnels.lock().unwrap().insert(id, entry);
+    }
 }
 
 /// The russh client handler. `check_server_key` is overridden (the default
@@ -224,19 +296,30 @@ struct ClientHandler {
     /// Resolved `$SSH_AUTH_SOCK` path; present only when agent forwarding is
     /// requested for this tunnel. The callback clones it to spawn the bridge.
     agent_sock: Option<PathBuf>,
+    /// GAP-5.2 TOFU host-key store. `None` (unit tests / unconfigured) keeps the
+    /// legacy accept-all behavior; otherwise `check_server_key` consults it.
+    known_hosts: Option<Arc<KnownHosts>>,
+    host: String,
+    port: u16,
 }
 
 impl Handler for ClientHandler {
     type Error = russh::Error;
 
-    /// GAP-5.2 MVP: accept all server host keys (trust-on-first-use pending a
-    /// known_hosts store). The tunnel only targets gateways the operator named
-    /// explicitly via the CLI/control plane, mirroring a first-run SSH client.
+    /// GAP-5.2 TOFU: accept the server key on first sight (recording it) or on a
+    /// matching repeat; reject on a mismatch (strict — the daemon has no prompt
+    /// path, so the rejection surfaces via the tunnel's `Failed` status). With
+    /// no store configured, falls back to accept-all (tests/unconfigured).
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh::keys::ssh_key::PublicKey,
+        server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        Ok(true)
+        let host_pattern = format_host_pattern(&self.host, self.port);
+        Ok(decide_host_key(
+            self.known_hosts.as_deref(),
+            &host_pattern,
+            server_public_key,
+        ))
     }
 
     /// GAP-5.4: the server opened an `auth-agent@openssh.com` channel back to
@@ -272,6 +355,29 @@ impl Handler for ClientHandler {
     }
 }
 
+/// Pure host-key decision (unit-testable). Returns whether the connection should
+/// proceed: accept on no-store (legacy/tests/unconfigured), `Match`, or
+/// `Unknown` (TOFU record + accept); reject strictly on `Mismatch` (the daemon
+/// has no interactive prompt path, so a mismatch surfaces via the tunnel's
+/// `Failed` status).
+fn decide_host_key(
+    kh: Option<&KnownHosts>,
+    host_pattern: &str,
+    key: &russh::keys::ssh_key::PublicKey,
+) -> bool {
+    let Some(kh) = kh else {
+        return true; // no store configured (tests/unconfigured) → legacy accept-all
+    };
+    match kh.check_and_record(host_pattern, key) {
+        KeyCheck::Match | KeyCheck::Unknown => true,
+        KeyCheck::Mismatch(stored_fp) => {
+            let live_fp = key.fingerprint(HashAlg::Sha256).to_string();
+            log::warn!("host key mismatch for {host_pattern}: known={stored_fp} live={live_fp}");
+            false
+        }
+    }
+}
+
 fn set_status(entry: &Mutex<TunnelEntry>, status: TunnelLive) {
     let mut e = entry.lock().unwrap();
     // Clear any parked auth sender when leaving the NeedAuth state.
@@ -293,6 +399,7 @@ async fn run_tunnel(
     password: Option<String>,
     _remote_dns: bool,
     forward_agent: bool,
+    known_hosts: Option<Arc<KnownHosts>>,
 ) {
     let listener = match TcpListener::from_std(std_listener) {
         Ok(l) => l,
@@ -320,6 +427,9 @@ async fn run_tunnel(
     };
     let handler = ClientHandler {
         agent_sock: agent_sock.clone(),
+        known_hosts,
+        host: host.clone(),
+        port,
     };
     let mut handle = match client::connect(config, &addr, handler).await {
         Ok(h) => h,
@@ -653,5 +763,47 @@ mod tests {
         // Mirrors the port decode in serve_socks5.
         assert_eq!(u16::from_be_bytes([0x1F, 0x90]), 8080);
         assert_eq!(u16::from_be_bytes([0x00, 0x50]), 80);
+    }
+
+    // ── GAP-5.2 TOFU host-key decision ────────────────────────────────────
+    const KEY_A_B64: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
+    const KEY_B_B64: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIAMKERgfJi00O0JJUFdeZWxzeoGIj5adpKuyucDHztXc";
+
+    fn pubkey(b64: &str) -> russh::keys::ssh_key::PublicKey {
+        russh::keys::parse_public_key_base64(b64).unwrap()
+    }
+
+    #[test]
+    fn host_key_no_store_accepts() {
+        assert!(decide_host_key(None, "gw", &pubkey(KEY_A_B64)));
+    }
+
+    #[test]
+    fn host_key_unknown_records_then_accepts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let kh = KnownHosts::open(tmp.path().join("kh")).unwrap();
+        assert!(decide_host_key(Some(&kh), "gw", &pubkey(KEY_A_B64)));
+    }
+
+    #[test]
+    fn host_key_match_accepts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("kh");
+        let kh = KnownHosts::open(path.clone()).unwrap();
+        assert!(decide_host_key(Some(&kh), "gw", &pubkey(KEY_A_B64)));
+        // Reload from the file the first connect wrote → Match must still accept.
+        let kh2 = KnownHosts::open(path).unwrap();
+        assert!(decide_host_key(Some(&kh2), "gw", &pubkey(KEY_A_B64)));
+    }
+
+    #[test]
+    fn host_key_mismatch_rejects() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("kh");
+        let kh = KnownHosts::open(path.clone()).unwrap();
+        assert!(decide_host_key(Some(&kh), "gw", &pubkey(KEY_A_B64)));
+        // Present a different key for the now-known host → reject.
+        let kh2 = KnownHosts::open(path).unwrap();
+        assert!(!decide_host_key(Some(&kh2), "gw", &pubkey(KEY_B_B64)));
     }
 }

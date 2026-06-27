@@ -37,6 +37,28 @@ pub fn run() -> std::io::Result<()> {
         runtime.handle().clone(),
     ));
 
+    // GAP-5.2: open the TOFU known_hosts store and hand it to the tunnel
+    // manager. A failure to open (rare: data dir unreadable) degrades to the
+    // legacy accept-all host-key behavior rather than crashing the daemon.
+    match crate::known_hosts::KnownHosts::open(crate::discovery::known_hosts_file()) {
+        Ok(kh) => state.tunnels.set_known_hosts(Arc::new(kh)),
+        Err(e) => log::warn!("known_hosts: open failed, TOFU disabled: {e}"),
+    }
+
+    // GAP-5.2: config-only restore — reload tunnel configs so they survive a
+    // daemon restart, registered as Stopped (no listener/task). The user
+    // re-starts them explicitly via tunnel.start. Secrets were never persisted,
+    // so a password-auth tunnel re-enters NeedAuth on re-start.
+    if let Some(file) = crate::persist::load_tunnels(&crate::discovery::tunnels_file()) {
+        let n = file.tunnels.len();
+        for cfg in file.tunnels {
+            state.tunnels.register_stopped(cfg);
+        }
+        if n > 0 {
+            log::info!("restored {n} tunnel config(s) (config-only; use tunnel.start to connect)");
+        }
+    }
+
     // GAP-7.3: periodic CPU sample tick drives `cpu_idle_secs` for every
     // session — the dual idle condition for hibernation, alongside PTY-output
     // idle recorded by the pump. Runs concurrently with the control listener.

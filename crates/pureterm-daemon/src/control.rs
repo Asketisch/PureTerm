@@ -64,6 +64,17 @@ impl ControlState {
     }
 }
 
+/// GAP-5.2: snapshot live tunnel configs to `tunnels.json` (config-only
+/// persistence across daemon restarts). Best-effort (save_tunnels logs on
+/// failure) — called after each `tunnel.start`/`tunnel.stop` mutation.
+fn persist_tunnels(state: &ControlState) {
+    let cfg = crate::persist::TunnelsFile {
+        version: 1,
+        tunnels: state.tunnels.snapshot_configs(),
+    };
+    crate::persist::save_tunnels(&crate::discovery::tunnels_file(), &cfg);
+}
+
 /// Bind the control socket and serve until the runtime is cancelled.
 pub async fn serve(socket_path: PathBuf, state: Arc<ControlState>) -> std::io::Result<()> {
     if socket_path.exists() {
@@ -257,7 +268,10 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
             match state.tunnels.start(
                 &rt, host, user, port, identity_file, password, local_port, remote_dns, forward_agent,
             ) {
-                Ok(tid) => Ok(serde_json::json!({ "tunnel_id": tid, "status": "connecting" })),
+                Ok(tid) => {
+                    persist_tunnels(&state);
+                    Ok(serde_json::json!({ "tunnel_id": tid, "status": "connecting" }))
+                }
                 Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("tunnel start failed: {e}"))),
             }
         }
@@ -267,7 +281,9 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                 Some(t) => t,
                 None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing tunnel_id"),
             };
-            Ok(serde_json::json!({ "stopped": state.tunnels.stop(&tid) }))
+            let stopped = state.tunnels.stop(&tid);
+            persist_tunnels(&state);
+            Ok(serde_json::json!({ "stopped": stopped }))
         }
         "tunnel.provide_auth" => {
             let tid = match sparam(request, "tunnel_id") {
