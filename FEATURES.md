@@ -96,6 +96,18 @@
 - **配置 I/O**:使用 `toml_edit::DocumentMut` 格式保留读写,`NamedTempFile::persist()` 原子写入
 - 实现:`crates/pureterm-settings/`(独立 crate)
 
+### GAP-32 Git Integration(2026-06-27)
+- 在 GAP-24 Enhanced Status Bar 的 porcelain 管线上增量扩展,零新依赖:`git status --porcelain=v2 --branch` 一条子进程出 branch + dirty 分计数(staged/unstaged/untracked/unmerged/renamed)+ ahead/behind + HEAD oid + upstream;PR 走 `gh pr view --json` shell-out(复用用户 `gh auth`,不做内置 OAuth),挂 `GitStatus.pr` 单一源(状态栏 pill + 面板共用);`git` 缺失/非 repo 回退纯 FS `read_git_branch`(行为不回退)
+- **状态栏 git 段**:`git_bar_label` 出 ` main ↑2↓1 ●2 ~1 +3`(零计数段省略)+ amber in-progress op 后缀 + 状态色 PR pill `⧉#N STATE (✓s · …p · ✗f)`
+- **⌘⇧B Git 面板**(避让 ⌘⇧G=SearchPrev):只读 repo 视图(分支/upstream/ahead-behind/HEAD/分计数/recent commits/in-progress op/PR+checks)+ 快捷操作按钮 Stage all / Commit / Push / Pull / **Create PR** / Lazygit,命令写进活跃 pane PTY(`run_git_quick_action` → `write_to_pty`);Create-PR=`gh pr create`(in-pane 编辑器写 title/body),gh 缺失 toast;lazygit 本地起 TUI、SSH pane/未装 toast 降级;Toast 层(3.5s 自动消失 + 4s StatusBarTick 安全网)
+- **Tab 标题可选显示分支**:`[git].tab_title_branch`(默认关,opt-in)开后在**派生标题**回退路径追加 ` [<branch>]`(OSC 程序设的标题 GAP-1.3 仍最高优先,不被覆盖);`tab_title_with_branch` 纯函数 + `read_git_branch` 纯 FS 取分支
+- **EventBus `git.*` 发射**(GAP-6.7 集成):新增 `Category::Git`,在**有意义转移点**(非每 tick)发 `git.branch_changed`(按 pane 去重 `last_git_branch` + `git_branch_changed` 纯函数)/ `git.pr_updated` / `git.panel_opened`/`panel_closed` / `git.quick_action`;`pureterm events tail --type git` 可消费
+- **配置**:`[git]` 段(`panel_enabled` / `show_pr` / `pr_refresh_ticks` 默认 30 / `lazygit_cmd` / `tab_title_branch`);PR 刷新每 `pr_refresh_ticks` tick 一次防抖
+- 实现:`crates/pureterm/src/{status_bar/git.rs,gh_pr.rs,git_panel.rs,events.rs}` + `iced_app.rs`(面板 view + 动作执行 + emit 点)+ `app_config.rs`(`GitConfig`/`load_git`)+ `keymap.rs`(⌘⇧B)
+- 单测:574 pureterm 全绿(porcelain v2 解析 19 + `parse_head` 3 + `gh_pr` 3 + `git_bar_label` 4 + `git_quick_action_command`/`as_slug`/`git_branch_changed` 6 + `tab_title_with_branch` 3 + events `Category::Git`/`type_filter_git` 2)
+- pixel smoke:`docs/manual-e2e/gap-32-git-integration.md`(非 CI gate,6 场景:状态栏 / 面板 / Create-PR / lazygit / tab 分支 / events tail --type git)
+- **未做(独立后续)**:`git2` crate/直接 GitHub API(有意弃用,shell-out 零依赖复用 `gh auth`)/ `Cmd+Shift+G` lazygit 热键(已绑 SearchPrev)/ `events.subscribe` 流式(被 GAP-6.7 阻塞)
+
 ---
 
 ## C. 终端交互
@@ -351,12 +363,12 @@ action = { Ssh = "ListProfiles" }
 | 类别 | 已实现数 |
 |---|---|
 | A. 核心架构 | 5 |
-| B. UI/UX | 6 |
+| B. UI/UX | 7 |
 | C. 终端交互 | 2 |
 | D. SSH | 6 |
 | E. 集成与可编程 | 5 |
 | F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **34** |
+| **总计** | **35** |
 
 ---

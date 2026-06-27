@@ -10,8 +10,8 @@
 
 | 状态 | 数量 | 说明 |
 |------|------|------|
-| ✅ 已完成 | 7 | 代码闭环，待或已完成 E2E |
-| 🚧 进行中 | 4 | 代码闭环待 E2E / 部分实现 |
+| ✅ 已完成 | 8 | 代码闭环，待或已完成 E2E |
+| 🚧 进行中 | 3 | 代码闭环待 E2E / 部分实现 |
 | ❌ 未实现 | 58 | 待排期 |
 | ⛔ 不做 | 0 | — |
 
@@ -27,7 +27,7 @@
 
 ---
 
-## ✅ 已完成（6 个）
+## ✅ 已完成（8 个）
 
 | GAP | 功能 | 状态 | 文档 |
 |-----|------|------|------|
@@ -36,19 +36,19 @@
 | GAP-5.4 | [SSH Agent Forwarding](featuresList/40-ssh-forwarding.md) | ✅ Track A DoD 闭环 | `crates/pureterm/src/ssh/` |
 | GAP-5.6 | [SSH Reconnect 状态机](featuresList/68-ssh-reconnect.md) | ✅ 代码闭环 + harness 绿（GUI 真机 E2E 后补） | `crates/pureterm/src/ssh/` |
 | GAP-6.7 | [Event Stream](featuresList/66-event-stream.md) | ✅ 代码闭环 + harness 绿（GUI E2E 后补） | `crates/pureterm/src/events_log.rs` |
+| GAP-32 | [Git Integration](featuresList/32-git-integration.md) | ✅ 代码闭环 + harness 绿（GUI E2E 后补） | `crates/pureterm/src/{status_bar/git.rs,gh_pr.rs,git_panel.rs}` |
 | — | Settings Panel | ✅ 已有 | `crates/pureterm-settings/src/app.rs` |
 | — | [Dual Close](featuresList/) | ✅ 已有 | `crates/pureterm/src/iced_app.rs` |
 
 ---
 
-## 🚧 进行中（5 个）
+## 🚧 进行中（3 个）
 
 | GAP | 功能 | 优先级 | 文档 |
 |-----|------|--------|------|
 | GAP-7.8 | [Agent-Browser 兼容](featuresList/67-browser-panel.md) | P1 | 代码闭环，9 browser tool，待用户页面 E2E |
 | GAP-5.2 | [SOCKS5 隧道](featuresList/69-socks5-tunnel.md) | P1 | 代码闭环，待真实 SSH 网关 E2E |
 | GAP-4.2 | [Hover Preview](featuresList/16-hover-preview.md) | P2 | 智能选择已实现，无 hover preview |
-| GAP-32 | [Git Integration](featuresList/32-git-integration.md) | P2 | 代码闭环，490 单测绿（porcelain 分计数 + gh PR 面板 + lazygit/快捷操作），待 GUI E2E |
 
 ---
 
@@ -86,7 +86,7 @@
 | 16 | 🚧 | [Hover Preview](featuresList/16-hover-preview.md) | 终端交互 | M | 悬停 URL/路径显示 tooltip |
 | 24 | ✅ | [Enhanced Status Bar](featuresList/24-status-bar-enhanced.md) | UI/外壳 | L | 40+ 组件：CPU/内存/网络/Git/电池 |
 | 25 | — | [Multi-Window](featuresList/25-multi-window.md) | UI/外壳 | L | 多独立窗口 + 跨窗口通信 |
-| 32 | 🚧 | [Git Integration](featuresList/32-git-integration.md) | 开发者工具 | M | 分支/dirty 分计数 + gh PR + 面板 + lazygit/快捷操作（代码闭环，待 GUI E2E） |
+| 32 | ✅ | [Git Integration](featuresList/32-git-integration.md) | 开发者工具 | M | porcelain 分计数 + gh PR + 面板 + Create-PR + tab 分支 + git.* EventBus（代码闭环，574 单测绿，GUI E2E 后补） |
 | 33 | — | [Port Scanner](featuresList/33-port-scanner.md) | 开发者工具 | S | 侧边栏显示监听端口 |
 | 36 | — | [Semantic History](featuresList/36-semantic-history.md) | 开发者工具 | M | Cmd-click 路径在编辑器中打开 |
 | 40 | — | [SSH Forwarding](featuresList/40-ssh-forwarding.md) | SSH/网络 | M | 端口转发（本地/远程/动态） |
@@ -154,12 +154,12 @@
 | **AI Agent** | 2 | 1 | 3 | 1 | 1 | 0 | 0 | **8** |
 | **终端交互** | 2 | 1 | 3 | 3 | 1 | 0 | 0 | **10** |
 | **UI/外壳** | 0 | 1 | 4 | 3 | 5 | 0 | 0 | **13** |
-| **开发者工具** | 0 | 1 | 3 | 1 | 1 | 0 | 1 | **6** |
+| **开发者工具** | 0 | 1 | 3 | 1 | 1 | 1 | 0 | **6** |
 | **SSH/网络** | 1 | 1 | 3 | 3 | 1 | 1 | 1 | **10** |
 | **平台** | 0 | 0 | 2 | 1 | 2 | 0 | 0 | **5** |
 | **集成** | 1 | 0 | 1 | 0 | 4 | 1 | 0 | **7** |
 | **视觉** | 0 | 0 | 0 | 0 | 8 | 0 | 0 | **8** |
-| **合计** | **6** | **6** | **19** | **12** | **23** | **2** | **2** | **67** |
+| **合计** | **6** | **6** | **19** | **12** | **23** | **3** | **1** | **67** |
 
 ---
 
@@ -193,7 +193,7 @@
 1. Triggers（L, 1.5 周）
 2. LSP Client（XL, 2-3 周）
 3. Dual Sidebar（L, 1.5 周）
-4. Git Integration（M, 1 周）
+4. ~~Git Integration（M, 1 周）~~ ✅ 已完成（2026-06-27）
 5. SSH Forwarding（M, 1 周）
 6. Semantic History（M, 1 周）
 
@@ -204,7 +204,7 @@
 
 ## 相关文件
 
-- **已实现特性**: [`FEATURES.md`](../FEATURES.md) — 33 个已闭环功能
+- **已实现特性**: [`FEATURES.md`](../FEATURES.md) — 35 个已闭环功能
 - **竞品分析**: [`cmux-comparison.md`](cmux-comparison.md), [`iterm2-comparison.md`](iterm2-comparison.md), [`tabby-comparison.md`](tabby-comparison.md), [`kaku-comparison.md`](kaku-comparison.md), [`warp-comparison.md`](warp-comparison.md)
 - **E2E 手册**: [`manual-e2e/`](manual-e2e/) 目录
 - **工作区规划**: [`gap-2.1-workspace-plan.md`](gap-2.1-workspace-plan.md)

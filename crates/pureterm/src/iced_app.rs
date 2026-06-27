@@ -371,6 +371,10 @@ pub struct PureTermApp {
     // GAP-32: Git Integration — config (`[git]`) + overlay panel state.
     git_cfg: crate::app_config::GitConfig,
     git_panel: crate::git_panel::GitPanelState,
+    /// GAP-32 EventBus: last-emitted branch per pane, deduping
+    /// `git.branch_changed` (the status path refreshes git every tick; we emit
+    /// only on a real change — never per-tick).
+    last_git_branch: HashMap<PaneId, String>,
     /// GAP-32: transient toast `(message, shown_at)`. None ⇒ no toast.
     toast: Option<(String, Instant)>,
     // GAP-4.1 Vi search
@@ -1433,6 +1437,7 @@ impl PureTermApp {
             // GAP-32: Git Integration config + overlay panel state.
             git_cfg,
             git_panel: crate::git_panel::GitPanelState::new(),
+            last_git_branch: HashMap::new(),
             toast: None,
             pane_cwds: HashMap::new(),
             pane_osc_title: HashMap::new(),
@@ -3129,10 +3134,24 @@ impl PureTermApp {
     }
 
     /// GAP-1.3: title shown for a tab — the OSC-set title of the active pane
-    /// wins, else the derived `tab.title`. See [`resolve_display_title`].
+    /// wins, else the derived `tab.title`. GAP-32: when `[git].tab_title_branch`
+    /// is on, the current branch is appended to the *derived* title only (an OSC
+    /// program-set title keeps precedence). See [`tab_title_with_branch`].
     fn tab_display_title(&self, tab: &Tab) -> String {
         let osc = self.pane_osc_title.get(&tab.active_pane).map(String::as_str);
-        resolve_display_title(osc, &tab.title).to_string()
+        // Pure-FS branch read (instant, no subprocess) for the active pane's
+        // cwd. Only read when the feature is opted in — off by default, so the
+        // common path stays a pure hashmap lookup.
+        let branch = if self.git_cfg.tab_title_branch {
+            self.pane_cwds
+                .get(&tab.active_pane)
+                .map(PathBuf::from)
+                .filter(|p| p.is_dir())
+                .and_then(|cwd| crate::status_bar::git::read_git_branch(&cwd))
+        } else {
+            None
+        };
+        tab_title_with_branch(osc, &tab.title, branch.as_deref(), self.git_cfg.tab_title_branch)
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -3447,9 +3466,37 @@ impl PureTermApp {
                             status.pr = existing.pr.clone();
                         }
                     }
+                    // Active pane id for branch-change dedup (computed before the
+                    // mutable field borrows below to keep the borrow checker happy).
+                    let pane_id = self.active_tab_ref().map(|t| t.active_pane);
                     self.status_bar_git_status = Some(status.clone());
                     if self.git_panel.open && self.git_panel.cwd.as_deref() == Some(cwd.as_str()) {
-                        self.git_panel.status = Some(status);
+                        self.git_panel.status = Some(status.clone());
+                    }
+                    // GAP-32 EventBus: emit `git.branch_changed` only on a real
+                    // change (deduped per pane), never per-tick.
+                    if let Some(branch) = status.branch.as_deref() {
+                        let changed = {
+                            let prev = pane_id
+                                .and_then(|pid| self.last_git_branch.get(&pid))
+                                .map(String::as_str);
+                            crate::git_panel::git_branch_changed(prev, branch)
+                        };
+                        if changed {
+                            if let Some(pid) = pane_id {
+                                self.last_git_branch.insert(pid, branch.to_string());
+                            }
+                            self.events.emit(
+                                crate::events::Category::Git,
+                                "git.branch_changed",
+                                None,
+                                serde_json::json!({
+                                    "branch": branch,
+                                    "ahead": status.ahead,
+                                    "behind": status.behind,
+                                }),
+                            );
+                        }
                     }
                 }
             }
@@ -3459,6 +3506,12 @@ impl PureTermApp {
                 }
                 if self.git_panel.open {
                     self.git_panel.close();
+                    self.events.emit(
+                        crate::events::Category::Git,
+                        "git.panel_closed",
+                        None,
+                        serde_json::json!({}),
+                    );
                     return Task::none();
                 }
                 let Some(cwd) = self.active_pane_cwd() else {
@@ -3471,6 +3524,12 @@ impl PureTermApp {
                 let cwd = cwd.to_string_lossy().to_string();
                 self.git_panel.open_for(&cwd);
                 self.git_panel.pr_refreshing = self.git_cfg.show_pr;
+                self.events.emit(
+                    crate::events::Category::Git,
+                    "git.panel_opened",
+                    None,
+                    serde_json::json!({ "cwd": cwd }),
+                );
                 let mut tasks = vec![
                     crate::status_bar::spawn_git_status(cwd.clone()),
                     crate::gh_pr::spawn_git_log(cwd.clone()),
@@ -3515,8 +3574,30 @@ impl PureTermApp {
                 // (`status_bar_git_status.pr`).
                 if matches_bar {
                     if let Some(g) = self.status_bar_git_status.as_mut() {
-                        g.pr = pr;
+                        g.pr = pr.clone();
                     }
+                }
+                // GAP-32 EventBus: PR refresh completed. Already throttled to
+                // every `pr_refresh_ticks`, so this stays low-frequency.
+                if matches_bar || matches_panel {
+                    let data = match &pr {
+                        Some(p) => serde_json::json!({
+                            "pr_number": p.number,
+                            "state": p.state,
+                            "checks": {
+                                "success": p.checks.success,
+                                "pending": p.checks.pending,
+                                "failure": p.checks.failure,
+                            },
+                        }),
+                        None => serde_json::json!({ "present": false }),
+                    };
+                    self.events.emit(
+                        crate::events::Category::Git,
+                        "git.pr_updated",
+                        None,
+                        data,
+                    );
                 }
             }
             Message::GitQuickAction(action) => {
@@ -6014,10 +6095,11 @@ impl PureTermApp {
 
     /// GAP-32: run a quick git action from the panel button row. Writes the
     /// command into the focused pane's PTY (so it runs in-pane). lazygit on an
-    /// SSH pane is deferred (different notifier path); a missing binary toasts
-    /// instead of writing. The panel stays open for the non-interactive actions
-    /// (`add`/`commit`/`push`/`pull`) and closes for lazygit (its TUI needs the
-    /// pane visible).
+    /// SSH pane is deferred (different notifier path); a missing `lazygit` or
+    /// `gh` binary toasts instead of writing. The panel stays open for the
+    /// in-pane actions (`add`/`commit`/`push`/`pull`/`create pr`) and closes
+    /// for lazygit (its TUI needs the pane visible). The command table itself
+    /// lives in the pure, unit-tested [`git_quick_action_command`].
     fn run_git_quick_action(
         &mut self,
         action: crate::git_panel::GitQuickAction,
@@ -6026,11 +6108,17 @@ impl PureTermApp {
         let Some(ctx) = self.active_terminal_ctx() else {
             return Task::done(Message::Toast("No active pane.".to_string()));
         };
-        let cmd: Option<String> = match action {
-            GitQuickAction::StageAll => Some("git add -A".into()),
-            GitQuickAction::Commit => Some("git commit".into()),
-            GitQuickAction::Push => Some("git push".into()),
-            GitQuickAction::Pull => Some("git pull".into()),
+        // GAP-32 EventBus: every quick action is recorded (user-initiated, so
+        // this is bounded — never emitted on the per-tick status path).
+        self.events.emit(
+            crate::events::Category::Git,
+            "git.quick_action",
+            None,
+            serde_json::json!({ "action": action.as_slug() }),
+        );
+        // Side-effecting guards for the two binary-backed actions (need app
+        // state + toasts). The pure command table covers the in-pane commands.
+        match action {
             GitQuickAction::Lazygit => {
                 if ctx.is_ssh() {
                     return Task::done(Message::Toast(
@@ -6049,10 +6137,17 @@ impl PureTermApp {
                 }
                 // The TUI needs the pane visible.
                 self.git_panel.close();
-                Some(bin)
             }
-        };
-        if let Some(cmd) = cmd {
+            GitQuickAction::CreatePr => {
+                if !crate::status_bar::is_binary_available("gh") {
+                    return Task::done(Message::Toast(
+                        "gh not installed — try `brew install gh`.".to_string(),
+                    ));
+                }
+            }
+            _ => {}
+        }
+        if let Some(cmd) = crate::git_panel::git_quick_action_command(action, &self.git_cfg) {
             let mut bytes = cmd.into_bytes();
             bytes.push(b'\n');
             ctx.write_to_pty(&bytes);
@@ -8893,31 +8988,42 @@ impl PureTermApp {
 
         // Quick-action buttons → write the command into the focused pane's PTY.
         body = body.push(space().height(2));
-        body = body.push(
-            row![
-                button(text("Stage all").size(11))
-                    .on_press(Message::GitQuickAction(GitQuickAction::StageAll))
+        let mut buttons = row![
+            button(text("Stage all").size(11))
+                .on_press(Message::GitQuickAction(GitQuickAction::StageAll))
+                .padding([3, 6])
+                .style(button::secondary),
+            button(text("Commit").size(11))
+                .on_press(Message::GitQuickAction(GitQuickAction::Commit))
+                .padding([3, 6])
+                .style(button::secondary),
+            button(text("Push").size(11))
+                .on_press(Message::GitQuickAction(GitQuickAction::Push))
+                .padding([3, 6])
+                .style(button::secondary),
+            button(text("Pull").size(11))
+                .on_press(Message::GitQuickAction(GitQuickAction::Pull))
+                .padding([3, 6])
+                .style(button::secondary),
+        ]
+        .spacing(4);
+        // Create PR shells out to `gh` — gate it behind the same switch as the
+        // PR block, so a `show_pr = false` config never offers a dead button.
+        if self.git_cfg.show_pr {
+            buttons = buttons.push(
+                button(text("Create PR").size(11))
+                    .on_press(Message::GitQuickAction(GitQuickAction::CreatePr))
                     .padding([3, 6])
                     .style(button::secondary),
-                button(text("Commit").size(11))
-                    .on_press(Message::GitQuickAction(GitQuickAction::Commit))
-                    .padding([3, 6])
-                    .style(button::secondary),
-                button(text("Push").size(11))
-                    .on_press(Message::GitQuickAction(GitQuickAction::Push))
-                    .padding([3, 6])
-                    .style(button::secondary),
-                button(text("Pull").size(11))
-                    .on_press(Message::GitQuickAction(GitQuickAction::Pull))
-                    .padding([3, 6])
-                    .style(button::secondary),
-                button(text("Lazygit").size(11))
-                    .on_press(Message::GitQuickAction(GitQuickAction::Lazygit))
-                    .padding([3, 6])
-                    .style(button::secondary),
-            ]
-            .spacing(4),
+            );
+        }
+        buttons = buttons.push(
+            button(text("Lazygit").size(11))
+                .on_press(Message::GitQuickAction(GitQuickAction::Lazygit))
+                .padding([3, 6])
+                .style(button::secondary),
         );
+        body = body.push(buttons);
 
         // Cwd footer (tail-truncated path).
         if let Some(cwd) = &self.git_panel.cwd {
@@ -10009,6 +10115,33 @@ fn resolve_display_title<'a>(osc: Option<&'a str>, derived: &'a str) -> &'a str 
     }
 }
 
+/// GAP-32: append the git branch to a tab's *derived* title. A non-empty OSC
+/// title (set by the program, GAP-1.3) is returned unchanged — the shell's own
+/// title always wins, so we never clobber it. Otherwise, when `enabled` and a
+/// non-empty `branch` is known, append ` [<branch>]` to the derived title; if
+/// disabled or no branch, return the derived title verbatim. Pure + tested.
+fn tab_title_with_branch(
+    osc: Option<&str>,
+    derived: &str,
+    branch: Option<&str>,
+    enabled: bool,
+) -> String {
+    // OSC program-set title wins outright (GAP-1.3 precedence).
+    if let Some(s) = osc {
+        if !s.is_empty() {
+            return s.to_string();
+        }
+    }
+    if enabled {
+        if let Some(b) = branch {
+            if !b.is_empty() {
+                return format!("{} [{}]", derived, b);
+            }
+        }
+    }
+    derived.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -10112,5 +10245,43 @@ mod tests {
     fn resolve_display_title_treats_empty_as_reset() {
         // Empty OSC title (e.g. `\e]0;\a`) is treated as reset → fall back.
         assert_eq!(super::resolve_display_title(Some(""), "#1"), "#1");
+    }
+
+    #[test]
+    fn tab_title_osc_wins_over_branch_suffix() {
+        // GAP-32: a program-set OSC title is never clobbered by the branch.
+        assert_eq!(
+            super::tab_title_with_branch(Some("vim"), "#1", Some("main"), true),
+            "vim"
+        );
+    }
+
+    #[test]
+    fn tab_title_appends_branch_in_derived_path_when_enabled() {
+        assert_eq!(
+            super::tab_title_with_branch(None, "#1", Some("main"), true),
+            "#1 [main]"
+        );
+        // Empty OSC (reset) still falls into the derived path.
+        assert_eq!(
+            super::tab_title_with_branch(Some(""), "#1", Some("feature/x"), true),
+            "#1 [feature/x]"
+        );
+    }
+
+    #[test]
+    fn tab_title_no_suffix_when_disabled_or_no_branch() {
+        // Disabled → never append, even with a branch known.
+        assert_eq!(
+            super::tab_title_with_branch(None, "#1", Some("main"), false),
+            "#1"
+        );
+        // Enabled but no branch (not a repo) → derived verbatim.
+        assert_eq!(super::tab_title_with_branch(None, "#1", None, true), "#1");
+        // Enabled but empty branch string → derived verbatim.
+        assert_eq!(
+            super::tab_title_with_branch(None, "#1", Some(""), true),
+            "#1"
+        );
     }
 }

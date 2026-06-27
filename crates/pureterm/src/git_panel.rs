@@ -24,8 +24,62 @@ pub enum GitQuickAction {
     Push,
     /// `git pull`
     Pull,
+    /// `gh pr create` (opens the editor in-pane for title/body). Needs `gh`
+    /// installed + authed; the caller toasts if `gh` is missing.
+    CreatePr,
     /// `lazygit` (or the configured binary) — opens the TUI in-pane.
     Lazygit,
+}
+
+impl GitQuickAction {
+    /// Lowercase slug used in the `git.quick_action` event payload (GAP-32
+    /// EventBus). Stable wire name — do not rename without a migration.
+    pub fn as_slug(self) -> &'static str {
+        match self {
+            GitQuickAction::StageAll => "stage_all",
+            GitQuickAction::Commit => "commit",
+            GitQuickAction::Push => "push",
+            GitQuickAction::Pull => "pull",
+            GitQuickAction::CreatePr => "create_pr",
+            GitQuickAction::Lazygit => "lazygit",
+        }
+    }
+}
+
+/// GAP-32 EventBus: did the git branch change enough to emit `git.branch_changed`?
+/// `None` prev (first observation for a pane) counts as a change so the initial
+/// branch is recorded; subsequent identical observations are suppressed (the
+/// status path refreshes git every tick — this keeps `events.jsonl` quiet).
+/// Pure + tested.
+pub fn git_branch_changed(prev: Option<&str>, next: &str) -> bool {
+    match prev {
+        Some(p) => p != next,
+        None => true,
+    }
+}
+
+/// Pure mapping from a quick action to the command string written into the
+/// focused pane's PTY (GAP-32). Extracted from `run_git_quick_action` so the
+/// command table is unit-testable without app state. The side-effecting guards
+/// — lazygit on an SSH pane / a missing `lazygit` or `gh` binary, and closing
+/// the panel for lazygit's TUI — stay in the caller, since they need app state
+/// and toasts. `Lazygit` resolves the configured binary name from `[git]`.
+pub fn git_quick_action_command(
+    action: GitQuickAction,
+    cfg: &crate::app_config::GitConfig,
+) -> Option<String> {
+    match action {
+        GitQuickAction::StageAll => Some("git add -A".into()),
+        GitQuickAction::Commit => Some("git commit".into()),
+        GitQuickAction::Push => Some("git push".into()),
+        GitQuickAction::Pull => Some("git pull".into()),
+        GitQuickAction::CreatePr => Some("gh pr create".into()),
+        GitQuickAction::Lazygit => Some(
+            cfg.lazygit_cmd
+                .clone()
+                .unwrap_or_else(|| "lazygit".to_string()),
+        ),
+    }
 }
 
 /// State for the Git overlay panel.
@@ -74,5 +128,71 @@ impl GitPanelState {
     pub fn close(&mut self) {
         self.open = false;
         self.pr_refreshing = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app_config::GitConfig;
+
+    #[test]
+    fn quick_action_command_table() {
+        let cfg = GitConfig::default();
+        assert_eq!(
+            git_quick_action_command(GitQuickAction::StageAll, &cfg).as_deref(),
+            Some("git add -A")
+        );
+        assert_eq!(
+            git_quick_action_command(GitQuickAction::Commit, &cfg).as_deref(),
+            Some("git commit")
+        );
+        assert_eq!(
+            git_quick_action_command(GitQuickAction::Push, &cfg).as_deref(),
+            Some("git push")
+        );
+        assert_eq!(
+            git_quick_action_command(GitQuickAction::Pull, &cfg).as_deref(),
+            Some("git pull")
+        );
+        // GAP-32: Create-PR writes `gh pr create` into the pane.
+        assert_eq!(
+            git_quick_action_command(GitQuickAction::CreatePr, &cfg).as_deref(),
+            Some("gh pr create")
+        );
+        assert_eq!(
+            git_quick_action_command(GitQuickAction::Lazygit, &cfg).as_deref(),
+            Some("lazygit")
+        );
+    }
+
+    #[test]
+    fn quick_action_lazygit_honors_config_override() {
+        let mut cfg = GitConfig::default();
+        cfg.lazygit_cmd = Some("lazygit-nightly".into());
+        assert_eq!(
+            git_quick_action_command(GitQuickAction::Lazygit, &cfg).as_deref(),
+            Some("lazygit-nightly")
+        );
+    }
+
+    #[test]
+    fn quick_action_slugs_are_stable() {
+        // Wire names emitted into events.jsonl — must not drift.
+        assert_eq!(GitQuickAction::CreatePr.as_slug(), "create_pr");
+        assert_eq!(GitQuickAction::StageAll.as_slug(), "stage_all");
+        assert_eq!(GitQuickAction::Lazygit.as_slug(), "lazygit");
+    }
+
+    #[test]
+    fn branch_changed_dedup() {
+        // First observation for a pane → emit.
+        assert!(git_branch_changed(None, "main"));
+        // Same branch → suppress.
+        assert!(!git_branch_changed(Some("main"), "main"));
+        // Different branch → emit.
+        assert!(git_branch_changed(Some("main"), "feature/x"));
+        // Detached short-SHA vs branch → emit.
+        assert!(git_branch_changed(Some("a1b2c3d"), "main"));
     }
 }

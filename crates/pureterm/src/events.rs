@@ -10,14 +10,14 @@
 
 use serde_json::Value;
 
-/// The 12 event categories. Serialized lowercase (`Feed` → `"feed"`).
+/// The 13 event categories. Serialized lowercase (`Feed` → `"feed"`).
 ///
 /// `Session` carries PTY/daemon-session lifecycle (spawned/exited/reattached/
 /// hibernated/resumed) as a first-class concern, rather than folding it under
 /// `Surface` — which GAP-2.1 will redefine, so aliasing now would force a rename.
 /// `Notification`/`Sidebar` are reserved: their producers land with future
 /// GAPs (Notification System / programmable sidebar). `Workspace`/`Browser`
-/// are produced by GAP-2.1 / GAP-3.5.
+/// are produced by GAP-2.1 / GAP-3.5; `Git` is produced by GAP-32.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Category {
@@ -33,6 +33,7 @@ pub enum Category {
     Browser,
     App,
     Config,
+    Git,
 }
 
 impl Category {
@@ -52,6 +53,7 @@ impl Category {
             Category::Browser => "browser",
             Category::App => "app",
             Category::Config => "config",
+            Category::Git => "git",
         }
     }
 }
@@ -145,6 +147,9 @@ mod tests {
             "\"feed\""
         );
         assert_eq!(Category::Session.as_str(), "session");
+        // GAP-32: the Git category round-trips lowercase on both paths.
+        assert_eq!(serde_json::to_string(&Category::Git).unwrap(), "\"git\"");
+        assert_eq!(Category::Git.as_str(), "git");
     }
 
     #[test]
@@ -192,5 +197,14 @@ mod tests {
         assert!(f.matches(&ev(Category::App, "app.started")));
         let f2 = TypeFilter::parse(Some(""));
         assert!(f2.matches(&ev(Category::App, "app.started")));
+    }
+
+    #[test]
+    fn type_filter_matches_git_category() {
+        // GAP-32: `--type git` surfaces the git.* event stream.
+        let f = TypeFilter::parse(Some("git"));
+        assert!(f.matches(&ev(Category::Git, "git.branch_changed")));
+        assert!(f.matches(&ev(Category::Git, "git.quick_action")));
+        assert!(!f.matches(&ev(Category::App, "app.started")));
     }
 }

@@ -204,13 +204,16 @@ impl StatusBarConfig {
 /// `Default` so a bad config never breaks startup. `panel_enabled` gates the
 /// `⌘⇧B` overlay panel; `show_pr` gates the `gh` PR subprocess; `pr_refresh_ticks`
 /// throttles PR refreshes against the status-bar tick (gh is slow/networked);
-/// `lazygit_cmd` overrides the lazygit binary name (default `lazygit`).
+/// `lazygit_cmd` overrides the lazygit binary name (default `lazygit`);
+/// `tab_title_branch` (default off) appends the current branch to a tab's
+/// *derived* title only — a program-set OSC title (GAP-1.3) always wins.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GitConfig {
     pub panel_enabled: bool,
     pub show_pr: bool,
     pub pr_refresh_ticks: u64,
     pub lazygit_cmd: Option<String>,
+    pub tab_title_branch: bool,
 }
 
 impl Default for GitConfig {
@@ -221,6 +224,9 @@ impl Default for GitConfig {
             // ~30 status-bar ticks (default 1s) between PR refreshes.
             pr_refresh_ticks: 30,
             lazygit_cmd: None,
+            // Opt-in (spec marks tab-title branch "可选"): off by default so the
+            // tab title stays the shell's OSC title unless the user asks for it.
+            tab_title_branch: false,
         }
     }
 }
@@ -594,6 +600,9 @@ impl AppConfig {
             if !s.is_empty() {
                 cfg.lazygit_cmd = Some(s.to_string());
             }
+        }
+        if let Some(b) = table.get("tab_title_branch").and_then(|v| v.as_bool()) {
+            cfg.tab_title_branch = b;
         }
         cfg
     }
