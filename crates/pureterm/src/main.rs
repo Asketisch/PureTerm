@@ -87,6 +87,8 @@ mod tmux_cli;
 mod git_panel;
 /// GAP-15: per-pane shell-integration state (OSC 133 A/B/C/D state machine).
 mod shell_state;
+/// GAP-15: AI-facing shell context builder (MCP get_shell_context + future AI panel).
+mod shell_context;
 mod terminal_context;
 mod terminal_shader;
 mod vi_mode_handler;

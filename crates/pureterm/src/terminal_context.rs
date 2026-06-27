@@ -21,6 +21,8 @@ use alacritty_terminal::term::{Config as TermConfig, Term};
 use alacritty_terminal::tty::{self, Options as PtyOptions};
 use alacritty_terminal::vte::ansi;
 use crossbeam_channel::{bounded, Receiver, Sender};
+// GAP-15: shell-integration injection opts (OSC 7 + OSC 133).
+use pureterm_daemon::shell_integration::ShellIntegrationOpts;
 
 #[cfg(unix)]
 use crate::ssh::config::SshProfile;
@@ -39,6 +41,10 @@ pub enum TerminalEvent {
     Title(String),
     /// GAP-1.3: title cleared (OSC reset) — fall back to the derived tab title.
     ResetTitle,
+    /// GAP-15: OSC 133 shell-integration mark (prompt/command/output boundary,
+    /// with exit code + duration on OutputEnd). Surfaced so the GUI can track
+    /// per-pane commands and emit `shell.*` events for the AI context pipeline.
+    ShellMark(alacritty_terminal::event::ShellMark),
 }
 
 /// Bridge: implements `EventListener` by sending through a crossbeam channel.
@@ -66,6 +72,9 @@ impl EventListener for ChannelEventListener {
             // so the GUI can show it instead of only the derived tab title.
             TEvent::Title(title) => TerminalEvent::Title(title),
             TEvent::ResetTitle => TerminalEvent::ResetTitle,
+            // GAP-15: forward OSC 133 shell-integration marks to the GUI (was
+            // previously dropped by the `_ => return` catch-all below).
+            TEvent::ShellMark(m) => TerminalEvent::ShellMark(m),
             _ => return,
         };
         let _ = self.tx.send(mapped);
@@ -272,8 +281,9 @@ impl TerminalContext {
     /// pre-P2 `TerminalContext::new()`.
     ///
     /// `cwd`, when `Some`, becomes the shell's startup directory so a new
-    /// tab/pane can inherit the current working directory.
-    pub fn new_local(cwd: Option<&Path>) -> io::Result<Self> {
+    /// tab/pane can inherit the current working directory. `shell_opts` (GAP-15)
+    /// selects which shells get OSC 133 integration injected alongside OSC 7.
+    pub fn new_local(cwd: Option<&Path>, shell_opts: ShellIntegrationOpts) -> io::Result<Self> {
         let (event_tx, event_rx) = bounded(64);
         let event_listener = ChannelEventListener::new(event_tx);
 
@@ -308,9 +318,15 @@ impl TerminalContext {
         // .app bundles when the payload exceeds ~80 bytes.
         let mut pty_options = PtyOptions::default();
         pty_options.working_directory = cwd.map(PathBuf::from);
-        pty_options
-            .env
-            .extend(pureterm_daemon::osc7::prepare_osc7_env(&std::process::id().to_string()));
+        // GAP-15: OSC 7 cwd + OSC 133 marks. `shell_opts` comes from the loaded
+        // `[shell_integration]` config (the daemon path can't honor config, so
+        // it always uses all_on — this direct fallback is where the knobs apply).
+        pty_options.env.extend(
+            pureterm_daemon::shell_integration::prepare_shell_env(
+                &std::process::id().to_string(),
+                shell_opts,
+            ),
+        );
 
         let pty = tty::new(&pty_options, window_size, 0)?;
 
@@ -391,8 +407,10 @@ impl TerminalContext {
     /// the GUI tab/split creation should use.
     ///
     /// `cwd`, when `Some`, is forwarded to whichever path spawns the shell so
-    /// a new tab/pane can inherit the current working directory.
-    pub fn new_local_auto(cwd: Option<&Path>) -> Self {
+    /// a new tab/pane can inherit the current working directory. `shell_opts`
+    /// (GAP-15) is honored only on the direct-PTY fallback (the daemon path is
+    /// always full integration).
+    pub fn new_local_auto(cwd: Option<&Path>, shell_opts: ShellIntegrationOpts) -> Self {
         #[cfg(unix)]
         {
             match Self::new_local_via_daemon(cwd) {
@@ -407,7 +425,7 @@ impl TerminalContext {
         {
             log::debug!("daemon PTY path is unix-only; using direct local PTY");
         }
-        Self::new_local(cwd).expect("Failed to create terminal context")
+        Self::new_local(cwd, shell_opts).expect("Failed to create terminal context")
     }
 
     /// Create a new SSH-backed terminal context. The SSH child is spawned

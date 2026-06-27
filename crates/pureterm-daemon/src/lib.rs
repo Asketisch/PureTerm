@@ -23,6 +23,7 @@ pub mod known_hosts;
 pub mod osc7;
 pub mod persist;
 pub mod ring_buffer;
+pub mod shell_integration;
 pub mod runtime;
 pub mod session;
 pub mod pipe_pane;

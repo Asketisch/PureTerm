@@ -231,6 +231,33 @@ impl Default for GitConfig {
     }
 }
 
+/// GAP-15: `[shell_integration]` settings — Shell Integration. A missing/
+/// malformed table yields `Default` (so a bad config never breaks startup).
+///
+/// `enabled` is the master switch: false short-circuits the injector to OSC 7
+/// only (cwd reporting still works, no OSC 133 marks). `inject_zsh`/`inject_bash`
+/// gate per-shell hook injection. `include_command_text` controls whether the
+/// recovered command text is sliced from the grid and included in
+/// `shell.command_finished` events / `get_shell_context` (privacy knob).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShellIntegrationConfig {
+    pub enabled: bool,
+    pub inject_zsh: bool,
+    pub inject_bash: bool,
+    pub include_command_text: bool,
+}
+
+impl Default for ShellIntegrationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            inject_zsh: true,
+            inject_bash: true,
+            include_command_text: true,
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Self {
         let mut config = Self::default();
@@ -603,6 +630,38 @@ impl AppConfig {
         }
         if let Some(b) = table.get("tab_title_branch").and_then(|v| v.as_bool()) {
             cfg.tab_title_branch = b;
+        }
+        cfg
+    }
+
+    /// Load the `[shell_integration]` table (GAP-15). A missing/malformed table
+    /// yields `Default`. Mirrors `load_git`: read_to_string → toml::from_str →
+    /// walk `value.get("shell_integration").as_table()`; each key is
+    /// independently optional.
+    pub fn load_shell_integration(path: &Path) -> ShellIntegrationConfig {
+        let mut cfg = ShellIntegrationConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("shell_integration").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("inject_zsh").and_then(|v| v.as_bool()) {
+            cfg.inject_zsh = b;
+        }
+        if let Some(b) = table.get("inject_bash").and_then(|v| v.as_bool()) {
+            cfg.inject_bash = b;
+        }
+        if let Some(b) = table.get("include_command_text").and_then(|v| v.as_bool()) {
+            cfg.include_command_text = b;
         }
         cfg
     }
@@ -1398,5 +1457,51 @@ default_capture_lines = 0
         let _ = std::fs::remove_file(&path);
         assert_eq!(cfg.default_capture_lines, 5000);
         assert!(cfg.enabled_tools.is_empty());
+    }
+
+    // ── GAP-15 [shell_integration] ───────────────────────────────────────
+
+    #[test]
+    fn shell_integration_missing_is_default_enabled() {
+        let path = write_temp_toml(
+            "pureterm_test_si_missing.toml",
+            "font.normal.family = \"mono\"\n",
+        );
+        let cfg = AppConfig::load_shell_integration(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(cfg.enabled);
+        assert!(cfg.inject_zsh);
+        assert!(cfg.inject_bash);
+        assert!(cfg.include_command_text);
+    }
+
+    #[test]
+    fn shell_integration_parses_fields() {
+        let toml = r#"
+[shell_integration]
+enabled = false
+inject_zsh = false
+inject_bash = true
+include_command_text = false
+"#;
+        let path = write_temp_toml("pureterm_test_si_fields.toml", toml);
+        let cfg = AppConfig::load_shell_integration(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert!(!cfg.inject_zsh);
+        assert!(cfg.inject_bash);
+        assert!(!cfg.include_command_text);
+    }
+
+    #[test]
+    fn shell_integration_malformed_table_yields_default() {
+        // Not a table → Default, never panics.
+        let toml = "shell_integration = \"oops\"";
+        let path = write_temp_toml("pureterm_test_si_bad.toml", toml);
+        let cfg = AppConfig::load_shell_integration(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(cfg.enabled);
+        assert!(cfg.inject_zsh);
+        assert!(cfg.inject_bash);
     }
 }

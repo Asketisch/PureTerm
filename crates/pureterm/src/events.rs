@@ -10,14 +10,14 @@
 
 use serde_json::Value;
 
-/// The 13 event categories. Serialized lowercase (`Feed` → `"feed"`).
+/// The 14 event categories. Serialized lowercase (`Feed` → `"feed"`).
 ///
 /// `Session` carries PTY/daemon-session lifecycle (spawned/exited/reattached/
 /// hibernated/resumed) as a first-class concern, rather than folding it under
 /// `Surface` — which GAP-2.1 will redefine, so aliasing now would force a rename.
 /// `Notification`/`Sidebar` are reserved: their producers land with future
 /// GAPs (Notification System / programmable sidebar). `Workspace`/`Browser`
-/// are produced by GAP-2.1 / GAP-3.5; `Git` is produced by GAP-32.
+/// are produced by GAP-2.1 / GAP-3.5; `Git` is produced by GAP-32; `Shell` by GAP-15.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Category {
@@ -34,6 +34,9 @@ pub enum Category {
     App,
     Config,
     Git,
+    /// GAP-15: shell integration marks (prompt/command/output boundaries, exit
+    /// codes) emitted from OSC 133 sequences parsed off the PTY.
+    Shell,
 }
 
 impl Category {
@@ -54,6 +57,7 @@ impl Category {
             Category::App => "app",
             Category::Config => "config",
             Category::Git => "git",
+            Category::Shell => "shell",
         }
     }
 }
@@ -206,5 +210,23 @@ mod tests {
         assert!(f.matches(&ev(Category::Git, "git.branch_changed")));
         assert!(f.matches(&ev(Category::Git, "git.quick_action")));
         assert!(!f.matches(&ev(Category::App, "app.started")));
+    }
+
+    #[test]
+    fn type_filter_matches_shell_category() {
+        // GAP-15: `--type shell` surfaces the shell.* event stream.
+        let f = TypeFilter::parse(Some("shell"));
+        assert!(f.matches(&ev(Category::Shell, "shell.command_finished")));
+        assert!(f.matches(&ev(Category::Shell, "shell.prompt_started")));
+        assert!(!f.matches(&ev(Category::App, "app.started")));
+    }
+
+    #[test]
+    fn shell_category_round_trips_lowercase() {
+        // GAP-15: the Shell category serializes + as_str() lowercases.
+        assert_eq!(serde_json::to_string(&Category::Shell).unwrap(), "\"shell\"");
+        assert_eq!(Category::Shell.as_str(), "shell");
+        let back: Category = serde_json::from_str("\"shell\"").unwrap();
+        assert_eq!(back, Category::Shell);
     }
 }

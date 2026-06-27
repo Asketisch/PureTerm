@@ -152,7 +152,16 @@ impl SessionManager {
             WindowSize { num_lines: rows, num_cols: cols, cell_width: 8, cell_height: 16 };
         tty::setup_env();
         let mut options = tty::Options::default();
-        options.env.extend(crate::osc7::prepare_osc7_env(&id));
+        // GAP-15: OSC 7 cwd + OSC 133 shell-integration marks. The daemon has
+        // no config access, so integration is always-on here (mirrors how OSC 7
+        // was already always-on); the GUI's `[shell_integration]` knobs gate
+        // only the direct (non-daemon) PTY fallback path.
+        options
+            .env
+            .extend(crate::shell_integration::prepare_shell_env(
+                &id,
+                crate::shell_integration::ShellIntegrationOpts::all_on(),
+            ));
         options.working_directory = cwd;
         // GAP-7.5: when an explicit argv is given (cold resume of an agent via
         // e.g. `claude --resume <id>`), spawn that command instead of the
@@ -893,6 +902,7 @@ mod tests {
 
     #[test]
     fn manager_list_reflects_create_and_kill() {
+        let _iso = crate::discovery::IsolatedDataDir::new();
         let mgr = SessionManager::default();
         assert!(mgr.list().is_empty());
         // create_local spawns a real shell; skip shape-assertions if it fails
@@ -912,6 +922,7 @@ mod tests {
     /// throughout (SIGSTOP/SIGCONT never close fds or kill the process).
     #[test]
     fn hibernate_then_resume_round_trip() {
+        let _iso = crate::discovery::IsolatedDataDir::new();
         let mgr = SessionManager::default();
         let id = match mgr.create_local(80, 24, None, None, None) {
             Ok(id) => id,
@@ -946,6 +957,7 @@ mod tests {
     /// fresh subscriber can re-attach.
     #[test]
     fn local_session_child_survives_subscriber_drop() {
+        let _iso = crate::discovery::IsolatedDataDir::new();
         let mgr = SessionManager::default();
         let id = match mgr.create_local(80, 24, None, None, None) {
             Ok(id) => id,

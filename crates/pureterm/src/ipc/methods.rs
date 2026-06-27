@@ -134,6 +134,10 @@ pub struct AppSnapshot {
     /// on non-unix (no SSH panes). Surfaced via the `ssh.state` Socket API
     /// method so agents / MCP / CLI can query which panes are connected.
     pub ssh_pane_states: Vec<SshPaneState>,
+    /// GAP-15: per-pane shell context (OSC 133 marks) keyed by `PaneId.0`.
+    /// Surfaced via the `shell.context` Socket API method / MCP
+    /// `get_shell_context`. Built from `pane_shell_state` + `pane_cwds`.
+    pub pane_shell_contexts: std::collections::HashMap<u64, crate::shell_context::ShellContextSummary>,
 }
 
 /// GAP-5.6: one SSH pane's connection state for the `ssh.state` Socket API
@@ -167,6 +171,7 @@ impl Default for AppSnapshot {
             active_pane_ids: Vec::new(),
             pane_ids: Vec::new(),
             ssh_pane_states: Vec::new(),
+            pane_shell_contexts: std::collections::HashMap::new(),
         }
     }
 }
@@ -513,6 +518,43 @@ impl SocketRouter {
                 }
             }
             (Ok(serde_json::json!(surfaces)), None)
+        });
+
+        // GAP-15: shell context (cwd, last command, recent commands) for a pane.
+        // Defaults to the active pane; honors an optional `recent` cap. Unknown /
+        // non-integrated panes (SSH/fish) return `integrated:false`.
+        router.register("shell.context", |params, snap| {
+            use crate::shell_context::ShellContextSummary;
+            let pane_id = params
+                .as_ref()
+                .and_then(|p| p.get("pane_id"))
+                .and_then(|v| v.as_u64())
+                .or_else(|| snap.active_pane_ids.get(snap.active_tab_index).copied());
+            let Some(pane_id) = pane_id else {
+                return (
+                    Ok(serde_json::json!({
+                        "pane_id": serde_json::Value::Null,
+                        "integrated": false,
+                        "cwd": serde_json::Value::Null,
+                        "last_command": serde_json::Value::Null,
+                        "recent_commands": [],
+                    })),
+                    None,
+                );
+            };
+            let mut ctx = snap
+                .pane_shell_contexts
+                .get(&pane_id)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(n) = params.as_ref().and_then(|p| p.get("recent")).and_then(|v| v.as_u64()) {
+                ctx.recent_commands.truncate(n as usize);
+            }
+            let mut val = serde_json::to_value(&ctx).unwrap_or_else(|_| serde_json::json!({}));
+            if let Some(obj) = val.as_object_mut() {
+                obj.insert("pane_id".to_string(), serde_json::json!(pane_id));
+            }
+            (Ok(val), None)
         });
 
         router.register("surface.send_text", |params, _snap| {
@@ -968,6 +1010,7 @@ mod tests {
             active_pane_ids: vec![10, 20],
             pane_ids: vec![vec![10, 11], vec![20]],
             ssh_pane_states: Vec::new(),
+            pane_shell_contexts: std::collections::HashMap::new(),
         }
     }
 

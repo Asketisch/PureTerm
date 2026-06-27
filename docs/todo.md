@@ -59,7 +59,7 @@
 | 01 | — | [AI Chat Panel](featuresList/01-ai-chat-panel.md) | AI Agent | XL | 内置 AI 聊天面板，流式 Markdown + 工具调用 |
 | 02 | — | [Error Recovery](featuresList/02-error-recovery.md) | AI Agent | M | 命令失败时自动分析并建议修复 |
 | 09 | — | [Notification System](featuresList/09-notification-system.md) | 终端交互 | M | OSC 9/99/777 通知，视觉提示哪个 pane 需关注 |
-| 15 | — | [Shell Integration](featuresList/15-shell-integration.md) | 终端交互 | L | 自动注入 shell 脚本，marks + command tracking |
+| 15 | 🚧 | [Shell Integration](featuresList/15-shell-integration.md) | 终端交互 | L | v1 代码闭环：zsh/bash OSC 133 + Category::Shell 事件流 + MCP get_shell_context，待人工 GUI E2E |
 | GAP-5.6 | ✅ | [SSH Reconnect](featuresList/68-ssh-reconnect.md) | SSH | S | 完整 reconnect/disconnect 状态机（收尾） |
 | GAP-6.7 | ✅ | [Event Stream](featuresList/66-event-stream.md) | 集成 | S | 事件流 + 持久 JSONL 日志（收尾） |
 

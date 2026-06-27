@@ -71,6 +71,16 @@ struct CapturePaneParams {
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
+struct GetShellContextParams {
+    /// Target pane id (default: active pane).
+    #[serde(default)]
+    pane_id: Option<u64>,
+    /// Cap the recent_commands list to the last N (default: 10).
+    #[serde(default)]
+    recent: Option<u64>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
 struct SendTextParams {
     /// Text to type into the pane. Use the two characters \\r for Enter.
     text: String,
@@ -201,6 +211,23 @@ impl PureTermServer {
             json!(p.lines.unwrap_or(self.cfg.default_capture_lines)),
         );
         let res = rpc("surface.snapshot", Some(Value::Object(obj)), self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
+    #[tool(description = "Return the shell context for a pane: cwd, last_command {text, exit_code, duration_us}, and recent_commands. Defaults to the active pane. Requires shell integration (zsh/bash); non-integrated panes (SSH/fish) return integrated=false.")]
+    async fn get_shell_context(
+        &self,
+        params: Parameters<GetShellContextParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        if let Some(n) = p.recent {
+            obj.insert("recent".into(), json!(n));
+        }
+        let res = rpc("shell.context", Some(Value::Object(obj)), self.socket.clone()).await?;
         Ok(to_text(res))
     }
 

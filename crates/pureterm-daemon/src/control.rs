@@ -416,6 +416,7 @@ mod tests {
 
     #[test]
     fn create_then_attach_round_trips_path() {
+        let _iso = crate::discovery::IsolatedDataDir::new();
         let st = state();
         // create may fail in environments without a usable shell; only assert
         // when it succeeds.

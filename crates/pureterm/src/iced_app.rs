@@ -4533,6 +4533,22 @@ impl PureTermApp {
                         #[cfg(not(unix))]
                         { Vec::new() }
                     },
+                    // GAP-15: per-pane shell context for the `shell.context`
+                    // Socket API / MCP `get_shell_context`. Built for every pane
+                    // (integrated or not) so SSH/fish panes resolve to a
+                    // non-integrated summary with cwd if known.
+                    pane_shell_contexts: {
+                        use crate::shell_context::build_for_pane;
+                        let mut map = std::collections::HashMap::new();
+                        for tab in self.tabs() {
+                            for pid in tab.split_tree.pane_ids() {
+                                let st = self.pane_shell_state.get(&pid);
+                                let cwd = self.pane_cwds.get(&pid).map(|s| s.as_str());
+                                map.insert(pid.0, build_for_pane(st, cwd, 10));
+                            }
+                        }
+                        map
+                    },
                 };
 
                 let (resp, side_effect) = self.ipc_router.dispatch(

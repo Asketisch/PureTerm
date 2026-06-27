@@ -792,6 +792,7 @@ mod tests {
                 active_pane_ids: vec![10, 20],
                 pane_ids: vec![vec![10, 11], vec![20]],
                 ssh_pane_states: Vec::new(),
+                pane_shell_contexts: std::collections::HashMap::new(),
             }
         }
 

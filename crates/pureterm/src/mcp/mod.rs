@@ -43,6 +43,11 @@ pub const TOOLS: &[ToolSpec] = &[
         description: "Read a terminal pane's buffer as text (full scrollback or the visible viewport). Returns {pane_id, text, lines, truncated}.",
     },
     ToolSpec {
+        name: "get_shell_context",
+        rpc_method: "shell.context",
+        description: "Return the shell context for a pane (default: active): cwd, last_command {text, exit_code, duration_us}, and recent_commands. Requires shell integration (zsh/bash). Non-integrated panes (SSH/fish) return integrated=false. Use this to understand what the user just ran before responding.",
+    },
+    ToolSpec {
         name: "send_text",
         rpc_method: "surface.send_text",
         description: "Write text into a pane's PTY (default: the active pane). Use \\r for Enter. Fire-and-forget; pair with capture_pane to read the result.",

@@ -20,7 +20,11 @@ pub enum ShellMarkKind {
 }
 
 /// A semantic prompt mark detected from OSC 133 sequences.
-#[derive(Debug, Clone)]
+//
+// PureTerm (GAP-15): added `PartialEq, Eq` so this can ride `TerminalEvent`,
+// whose enum requires them (used in update-loop matching / dedup). All fields
+// are already `Eq`, so this is a safe additive derive with no behavior change.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellMark {
     /// The kind of marker.
     pub kind: ShellMarkKind,
