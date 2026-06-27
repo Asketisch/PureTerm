@@ -74,8 +74,13 @@ _pt_precmd() {
   local rc=$?
   if [ -n "${__pt_cmd_start:-}" ]; then
     local now=$EPOCHREALTIME
-    local dur=$(( ( ${now%.*} * 1000000 + ${now#*.} ) - ( ${__pt_cmd_start%.*} * 1000000 + ${__pt_cmd_start#*.} ) ))
-    _pt_ms D "exit=$rc;duration=$dur"
+    # Float subtract: EPOCHREALTIME's fractional part is *nanoseconds* on this
+    # platform (10 digits), not microseconds — the old `${now#*.}` arithmetic
+    # treated it as µs and produced wildly wrong durations (e.g. 1e9 µs for a
+    # 100ms command). ×1e6 → µs; `${_%.*}` strips the float fraction so the
+    # scanner parses a clean u64 (zsh has no `int()` without zsh/mathfunc).
+    local dur=$(( (now - __pt_cmd_start) * 1000000 ))
+    _pt_ms D "exit=$rc;duration=${dur%.*}"
     unset __pt_cmd_start
   fi
   _pt_ms C
@@ -104,8 +109,16 @@ const BASH_PROMPT_COMMAND: &str = r#"_pt_osc7() { printf '\e]7;file://%s%s\e\\' 
 _pt_ms() { printf '\e]133;%s%s\a' "$1" "${2:+;$2}"; }
 _pt_now_us() {
   if [ -n "${EPOCHREALTIME:-}" ]; then
-    local _t=$EPOCHREALTIME
-    echo $(( ${_t%.*} * 1000000 + ${_t#*.} ))
+    # EPOCHREALTIME = sec.<variable-precision frac>. On some platforms the frac
+    # is nanoseconds (10 digits), not µs — treating it as µs gave wrong durations
+    # (bash arithmetic is integer-only, so float subtract isn't an option here).
+    # Pad-then-truncate the frac to exactly 6 digits = microseconds; `10#` avoids
+    # octal interpretation of a leading-zero fraction.
+    local _s=${EPOCHREALTIME%.*}
+    local _f=${EPOCHREALTIME#*.}
+    _f=${_f}000000
+    _f=${_f:0:6}
+    echo $(( _s * 1000000 + 10#$_f ))
   else
     echo "$(date +%s)000000"
   fi
