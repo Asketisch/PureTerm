@@ -167,6 +167,7 @@ where
                         row: cursor_row,
                         exit_code: raw.exit_code,
                         duration_us: raw.duration_us,
+                        command: raw.command,
                     }));
                 }
             }
@@ -517,6 +518,28 @@ struct RawMark {
     kind: ShellMarkKind,
     exit_code: Option<i32>,
     duration_us: Option<u64>,
+    /// Exact command text (hex-decoded), only for CommandStart (B) marks the
+    /// shell annotated with `cmd=<hex>`. See `ShellMark::command`.
+    command: Option<String>,
+}
+
+/// Decode a hex-encoded UTF-8 string (the `cmd=` param a shell sends in the B
+/// mark). Hex is scanner-safe — its alphabet `[0-9a-f]` contains no `;`, so the
+/// `;`-delimited param split in [`scan_osc133`] can't be corrupted by command
+/// text. Returns `None` on odd length, a non-hex digit, or invalid UTF-8 (a
+/// malformed mark is dropped, not panicked).
+fn decode_hex(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    if b.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(b.len() / 2);
+    for chunk in b.chunks(2) {
+        let hi = (chunk[0] as char).to_digit(16)?;
+        let lo = (chunk[1] as char).to_digit(16)?;
+        out.push((hi * 16 + lo) as u8);
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Scan raw bytes for OSC 133 sequences: `\x1b]133;X[;params]\x07` or `\x1b]133;X[;params]\x1b\\`.
@@ -549,6 +572,7 @@ fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
                 };
                 let mut exit_code = None;
                 let mut duration_us = None;
+                let mut command = None;
                 // Scan params until terminator
                 let mut p = after + 1;
                 let params_start = p;
@@ -567,17 +591,29 @@ fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
                 }
                 if p < buf.len() {
                     let params = &buf[params_start..p];
-                    if kind == ShellMarkKind::OutputEnd && !params.is_empty() {
+                    if !params.is_empty() {
                         let params_str = std::str::from_utf8(params).unwrap_or("");
                         for part in params_str.split(';') {
-                            if let Some(val) = part.strip_prefix("exit=") {
-                                exit_code = val.parse().ok();
-                            } else if let Some(val) = part.strip_prefix("duration=") {
-                                duration_us = val.parse().ok();
+                            // D carries exit/duration; B carries the command
+                            // (hex-encoded so it survives the `;`-delimited params).
+                            match kind {
+                                ShellMarkKind::OutputEnd => {
+                                    if let Some(val) = part.strip_prefix("exit=") {
+                                        exit_code = val.parse().ok();
+                                    } else if let Some(val) = part.strip_prefix("duration=") {
+                                        duration_us = val.parse().ok();
+                                    }
+                                }
+                                ShellMarkKind::CommandStart => {
+                                    if let Some(val) = part.strip_prefix("cmd=") {
+                                        command = decode_hex(val);
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                     }
-                    marks.push(RawMark { kind, exit_code, duration_us });
+                    marks.push(RawMark { kind, exit_code, duration_us, command });
                     i = p + 1;
                     continue;
                 }
@@ -653,6 +689,41 @@ mod tests_osc133 {
         let buf = b"\x1b]133;D;exit=127\x07";
         let marks = scan_osc133(buf);
         assert_eq!(marks[0].exit_code, Some(127));
+    }
+
+    #[test]
+    fn scan_command_start_carries_hex_command() {
+        // "hi" hex-encodes to 6869.
+        let buf = b"\x1b]133;B;cmd=6869\x07";
+        let marks = scan_osc133(buf);
+        assert_eq!(marks.len(), 1);
+        assert_eq!(marks[0].kind, ShellMarkKind::CommandStart);
+        assert_eq!(marks[0].command.as_deref(), Some("hi"));
+        // exit/duration are not carried on B.
+        assert!(marks[0].exit_code.is_none());
+        assert!(marks[0].duration_us.is_none());
+    }
+
+    #[test]
+    fn scan_command_start_no_cmd_yields_none_command() {
+        let buf = b"\x1b]133;B\x07";
+        let marks = scan_osc133(buf);
+        assert_eq!(marks[0].kind, ShellMarkKind::CommandStart);
+        assert!(marks[0].command.is_none());
+    }
+
+    #[test]
+    fn decode_hex_basic() {
+        assert_eq!(decode_hex("6869").as_deref(), Some("hi"));
+        assert_eq!(decode_hex("6563686f206f6b").as_deref(), Some("echo ok"));
+        assert_eq!(decode_hex("").as_deref(), Some(""));
+    }
+
+    #[test]
+    fn decode_hex_rejects_invalid() {
+        assert!(decode_hex("6").is_none(), "odd length");
+        assert!(decode_hex("6z").is_none(), "non-hex digit");
+        assert!(decode_hex("ff").is_none(), "0xff is not valid UTF-8");
     }
 }
 

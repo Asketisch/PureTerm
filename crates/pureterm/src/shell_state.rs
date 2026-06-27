@@ -3,9 +3,9 @@
 //! [`ShellState`] is the per-pane accumulator fed by OSC 133 marks (forwarded as
 //! [`TerminalEvent::ShellMark`](crate::terminal_context::TerminalEvent)). It runs
 //! the A/B/C/D state machine and, on D (OutputEnd), finalizes a
-//! [`FinishedCommand`] — recovering the command text from the grid via a
-//! caller-supplied extractor (so this module stays decoupled from the alacritty
-//! `Term` and is unit-testable).
+//! [`FinishedCommand`] — carrying the exact command text the shell sent in the B
+//! mark (`mark.command`, hex-decoded by the scanner), so this module stays
+//! decoupled from the alacritty `Term` and is unit-testable.
 //!
 //! The shell hook scripts already compute `duration_us` and `exit_code`, so this
 //! struct stores only what each mark carries — no `Instant` bookkeeping.
@@ -18,8 +18,9 @@ pub const SHELL_HISTORY_MAX: usize = 64;
 /// One finalized command, recovered at its OutputEnd (D) mark.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FinishedCommand {
-    /// Command text sliced from the grid at the B-mark row. `None` when
-    /// `include_command_text` is off or the row scrolled out of scrollback.
+    /// Exact command text, sent by the shell in the B mark and hex-decoded by the
+    /// scanner. `None` when `include_command_text` is off or the shell didn't
+    /// annotate the mark.
     pub text: Option<String>,
     /// Exit code, present only on D marks that carried `exit=`.
     pub exit_code: Option<i32>,
@@ -35,9 +36,11 @@ pub struct FinishedCommand {
 pub struct ShellState {
     /// Newest-last finished commands; bounded to [`SHELL_HISTORY_MAX`].
     pub history: Vec<FinishedCommand>,
-    /// Row of the most recent B (CommandStart) mark; `None` until the user
-    /// submits a command. Consumed (cleared) on the next D.
-    pending_b_row: Option<usize>,
+    /// Pending B (CommandStart): `(row, text-sliced-fresh-at-B)`. `None` until the
+    /// user submits a command; consumed (cleared) on the next D. The text is
+    /// captured at B-time because by D-time the B row's grid content has drifted
+    /// (output / the next prompt overwrote it).
+    pending_b: Option<(usize, Option<String>)>,
     /// Row of the most recent C (OutputStart) mark (unused for text recovery in
     /// v1, but tracked for completeness/future use).
     last_c_row: Option<usize>,
@@ -47,20 +50,22 @@ pub struct ShellState {
 }
 
 impl ShellState {
-    /// Advance the state machine by one mark. On an OutputEnd (D) mark with a
-    /// pending B row, `extract_text(row)` recovers the command line from the
-    /// grid (the caller locks the `Term` + `bounds_to_string`); pass a closure
-    /// returning `None` to skip text recovery (`include_command_text = false`).
+    /// Advance the state machine by one mark. The command text comes from the
+    /// shell-sent `mark.command` (hex-decoded by the scanner) — it is NOT read
+    /// from the grid, because by the time the B-event is handled the command's
+    /// output already occupies the grid (same PTY read) and scrolling drifts the
+    /// row, making grid recovery unreliable.
+    ///
+    /// `include_text` gates whether command text is retained (the
+    /// `[shell_integration].include_command_text` config) — when off, `text` is
+    /// `None` even if the shell sent it, so neither events nor the MCP context
+    /// expose it.
     ///
     /// Returns the finalized [`FinishedCommand`] (cloned) when a D mark closes a
     /// pending command, else `None` — so the caller can include command/exit/
     /// duration in the emitted `shell.command_finished` event without re-borrowing
     /// this struct.
-    pub fn apply_mark(
-        &mut self,
-        mark: &ShellMark,
-        extract_text: impl FnOnce(usize) -> Option<String>,
-    ) -> Option<FinishedCommand> {
+    pub fn apply_mark(&mut self, mark: &ShellMark, include_text: bool) -> Option<FinishedCommand> {
         match mark.kind {
             ShellMarkKind::PromptStart => {
                 self.integrated = true;
@@ -68,7 +73,8 @@ impl ShellState {
             }
             ShellMarkKind::CommandStart => {
                 self.integrated = true;
-                self.pending_b_row = Some(mark.row);
+                let text = if include_text { mark.command.clone() } else { None };
+                self.pending_b = Some((mark.row, text));
                 None
             }
             ShellMarkKind::OutputStart => {
@@ -78,8 +84,7 @@ impl ShellState {
             }
             ShellMarkKind::OutputEnd => {
                 self.integrated = true;
-                self.pending_b_row.take().map(|row| {
-                    let text = extract_text(row);
+                self.pending_b.take().map(|(row, text)| {
                     let cmd = FinishedCommand {
                         text,
                         exit_code: mark.exit_code,
@@ -119,7 +124,18 @@ mod tests {
     use super::*;
 
     fn mark(kind: ShellMarkKind, row: usize) -> ShellMark {
-        ShellMark { kind, row, exit_code: None, duration_us: None }
+        ShellMark { kind, row, exit_code: None, duration_us: None, command: None }
+    }
+
+    /// A B (CommandStart) mark carrying shell-sent command text.
+    fn mark_b(row: usize, cmd: &str) -> ShellMark {
+        ShellMark {
+            kind: ShellMarkKind::CommandStart,
+            row,
+            exit_code: None,
+            duration_us: None,
+            command: Some(cmd.into()),
+        }
     }
 
     fn mark_d(exit: i32, dur: u64) -> ShellMark {
@@ -128,11 +144,8 @@ mod tests {
             row: 0,
             exit_code: Some(exit),
             duration_us: Some(dur),
+            command: None,
         }
-    }
-
-    fn noop_extract(_row: usize) -> Option<String> {
-        None
     }
 
     #[test]
@@ -146,13 +159,11 @@ mod tests {
     #[test]
     fn abcd_records_one_command() {
         let mut s = ShellState::default();
-        let _ = s.apply_mark(&mark(ShellMarkKind::PromptStart, 4), noop_extract);
-        let _ = s.apply_mark(&mark(ShellMarkKind::CommandStart, 5), noop_extract);
-        let _ = s.apply_mark(&mark(ShellMarkKind::OutputStart, 6), noop_extract);
-        let finalized = s.apply_mark(&mark_d(0, 1_234_000), |row| {
-            assert_eq!(row, 5);
-            Some("cargo test".into())
-        });
+        let _ = s.apply_mark(&mark(ShellMarkKind::PromptStart, 4), true);
+        // The shell sends the exact command in the B mark.
+        let _ = s.apply_mark(&mark_b(5, "cargo test"), true);
+        let _ = s.apply_mark(&mark(ShellMarkKind::OutputStart, 6), true);
+        let finalized = s.apply_mark(&mark_d(0, 1_234_000), true);
         assert!(s.integrated);
         assert_eq!(s.history.len(), 1);
         // The return carries the same finalized command.
@@ -165,10 +176,23 @@ mod tests {
     }
 
     #[test]
+    fn command_text_comes_from_b_mark_not_d() {
+        // The finalized text is the shell-sent `mark.command` on B; D carries no
+        // command. This pins the contract independent of grid state at D.
+        let mut s = ShellState::default();
+        let _ = s.apply_mark(&mark(ShellMarkKind::PromptStart, 4), true);
+        let _ = s.apply_mark(&mark_b(5, "echo hello"), true);
+        let _ = s.apply_mark(&mark(ShellMarkKind::OutputStart, 6), true);
+        let finalized = s.apply_mark(&mark_d(0, 1_000), true);
+        let cmd = finalized.expect("D finalizes a pending command");
+        assert_eq!(cmd.text.as_deref(), Some("echo hello"));
+    }
+
+    #[test]
     fn d_without_b_is_noop() {
         let mut s = ShellState::default();
-        let _ = s.apply_mark(&mark(ShellMarkKind::PromptStart, 0), noop_extract);
-        let finalized = s.apply_mark(&mark_d(1, 500), noop_extract);
+        let _ = s.apply_mark(&mark(ShellMarkKind::PromptStart, 0), true);
+        let finalized = s.apply_mark(&mark_d(1, 500), true);
         assert!(finalized.is_none());
         assert!(s.history.is_empty(), "D with no pending B must not record");
     }
@@ -176,23 +200,23 @@ mod tests {
     #[test]
     fn b_without_d_is_overwritten_by_next_b() {
         // A command whose D never arrives is lost (no OutputEnd). The next B
-        // supersedes it rather than double-recording.
+        // supersedes it rather than double-recording — its row + command win.
         let mut s = ShellState::default();
-        let _ = s.apply_mark(&mark(ShellMarkKind::CommandStart, 5), noop_extract);
-        let _ = s.apply_mark(&mark(ShellMarkKind::CommandStart, 9), noop_extract);
-        let _ = s.apply_mark(&mark_d(0, 10), |row| {
-            assert_eq!(row, 9);
-            Some("echo ok".into())
-        });
+        let _ = s.apply_mark(&mark_b(5, "lost"), true);
+        let _ = s.apply_mark(&mark_b(9, "echo ok"), true);
+        let _ = s.apply_mark(&mark_d(0, 10), true);
         assert_eq!(s.history.len(), 1);
         assert_eq!(s.history[0].pane_row_at_b, 9);
+        assert_eq!(s.history[0].text.as_deref(), Some("echo ok"));
     }
 
     #[test]
     fn include_text_off_yields_none_text() {
+        // include_command_text=false drops the command text even though the shell
+        // sent it; exit/duration are still recorded.
         let mut s = ShellState::default();
-        let _ = s.apply_mark(&mark(ShellMarkKind::CommandStart, 2), noop_extract);
-        let _ = s.apply_mark(&mark_d(0, 1), noop_extract);
+        let _ = s.apply_mark(&mark_b(2, "secret"), false);
+        let _ = s.apply_mark(&mark_d(0, 1), false);
         assert_eq!(s.history.len(), 1);
         assert!(s.history[0].text.is_none());
         // exit/duration still captured even with text off.
@@ -203,8 +227,8 @@ mod tests {
     fn history_trims_to_max() {
         let mut s = ShellState::default();
         for _ in 0..(SHELL_HISTORY_MAX + 10) {
-            let _ = s.apply_mark(&mark(ShellMarkKind::CommandStart, 1), noop_extract);
-            let _ = s.apply_mark(&mark_d(0, 1), noop_extract);
+            let _ = s.apply_mark(&mark(ShellMarkKind::CommandStart, 1), true);
+            let _ = s.apply_mark(&mark_d(0, 1), true);
         }
         assert_eq!(s.history.len(), SHELL_HISTORY_MAX);
     }
@@ -212,11 +236,17 @@ mod tests {
     #[test]
     fn exit_code_none_when_d_omits_it() {
         let mut s = ShellState::default();
-        let _ = s.apply_mark(&mark(ShellMarkKind::CommandStart, 1), noop_extract);
+        let _ = s.apply_mark(&mark(ShellMarkKind::CommandStart, 1), true);
         // A D mark with no exit= param.
         let _ = s.apply_mark(
-            &ShellMark { kind: ShellMarkKind::OutputEnd, row: 0, exit_code: None, duration_us: None },
-            noop_extract,
+            &ShellMark {
+                kind: ShellMarkKind::OutputEnd,
+                row: 0,
+                exit_code: None,
+                duration_us: None,
+                command: None,
+            },
+            true,
         );
         assert_eq!(s.history[0].exit_code, None);
         assert_eq!(s.history[0].duration_us, None);

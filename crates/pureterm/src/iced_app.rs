@@ -3372,26 +3372,19 @@ impl PureTermApp {
                                 // staying disjoint from the loop's `windows` borrow.
                                 TerminalEvent::ShellMark(mark) => {
                                     use crate::shell_state::{shell_mark_kind_str, FinishedCommand};
-                                    use alacritty_terminal::index::{Column, Line, Point};
 
                                     let include_text =
                                         self.shell_integration_cfg.include_command_text;
-                                    let term = ctx.terminal().clone();
                                     let session_id = ctx.session_id().map(|s| s.to_string());
 
+                                    // Command text comes from the shell-sent
+                                    // `mark.command` (no grid read — see
+                                    // shell_state::ShellState::apply_mark).
                                     let finalized: Option<FinishedCommand> = self
                                         .pane_shell_state
                                         .entry(*pane_id)
                                         .or_default()
-                                        .apply_mark(&mark, |row| {
-                                            if !include_text {
-                                                return None;
-                                            }
-                                            let t = term.lock();
-                                            let start = Point::new(Line(row as i32), Column(0));
-                                            let end = Point::new(Line(row as i32), t.last_column());
-                                            Some(t.bounds_to_string(start, end))
-                                        });
+                                        .apply_mark(&mark, include_text);
 
                                     let mut data = serde_json::json!({
                                         "pane_id": pane_id.0,

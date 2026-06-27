@@ -24,6 +24,12 @@ pub enum ShellMarkKind {
 // PureTerm (GAP-15): added `PartialEq, Eq` so this can ride `TerminalEvent`,
 // whose enum requires them (used in update-loop matching / dedup). All fields
 // are already `Eq`, so this is a safe additive derive with no behavior change.
+//
+// PureTerm (GAP-15): added `command`. The exact command text can't be recovered
+// from the grid (by the time the B-event is handled, the command's output is
+// already in the grid from the same PTY read, and scrolling drifts the row), so
+// the shell sends it hex-encoded in the B mark's `cmd=` param and the scanner
+// decodes it here. Only present for CommandStart marks the shell chose to annotate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellMark {
     /// The kind of marker.
@@ -34,6 +40,10 @@ pub struct ShellMark {
     pub exit_code: Option<i32>,
     /// Duration in microseconds, only present for OutputEnd marks.
     pub duration_us: Option<u64>,
+    /// Exact command text (hex-decoded from the B mark's `cmd=` param), only
+    /// present for CommandStart marks. See struct doc for why this is sent
+    /// rather than recovered from the grid.
+    pub command: Option<String>,
 }
 
 /// Terminal event.

@@ -43,9 +43,12 @@ impl ShellIntegrationOpts {
 /// doubled; a nested zsh (new `$$`, inherited `ZDOTDIR`) re-runs this and gets
 /// its own hooks. `__REAL_ZDOTDIR__` is spliced in by [`prepare_shell_env`].
 ///
-/// Marks carry NO command text — only the A/B/C/D letter (+ exit/duration on D).
-/// The command line is recovered from the grid by the GUI; embedding it here
-/// would corrupt the OSC param scanner (semicolons delimit params).
+/// The B mark carries the command line hex-encoded as `cmd=` (hex's `[0-9a-f]`
+/// alphabet contains no `;`, so it can't corrupt the scanner's `;`-delimited
+/// params — the GUI hex-decodes it into `ShellMark.command`). Recovering the
+/// command from the grid instead is unreliable: by the time the B-event is
+/// handled the command's output already fills the grid (same PTY read) and
+/// scrolling drifts the row. A/C/D carry only the letter (+ exit/duration on D).
 const ZSH_ZSHENV: &str = r#"# PureTerm zsh bootstrap — OSC 7 cwd + OSC 133 marks (GAP-15).
 # Same-process re-source is a no-op; a nested zsh (new $$) re-integrates.
 if [ "${PURETERM_SI_PID:-}" = "$$" ]; then
@@ -62,10 +65,14 @@ zmodload zsh/datetime 2>/dev/null
 _pt_osc7() { printf '\e]7;file://%s%s\e\\' "$HOST" "$PWD"; }
 # Emit one OSC 133 mark. $1 = letter (A/B/C/D); optional $2 = "k=v;k=v" params.
 _pt_ms() { printf '\e]133;%s%s\a' "$1" "${2:+;$2}"; }
+# Hex-encode a string for the cmd= param (hex has no ';', so it can't corrupt the
+# scanner's ';'-delimited params). The GUI hex-decodes it into ShellMark.command.
+_pt_hex() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
 
-# preexec: the user accepted a line — mark command start + record the time.
+# preexec: the user accepted a line — mark command start, carrying the exact
+# command text, + record the start time. $1 is the command line zsh hands preexec.
 _pt_preexec() {
-  _pt_ms B
+  _pt_ms B "cmd=$(_pt_hex "$1")"
   __pt_cmd_start=$EPOCHREALTIME
 }
 
@@ -104,9 +111,11 @@ _pt_ms A
 ///
 /// `$EPOCHREALTIME` (bash 5+) gives microsecond duration; otherwise `date +%s`
 /// degrades to whole-second granularity (exit code — the valuable part — is
-/// unaffected). Mark strings carry no command text (see [`ZSH_ZSHENV`]).
+/// unaffected). The B mark carries the command hex-encoded as `cmd=` (see
+/// [`ZSH_ZSHENV`] for why hex + why not grid-recovery).
 const BASH_PROMPT_COMMAND: &str = r#"_pt_osc7() { printf '\e]7;file://%s%s\e\\' "$HOSTNAME" "$PWD"; }
 _pt_ms() { printf '\e]133;%s%s\a' "$1" "${2:+;$2}"; }
+_pt_hex() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
 _pt_now_us() {
   if [ -n "${EPOCHREALTIME:-}" ]; then
     # EPOCHREALTIME = sec.<variable-precision frac>. On some platforms the frac
@@ -123,12 +132,12 @@ _pt_now_us() {
     echo "$(date +%s)000000"
   fi
 }
-_pt_preexec() { _pt_ms B; __pt_cmd_start=$(_pt_now_us); }
+_pt_preexec() { _pt_ms B "cmd=$(_pt_hex "$1")"; __pt_cmd_start=$(_pt_now_us); }
 _pt_debug() {
   [ -n "${COMP_LINE:-}" ] && return 0
   [ -z "${__pt_armed:-}" ] && return 0
   __pt_armed=
-  _pt_preexec
+  _pt_preexec "$BASH_COMMAND"
 }
 _pt_prompt() {
   local rc=$?
