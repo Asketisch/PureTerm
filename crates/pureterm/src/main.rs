@@ -59,6 +59,7 @@ mod ipc;
 /// the roster/whitelist/config pieces stay compiled without the feature.
 mod mcp;
 mod keymap;
+mod pane_exit;
 mod search;
 mod session_restore;
 mod split_tree;
@@ -84,6 +85,8 @@ mod resume_bindings;
 mod tmux_cli;
 /// GAP-32: Git overlay panel state + quick-action enum (view lives in iced_app).
 mod git_panel;
+/// GAP-15: per-pane shell-integration state (OSC 133 A/B/C/D state machine).
+mod shell_state;
 mod terminal_context;
 mod terminal_shader;
 mod vi_mode_handler;

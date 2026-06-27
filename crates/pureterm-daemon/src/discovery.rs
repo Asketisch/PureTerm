@@ -30,7 +30,15 @@ pub fn socket_path() -> PathBuf {
 }
 
 /// Persistent data dir for the daemon: manifests, session rings, etc.
+///
+/// Tests may override via `PURETERM_DAEMON_DATA_DIR` so `cargo test` stays
+/// isolated from a live `puretermd` instance (lock file / session sockets).
 pub fn data_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("PURETERM_DAEMON_DATA_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("/tmp"))
         .join("pureterm")
@@ -83,13 +91,20 @@ pub fn restrict_socket(path: &std::path::Path) {
 /// the caller must hold the `File` for the daemon's lifetime. Returns
 /// `Ok(None)` if another daemon already holds the lock.
 pub fn acquire_instance_lock() -> io::Result<Option<File>> {
-    ensure_dirs()?;
+    acquire_instance_lock_at(&lock_path())
+}
+
+/// Same as [`acquire_instance_lock`] but on an arbitrary path (unit tests).
+pub fn acquire_instance_lock_at(path: &std::path::Path) -> io::Result<Option<File>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
     let file = OpenOptions::new()
         .create(true)
         .write(true)
         .truncate(false)
         .mode(0o600)
-        .open(lock_path())?;
+        .open(path)?;
     // LOCK_EX | LOCK_NB: fails immediately if another instance holds it.
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result == 0 {
@@ -105,6 +120,33 @@ pub fn acquire_instance_lock() -> io::Result<Option<File>> {
 }
 
 use std::os::unix::io::AsRawFd;
+
+/// RAII guard: route daemon data paths into an isolated temp dir (unit tests).
+#[cfg(test)]
+pub(crate) struct IsolatedDataDir {
+    _dir: tempfile::TempDir,
+    prev: Option<String>,
+}
+
+#[cfg(test)]
+impl IsolatedDataDir {
+    pub fn new() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prev = std::env::var("PURETERM_DAEMON_DATA_DIR").ok();
+        std::env::set_var("PURETERM_DAEMON_DATA_DIR", dir.path());
+        Self { _dir: dir, prev }
+    }
+}
+
+#[cfg(test)]
+impl Drop for IsolatedDataDir {
+    fn drop(&mut self) {
+        match &self.prev {
+            Some(v) => std::env::set_var("PURETERM_DAEMON_DATA_DIR", v),
+            None => std::env::remove_var("PURETERM_DAEMON_DATA_DIR"),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -137,13 +179,23 @@ mod tests {
 
     #[test]
     fn instance_lock_is_exclusive() {
-        let first = acquire_instance_lock().expect("first lock");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let lock = tmp.path().join("puretermd.lock");
+        let first = acquire_instance_lock_at(&lock).expect("first lock");
         assert!(first.is_some(), "first acquirer should get the lock");
-        let second = acquire_instance_lock().expect("second lock attempt");
+        let second = acquire_instance_lock_at(&lock).expect("second lock attempt");
         assert!(second.is_none(), "second acquirer must be told another instance runs");
         // Dropping `first` releases the flock; a third attempt re-acquires.
         drop(first);
-        let third = acquire_instance_lock().expect("third lock attempt");
+        let third = acquire_instance_lock_at(&lock).expect("third lock attempt");
         assert!(third.is_some(), "lock must be reusable after release");
+    }
+
+    #[test]
+    fn data_dir_respects_test_override() {
+        let _iso = IsolatedDataDir::new();
+        let d = data_dir();
+        assert!(d.starts_with(std::env::temp_dir()));
+        assert!(lock_path().starts_with(&d));
     }
 }

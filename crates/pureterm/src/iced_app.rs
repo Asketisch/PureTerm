@@ -347,6 +347,9 @@ pub struct PureTermApp {
     /// Last-known cwd per pane, reported via OSC 7. Drives cwd inheritance
     /// for new tabs/panes and status-bar restoration on tab/pane switch.
     pane_cwds: HashMap<PaneId, String>,
+    /// GAP-15: per-pane shell-integration state (OSC 133 A/B/C/D state machine).
+    /// Drives `shell.*` EventBus events + the `get_shell_context` MCP tool.
+    pane_shell_state: HashMap<PaneId, crate::shell_state::ShellState>,
     /// GAP-1.3: OSC-set window title per pane. A program sets it via OSC 0/2
     /// (`\e]0;title\a`), and CSI 22t/23t push/pop also flow through the same
     /// upstream `Term::set_title` → `Event::Title`. Presence (non-empty) means
@@ -371,6 +374,8 @@ pub struct PureTermApp {
     // GAP-32: Git Integration — config (`[git]`) + overlay panel state.
     git_cfg: crate::app_config::GitConfig,
     git_panel: crate::git_panel::GitPanelState,
+    // GAP-15: Shell Integration — per-pane command/exit state + `[shell_integration]` config.
+    shell_integration_cfg: crate::app_config::ShellIntegrationConfig,
     /// GAP-32 EventBus: last-emitted branch per pane, deduping
     /// `git.branch_changed` (the status path refreshes git every tick; we emit
     /// only on a real change — never per-tick).
@@ -1314,6 +1319,9 @@ impl PureTermApp {
         // GAP-32: Git Integration config (panel toggle, PR refresh, lazygit cmd).
         let git_cfg = AppConfig::load_git(&config_path);
 
+        // GAP-15: Shell Integration config (master switch, per-shell inject, command-text privacy).
+        let shell_integration_cfg = AppConfig::load_shell_integration(&config_path);
+
         // GAP-5.6: peek the saved layout so the window reopens at its last
         // size (unix-only — recovery depends on the daemon path). The same
         // snapshot is passed to `try_restore_layout` below (single disk read).
@@ -1438,8 +1446,11 @@ impl PureTermApp {
             git_cfg,
             git_panel: crate::git_panel::GitPanelState::new(),
             last_git_branch: HashMap::new(),
+            // GAP-15: Shell Integration.
+            shell_integration_cfg,
             toast: None,
             pane_cwds: HashMap::new(),
+            pane_shell_state: HashMap::new(),
             pane_osc_title: HashMap::new(),
             agent_sessions: HashMap::new(),
             status_bar_git_branch: None,
@@ -1498,7 +1509,10 @@ impl PureTermApp {
         let cwd = self.active_pane_cwd();
         // GAP-5.1 M1: route through persistent daemon; falls back to a direct
         // local PTY when puretermd is unavailable.
-        let terminal_ctx = Arc::new(TerminalContext::new_local_auto(cwd.as_deref()));
+        let terminal_ctx = Arc::new(TerminalContext::new_local_auto(
+            cwd.as_deref(),
+            self.shell_integration_opts(),
+        ));
 
         let terminal_height =
             terminal_content_height(viewport_height, self.status_bar_cfg.effective_height());
@@ -2071,6 +2085,18 @@ impl PureTermApp {
         }
         let path = PathBuf::from(self.pane_cwds.get(&pane_id)?);
         if path.is_dir() { Some(path) } else { None }
+    }
+
+    /// GAP-15: resolve the `[shell_integration]` config into the injector opts
+    /// for the direct (non-daemon) PTY path. `enabled=false` collapses to both
+    /// off (pure OSC 7). Honored only on the fallback path; the daemon path is
+    /// always full integration (no config access there).
+    fn shell_integration_opts(&self) -> pureterm_daemon::shell_integration::ShellIntegrationOpts {
+        let c = &self.shell_integration_cfg;
+        pureterm_daemon::shell_integration::ShellIntegrationOpts {
+            zsh: c.enabled && c.inject_zsh,
+            bash: c.enabled && c.inject_bash,
+        }
     }
 
     /// Re-derive the status-bar cwd (and git branch) from the now-active
@@ -3339,6 +3365,60 @@ impl PureTermApp {
                                 TerminalEvent::ResetTitle => {
                                     self.pane_osc_title.remove(pane_id);
                                 }
+                                // GAP-15: OSC 133 shell-integration mark — advance the
+                                // per-pane state machine and emit a `shell.*` event.
+                                // Inlined (not a method) so it borrows only
+                                // `pane_shell_state`/`shell_integration_cfg`/`events`,
+                                // staying disjoint from the loop's `windows` borrow.
+                                TerminalEvent::ShellMark(mark) => {
+                                    use crate::shell_state::{shell_mark_kind_str, FinishedCommand};
+                                    use alacritty_terminal::index::{Column, Line, Point};
+
+                                    let include_text =
+                                        self.shell_integration_cfg.include_command_text;
+                                    let term = ctx.terminal().clone();
+                                    let session_id = ctx.session_id().map(|s| s.to_string());
+
+                                    let finalized: Option<FinishedCommand> = self
+                                        .pane_shell_state
+                                        .entry(*pane_id)
+                                        .or_default()
+                                        .apply_mark(&mark, |row| {
+                                            if !include_text {
+                                                return None;
+                                            }
+                                            let t = term.lock();
+                                            let start = Point::new(Line(row as i32), Column(0));
+                                            let end = Point::new(Line(row as i32), t.last_column());
+                                            Some(t.bounds_to_string(start, end))
+                                        });
+
+                                    let mut data = serde_json::json!({
+                                        "pane_id": pane_id.0,
+                                        "row": mark.row
+                                    });
+                                    if mark.kind
+                                        == alacritty_terminal::event::ShellMarkKind::OutputEnd
+                                    {
+                                        if let Some(exit) = mark.exit_code {
+                                            data["exit_code"] = serde_json::json!(exit);
+                                        }
+                                        if let Some(dur) = mark.duration_us {
+                                            data["duration_us"] = serde_json::json!(dur);
+                                        }
+                                        if let Some(cmd) = &finalized {
+                                            if let Some(txt) = &cmd.text {
+                                                data["command"] = serde_json::json!(txt);
+                                            }
+                                        }
+                                    }
+                                    self.events.emit(
+                                        crate::events::Category::Shell,
+                                        format!("shell.{}", shell_mark_kind_str(mark.kind)),
+                                        session_id,
+                                        data,
+                                    );
+                                }
                             }
                         }
                     }
@@ -3399,12 +3479,22 @@ impl PureTermApp {
                 if let Some(tab_id) = close_tab_msg {
                     return Task::done(Message::CloseTab(tab_id));
                 }
-                if let Some(&(tab_id, pane_id)) = pane_exit_msgs.first() {
-                    return Task::done(Message::PtyExitedPane(tab_id, pane_id));
-                }
-                if handled_exit {
-                    // 重连 / quick-exit 已就地处理,无 Message 需派发。
-                    return Task::none();
+                match crate::pane_exit::plan_pty_exit_dispatch(
+                    None,
+                    &pane_exit_msgs,
+                    handled_exit,
+                ) {
+                    crate::pane_exit::PtyExitDispatch::RemovePanes(msgs) => {
+                        return Task::batch(
+                            msgs.into_iter()
+                                .map(|(tab_id, pane_id)| {
+                                    Task::done(Message::PtyExitedPane(tab_id, pane_id))
+                                })
+                                .collect::<Vec<_>>(),
+                        );
+                    }
+                    crate::pane_exit::PtyExitDispatch::Handled => return Task::none(),
+                    crate::pane_exit::PtyExitDispatch::CloseTab(_) | crate::pane_exit::PtyExitDispatch::None => {}
                 }
 
                 // GAP-24: status-bar refresh moved to the dedicated
@@ -6533,6 +6623,8 @@ impl PureTermApp {
         self.status_bar_cfg = new_sb;
         // GAP-32: reload `[git]` config (panel toggle / PR refresh / lazygit cmd).
         self.git_cfg = AppConfig::load_git(&self.config_path);
+        // GAP-15: reload `[shell_integration]` config.
+        self.shell_integration_cfg = AppConfig::load_shell_integration(&self.config_path);
         if rebuild {
             self.status_bar_registry = crate::status_bar::build_registry(&self.status_bar_cfg);
         }
@@ -7455,7 +7547,10 @@ impl PureTermApp {
         let cwd = self.active_pane_cwd();
         // GAP-5.1 M1: route through persistent daemon; falls back to a direct
         // local PTY when puretermd is unavailable.
-        let terminal_ctx = Arc::new(TerminalContext::new_local_auto(cwd.as_deref()));
+        let terminal_ctx = Arc::new(TerminalContext::new_local_auto(
+            cwd.as_deref(),
+            self.shell_integration_opts(),
+        ));
 
         // Find the tab and perform the split
         // T2b-1:field-path 直访 self.windows → 活跃 workspace;self.viewport_size /

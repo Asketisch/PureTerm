@@ -657,6 +657,54 @@ mod tests_osc133 {
 }
 
 #[cfg(test)]
+mod tests_osc7 {
+    use super::*;
+
+    #[test]
+    fn scan_bel_terminated() {
+        let buf = b"\x1b]7;file://host/home/user\x07";
+        assert_eq!(scan_osc7(buf).as_deref(), Some("/home/user"));
+    }
+
+    #[test]
+    fn scan_st_terminated() {
+        // PureTerm's injected OSC 7 hook uses ST (\x1b\\), not BEL.
+        let buf = b"\x1b]7;file://myhost/tmp\x1b\\";
+        assert_eq!(scan_osc7(buf).as_deref(), Some("/tmp"));
+    }
+
+    #[test]
+    fn scan_last_of_multiple_sequences() {
+        let buf = b"\x1b]7;file://h/a\x1b\\ \x1b]7;file://h/b\x07";
+        assert_eq!(scan_osc7(buf).as_deref(), Some("/b"));
+    }
+
+    #[test]
+    fn scan_st_then_bel_returns_last() {
+        let buf = b"\x1b]7;file://h/old\x1b\\prompt\x1b]7;file://h/new\x07";
+        assert_eq!(scan_osc7(buf).as_deref(), Some("/new"));
+    }
+
+    #[test]
+    fn scan_incomplete_at_buffer_end_returns_none() {
+        // Truncated OSC 7 (no terminator) must not produce a path.
+        let buf = b"\x1b]7;file://host/partial";
+        assert!(scan_osc7(buf).is_none());
+    }
+
+    #[test]
+    fn scan_no_osc7() {
+        assert!(scan_osc7(b"plain shell output\n").is_none());
+    }
+
+    #[test]
+    fn scan_percent_encoded_path() {
+        let buf = b"\x1b]7;file://host/home/user/My%20Docs\x1b\\";
+        assert_eq!(scan_osc7(buf).as_deref(), Some("/home/user/My Docs"));
+    }
+}
+
+#[cfg(test)]
 mod tests_pty_write_arc {
     //! Verify that `Event::PtyWrite` payloads are wrapped in `Arc<String>` so
     //! multi-window fan-out clones a pointer (atomic increment) instead of
@@ -703,25 +751,34 @@ fn scan_osc7(buf: &[u8]) -> Option<String> {
             let start = i + pos;
             if buf[start..].starts_with(prefix) {
                 let url_start = start + prefix.len();
-                // Find terminator: BEL (0x07) or ST (\x1b\\)
-                if let Some(end) = memchr::memchr(0x07, &buf[url_start..]) {
-                    last_url = Some(&buf[url_start..url_start + end]);
-                    i = url_start + end + 1;
-                    continue;
-                }
-                // Try ST terminator: \x1b\\
-                let rest = &buf[url_start..];
-                for j in 0..rest.len().saturating_sub(1) {
-                    if rest[j] == 0x1b && rest[j + 1] == b'\\' {
-                        last_url = Some(&buf[url_start..url_start + j]);
-                        i = url_start + j + 2;
-                        continue;
+                // Scan params until BEL or ST terminator (mirrors scan_osc133).
+                let mut p = url_start;
+                let mut terminated = false;
+                while p < buf.len() {
+                    match buf[p] {
+                        0x07 => {
+                            last_url = Some(&buf[url_start..p]);
+                            i = p + 1;
+                            terminated = true;
+                            break;
+                        }
+                        0x1b if p + 1 < buf.len() && buf[p + 1] == b'\\' => {
+                            last_url = Some(&buf[url_start..p]);
+                            i = p + 2;
+                            terminated = true;
+                            break;
+                        }
+                        _ => p += 1,
                     }
                 }
-                break;
-            } else {
+                if terminated {
+                    continue;
+                }
+                // No terminator — sequence may span a buffer boundary; skip prefix.
                 i = start + 1;
+                continue;
             }
+            i = start + 1;
         } else {
             break;
         }
