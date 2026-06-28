@@ -5,8 +5,8 @@ category: 终端交互
 plan_type: feature
 priority: P1
 effort: L
-status: in-progress
-closed: null
+status: done
+closed: 2026-06-28
 plan: ../../superpowers/plans/2026-05-15-triggers-system.md
 ---
 
@@ -14,49 +14,84 @@ plan: ../../superpowers/plans/2026-05-15-triggers-system.md
 
 ## 概述
 
-定义规则匹配终端输出中的模式（正则表达式），自动执行动作：高亮文本、添加注释、发送通知、执行脚本、折叠区域等。67+ 种触发器类型。
+定义规则匹配终端输出中的模式（正则表达式），自动执行动作。v1 交付四动作；v2（2026-06-28）补齐捕获组模板、`set_variable`、`set_mark` + `fold`、状态栏 `trigger_count`。
 
-## 竞品参考
+## 已交付
 
-| 竞品 | 功能 | 代码路径 |
-|------|------|----------|
-| **iTerm2** | 67+ 种 trigger 类型：HighlightTrigger, AnnotateTrigger, MarkTrigger, NotificationTrigger, ScriptTrigger, iTermRPCTigger, iTermHyperlinkTrigger, BellTrigger, BounceTrigger, SendTextTrigger, BrowserTrigger, FoldTrigger, SGRTrigger, SetTabStatusTrigger, SetUserVariableTrigger 等 | `sources/Triggers/` |
-| **cmux** | 无明确 Triggers 系统 | — |
+- `[[triggers]]` TOML 配置 + `load_triggers()` 热重载
+- Wakeup per-pane 增量扫描 + `trigger.matched` EventBus（含 `captures` 数组）
+- GPU highlight overlay + fold 区间 conceal 渲染
+- toast / PTY send_text / exec 子进程（argv，无 shell）
+- 模板展开：`{match}`、`$1`–`$9`、`${var:NAME}`、`\n\r\t\xNN`
+- `set_variable` → per-pane 变量；`trigger.variable_set` 事件（不含值）
+- `set_mark` + `fold`（命名 mark 到命中行；`lines_back` 回退）
+- MCP `trigger_list` + IPC `trigger.list`（脱敏）
+- 状态栏组件 id `trigger_count`（显示 `⚡ N`，需手动加入 `status_bar.components`）
 
-## PureTerm 现状
+## 配置示例
 
-**🚧 库级（核心引擎 + 配置解析 + Message stub；Wakeup 扫描 / highlight 渲染未接）。** 用户尚不可通过 `[[triggers]]` 配置获得端到端行为。
+```toml
+[[triggers]]
+name = "error-spot"
+pattern = "(?i)error:|panic:"
+action = "highlight"
+# color = "#55ff55"   # 可选 RGBA hex
 
-**v0 已交付（2026-06-28）：**
-- `triggers.rs` — `scan_lines()` / `next_scan_window()` / `TriggerPaneState` / `HighlightRegion` / `spawn_trigger_exec()`；动作类型 `highlight` / `notify` / `send_text` / `exec`
-- `app_config.rs` — `load_triggers()` + `[[triggers]]` TOML 解析（容错跳过坏条目）
-- `iced_app.rs` — `Message::TriggerSendText` / `TriggerExecResult` handler（供未来扫描循环 `Task::done` 派发）
+[[triggers]]
+name = "build-done"
+pattern = "Built in \\d+s"
+action = "notify"
+title = "Build complete"
 
-**未接线（端到端缺口）：**
-- `load_triggers()` 未在 `iced_app` 启动调用；无 `compiled_triggers` / `trigger_pane_states` 字段
-- 无 `TerminalEvent::Wakeup` 扫描循环
-- `terminal_shader.rs` 无 `HighlightRegion` 渲染
-- 无 `trigger.matched` EventBus emit
-- `default-config.toml` 无 `[[triggers]]` 示例
-- 单测 `scan_multi_trigger_independent` 当前失败（库 bug，待修）
+[[triggers]]
+name = "open-link"
+pattern = "(https://\\S+)"
+action = "set_variable"
+variable = "last_url"
+value = "$1"
 
-## 优先级
+[[triggers]]
+name = "mark-build"
+pattern = "^Building"
+action = "set_mark"
+mark = "build_start"
 
-**P1 — AI 差异化能力**
+[[triggers]]
+name = "fold-build"
+pattern = "SUCCESS"
+action = "fold"
+mark = "build_start"
+# lines_back = 5   # 无 mark 时折叠 [line-lines_back, line]
 
-Triggers 是 iTerm2 最强大的功能之一，将终端从"被动显示"升级为"主动响应"。对 AI agent 工作流尤其重要——可以自动检测 agent 输出中的特定模式并触发动作。
+[[triggers]]
+name = "reply-sudo"
+pattern = "Password:"
+action = "send_text"
+text = "mysecret\n"   # 支持 $1 / {var:NAME} 模板
 
-## 工作量
+[[triggers]]
+name = "open-url"
+pattern = "https://example\\.com/\\S+"
+action = "exec"
+command = "open"
+args = ["$1"]
+route = "toast"   # 或 "pane"
+```
 
-**L（1.5-2 周）**
+### 状态栏 trigger_count
 
-库 + 配置已落地；剩余 Wakeup 扫描 + highlight 渲染 + notify 动作 + 状态栏计数。
+```toml
+[status_bar]
+components = ["trigger_count", "cwd", "git"]
+```
 
-## 实现方向
+## Fold 语义（v2）
 
-1. ✅ 配置格式：`[[triggers]]` 段落在 `alacritty.toml`
-2. ✅ 匹配器：`regex` crate，`scan_lines` 纯函数
-3. 🚧 动作类型：`highlight` / `notify` / `send_text` / `exec`（库定义齐全，运行时未派发）
-4. ❌ Wakeup 扫描循环 + highlight GPU  overlay
-5. ❌ UI：触发的 trigger 在状态栏显示计数
-6. ❌ 可扩展：通过 MCP 暴露 trigger 事件给 AI agent
+- `set_mark`：命中行记入 `named_marks[mark]`（同名覆盖）
+- `fold`：`top_line` = mark 行（若已滚出 scrollback 则回退 `lines_back` 或单行）；`bottom_line` = 命中行
+- 渲染：折叠区间内行 conceal（保留行高）；v1 不做点击展开
+
+## 安全
+
+- `trigger.list` / MCP 不返回 `send_text.text`、`set_variable.value`、`exec.args`
+- `trigger.variable_set` 只含变量名

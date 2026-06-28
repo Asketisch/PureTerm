@@ -4,6 +4,7 @@ use pureterm_settings::config_io;
 
 use crate::keymap::{CustomCommand, RawBinding};
 use crate::ssh::config::SshProfile;
+use crate::triggers::{CompiledTrigger, ExecRoute, TriggerAction, TriggerConfig};
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {
@@ -895,6 +896,121 @@ impl AppConfig {
         result
     }
 
+    /// GAP-10: Load the user's `[[triggers]]` array from the toml config.
+    ///
+    /// Each entry compiles a regex `pattern` matched against terminal output
+    /// and fires one `action` on match. v1 action set:
+    /// ```toml
+    /// [[triggers]]
+    /// name = "error-spot"
+    /// pattern = "(?i)error:|panic:"
+    /// action = "highlight"          # optional: color = "#ff5555"
+    ///
+    /// [[triggers]]
+    /// name = "sudo-reply"
+    /// pattern = "\\[sudo\\] password"
+    /// action = "send_text"
+    /// text = "mypassword\r"         # optional: pane_id = 3 (default = matching pane)
+    ///
+    /// [[triggers]]
+    /// name = "build-done"
+    /// pattern = "Built in \\d+s"
+    /// action = "notify"             # optional: title = "Build complete"
+    ///
+    /// [[triggers]]
+    /// name = "open-link"
+    /// pattern = "https://example\\.com/\\S+"
+    /// action = "exec"
+    /// command = "open"
+    /// args = ["https://example.com/"]   # v1: literal, no {match} substitution
+    /// route = "toast"               # "toast" (default) | "pane"
+    /// ```
+    ///
+    /// Failure-tolerant, mirroring `load_custom_commands`: a missing file or
+    /// `[[triggers]]` table returns an empty Vec; entries missing a required
+    /// field (`name`/`pattern`/`action`) or with an unparseable regex are
+    /// skipped (with a `warn`) — config is untrusted and must never panic the
+    /// app. Duplicate `name`s collapse to the last definition (later wins).
+    pub fn load_triggers(path: &Path) -> Vec<CompiledTrigger> {
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                log::debug!("load_triggers: cannot read {:?}: {}", path, e);
+                return Vec::new();
+            },
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("load_triggers: parse {:?} failed: {}", path, e);
+                return Vec::new();
+            },
+        };
+        let Some(arr) = value.get("triggers").and_then(|v| v.as_array()) else {
+            return Vec::new();
+        };
+        let mut result: Vec<CompiledTrigger> = Vec::new();
+        for entry in arr {
+            let table = match entry.as_table() {
+                Some(t) => t,
+                None => continue,
+            };
+            let name = match table.get("name").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => {
+                    log::warn!("load_triggers: entry missing 'name', skipped");
+                    continue;
+                },
+            };
+            let pattern = match table.get("pattern").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => {
+                    log::warn!("load_triggers: entry '{}' missing 'pattern', skipped", name);
+                    continue;
+                },
+            };
+            let re = match regex::Regex::new(&pattern) {
+                Ok(re) => re,
+                Err(e) => {
+                    log::warn!(
+                        "load_triggers: entry '{}' has unparseable regex {:?}: {} — skipped",
+                        name,
+                        pattern,
+                        e
+                    );
+                    continue;
+                },
+            };
+            let action_str = match table.get("action").and_then(|v| v.as_str()) {
+                Some(a) => a,
+                None => {
+                    log::warn!("load_triggers: entry '{}' missing 'action', skipped", name);
+                    continue;
+                },
+            };
+            let action = match parse_trigger_action(action_str, table, &name) {
+                Some(a) => a,
+                None => continue,
+            };
+            let cfg = TriggerConfig { name: name.clone(), pattern, action };
+            let compiled = CompiledTrigger { cfg, re };
+            // Dedup by name: later definition overrides an earlier one.
+            if let Some(existing) = result.iter_mut().find(|e| e.cfg.name == name) {
+                log::warn!(
+                    "load_triggers: duplicate name '{}' — later entry overrides",
+                    name
+                );
+                *existing = compiled;
+            } else {
+                result.push(compiled);
+            }
+        }
+        if !result.is_empty() {
+            log::info!("load_triggers: loaded {} triggers", result.len());
+        }
+        result
+    }
+
     /// GAP-7.1: Load the user's `[[agent.hook]]` array from the toml config.
     ///
     /// Each entry is `{ event, matcher?, command? | deny_pattern? | ask_pattern?, *_reason?, timeout? }`:
@@ -1015,6 +1131,121 @@ fn parse_hex_color(hex: &str) -> Option<[f32; 4]> {
     let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
     let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
     Some([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
+}
+
+/// GAP-10: parse a `[[triggers]]` entry's `action` + its action-specific
+/// params from the entry table. Returns `None` (already warned) on a missing
+/// required param or unknown action, so `load_triggers` can skip the entry.
+fn parse_trigger_action(action: &str, table: &toml::Table, name: &str) -> Option<TriggerAction> {
+    match action {
+        "highlight" => {
+            let color = table.get("color").and_then(|v| v.as_str()).and_then(parse_hex_color);
+            Some(TriggerAction::Highlight { color })
+        },
+        "notify" => {
+            let title = table.get("title").and_then(|v| v.as_str()).map(|s| s.to_string());
+            Some(TriggerAction::Notify { title })
+        },
+        "send_text" => {
+            let text = match table.get("text").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => {
+                    log::warn!(
+                        "load_triggers: send_text entry '{}' missing 'text', skipped",
+                        name
+                    );
+                    return None;
+                },
+            };
+            let pane_id = table
+                .get("pane_id")
+                .and_then(|v| v.as_integer())
+                .map(|n| n as u64);
+            Some(TriggerAction::SendText { text, pane_id })
+        },
+        "exec" => {
+            let command = match table.get("command").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => {
+                    log::warn!(
+                        "load_triggers: exec entry '{}' missing 'command', skipped",
+                        name
+                    );
+                    return None;
+                },
+            };
+            let args = table
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let route = match table.get("route").and_then(|v| v.as_str()) {
+                Some("pane") => ExecRoute::Pane,
+                _ => ExecRoute::Toast,
+            };
+            Some(TriggerAction::Exec { command, args, route })
+        },
+        "set_variable" => {
+            let var_name = match table
+                .get("variable")
+                .or_else(|| table.get("var_name"))
+                .and_then(|v| v.as_str())
+            {
+                Some(s) => s.to_string(),
+                None => {
+                    log::warn!(
+                        "load_triggers: set_variable entry '{}' missing 'variable', skipped",
+                        name
+                    );
+                    return None;
+                },
+            };
+            let value = match table.get("value").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => {
+                    log::warn!(
+                        "load_triggers: set_variable entry '{}' missing 'value', skipped",
+                        name
+                    );
+                    return None;
+                },
+            };
+            Some(TriggerAction::SetVariable { name: var_name, value })
+        },
+        "set_mark" => {
+            let mark = match table.get("mark").and_then(|v| v.as_str()) {
+                Some(s) => s.to_string(),
+                None => {
+                    log::warn!(
+                        "load_triggers: set_mark entry '{}' missing 'mark', skipped",
+                        name
+                    );
+                    return None;
+                },
+            };
+            Some(TriggerAction::SetMark { mark })
+        },
+        "fold" => {
+            let mark = table.get("mark").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let lines_back = table
+                .get("lines_back")
+                .and_then(|v| v.as_integer())
+                .map(|n| n as u32);
+            Some(TriggerAction::Fold { mark, lines_back })
+        },
+        other => {
+            log::warn!(
+                "load_triggers: entry '{}' has unknown action {:?}, skipped",
+                name,
+                other
+            );
+            None
+        },
+    }
 }
 
 #[cfg(test)]
@@ -1577,5 +1808,115 @@ include_command_text = false
         assert!(cfg.enabled);
         assert!(cfg.inject_zsh);
         assert!(cfg.inject_bash);
+    }
+
+    #[test]
+    fn test_load_triggers_basic() {
+        let toml = r##"
+[[triggers]]
+name = "err"
+pattern = "(?i)error"
+action = "notify"
+
+[[triggers]]
+name = "hl"
+pattern = "WARN"
+action = "highlight"
+color = "#ff0000"
+"##;
+        let path = write_temp_toml("pureterm_test_triggers_basic.toml", toml);
+        let triggers = AppConfig::load_triggers(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(triggers.len(), 2);
+        assert_eq!(triggers[0].cfg.name, "err");
+        assert_eq!(triggers[1].cfg.action.discriminant(), "highlight");
+    }
+
+    #[test]
+    fn test_load_triggers_skips_bad_regex() {
+        let toml = r#"
+[[triggers]]
+name = "bad"
+pattern = "[unclosed"
+action = "notify"
+
+[[triggers]]
+name = "ok"
+pattern = "fine"
+action = "notify"
+"#;
+        let path = write_temp_toml("pureterm_test_triggers_bad_re.toml", toml);
+        let triggers = AppConfig::load_triggers(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].cfg.name, "ok");
+    }
+
+    #[test]
+    fn test_load_triggers_skips_missing_action() {
+        let toml = r#"
+[[triggers]]
+name = "no-action"
+pattern = "x"
+"#;
+        let path = write_temp_toml("pureterm_test_triggers_no_action.toml", toml);
+        let triggers = AppConfig::load_triggers(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(triggers.is_empty());
+    }
+
+    #[test]
+    fn test_load_triggers_duplicate_name_later_wins() {
+        let toml = r#"
+[[triggers]]
+name = "dup"
+pattern = "first"
+action = "notify"
+
+[[triggers]]
+name = "dup"
+pattern = "second"
+action = "highlight"
+"#;
+        let path = write_temp_toml("pureterm_test_triggers_dup.toml", toml);
+        let triggers = AppConfig::load_triggers(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(triggers.len(), 1);
+        assert_eq!(triggers[0].cfg.pattern, "second");
+        assert_eq!(triggers[0].cfg.action.discriminant(), "highlight");
+    }
+
+    #[test]
+    fn test_load_triggers_set_variable_and_fold() {
+        let toml = r#"
+[[triggers]]
+name = "set-url"
+pattern = "(https://\\S+)"
+action = "set_variable"
+variable = "last_url"
+value = "$1"
+
+[[triggers]]
+name = "mark-build"
+pattern = "^Building"
+action = "set_mark"
+mark = "build_start"
+
+[[triggers]]
+name = "fold-build"
+pattern = "SUCCESS"
+action = "fold"
+mark = "build_start"
+"#;
+        let path = write_temp_toml("pureterm_test_triggers_ext.toml", toml);
+        let triggers = AppConfig::load_triggers(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(triggers.len(), 3);
+        assert!(matches!(
+            triggers[0].cfg.action,
+            TriggerAction::SetVariable { .. }
+        ));
+        assert!(matches!(triggers[1].cfg.action, TriggerAction::SetMark { .. }));
+        assert!(matches!(triggers[2].cfg.action, TriggerAction::Fold { .. }));
     }
 }

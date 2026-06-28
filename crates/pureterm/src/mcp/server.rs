@@ -231,6 +231,12 @@ impl PureTermServer {
         Ok(to_text(res))
     }
 
+    #[tool(description = "List configured [[triggers]] rules: name, regex pattern, and action (highlight/notify/send_text/exec). Does not return send_text passwords.")]
+    async fn trigger_list(&self) -> Result<String, String> {
+        let res = rpc("trigger.list", None, self.socket.clone()).await?;
+        Ok(to_text(res))
+    }
+
     #[tool(description = "Type text into a pane's PTY (fire-and-forget). Use the two characters \\r for Enter. Defaults to the active pane. Pair with capture_pane to read the result.")]
     async fn send_text(&self, params: Parameters<SendTextParams>) -> Result<String, String> {
         let p = params.0;

@@ -785,6 +785,12 @@ pub struct TerminalProgram {
     /// across frames. Rebuilt only when the pattern string changes.
     pub cached_search:
         Arc<std::sync::Mutex<Option<(String, alacritty_terminal::term::search::RegexSearch)>>>,
+    /// GAP-10: Trigger highlight regions for the active pane (published each frame
+    /// by the app into this shared `Arc`, mirroring `vi_search_pattern`).
+    pub trigger_highlights:
+        Arc<std::sync::Mutex<Vec<crate::triggers::HighlightRegion>>>,
+    /// GAP-10: collapsed fold regions for the active pane.
+    pub trigger_folds: Arc<std::sync::Mutex<Vec<crate::triggers::FoldRegion>>>,
 }
 
 #[derive(Default)]
@@ -951,6 +957,37 @@ impl<M> shader::Program<M> for TerminalProgram {
             search_matches.iter().any(|m| m.contains(&p))
         };
 
+        // GAP-10: trigger highlight regions (pre-filtered to the visible viewport).
+        let trigger_regions: Vec<crate::triggers::HighlightRegion> = {
+            let guard = match self.trigger_highlights.lock() {
+                Ok(g) => g,
+                Err(e) => e.into_inner(),
+            };
+            let top = -(display_offset as i32);
+            let bottom = -(display_offset as i32) + computed_rows as i32 - 1;
+            guard
+                .iter()
+                .filter(|r| r.line >= top && r.line <= bottom)
+                .copied()
+                .collect()
+        };
+
+        let trigger_folds: Vec<crate::triggers::FoldRegion> = {
+            let guard = match self.trigger_folds.lock() {
+                Ok(g) => g,
+                Err(e) => e.into_inner(),
+            };
+            let top = -(display_offset as i32);
+            let bottom = -(display_offset as i32) + computed_rows as i32 - 1;
+            guard
+                .iter()
+                .filter(|f| f.collapsed && f.bottom_line >= top && f.top_line <= bottom)
+                .copied()
+                .collect()
+        };
+
+        let fold_conceal_color: [f32; 4] = [0.15, 0.15, 0.18, 0.85];
+
         // Iterate cell snapshots: backgrounds + text glyphs
         for cell in &cells {
             let x = pad_x + cell.col as f32 * cell_w;
@@ -992,7 +1029,43 @@ impl<M> shader::Program<M> for TerminalProgram {
                 }
             }
 
-            // Text glyph
+            // GAP-10: Trigger match highlighting (per-rule color overlay).
+            if !trigger_regions.is_empty() {
+                let grid_line = Line(cell.row as i32 - display_offset as i32);
+                for region in &trigger_regions {
+                    if region.line == grid_line.0
+                        && cell.col >= region.col_start
+                        && cell.col < region.col_end
+                    {
+                        push_bg_quad(
+                            &mut bg_vertices,
+                            &mut bg_indices,
+                            x, y, cell_w, cell_h,
+                            region.color,
+                        );
+                        break;
+                    }
+                }
+            }
+
+            let grid_line_i32 = cell.row as i32 - display_offset as i32;
+            let fold_concealed = trigger_folds.iter().any(|f| {
+                f.collapsed && grid_line_i32 > f.top_line && grid_line_i32 <= f.bottom_line
+            });
+            if fold_concealed {
+                push_bg_quad(
+                    &mut bg_vertices,
+                    &mut bg_indices,
+                    x, y, cell_w, cell_h,
+                    fold_conceal_color,
+                );
+            }
+
+            // Text glyph — skip concealed fold interior rows.
+            if fold_concealed {
+                continue;
+            }
+
             if cell.c == ' ' || cell.c == '\t' || cell.c == '\0' {
                 continue;
             }

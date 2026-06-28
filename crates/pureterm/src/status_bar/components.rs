@@ -227,6 +227,34 @@ impl StatusBarComponent for Notifications {
     }
 }
 
+/// GAP-10: global trigger hit counter (from `trigger_hit_total` atomic).
+pub struct TriggerCount {
+    hits: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl TriggerCount {
+    pub fn new(hits: std::sync::Arc<std::sync::atomic::AtomicU64>) -> Self {
+        Self { hits }
+    }
+}
+
+impl StatusBarComponent for TriggerCount {
+    fn id(&self) -> &'static str {
+        "trigger_count"
+    }
+    fn view(&self, _data: &BarData<'_>) -> BarElement<'static> {
+        let n = self.hits.load(std::sync::atomic::Ordering::Relaxed);
+        if n > 0 {
+            text_seg(
+                format!(" \u{26a1} {}", n),
+                Color::from_rgba(0.55, 0.85, 0.55, 1.0),
+            )
+        } else {
+            text(String::new()).size(11).into()
+        }
+    }
+}
+
 pub struct Cursor;
 impl StatusBarComponent for Cursor {
     fn id(&self) -> &'static str {

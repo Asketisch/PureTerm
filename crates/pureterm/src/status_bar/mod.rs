@@ -53,7 +53,10 @@ pub fn get_foreground_process(_pid: u32) -> Option<String> {
 
 /// Build the ordered component registry from a `[statusbar].components` list.
 /// Unknown ids are warned and skipped.
-pub fn build_registry(cfg: &StatusBarConfig) -> Vec<Box<dyn StatusBarComponent>> {
+pub fn build_registry(
+    cfg: &StatusBarConfig,
+    trigger_hits: Option<std::sync::Arc<std::sync::atomic::AtomicU64>>,
+) -> Vec<Box<dyn StatusBarComponent>> {
     cfg.components
         .iter()
         .filter_map(|id| {
@@ -65,6 +68,11 @@ pub fn build_registry(cfg: &StatusBarConfig) -> Vec<Box<dyn StatusBarComponent>>
                 "process" => Box::new(components::Process),
                 "agent" => Box::new(components::Agent),
                 "notifications" => Box::new(components::Notifications),
+                "trigger_count" => Box::new(components::TriggerCount::new(
+                    trigger_hits
+                        .clone()
+                        .unwrap_or_else(|| std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0))),
+                )),
                 "cursor" => Box::new(components::Cursor),
                 "clock" => Box::new(components::Clock),
                 "cpu" => Box::new(components::Cpu::new(cfg.show_sparklines)),

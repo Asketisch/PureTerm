@@ -449,6 +449,16 @@ pub struct PureTermApp {
     notification_panel: crate::notification_panel::NotificationPanelState,
     // GAP-15: Shell Integration — per-pane command/exit state + `[shell_integration]` config.
     shell_integration_cfg: crate::app_config::ShellIntegrationConfig,
+    // GAP-10: Triggers — compiled `[[triggers]]` rules + per-pane scan/highlight state.
+    triggers_cfg: Vec<crate::triggers::CompiledTrigger>,
+    pane_trigger_state: HashMap<PaneId, crate::triggers::TriggerPaneState>,
+    /// Shared highlight regions for the active pane; cloned into each frame's
+    /// `TerminalProgram` (mirrors `cached_search` / `vi_search_pattern`).
+    trigger_highlights: std::sync::Arc<std::sync::Mutex<Vec<crate::triggers::HighlightRegion>>>,
+    /// GAP-10: shared fold regions for the active pane renderer.
+    trigger_folds: std::sync::Arc<std::sync::Mutex<Vec<crate::triggers::FoldRegion>>>,
+    /// GAP-10: global trigger hit counter (status-bar `trigger_count`).
+    trigger_hit_total: std::sync::Arc<std::sync::atomic::AtomicU64>,
     // GAP-09: Notification System — `[notification]` config + in-memory store.
     notification_cfg: crate::app_config::NotificationConfig,
     notification_store: crate::notification_store::NotificationStore,
@@ -783,6 +793,16 @@ pub enum Message {
     /// GAP-32: lightweight transient toast (e.g. "lazygit not installed").
     Toast(String),
     ToastDismissed,
+    /// GAP-10: a trigger fired a cross-pane `send_text`. Deferred out of the
+    /// explicit target pane id (cross-pane `send_text` only).
+    TriggerSendText { pane_id: u64, text: String },
+    /// GAP-10: an `exec` trigger's subprocess finished; route stdout per `route`.
+    /// `Err` = spawn failure; `Ok` = stdout (or a `[trigger exec failed] …`
+    /// payload when the command exited non-zero — surfaced, not dropped).
+    TriggerExecResult {
+        route: crate::triggers::ExecRoute,
+        result: Result<String, String>,
+    },
     NewTab,
     CloseTab(TabId),
     ActivateTab(TabId),
@@ -1402,13 +1422,18 @@ impl PureTermApp {
         // GAP-24: status-bar config + component registry. Computed before the
         // struct literal so the registry can borrow the cfg.
         let status_bar_cfg = AppConfig::load_statusbar(&config_path);
-        let status_bar_registry = crate::status_bar::build_registry(&status_bar_cfg);
+        let trigger_hit_total = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let status_bar_registry =
+            crate::status_bar::build_registry(&status_bar_cfg, Some(trigger_hit_total.clone()));
 
         // GAP-32: Git Integration config (panel toggle, PR refresh, lazygit cmd).
         let git_cfg = AppConfig::load_git(&config_path);
 
         // GAP-15: Shell Integration config (master switch, per-shell inject, command-text privacy).
         let shell_integration_cfg = AppConfig::load_shell_integration(&config_path);
+
+        // GAP-10: pattern-match triggers (`[[triggers]]`).
+        let triggers_cfg = AppConfig::load_triggers(&config_path);
 
         // GAP-09: Notification System config (desktop toasts, dock badge, ring, bell throttle).
         let notification_cfg = AppConfig::load_notification(&config_path);
@@ -1552,6 +1577,11 @@ impl PureTermApp {
             last_git_branch: HashMap::new(),
             // GAP-15: Shell Integration.
             shell_integration_cfg,
+            triggers_cfg,
+            pane_trigger_state: HashMap::new(),
+            trigger_highlights: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            trigger_folds: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            trigger_hit_total,
             toast: None,
             pane_cwds: HashMap::new(),
             pane_shell_state: HashMap::new(),
@@ -2116,6 +2146,35 @@ impl PureTermApp {
 
     fn active_tab_mut(&mut self) -> Option<&mut Tab> {
         self.active_ws_mut()?.active_tab_mut()
+    }
+
+    /// GAP-10: publish trigger highlight + fold regions into shared renderer Arcs.
+    fn publish_trigger_overlay_for_view(&self, pane_id: PaneId, publish: bool) {
+        if publish {
+            let state = self.pane_trigger_state.get(&pane_id);
+            let highlights = state
+                .map(|s| s.highlights.clone())
+                .unwrap_or_default();
+            let folds = state.map(|s| s.folds.clone()).unwrap_or_default();
+            if let Ok(mut g) = self.trigger_highlights.lock() {
+                *g = highlights;
+            }
+            if let Ok(mut g) = self.trigger_folds.lock() {
+                *g = folds;
+            }
+        } else {
+            if let Ok(mut g) = self.trigger_highlights.lock() {
+                *g = Vec::new();
+            }
+            if let Ok(mut g) = self.trigger_folds.lock() {
+                *g = Vec::new();
+            }
+        }
+    }
+
+    /// GAP-10: publish highlight regions for the pane being drawn this frame.
+    fn publish_trigger_highlights_for_view(&self, pane_id: PaneId, publish: bool) {
+        self.publish_trigger_overlay_for_view(pane_id, publish);
     }
 
     // ── GAP-2.1 Phase 4 Workspace tier(坍缩为纯 Window 指针切换) ──────────
@@ -3403,6 +3462,8 @@ impl PureTermApp {
                 // T2b-1:field-path 直访 self.windows(只读),与循环体内
                 // self.pane_cwds / self.status_bar_* 的 mut disjoint。
                 let mut exited_panes = Vec::new();
+                let mut trigger_tasks: Vec<Task<Message>> = Vec::new();
+                let mut deferred_send_text: Vec<Message> = Vec::new();
                 let aw = self.active_window_id;
                 let active_ws_tabs: Vec<&Tab> = self
                     .windows
@@ -3434,6 +3495,207 @@ impl PureTermApp {
                                                 }
                                                 ctx.set_ssh_state(SshState::Connected);
                                                 self.emit_ssh_state_changed(*pane_id, ctx, SshStateSnapshot::Connected);
+                                            }
+                                        }
+                                    }
+                                    // GAP-10: scan new output lines for `[[triggers]]` matches.
+                                    // Inlined (borrow disjoint from the loop's `windows` borrow).
+                                    if !self.triggers_cfg.is_empty() {
+                                        use crate::triggers::{
+                                            DEFAULT_HIGHLIGHT_COLOR, HighlightRegion, FoldRegion,
+                                            MAX_LINES_PER_WAKE, MAX_MATCHES_PER_LINE,
+                                            next_scan_window, scan_lines, spawn_trigger_exec,
+                                            TemplateContext, TriggerAction, expand_trigger_template,
+                                            fold_window,
+                                        };
+
+                                        let session_id = ctx.session_id().map(|s| s.to_string());
+                                        let pane_state =
+                                            self.pane_trigger_state.entry(*pane_id).or_default();
+
+                                        let scan_result = {
+                                            let term = ctx.terminal().lock();
+                                            let cursor = term.grid().cursor.point.line.0;
+                                            let topmost = term.topmost_line().0;
+
+                                            let window = match next_scan_window(
+                                                pane_state.last_scanned_line,
+                                                cursor,
+                                                MAX_LINES_PER_WAKE,
+                                            ) {
+                                                None => {
+                                                    pane_state.last_scanned_line = Some(cursor);
+                                                    None
+                                                }
+                                                Some(w) => Some(w),
+                                            };
+
+                                            match window {
+                                                None => None,
+                                                Some((start, end)) => {
+                                                    let mut lines = Vec::new();
+                                                    for l in start..=end {
+                                                        let text = term.bounds_to_string(
+                                                            TermPoint::new(Line(l), Column(0)),
+                                                            TermPoint::new(
+                                                                Line(l),
+                                                                term.last_column(),
+                                                            ),
+                                                        );
+                                                        lines.push((l, text));
+                                                    }
+                                                    pane_state.last_scanned_line = Some(end);
+                                                    pane_state.evict_offscreen(topmost);
+                                                    Some((lines, topmost))
+                                                }
+                                            }
+                                        };
+
+                                        if let Some((lines, topmost)) = scan_result {
+                                            let line_refs: Vec<(i32, &str)> = lines
+                                                .iter()
+                                                .map(|(l, s)| (*l, s.as_str()))
+                                                .collect();
+                                            let matches = scan_lines(
+                                                &line_refs,
+                                                &self.triggers_cfg,
+                                                MAX_MATCHES_PER_LINE,
+                                            );
+
+                                            for m in matches {
+                                                let trig = &self.triggers_cfg[m.trigger_idx];
+                                                let cfg = &trig.cfg;
+                                                self.trigger_hit_total
+                                                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                                                let variables_snapshot = pane_state.variables.clone();
+                                                let tpl = TemplateContext {
+                                                    matched_text: &m.matched_text,
+                                                    captures: &m.captures,
+                                                    variables: &variables_snapshot,
+                                                };
+                                                let captures_json: Vec<String> = m
+                                                    .captures
+                                                    .iter()
+                                                    .map(|c| {
+                                                        if c.chars().count()
+                                                            > crate::triggers::MATCHED_TEXT_MAX
+                                                        {
+                                                            c.chars()
+                                                                .take(crate::triggers::MATCHED_TEXT_MAX)
+                                                                .collect()
+                                                        } else {
+                                                            c.clone()
+                                                        }
+                                                    })
+                                                    .collect();
+                                                self.events.emit(
+                                                    crate::events::Category::Trigger,
+                                                    "trigger.matched",
+                                                    session_id.clone(),
+                                                    serde_json::json!({
+                                                        "pane_id": pane_id.0,
+                                                        "trigger": cfg.name,
+                                                        "pattern": cfg.pattern,
+                                                        "action": cfg.action.discriminant(),
+                                                        "line": m.line,
+                                                        "col_start": m.col_start,
+                                                        "matched_text": m.matched_text,
+                                                        "captures": captures_json,
+                                                    }),
+                                                );
+                                                pane_state.bump_fire_count(&cfg.name);
+
+                                                match &cfg.action {
+                                                    TriggerAction::Highlight { color } => {
+                                                        let c =
+                                                            color.unwrap_or(DEFAULT_HIGHLIGHT_COLOR);
+                                                        pane_state.push_highlight(HighlightRegion {
+                                                            line: m.line,
+                                                            col_start: m.col_start,
+                                                            col_end: m.col_end,
+                                                            color: c,
+                                                        });
+                                                    }
+                                                    TriggerAction::Notify { title } => {
+                                                        let msg = match title {
+                                                            Some(t) => expand_trigger_template(t, &tpl),
+                                                            None => m.matched_text.clone(),
+                                                        };
+                                                        trigger_tasks
+                                                            .push(Task::done(Message::Toast(msg)));
+                                                    }
+                                                    TriggerAction::SendText { text, pane_id: target }
+                                                    => {
+                                                        let expanded =
+                                                            expand_trigger_template(text, &tpl);
+                                                        match target {
+                                                            None => {
+                                                                ctx.write_to_pty(expanded.as_bytes());
+                                                            }
+                                                            Some(id) => {
+                                                                deferred_send_text.push(
+                                                                    Message::TriggerSendText {
+                                                                        pane_id: *id,
+                                                                        text: expanded,
+                                                                    },
+                                                                );
+                                                            }
+                                                        }
+                                                    }
+                                                    TriggerAction::Exec {
+                                                        command,
+                                                        args,
+                                                        route,
+                                                    } => {
+                                                        let cmd =
+                                                            expand_trigger_template(command, &tpl);
+                                                        let expanded_args: Vec<String> = args
+                                                            .iter()
+                                                            .map(|a| expand_trigger_template(a, &tpl))
+                                                            .collect();
+                                                        trigger_tasks.push(spawn_trigger_exec(
+                                                            cmd,
+                                                            expanded_args,
+                                                            *route,
+                                                        ));
+                                                    }
+                                                    TriggerAction::SetVariable { name, value } => {
+                                                        let expanded =
+                                                            expand_trigger_template(value, &tpl);
+                                                        pane_state.variables.insert(
+                                                            name.clone(),
+                                                            expanded,
+                                                        );
+                                                        self.events.emit(
+                                                            crate::events::Category::Trigger,
+                                                            "trigger.variable_set",
+                                                            session_id.clone(),
+                                                            serde_json::json!({
+                                                                "pane_id": pane_id.0,
+                                                                "variable": name,
+                                                            }),
+                                                        );
+                                                    }
+                                                    TriggerAction::SetMark { mark } => {
+                                                        pane_state
+                                                            .named_marks
+                                                            .insert(mark.clone(), m.line);
+                                                    }
+                                                    TriggerAction::Fold { mark, lines_back } => {
+                                                        let (top, bottom) = fold_window(
+                                                            m.line,
+                                                            mark.as_deref(),
+                                                            *lines_back,
+                                                            &pane_state.named_marks,
+                                                            topmost,
+                                                        );
+                                                        pane_state.push_fold(FoldRegion {
+                                                            top_line: top,
+                                                            bottom_line: bottom,
+                                                            collapsed: true,
+                                                        });
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -3703,8 +3965,19 @@ impl PureTermApp {
                     }
                 }
 
+                let mut trigger_batch = trigger_tasks;
+                trigger_batch.extend(
+                    deferred_send_text
+                        .into_iter()
+                        .map(|m| Task::done(m)),
+                );
+
                 if let Some(tab_id) = close_tab_msg {
-                    return Task::done(Message::CloseTab(tab_id));
+                    trigger_batch.push(Task::done(Message::CloseTab(tab_id)));
+                    if !trigger_batch.is_empty() {
+                        return Task::batch(trigger_batch);
+                    }
+                    return Task::none();
                 }
                 match crate::pane_exit::plan_pty_exit_dispatch(
                     None,
@@ -3712,16 +3985,25 @@ impl PureTermApp {
                     handled_exit,
                 ) {
                     crate::pane_exit::PtyExitDispatch::RemovePanes(msgs) => {
-                        return Task::batch(
+                        trigger_batch.extend(
                             msgs.into_iter()
                                 .map(|(tab_id, pane_id)| {
                                     Task::done(Message::PtyExitedPane(tab_id, pane_id))
-                                })
-                                .collect::<Vec<_>>(),
+                                }),
                         );
+                        return Task::batch(trigger_batch);
                     }
-                    crate::pane_exit::PtyExitDispatch::Handled => return Task::none(),
+                    crate::pane_exit::PtyExitDispatch::Handled => {
+                        if !trigger_batch.is_empty() {
+                            return Task::batch(trigger_batch);
+                        }
+                        return Task::none();
+                    }
                     crate::pane_exit::PtyExitDispatch::CloseTab(_) | crate::pane_exit::PtyExitDispatch::None => {}
+                }
+
+                if !trigger_batch.is_empty() {
+                    return Task::batch(trigger_batch);
                 }
 
                 // GAP-24: status-bar refresh moved to the dedicated
@@ -3965,6 +4247,41 @@ impl PureTermApp {
             }
             Message::ToastDismissed => {
                 self.toast = None;
+            }
+            Message::TriggerSendText { pane_id, text } => {
+                // GAP-10: deferred cross-pane send_text — runs outside the Wakeup
+                // loop so `pane_terminal_ctx` can borrow `self.windows`.
+                if let Some(ctx) = self.pane_terminal_ctx(PaneId(pane_id)) {
+                    ctx.write_to_pty(text.as_bytes());
+                }
+            }
+            Message::TriggerExecResult { route, result } => {
+                // GAP-10: route exec stdout. Reuse the Toast path for display
+                // (it owns the dismiss timer) via `Task::done(Message::Toast)`.
+                match result {
+                    Err(e) => {
+                        return Task::done(Message::Toast(format!("Trigger exec failed: {e}")));
+                    },
+                    Ok(stdout) => match route {
+                        crate::triggers::ExecRoute::Toast => {
+                            // First non-empty line as a compact toast.
+                            let line = stdout
+                                .lines()
+                                .find(|l| !l.trim().is_empty())
+                                .unwrap_or("(no output)")
+                                .to_string();
+                            return Task::done(Message::Toast(line));
+                        },
+                        crate::triggers::ExecRoute::Pane => {
+                            // Write full stdout (+newline) to the active pane.
+                            if let Some(ctx) = self.active_terminal_ctx() {
+                                let mut bytes = stdout.into_bytes();
+                                bytes.push(b'\n');
+                                ctx.write_to_pty(&bytes);
+                            }
+                        },
+                    },
+                }
             }
             Message::LayoutSaveTick => {
                 // GAP-4.3: tail-find re-anchor on new output (~4 Hz cadence).
@@ -4820,6 +5137,17 @@ impl PureTermApp {
                         }
                         map
                     },
+                    triggers: self
+                        .triggers_cfg
+                        .iter()
+                        .enumerate()
+                        .map(|(i, t)| crate::ipc::methods::TriggerListEntry {
+                            index: i,
+                            name: t.cfg.name.clone(),
+                            pattern: t.cfg.pattern.clone(),
+                            action: t.cfg.action.discriminant().to_string(),
+                        })
+                        .collect(),
                 };
 
                 let (resp, side_effect) = self.ipc_router.dispatch(
@@ -6158,6 +6486,7 @@ impl PureTermApp {
                     tab.panes.remove(&pane_id);
                     self.pane_cwds.remove(&pane_id);
                     self.pane_osc_title.remove(&pane_id);
+                    self.pane_trigger_state.remove(&pane_id);
                     tab.active_pane = new_active;
                     // Resize remaining panes
                     let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
@@ -6923,6 +7252,8 @@ impl PureTermApp {
         self.git_cfg = AppConfig::load_git(&self.config_path);
         // GAP-15: reload `[shell_integration]` config.
         self.shell_integration_cfg = AppConfig::load_shell_integration(&self.config_path);
+        // GAP-10: reload `[[triggers]]` rules (regex recompiled on load).
+        self.triggers_cfg = AppConfig::load_triggers(&self.config_path);
         // GAP-09: reload `[notification]` config; if desktop toasts were
         // (re)enabled, (re)request authorization (idempotent — system prompts
         // only once).
@@ -6932,7 +7263,10 @@ impl PureTermApp {
             crate::macos_notifications::request_authorization();
         }
         if rebuild {
-            self.status_bar_registry = crate::status_bar::build_registry(&self.status_bar_cfg);
+            self.status_bar_registry = crate::status_bar::build_registry(
+                &self.status_bar_cfg,
+                Some(self.trigger_hit_total.clone()),
+            );
         }
 
         if font_changed {
@@ -8057,6 +8391,7 @@ impl PureTermApp {
             tab.panes.remove(&active_pane_id);
             self.pane_cwds.remove(&active_pane_id);
             self.pane_osc_title.remove(&active_pane_id);
+            self.pane_trigger_state.remove(&active_pane_id);
             tab.active_pane = new_active;
             // Resize remaining panes
             let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
@@ -10022,31 +10357,35 @@ impl PureTermApp {
         // !w.is_main 守卫避免误命中主窗(id == main_window 时直接走主窗路径)。
         if let Some(w) = self.window_for(id) {
             if !w.is_main {
-                // Use the active tab's first pane terminal context for detached windows
-                let ctx = w
+                let pane_entry = w
                     .active_tab()
-                    .and_then(|t| t.panes.values().next())
-                    .and_then(|p| p.terminal().cloned());
-                if let Some(ctx) = ctx {
-                    let shader = Shader::new(TerminalProgram {
-                        ctx,
-                        glyph_state: self.glyph_state.clone(),
-                        background_color: self.config.background_color,
-                        foreground_color: self.config.foreground_color,
-                        opacity: self.config.opacity,
-                        viewport_scale_factor: self.viewport_scale_factor.clone(),
-                        vi_search_pattern: self.vi_search_pattern.clone(),
-                        cached_search: self.cached_search.clone(),
-                    })
-                    .width(Length::Fill)
-                    .height(Length::Fill);
+                    .and_then(|t| t.panes.iter().next());
+                if let Some((pane_id, pane)) = pane_entry {
+                    if let Some(ctx) = pane.terminal().cloned() {
+                        self.publish_trigger_highlights_for_view(*pane_id, true);
+                        let shader = Shader::new(TerminalProgram {
+                            ctx,
+                            glyph_state: self.glyph_state.clone(),
+                            background_color: self.config.background_color,
+                            foreground_color: self.config.foreground_color,
+                            opacity: self.config.opacity,
+                            viewport_scale_factor: self.viewport_scale_factor.clone(),
+                            vi_search_pattern: self.vi_search_pattern.clone(),
+                            cached_search: self.cached_search.clone(),
+                            trigger_highlights: self.trigger_highlights.clone(),
+                            trigger_folds: self.trigger_folds.clone(),
+                        })
+                        .width(Length::Fill)
+                        .height(Length::Fill);
 
-                    return crate::ime_widget::ImeWrapper::new(
-                        mouse_area(shader)
-                            .on_scroll(Message::MouseScroll)
-                            .on_move(Message::CursorMoved)
-                            .into(),
-                    ).into();
+                        return crate::ime_widget::ImeWrapper::new(
+                            mouse_area(shader)
+                                .on_scroll(Message::MouseScroll)
+                                .on_move(Message::CursorMoved)
+                                .into(),
+                        )
+                        .into();
+                    }
                 }
             }
         }
@@ -10317,6 +10656,8 @@ impl PureTermApp {
                 .into();
         };
 
+        self.publish_trigger_highlights_for_view(pane_id, is_active);
+
         let shader = Shader::new(TerminalProgram {
             ctx,
             glyph_state: self.glyph_state.clone(),
@@ -10326,6 +10667,8 @@ impl PureTermApp {
             viewport_scale_factor: self.viewport_scale_factor.clone(),
             vi_search_pattern: self.vi_search_pattern.clone(),
             cached_search: self.cached_search.clone(),
+            trigger_highlights: self.trigger_highlights.clone(),
+            trigger_folds: self.trigger_folds.clone(),
         })
         .width(Length::Fill)
         .height(Length::Fill);

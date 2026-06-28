@@ -13,6 +13,7 @@
 | GAP-6.7 | Event Stream + 持久 JSONL 日志 | 集成 | integration | P0 | 2026-06-26 | [spec](features/GAP-6.7-event-stream/spec.md) |
 | GAP-32 | Git Integration（porcelain + gh PR + 面板） | 开发者工具 | integration | P2 | 2026-06-27 | [spec](features/GAP-32-git-integration/spec.md) |
 | GAP-09 | Notification System（OSC 9/99/777 + Bell → ring/面板/Dock/toast/CLI） | 终端交互 | feature | P0 | 2026-06-28 | [spec](features/GAP-09-notification/spec.md) |
+| GAP-10 | Triggers（regex 匹配输出 → highlight/notify/send_text/exec） | 终端交互 | feature | P1 | 2026-06-28 | [spec](features/GAP-10-triggers/spec.md) |
 | GAP-24 | Enhanced Status Bar（40+ 组件） | UI/外壳 | enhance | P2 | 2026-06-26 | [spec](features/GAP-24-status-bar/spec.md) |
 | GAP-27 | Settings Panel（独立 Iced 进程） | UI/外壳 | feature | P4 | 2026-06-08 | [spec](features/GAP-27-settings-panel/spec.md) |
 

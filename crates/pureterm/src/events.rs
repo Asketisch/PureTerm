@@ -37,6 +37,11 @@ pub enum Category {
     /// GAP-15: shell integration marks (prompt/command/output boundaries, exit
     /// codes) emitted from OSC 133 sequences parsed off the PTY.
     Shell,
+    /// GAP-02: error recovery — LLM fix suggestions on command failure.
+    ErrorRecovery,
+    /// GAP-10: pattern-match triggers — `trigger.matched` emitted on every
+    /// regex hit against terminal output.
+    Trigger,
 }
 
 impl Category {
@@ -58,6 +63,8 @@ impl Category {
             Category::Config => "config",
             Category::Git => "git",
             Category::Shell => "shell",
+            Category::ErrorRecovery => "error_recovery",
+            Category::Trigger => "trigger",
         }
     }
 }
@@ -218,6 +225,14 @@ mod tests {
         let f = TypeFilter::parse(Some("shell"));
         assert!(f.matches(&ev(Category::Shell, "shell.command_finished")));
         assert!(f.matches(&ev(Category::Shell, "shell.prompt_started")));
+        assert!(!f.matches(&ev(Category::App, "app.started")));
+    }
+
+    #[test]
+    fn type_filter_error_recovery_category_prefix() {
+        let f = TypeFilter::parse(Some("error_recovery"));
+        assert!(f.matches(&ev(Category::ErrorRecovery, "error_recovery.triggered")));
+        assert!(f.matches(&ev(Category::ErrorRecovery, "error_recovery.applied")));
         assert!(!f.matches(&ev(Category::App, "app.started")));
     }
 

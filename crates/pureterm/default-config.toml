@@ -52,3 +52,33 @@ dock_badge = true             # unread count on the app icon
 ring = true                   # amber attention ring around the pane
 bell_passthrough = true       # surface BEL (0x07) as an attention signal
 bell_throttle_ms = 1000       # ≤1 bell-derived notif per pane per this window
+
+# GAP-10: Triggers — regex on terminal *output* → highlight / notify / send_text / exec /
+# set_variable / set_mark / fold. Templates: {match}, $1–$9, ${var:NAME}, \n\r\t\xNN.
+# Uncomment and customize (never commit real passwords in send_text):
+#
+# [[triggers]]
+# name = "error-spot"
+# pattern = "(?i)error:"
+# action = "highlight"
+#
+# [[triggers]]
+# name = "build-done"
+# pattern = "Built in \\d+s"
+# action = "notify"
+# title = "Build complete"
+#
+# [[triggers]]
+# name = "capture-url"
+# pattern = "(https://\\S+)"
+# action = "set_variable"
+# variable = "last_url"
+# value = "$1"
+#
+# [[triggers]]
+# name = "fold-build"
+# pattern = "SUCCESS"
+# action = "fold"
+# mark = "build_start"
+#
+# Status bar: add "trigger_count" to [status_bar] components for ⚡ N hit counter.

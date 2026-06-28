@@ -48,6 +48,11 @@ pub const TOOLS: &[ToolSpec] = &[
         description: "Return the shell context for a pane (default: active): cwd, last_command {text, exit_code, duration_us}, and recent_commands. Requires shell integration (zsh/bash). Non-integrated panes (SSH/fish) return integrated=false. Use this to understand what the user just ran before responding.",
     },
     ToolSpec {
+        name: "trigger_list",
+        rpc_method: "trigger.list",
+        description: "List configured [[triggers]] rules (name, pattern, action). Does not return send_text secrets.",
+    },
+    ToolSpec {
         name: "send_text",
         rpc_method: "surface.send_text",
         description: "Write text into a pane's PTY (default: the active pane). Use \\r for Enter. Fire-and-forget; pair with capture_pane to read the result.",

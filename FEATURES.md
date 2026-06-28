@@ -154,6 +154,17 @@
 - 单测:scanner 17 + notification_store 9 + app_config 3 + bridge 2 + `should_toast` 2;GUI E2E 见 `docs/manual-e2e/gap-09-notification.md`(非阻塞,待人工)
 - **已知局限**:Linux dbus 通知未做(用户决定 macOS-only);`FocusNotificationPane` v1 仅清 unread,跨 tab 聚焦待补
 
+### GAP-10 Triggers（模式匹配自动化 v1+v2）(2026-06-28)
+- `[[triggers]]` 正则匹配终端**输出**文本 → 七动作:`highlight`(GPU overlay) / `notify`(toast + EventBus) / `send_text`(写 PTY) / `exec`(argv 子进程,无 shell) / `set_variable` / `set_mark` / `fold`(conceal 折叠渲染)
+- **模板**:`{match}`、`$1`–`$9`、`${var:NAME}`、`\n\r\t\xNN` — notify/send_text/exec/set_variable 派发前 expand
+- **配置**:`app_config.rs` `load_triggers()` — 容错跳过坏正则/缺字段;热重载 `ConfigReloaded`
+- **扫描**:`triggers.rs` `scan_lines`(captures) + `next_scan_window` per-pane delta;`iced_app.rs` `TerminalEvent::Wakeup` 内联(首次 wake 只 seed 不回放历史);列号用字符数非字节
+- **Highlight/Fold**:`pane_trigger_state` → 共享 `Arc<Mutex>` → `terminal_shader.rs` overlay + fold conceal
+- **EventBus**:`Category::Trigger` + `trigger.matched`(含 captures) + `trigger.variable_set`(脱敏)
+- **状态栏**:`trigger_count` 组件 id（`⚡ N`，需手动加入 components）
+- **MCP/IPC**:`trigger.list` / MCP `trigger_list`(只读;**不**返回密码/变量值)
+- 单测:triggers + load_triggers + `trigger_list` 脱敏;全量绿;GUI E2E 待人工
+
 ---
 
 ## D. SSH

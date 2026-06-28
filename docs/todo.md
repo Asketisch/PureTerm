@@ -4,14 +4,13 @@
 
 ---
 
-## 🚧 进行中（7）
+## 🚧 进行中（6）
 
 | GAP | 简述 | 类别 | 规划类型 | 优先级 | 详情 |
 |-----|------|------|----------|--------|------|
 | GAP-02 | 错误恢复：Shell exit 触发 + LLM 卡片 + Apply，待 GUI E2E | AI Agent | wrap-up | P0 | [spec](features/GAP-02-error-recovery/spec.md) · [E2E](manual-e2e/gap-02-error-recovery.md) |
 | GAP-01 | AI Chat Panel：Phase 1+2 headless ✅，GUI/配置未接 | AI Agent | feature | P0 | [spec](features/GAP-01-ai-chat-panel/spec.md) |
 | GAP-15 | Shell Integration：OSC 133 + EventBus + MCP，待 GUI E2E | 终端交互 | wrap-up | P0 | [spec](features/GAP-15-shell-integration/spec.md) |
-| GAP-10 | Triggers：库+配置 stub，Wakeup 扫描/highlight 未接 | 终端交互 | feature | P1 | [spec](features/GAP-10-triggers/spec.md) |
 | GAP-7.8 | Agent-Browser 兼容：9 browser tool，待用户页面 E2E | AI Agent | wrap-up | P1 | [spec](features/GAP-3.5-browser-panel/spec.md) |
 | GAP-4.2 | Hover Preview：智能选择已有，悬停 tooltip 未做 | 终端交互 | enhance | P2 | [spec](features/GAP-4.2-hover-preview/spec.md) |
 | GAP-21 | Dock Badge：通知角标 ✅，Feed 叠加 + Dock 菜单 ❌ | UI/外壳 | wrap-up | P4 | [spec](features/GAP-21-dock-badge/spec.md) |

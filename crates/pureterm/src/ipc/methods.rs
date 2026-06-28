@@ -143,6 +143,17 @@ pub struct AppSnapshot {
     /// Surfaced via the `shell.context` Socket API method / MCP
     /// `get_shell_context`. Built from `pane_shell_state` + `pane_cwds`.
     pub pane_shell_contexts: std::collections::HashMap<u64, crate::shell_context::ShellContextSummary>,
+    /// GAP-10: configured `[[triggers]]` rules (no `send_text` secrets).
+    pub triggers: Vec<TriggerListEntry>,
+}
+
+/// GAP-10: one trigger rule for `trigger.list` / MCP `trigger_list`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TriggerListEntry {
+    pub index: usize,
+    pub name: String,
+    pub pattern: String,
+    pub action: String,
 }
 
 /// GAP-5.6: one SSH pane's connection state for the `ssh.state` Socket API
@@ -177,6 +188,7 @@ impl Default for AppSnapshot {
             pane_ids: Vec::new(),
             ssh_pane_states: Vec::new(),
             pane_shell_contexts: std::collections::HashMap::new(),
+            triggers: Vec::new(),
         }
     }
 }
@@ -560,6 +572,24 @@ impl SocketRouter {
                 obj.insert("pane_id".to_string(), serde_json::json!(pane_id));
             }
             (Ok(val), None)
+        });
+
+        // GAP-10: list configured trigger rules (read-only; no send_text secrets).
+        router.register("trigger.list", |_params, snap| {
+            let triggers: Vec<Value> = snap
+                .triggers
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "index": t.index,
+                        "name": t.name,
+                        "pattern": t.pattern,
+                        "action": t.action,
+                    })
+                })
+                .collect();
+            let count = triggers.len();
+            (Ok(serde_json::json!({ "triggers": triggers, "count": count })), None)
         });
 
         router.register("surface.send_text", |params, _snap| {
@@ -1039,6 +1069,7 @@ mod tests {
             pane_ids: vec![vec![10, 11], vec![20]],
             ssh_pane_states: Vec::new(),
             pane_shell_contexts: std::collections::HashMap::new(),
+            triggers: Vec::new(),
         }
     }
 
@@ -1070,6 +1101,35 @@ mod tests {
         assert_eq!(r["version"], "0.1.0");
         assert_eq!(r["tabs"], 2);
         assert_eq!(r["panes"], 3);
+    }
+
+    #[test]
+    fn trigger_list_no_secrets() {
+        let router = SocketRouter::new();
+        let mut snap = test_snap();
+        snap.triggers = vec![
+            super::TriggerListEntry {
+                index: 0,
+                name: "sudo-reply".into(),
+                pattern: r"\[sudo\] password".into(),
+                action: "send_text".into(),
+            },
+            super::TriggerListEntry {
+                index: 1,
+                name: "err".into(),
+                pattern: "error".into(),
+                action: "notify".into(),
+            },
+        ];
+        let (resp, fx) = router.dispatch(42, "trigger.list", None, &snap);
+        assert!(fx.is_none());
+        let r = resp.result.unwrap();
+        assert_eq!(r["count"], 2);
+        let list = r["triggers"].as_array().unwrap();
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0]["action"], "send_text");
+        assert!(list[0].get("text").is_none());
+        assert!(list[0].get("args").is_none());
     }
 
     #[test]
