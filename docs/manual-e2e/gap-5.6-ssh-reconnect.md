@@ -14,6 +14,8 @@
 > CI 无法证明**真实 SSH 行为**:真机重连、状态栏 🔑/⏻→SSH 切换、分隔线在 scrollback 里的视觉、
 > `events tail` 实时事件、多 pane split 各自重连、分类后的对话框文案、用户断开的 `disconnected` 事件。
 > 本页是那条人工置信层,也是 GAP-5.6 flip 🚧→✅ 的唯一门槛。**非 CI gate**。
+>
+> **Automated harness re-run (2026-06-27):** `cargo test -p pureterm` **589** green（含 `ssh::reconnect::*` / `on_first_remote_byte` / 多 pane 退出原地重连路径）。`scan_osc7` ST 终止符修复后 CWD 继承单测绿。GUI 五场景仍待 `./build.sh app` 后人工勾选。
 
 ## 前置
 
@@ -132,8 +134,8 @@ pureterm ssh state
 - [ ] 场景 4:单 pane 重连未退化。
 - [ ] 场景 5:用户主动断开 → 状态栏 `SSH ⏻` + `ssh.state_changed to:disconnected` + pane 不重连。
 
-**已执行(2026-06-25)**:`docs/todo.md` GAP-5.6 🚧→✅(移入"已完成"+计数 5→6)、`FEATURES.md`
-状态标记翻转、`docs/featuresList/68-ssh-reconnect.md` ✅、本文件加 ✅ 日期 —— 同提交 flip
+**已执行(2026-06-25)**:`docs/done.md` GAP-5.6、`FEATURES.md`
+状态标记翻转、`docs/features/GAP-5.6-ssh-reconnect/spec.md` ✅、本文件加 ✅ 日期 —— 同提交 flip
 (memory `closing-inprogress-gap-to-done`)。本次按用户授权("先全部完成")先行 flip,GUI 5 场景
 作为非阻塞 follow-up。
 

@@ -1,7 +1,7 @@
 # PureTerm 已实现特性
 
-> 本文件汇总 PureTerm 所有已闭环(✅)特性,按类别组织。未实现/进行中特性见 [`docs/todo.md`](docs/todo.md)。
-> 更新约定:新特性闭环后同步本文件 + `docs/todo.md` 状态更新。
+> 本文件汇总 PureTerm 所有已闭环(✅)特性,按类别组织。未实现/进行中特性见 [`docs/todo.md`](docs/todo.md)；路线图已闭合项见 [`docs/done.md`](docs/done.md)。
+> 更新约定:新特性闭环后同步本文件 + `docs/todo.md` → `docs/done.md` 状态迁移。
 
 ---
 
@@ -131,6 +131,26 @@
 - 核心栈复用上游 alacritty_terminal(`Term::{push,pop,set}_title` + `title_stack`,深度上限 4096;vte 已接好 `22t→push_title` / `23t→pop_title` / `OSC 0,2→set_title`),不改 vendored 源码
 - 实现:`terminal_context.rs::ChannelEventListener` 转发 `Event::Title`/`ResetTitle`(此前 `_ => return` 丢弃)+ `iced_app.rs` `pane_osc_title` side-map(仿 `pane_cwds`,不改 `Pane` 结构体)+ 事件循环两 arm + `resolve_display_title` 纯函数 + `tab_display_title` 接线(窗口标题 / Tab 栏 / Tab 切换器 / AppSnapshot)
 - 单测:桥接转发 3 + `resolve_display_title` 3;全 461 绿
+
+### GAP-15 Shell Integration（OSC 133 A/B/C/D）(2026-06-28)
+- zsh + bash 自动注入 OSC 133 prompt/command/output 边界标记 + 复用既有 OSC 7 cwd;命令文本由 shell 经 B mark 的 `cmd=<hex>` 发送(非 grid 读取),GUI hex 解码进 `ShellMark.command`
+- **注入**:`pureterm-daemon/src/shell_integration.rs` `prepare_shell_env(tag, opts)` — zsh `.zshenv` bootstrap(precmd/preexec/chpwd) + bash `PROMPT_COMMAND`(DEBUG trap);`PURETERM_SI_PID` 哨兵防同进程重复注入
+- **解析**:`alacritty_terminal/event_loop.rs` `scan_osc133()` + `Event::ShellMark`;`terminal_context.rs` 桥接 `TerminalEvent::ShellMark`(此前 `_ => return` 丢弃)
+- **状态机**:`shell_state.rs` per-pane A/B/C/D → `FinishedCommand`(exit/duration/text,64 条历史);`iced_app.rs` `pane_shell_state` + `shell.{prompt_started,command_started,output_started,command_finished}` EventBus emit
+- **AI 上下文**:`shell_context.rs` + IPC `shell.context` + MCP `get_shell_context`(cwd / last_command / recent_commands;SSH pane → `integrated:false`)
+- **配置**:`[shell_integration]`(`enabled`/`inject_zsh`/`inject_bash`/`include_command_text`);门控仅 GUI 直接 PTY 回退路径 — daemon 路径始终 `ShellIntegrationOpts::all_on()`(与 OSC 7 always-on 一致)
+- 单测:shell_state/shell_context/events/app_config 21 绿 + daemon `shell_integration` 单测;pixel smoke 见 `docs/features/GAP-15-shell-integration/spec.md` runbook
+- **DoD 待人工**:GUI 真机 E2E(zsh/bash `events tail --type shell` + MCP `get_shell_context`);**未做(独立后续)**:视觉 grid marks、fish/nu、click-to-SCP
+
+### GAP-09 Notification System（OSC 9/99/777 + Bell）(2026-06-28)
+- 解析 OSC 9/99/777 + Bell(0x07) →  per-pane 关注信号:amber attention ring + 状态栏 🔔 未读计数 + ⌘⇧M 通知历史面板 + macOS Dock 未读角标 + EventBus `notification.*`
+- **解析**:`alacritty_terminal/event_loop.rs` `scan_osc_notify()` + `event.rs` `Notification`/`NotifySource`/`NotifyOccasion`;`terminal_context.rs` 桥接 `TerminalEvent::Notification`/`Bell`
+- **Store**:`notification_store.rs` 内存真源(历史环/unread/attention/bell 节流);EventBus `events.jsonl` 仅审计(`notification.posted` / `panel_opened` / `panel_closed` / `all_dismissed`)
+- **GUI**:`iced_app.rs` 处理 Notification/Bell → store + `refresh_dock_badge`;聚焦 pane 清 unread;`view_pane` amber ring;`view_notifications_panel` 历史列表 + 点击聚焦源 pane
+- **配置**:`[notification]`(`enabled`/`desktop_notifications`/`dock_badge`/`ring`/`bell_passthrough`/`bell_throttle_ms`);`default-config.toml` 示例块
+- **macOS**:`macos_dock_badge.rs` `NSDockTile.setBadgeLabel`;`macos_notifications.rs` UNUserNotificationCenter shim
+- 单测:notification_store 9 + app_config 3 + bridge 1 + `should_toast` 2;pixel smoke 见 `docs/manual-e2e/gap-09-notification.md`
+- **DoD 待补(非阻塞)**:`fire_toast()` 尚未在 Notification handler 调用 → 桌面 toast 未生效;启动时 `request_authorization()` 未调;`pureterm notify` CLI 未实现;Linux dbus 通知未做
 
 ---
 
@@ -273,11 +293,22 @@ action = { Ssh = "ListProfiles" }
 - 实现:`crates/pureterm/src/{events.rs,events_bus.rs,events_log.rs}` + `iced_app.rs`(emit 点)+ `cli.rs`(`EventsSub`)
 - 单测:495 pureterm 全绿(events 模块 11 个:EventBus 双写 / AppEvent JSONL round-trip / TypeFilter / read_recent / drain_once 完整行+半行+rotation / tail_follow 端到端送达 + rotation 存活)
 - pixel smoke:`docs/manual-e2e/gap-6.7-event-stream.md`(非 CI gate,实时跟随 + workspace 过滤 + list 回读 + tail 延迟)
-- **未做(独立后续)**:`events.subscribe` 流式 MCP 工具(需独立流式传输设计)/ `notification.*` producer(被 GAP-09 阻塞)/ sidebar producer(被 GAP-6.8 阻塞);`notify`(kqueue/inotify)替轮询经实测评估弃用 —— macOS `RecommendedWatcher` 走 FSEvents,事件 ~1s 才到(比 150ms 轮询还慢)且其 runloop 会拖住同进程其它线程的 sleep,主平台无收益反有害(详见 `events_log.rs::TAIL_FALLBACK_MS` 注释)
+- **未做(独立后续)**:`events.subscribe` 流式 MCP 工具(需独立流式传输设计)/ sidebar producer(被 GAP-6.8 阻塞);`notify`(kqueue/inotify)替轮询经实测评估弃用 —— macOS `RecommendedWatcher` 走 FSEvents,事件 ~1s 才到(比 150ms 轮询还慢)且其 runloop 会拖住同进程其它线程的 sleep,主平台无收益反有害(详见 `events_log.rs::TAIL_FALLBACK_MS` 注释)
+- **GAP-09 集成(2026-06-28)**: `Category::Notification` producer 已落地 — `notification.posted` / `panel_opened` / `panel_closed` / `all_dismissed`;desktop toast / `pureterm notify` CLI defer 至 GAP-09 收尾
 
 ---
 
 ## F. AI Agent
+
+### GAP-02 Error Recovery（命令失败 LLM 修复建议）(2026-06-28)
+- Shell Integration 非零 exit 自动触发（可配 `[error_recovery].auto_analyze`）→ 捕获命令 + 输出 tail → 复用 `ai_chat` Anthropic/OpenAI `ChatProvider` 流式分析 → 底部 inline 卡片展示建议 + **Apply** 写入 PTY
+- **核心**:`error_recovery.rs`(`FailureContext`/`ErrorRecoveryState`/`build_prompt`/`extract_fix_command`/`should_auto_analyze`);`surface_snapshot.rs` `capture_visible_tail`/`capture_row_range`
+- **GUI**:`iced_app.rs` ShellMark OutputEnd 门控 + `spawn_error_recovery_stream` + `view_error_recovery_card`;`⌘⇧E` 手动重分析最近失败命令;Dismiss/Stop 取消 in-flight 请求
+- **配置**:`[error_recovery]`(`enabled`/`auto_analyze`/`provider`/`model`/`max_output_lines`/`max_tokens`/`api_key_env`/`openai_base_url`);API key 仅 env（`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`）
+- **EventBus**:`Category::ErrorRecovery` — `error_recovery.triggered` / `suggested` / `applied`
+- 单测:error_recovery 7 + app_config 2 + events filter 1;637 pureterm 绿（`triggers::scan_multi_trigger_independent` 预存失败 unrelated）
+- pixel smoke:`docs/manual-e2e/gap-02-error-recovery.md`（非 CI gate,需真实 API key）
+- **DoD 待人工**:GUI E2E + Apply 验证;**未做(独立后续)**:Settings UI、SSH pane 自动分析
 
 ### GAP-7.1 Agent Hooks 通用框架(2026-06-18)
 - PureTerm 充当 Claude Code / 其它 agent 的 hook 中转:agent 把 hook 事件 JSON 经 stdin 喂给 `pureterm hook <event>`,PureTerm 按 `[[agent.hook]]` 策略评估
@@ -373,11 +404,11 @@ action = { Ssh = "ListProfiles" }
 |---|---|
 | A. 核心架构 | 5 |
 | B. UI/UX | 7 |
-| C. 终端交互 | 2 |
+| C. 终端交互 | 4 |
 | D. SSH | 6 |
 | E. 集成与可编程 | 5 |
 | F. AI Agent | 9 |
 | G. 平台 | 1 |
-| **总计** | **35** |
+| **总计** | **37** |
 
 ---

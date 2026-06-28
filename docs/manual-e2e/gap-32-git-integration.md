@@ -13,6 +13,8 @@
 > - EventBus：`Category::Git` 序列化为 `"git"` / `--type git` 前缀过滤 / `git_branch_changed` 去重（首次=变 / 相同=抑制 / 不同=变）。
 >
 > CI 无法证明**真实视觉**：状态栏 git 段随 dirty 实时变化、⌘⇧B 面板分计数/PR/按钮、Create-PR 真写进 PTY、lazygit 本地起 TUI、tab 标题带分支、`events tail --type git` 实时流。本页覆盖这些。
+>
+> **Automated harness re-run (2026-06-27):** `cargo test -p pureterm` **589** green（含 `status_bar/git` / `gh_pr` / `git_panel` / `Category::Git` 事件过滤）。`scan_osc7` ST 修复保障 OSC 7 cwd → git 段刷新。GUI 六场景仍待 `./build.sh app` 后人工勾选。
 
 ## 前置
 
@@ -93,7 +95,7 @@ open dist/PureTerm.app
 - [ ] 场景 5：`tab_title_branch` 开后派生标题带 `[branch]`，OSC 标题仍优先 ✅
 - [ ] 场景 6：`events tail --type git` 见 `git.*`，branch_changed 去重不刷屏 ✅
 
-全过 → flip GAP-32 🚧→✅ + FEATURES.md 加块 + `docs/featuresList/32-git-integration.md` 改状态。（本次按用户授权「完整完成」先行 flip，GUI 场景作为非阻塞 follow-up。）
+全过 → flip GAP-32 🚧→✅ + FEATURES.md 加块 + `docs/features/GAP-32-git-integration/spec.md` 改状态。（本次按用户授权「完整完成」先行 flip，GUI 场景作为非阻塞 follow-up。）
 
 ## 已知边界（非 DoD）
 

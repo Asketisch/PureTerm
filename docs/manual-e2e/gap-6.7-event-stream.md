@@ -1,6 +1,8 @@
 # GAP-6.7 Event Stream（事件流 + 持久 JSONL 日志）—— 手动 GUI E2E runbook
 
 > 🚧 **待人工通过** — GAP-6.7 代码闭环 + harness 全绿，本页是 flip 🚧→✅ 的人工置信层。**非 CI gate。**
+>
+> **Automated harness re-run (2026-06-27, post bug-fix):** `cargo test -p pureterm` **589** green (incl. **31** `events*` tests); `events_log::tail_follow_*` + rotation + `TypeFilter`/`Category::Workspace` 单测全过。GUI 四场景仍待 `./build.sh app` 后人工勾选。
 
 > CI 自动 harness（`crates/pureterm/src/{events.rs,events_bus.rs,events_log.rs}` 单测，**495 pureterm 绿**）已覆盖**逻辑不变量**:
 > - `EventBus` 双写:每条事件落 `events.jsonl`(16MiB rotation + `.1` 归档)+ broadcast(4096);
@@ -73,11 +75,11 @@ open dist/PureTerm.app
 - [ ] 场景 3:`events list` newest-first 回读 + dotted-kind 过滤 ✅
 - [ ] 场景 4:tail ~150ms 内响应、空闲低 CPU ✅
 
-全过 → flip GAP-6.7 🚧→✅ + FEATURES.md 加块 + `docs/featuresList/66-event-stream.md` 改状态。
+全过 → flip GAP-6.7 🚧→✅ + FEATURES.md 加块 + `docs/features/GAP-6.7-event-stream/spec.md` 改状态。
 
 ## 已知边界(非 DoD)
 
 - **`events.subscribe` 流式 MCP 工具**:未实现(需独立流式传输设计;当前 IPC 是阻塞式 `send_rpc`)。留作非阻塞后续。
-- **`notification.*` producer**:未实现,被 GAP-09(Notification System)阻塞 —— OSC 9/99/777 解析器与 `Event::Bell` GUI 处理尚无。`Category::Notification` 已在 schema 预留。
+- **`notification.*` producer**: **部分落地**(2026-06-28) — `notification.posted` / `panel_opened` / `panel_closed` / `all_dismissed` 已 emit(GAP-09 GUI 内环)。desktop toast / `pureterm notify` CLI defer。runbook: [`gap-09-notification.md`](gap-09-notification.md)。
 - **sidebar producer**:未实现,被 GAP-6.8(可编程 sidebar)阻塞 —— sidebar 模块尚不存在。`Category::Sidebar` 已预留。
 - **rotation(16MiB)**:难以手动触发,由 `events_log::tests::rotation_archives_active_file_at_threshold` + `drain_once_reopens_from_start_after_rotation` 单测覆盖,非手动 DoD。
