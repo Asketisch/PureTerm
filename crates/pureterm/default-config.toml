@@ -30,7 +30,7 @@ hide_when_typing = false
 # `show_sparklines` toggles the canvas mini-graphs (cpu/memory/network); when
 # on, the bar auto-grows to ≥28px for legibility (`bar_height` is the floor).
 [statusbar]
-components = ["cwd", "git", "ssh", "vimode", "process", "agent", "cpu", "memory", "network", "clock", "battery", "cursor"]
+components = ["cwd", "git", "ssh", "vimode", "process", "agent", "cpu", "memory", "network", "clock", "battery", "cursor", "notifications"]
 refresh_interval_secs = 1
 show_sparklines = true
 bar_height = 24
@@ -42,3 +42,13 @@ panel_enabled = true       # ⌘⇧B toggles the Git overlay panel
 show_pr = true             # query the linked PR via `gh` (needs `gh auth`)
 pr_refresh_ticks = 30      # PR refresh cadence in status-bar ticks (~30s)
 # lazygit_cmd = "lazygit"  # override the lazygit binary name for the panel button
+
+# GAP-09: Notification System — OSC 9/99/777 + bell → per-pane attention ring,
+# status-bar unread count (🔔 above), Dock badge, and macOS desktop toasts.
+[notification]
+enabled = true                # master switch (false ⇒ no ring/badge/toast/audit)
+desktop_notifications = true  # macOS toast (UNUserNotificationCenter; needs bundle id)
+dock_badge = true             # unread count on the app icon
+ring = true                   # amber attention ring around the pane
+bell_passthrough = true       # surface BEL (0x07) as an attention signal
+bell_throttle_ms = 1000       # ≤1 bell-derived notif per pane per this window

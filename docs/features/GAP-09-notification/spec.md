@@ -5,8 +5,8 @@ category: 终端交互
 plan_type: wrap-up
 priority: P0
 effort: M
-status: in-progress
-closed: null
+status: done
+closed: 2026-06-28
 e2e: manual-e2e/gap-09-notification.md
 ---
 

@@ -148,9 +148,11 @@
 - **Store**:`notification_store.rs` 内存真源(历史环/unread/attention/bell 节流);EventBus `events.jsonl` 仅审计(`notification.posted` / `panel_opened` / `panel_closed` / `all_dismissed`)
 - **GUI**:`iced_app.rs` 处理 Notification/Bell → store + `refresh_dock_badge`;聚焦 pane 清 unread;`view_pane` amber ring;`view_notifications_panel` 历史列表 + 点击聚焦源 pane
 - **配置**:`[notification]`(`enabled`/`desktop_notifications`/`dock_badge`/`ring`/`bell_passthrough`/`bell_throttle_ms`);`default-config.toml` 示例块
-- **macOS**:`macos_dock_badge.rs` `NSDockTile.setBadgeLabel`;`macos_notifications.rs` UNUserNotificationCenter shim
-- 单测:notification_store 9 + app_config 3 + bridge 1 + `should_toast` 2;pixel smoke 见 `docs/manual-e2e/gap-09-notification.md`
-- **DoD 待补(非阻塞)**:`fire_toast()` 尚未在 Notification handler 调用 → 桌面 toast 未生效;启动时 `request_authorization()` 未调;`pureterm notify` CLI 未实现;Linux dbus 通知未做
+- **macOS**:`macos_dock_badge.rs` `NSDockTile.setBadgeLabel`;`macos_notifications.rs` UNUserNotificationCenter shim(request `.alert|.sound|.badge` + `post()` 调 `UNNotificationRequest`);启动 + 热重载时 `request_authorization()`
+- **桌面 toast 门控**:`should_toast(occasion, pane_visible, app_focused)` 纯函数 — `Always`/`Invisible`/Bell 仅在 pane 不可见时弹;`Unfocused` 仅在 app 失焦时弹;`WindowFocused`/`WindowUnfocused` 翻 `app_focused`
+- **CLI/IPC**:`pureterm notify "msg" [-t title] [--pane-id N]` → `notification.post` RPC → `IpcSideEffect::ShowNotification`(source `Cli`)→ store + 角标 + 门控 toast
+- 单测:scanner 17 + notification_store 9 + app_config 3 + bridge 2 + `should_toast` 2;GUI E2E 见 `docs/manual-e2e/gap-09-notification.md`(非阻塞,待人工)
+- **已知局限**:Linux dbus 通知未做(用户决定 macOS-only);`FocusNotificationPane` v1 仅清 unread,跨 tab 聚焦待补
 
 ---
 

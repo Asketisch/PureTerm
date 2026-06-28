@@ -206,6 +206,27 @@ impl StatusBarComponent for Agent {
     }
 }
 
+/// GAP-09: unread-notification count. Renders "🔔 N" when there are unread
+/// notifications, nothing otherwise (empty text mirrors Agent/Process).
+pub struct Notifications;
+impl StatusBarComponent for Notifications {
+    fn id(&self) -> &'static str {
+        "notifications"
+    }
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
+        let n = data.notifications.map(|s| s.total_unread).unwrap_or(0);
+        if n > 0 {
+            // Amber to match the attention ring; bell glyph + count.
+            text_seg(
+                format!(" \u{1f514} {}", n),
+                Color::from_rgba(1.0, 0.7, 0.2, 1.0),
+            )
+        } else {
+            text(String::new()).size(11).into()
+        }
+    }
+}
+
 pub struct Cursor;
 impl StatusBarComponent for Cursor {
     fn id(&self) -> &'static str {

@@ -44,6 +44,77 @@ use pureterm_settings::i18n::I18n;
 // PureTerm: 屏幕吸管拦截用到 ColorsMsg（OpenScreenPicker / ColorPickerResult / ScreenPickerCancelled）。
 use pureterm_settings::pages::colors::ColorsMsg;
 
+/// GAP-09: current epoch millis (wall clock for notification timestamps + bell
+/// throttle windows). Falls back to 0 if the clock is before UNIX_EPOCH (only
+/// possible on misconfigured systems).
+fn now_epoch_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// GAP-09: refresh the Dock badge from the current unread count (macOS only,
+/// gated by `[notification].dock_badge`). Takes specific field references so it
+/// is callable from the terminal-event loop, where `self.windows` is borrowed
+/// (a `&self` method would conflict with that borrow).
+fn refresh_dock_badge(
+    cfg: &crate::app_config::NotificationConfig,
+    store: &crate::notification_store::NotificationStore,
+) {
+    #[cfg(target_os = "macos")]
+    if cfg.dock_badge {
+        crate::macos_dock_badge::set_badge(store.summary().total_unread);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (cfg, store);
+    }
+}
+
+/// GAP-09: gate the intrusive OS toast (vs. the always-on ring + status count +
+/// Dock badge). `pane_visible` = the emitting pane is the active pane in the
+/// focused window's active tab; `app_focused` = a PureTerm window holds OS
+/// focus. `Always`/`Invisible`/Bell toast only when the pane is not visible;
+/// `Unfocused` toasts only when the app is not focused (the gentlest occasion).
+fn should_toast(
+    occasion: alacritty_terminal::event::NotifyOccasion,
+    pane_visible: bool,
+    app_focused: bool,
+) -> bool {
+    use alacritty_terminal::event::NotifyOccasion;
+    match occasion {
+        NotifyOccasion::Unfocused => !app_focused,
+        NotifyOccasion::Always | NotifyOccasion::Invisible => !pane_visible,
+    }
+}
+
+/// GAP-09: post a macOS desktop toast when the config + focus/visibility gating
+/// permit it (no-op on non-macOS). Pure field-reference signature so it's
+/// callable from the terminal-event loop, where `self.windows` is borrowed. The
+/// toast never suppresses the in-app ring/status count/Dock badge.
+fn fire_toast(
+    cfg: &crate::app_config::NotificationConfig,
+    n: &alacritty_terminal::event::Notification,
+    pane_visible: bool,
+    app_focused: bool,
+) {
+    #[cfg(target_os = "macos")]
+    {
+        if cfg.enabled
+            && cfg.desktop_notifications
+            && should_toast(n.occasion, pane_visible, app_focused)
+        {
+            let title = n.title.clone().unwrap_or_else(|| "PureTerm".to_string());
+            crate::macos_notifications::post(&title, &n.body);
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (cfg, n, pane_visible, app_focused);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TabId(pub(crate) u64);
 
@@ -374,8 +445,17 @@ pub struct PureTermApp {
     // GAP-32: Git Integration — config (`[git]`) + overlay panel state.
     git_cfg: crate::app_config::GitConfig,
     git_panel: crate::git_panel::GitPanelState,
+    // GAP-09: Notifications overlay panel state (reads the store live).
+    notification_panel: crate::notification_panel::NotificationPanelState,
     // GAP-15: Shell Integration — per-pane command/exit state + `[shell_integration]` config.
     shell_integration_cfg: crate::app_config::ShellIntegrationConfig,
+    // GAP-09: Notification System — `[notification]` config + in-memory store.
+    notification_cfg: crate::app_config::NotificationConfig,
+    notification_store: crate::notification_store::NotificationStore,
+    /// GAP-09: whether a PureTerm window holds OS focus. Drives the toast gate
+    /// (`should_toast`): true on launch + `WindowFocused`, false on
+    /// `WindowUnfocused`.
+    app_focused: bool,
     /// GAP-32 EventBus: last-emitted branch per pane, deduping
     /// `git.branch_changed` (the status path refreshes git every tick; we emit
     /// only on a real change — never per-tick).
@@ -666,6 +746,9 @@ pub enum Message {
     /// the handler points `active_window_id` at it so keystrokes/IME land in
     /// that window's active terminal (detached windows are no longer input-dead).
     WindowFocused(window::Id),
+    /// GAP-09: a PureTerm window lost OS focus — flips `app_focused` so the
+    /// desktop-toast gate (`should_toast`) lets notifications fire.
+    WindowUnfocused(window::Id),
     /// Device pixel ratio changed (e.g. dragging window between Retina and 1× displays).
     ScaleFactorChanged(window::Id, f32),
     /// File/directory dropped onto the window via OS drag-and-drop.
@@ -692,6 +775,11 @@ pub enum Message {
     GhPrResult(String, Option<crate::gh_pr::PrInfo>, Option<String>),
     /// GAP-32: a quick git action from the panel button row → write to the PTY.
     GitQuickAction(crate::git_panel::GitQuickAction),
+    /// GAP-09: Notifications overlay panel — toggle / focus a pane from a history
+    /// entry / dismiss all.
+    ToggleNotificationsPanel,
+    FocusNotificationPane(PaneId),
+    DismissAllNotifications,
     /// GAP-32: lightweight transient toast (e.g. "lazygit not installed").
     Toast(String),
     ToastDismissed,
@@ -1322,6 +1410,15 @@ impl PureTermApp {
         // GAP-15: Shell Integration config (master switch, per-shell inject, command-text privacy).
         let shell_integration_cfg = AppConfig::load_shell_integration(&config_path);
 
+        // GAP-09: Notification System config (desktop toasts, dock badge, ring, bell throttle).
+        let notification_cfg = AppConfig::load_notification(&config_path);
+        // Request macOS notification authorization early (best-effort, async —
+        // toasts posted before it resolves are dropped, acceptable).
+        #[cfg(target_os = "macos")]
+        if notification_cfg.enabled && notification_cfg.desktop_notifications {
+            crate::macos_notifications::request_authorization();
+        }
+
         // GAP-5.6: peek the saved layout so the window reopens at its last
         // size (unix-only — recovery depends on the daemon path). The same
         // snapshot is passed to `try_restore_layout` below (single disk read).
@@ -1445,6 +1542,13 @@ impl PureTermApp {
             // GAP-32: Git Integration config + overlay panel state.
             git_cfg,
             git_panel: crate::git_panel::GitPanelState::new(),
+            // GAP-09: Notifications overlay panel + store + config.
+            notification_panel: crate::notification_panel::NotificationPanelState::new(),
+            notification_cfg,
+            notification_store: crate::notification_store::NotificationStore::new(
+                crate::notification_store::DEFAULT_HISTORY_CAP,
+            ),
+            app_focused: true,
             last_git_branch: HashMap::new(),
             // GAP-15: Shell Integration.
             shell_integration_cfg,
@@ -3412,6 +3516,136 @@ impl PureTermApp {
                                         data,
                                     );
                                 }
+                                // GAP-09: OSC 9/99/777 desktop notification —
+                                // record in the in-memory store (status-bar
+                                // count + attention ring + Dock badge), fire a
+                                // gated desktop toast, and emit a
+                                // `notification.posted` audit event.
+                                TerminalEvent::Notification(n) => {
+                                    if self.notification_cfg.enabled {
+                                        let now_ms = now_epoch_millis();
+                                        let pane_visible = self.app_focused
+                                            && *pane_id == tab.active_pane
+                                            && tab.id == self.active_tab_id();
+                                        let entry = crate::notification_store::NotificationEntry {
+                                            seq: 0,
+                                            notification: n.clone(),
+                                            pane_id: *pane_id,
+                                            received_at: now_ms,
+                                        };
+                                        self.notification_store.post(
+                                            entry,
+                                            now_ms,
+                                            self.notification_cfg.bell_throttle_ms,
+                                        );
+                                        refresh_dock_badge(
+                                            &self.notification_cfg,
+                                            &self.notification_store,
+                                        );
+                                        fire_toast(
+                                            &self.notification_cfg,
+                                            &n,
+                                            pane_visible,
+                                            self.app_focused,
+                                        );
+
+                                        let session_id = ctx.session_id().map(|s| s.to_string());
+                                        let source = match n.source {
+                                            alacritty_terminal::event::NotifySource::Osc9 => "osc9",
+                                            alacritty_terminal::event::NotifySource::Osc99 => {
+                                                "osc99"
+                                            }
+                                            alacritty_terminal::event::NotifySource::Osc777 => {
+                                                "osc777"
+                                            }
+                                            alacritty_terminal::event::NotifySource::Bell => "bell",
+                                            alacritty_terminal::event::NotifySource::Cli => "cli",
+                                        };
+                                        let occasion = match n.occasion {
+                                            alacritty_terminal::event::NotifyOccasion::Always => {
+                                                "always"
+                                            }
+                                            alacritty_terminal::event::NotifyOccasion::Unfocused => {
+                                                "unfocused"
+                                            }
+                                            alacritty_terminal::event::NotifyOccasion::Invisible => {
+                                                "invisible"
+                                            }
+                                        };
+                                        let mut data = serde_json::json!({
+                                            "pane_id": pane_id.0,
+                                            "source": source,
+                                            "occasion": occasion,
+                                            "body": n.body,
+                                        });
+                                        if let Some(title) = &n.title {
+                                            data["title"] = serde_json::json!(title);
+                                        }
+                                        if let Some(id) = &n.id {
+                                            data["id"] = serde_json::json!(id);
+                                        }
+                                        self.events.emit(
+                                            crate::events::Category::Notification,
+                                            "notification.posted",
+                                            session_id,
+                                            data,
+                                        );
+                                    }
+                                }
+                                // GAP-09: bell (0x07) — surface as an attention
+                                // signal (throttled per pane) when bell
+                                // passthrough is enabled.
+                                TerminalEvent::Bell => {
+                                    if self.notification_cfg.enabled
+                                        && self.notification_cfg.bell_passthrough
+                                    {
+                                        let now_ms = now_epoch_millis();
+                                        let pane_visible = self.app_focused
+                                            && *pane_id == tab.active_pane
+                                            && tab.id == self.active_tab_id();
+                                        let bell_notif = alacritty_terminal::event::Notification {
+                                            title: None,
+                                            body: "Bell".to_string(),
+                                            id: None,
+                                            occasion:
+                                                alacritty_terminal::event::NotifyOccasion::Always,
+                                            source: alacritty_terminal::event::NotifySource::Bell,
+                                        };
+                                        let entry = crate::notification_store::NotificationEntry {
+                                            seq: 0,
+                                            notification: bell_notif.clone(),
+                                            pane_id: *pane_id,
+                                            received_at: now_ms,
+                                        };
+                                        self.notification_store.post(
+                                            entry,
+                                            now_ms,
+                                            self.notification_cfg.bell_throttle_ms,
+                                        );
+                                        refresh_dock_badge(
+                                            &self.notification_cfg,
+                                            &self.notification_store,
+                                        );
+                                        fire_toast(
+                                            &self.notification_cfg,
+                                            &bell_notif,
+                                            pane_visible,
+                                            self.app_focused,
+                                        );
+                                        let session_id = ctx.session_id().map(|s| s.to_string());
+                                        self.events.emit(
+                                            crate::events::Category::Notification,
+                                            "notification.posted",
+                                            session_id,
+                                            serde_json::json!({
+                                                "pane_id": pane_id.0,
+                                                "source": "bell",
+                                                "occasion": "always",
+                                                "body": "Bell",
+                                            }),
+                                        );
+                                    }
+                                }
                             }
                         }
                     }
@@ -3582,6 +3816,39 @@ impl PureTermApp {
                         }
                     }
                 }
+            }
+            // GAP-09: Notifications overlay panel — toggle open/closed.
+            Message::ToggleNotificationsPanel => {
+                if !self.notification_cfg.enabled {
+                    return Task::none();
+                }
+                let now_open = !self.notification_panel.open;
+                self.notification_panel.toggle();
+                self.events.emit(
+                    crate::events::Category::Notification,
+                    if now_open {
+                        "notification.panel_opened"
+                    } else {
+                        "notification.panel_closed"
+                    },
+                    None,
+                    serde_json::json!({}),
+                );
+                return Task::none();
+            }
+            // GAP-09: a history entry was clicked — clear that pane's unread
+            // count + refresh the Dock badge. (Cross-tab focus wiring is a
+            // follow-up; v1 clears the indicator, which is the visible effect.)
+            Message::FocusNotificationPane(pane_id) => {
+                self.notification_store.clear_unread(pane_id);
+                refresh_dock_badge(&self.notification_cfg, &self.notification_store);
+                return Task::none();
+            }
+            // GAP-09: "Dismiss all" — clear the store + Dock badge.
+            Message::DismissAllNotifications => {
+                self.notification_store.clear_all();
+                refresh_dock_badge(&self.notification_cfg, &self.notification_store);
+                return Task::none();
             }
             Message::ToggleGitPanel => {
                 if !self.git_cfg.panel_enabled {
@@ -3804,6 +4071,17 @@ impl PureTermApp {
                 if self.window_for(win_id).is_some() {
                     self.active_window_id = win_id;
                 }
+                // GAP-09: a window gained OS focus → toasts gate off while the
+                // user is looking at PureTerm.
+                self.app_focused = true;
+                return Task::none();
+            }
+            Message::WindowUnfocused(_win_id) => {
+                // GAP-09: lost OS focus → allow desktop toasts. We track a
+                // single coarse `app_focused` flag (good enough for the toast
+                // gate; precise per-window focus is handled by
+                // `active_window_id` elsewhere).
+                self.app_focused = false;
                 return Task::none();
             }
             Message::WindowClosed(win_id) => {
@@ -5207,6 +5485,10 @@ impl PureTermApp {
                 // reports cwd on `cd` (not every prompt), so switching panes
                 // wouldn't otherwise update the cwd/branch shown.
                 self.refresh_status_bar_cwd();
+                // GAP-09: focusing a pane clears its unread notifications +
+                // refreshes the Dock badge (the user has now seen them).
+                self.notification_store.clear_unread(pane_id);
+                refresh_dock_badge(&self.notification_cfg, &self.notification_store);
                 // GAP-6.7: focus moved to another pane.
                 self.events.emit(
                     crate::events::Category::Pane,
@@ -5933,6 +6215,11 @@ impl PureTermApp {
                     self.git_panel.close();
                     return Task::none();
                 }
+                // GAP-09: Escape closes the Notifications overlay panel.
+                if self.notification_panel.open {
+                    self.notification_panel.close();
+                    return Task::none();
+                }
                 // GAP-4.1: Escape in vi mode → close search bar first, then exit visual/vi mode
                 if self.vi_search.is_some() {
                     return Task::done(Message::ViSearchClose);
@@ -6353,6 +6640,8 @@ impl PureTermApp {
             Action::FocusAddressBar => Task::done(Message::AddressBarOpen),
             // GAP-32: ⌘⇧B Git panel / lazygit.
             Action::ToggleGitPanel => Task::done(Message::ToggleGitPanel),
+            // GAP-09: ⌘⇧M Notifications panel.
+            Action::ToggleNotificationsPanel => Task::done(Message::ToggleNotificationsPanel),
             Action::OpenLazygit => {
                 Task::done(Message::GitQuickAction(crate::git_panel::GitQuickAction::Lazygit))
             }
@@ -6634,6 +6923,14 @@ impl PureTermApp {
         self.git_cfg = AppConfig::load_git(&self.config_path);
         // GAP-15: reload `[shell_integration]` config.
         self.shell_integration_cfg = AppConfig::load_shell_integration(&self.config_path);
+        // GAP-09: reload `[notification]` config; if desktop toasts were
+        // (re)enabled, (re)request authorization (idempotent — system prompts
+        // only once).
+        self.notification_cfg = AppConfig::load_notification(&self.config_path);
+        #[cfg(target_os = "macos")]
+        if self.notification_cfg.enabled && self.notification_cfg.desktop_notifications {
+            crate::macos_notifications::request_authorization();
+        }
         if rebuild {
             self.status_bar_registry = crate::status_bar::build_registry(&self.status_bar_cfg);
         }
@@ -6825,6 +7122,60 @@ impl PureTermApp {
                 // GAP-7.5: SessionStart hook fired → persist the agent session id
                 // (for cold resume) + associate it with the owning pane.
                 self.handle_agent_session_started(session_id, kind, cwd);
+                Task::none()
+            }
+            // GAP-09: `pureterm notify` / external IPC → post a notification
+            // (source Cli) into the active or specified pane.
+            Fx::ShowNotification { title, body, pane_id } => {
+                if !self.notification_cfg.enabled {
+                    return Task::none();
+                }
+                let active_pane = self.active_tab_ref().map(|t| t.active_pane);
+                let pid = match pane_id {
+                    Some(id) => PaneId(id),
+                    None => match active_pane {
+                        Some(p) => p,
+                        // No active pane to attach the notification to.
+                        None => return Task::none(),
+                    },
+                };
+                let pane_visible = self.app_focused && Some(pid) == active_pane;
+                let n = alacritty_terminal::event::Notification {
+                    title,
+                    body: body.clone(),
+                    id: None,
+                    occasion: alacritty_terminal::event::NotifyOccasion::Always,
+                    source: alacritty_terminal::event::NotifySource::Cli,
+                };
+                let now_ms = now_epoch_millis();
+                let entry = crate::notification_store::NotificationEntry {
+                    seq: 0,
+                    notification: n.clone(),
+                    pane_id: pid,
+                    received_at: now_ms,
+                };
+                self.notification_store.post(
+                    entry,
+                    now_ms,
+                    self.notification_cfg.bell_throttle_ms,
+                );
+                refresh_dock_badge(&self.notification_cfg, &self.notification_store);
+                fire_toast(&self.notification_cfg, &n, pane_visible, self.app_focused);
+                let mut data = serde_json::json!({
+                    "pane_id": pid.0,
+                    "source": "cli",
+                    "occasion": "always",
+                    "body": n.body,
+                });
+                if let Some(t) = &n.title {
+                    data["title"] = serde_json::json!(t);
+                }
+                self.events.emit(
+                    crate::events::Category::Notification,
+                    "notification.posted",
+                    None,
+                    data,
+                );
                 Task::none()
             }
         }
@@ -8268,6 +8619,11 @@ impl PureTermApp {
             agent,
             cursor: self.get_active_cursor_pos(),
             show_sparklines: self.status_bar_cfg.show_sparklines,
+            notifications: if self.notification_cfg.enabled {
+                Some(self.notification_store.summary())
+            } else {
+                None
+            },
         };
 
         // Iterate the configured component list; right-aligned components render
@@ -9148,6 +9504,83 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(x).y(48.0).into())
     }
 
+    /// GAP-09: Notifications history overlay panel (⌘⇧M). Left-anchored, lists
+    /// the store's history newest-first; clicking an entry clears that pane's
+    /// unread count. Mirrors `view_git_panel`'s pinned-container shape.
+    fn view_notifications_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, row, scrollable, space, text};
+        use iced::Length;
+
+        if !self.notification_panel.open {
+            return None;
+        }
+
+        let summary = self.notification_store.summary();
+        let mut body = column![
+            // Header: title + unread count + dismiss-all + close.
+            row![
+                text("Notifications").size(15),
+                space().width(Length::Fill),
+                text(format!("{} unread", summary.total_unread))
+                    .size(11)
+                    .color(Color::from_rgba(0.95, 0.75, 0.3, 1.0)),
+                button(text("Clear").size(11))
+                    .on_press(Message::DismissAllNotifications)
+                    .padding([2, 6])
+                    .style(button::secondary),
+                button(text("×").size(15))
+                    .on_press(Message::ToggleNotificationsPanel)
+                    .padding([2, 8])
+                    .style(button::secondary),
+            ]
+            .spacing(6),
+        ]
+        .spacing(4);
+
+        let history = self.notification_store.history();
+        if history.is_empty() {
+            body = body.push(
+                text("No notifications yet").size(12).color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)),
+            );
+        } else {
+            // Newest-first.
+            for entry in history.iter().rev() {
+                let n = &entry.notification;
+                let source = match n.source {
+                    alacritty_terminal::event::NotifySource::Osc9 => "osc9",
+                    alacritty_terminal::event::NotifySource::Osc99 => "osc99",
+                    alacritty_terminal::event::NotifySource::Osc777 => "osc777",
+                    alacritty_terminal::event::NotifySource::Bell => "🔔 bell",
+                    alacritty_terminal::event::NotifySource::Cli => "cli",
+                };
+                let title = n.title.clone().unwrap_or_else(|| source.to_string());
+                let body_text: String = n.body.chars().take(200).collect();
+                let pane_id = entry.pane_id;
+                let entry_col = column![
+                    text(title).size(12),
+                    text(body_text).size(11).color(Color::from_rgba(1.0, 1.0, 1.0, 0.7)),
+                    text(format!("pane {} · {}", pane_id.0, source))
+                        .size(9)
+                        .color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)),
+                ]
+                .spacing(1);
+                body = body.push(
+                    button(entry_col)
+                        .on_press(Message::FocusNotificationPane(pane_id))
+                        .padding([4, 6])
+                        .width(Length::Fill)
+                        .style(button::secondary),
+                );
+            }
+        }
+
+        let panel = container(scrollable(body))
+            .width(Length::Fixed(340.0))
+            .max_height(self.viewport_size.height * 0.8)
+            .style(container::bordered_box);
+        Some(iced::widget::pin(panel).x(8.0).y(48.0).into())
+    }
+
     /// GAP-32: transient toast pill (bottom-center), shown for ~3.5s.
     fn view_toast(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{container, text};
@@ -9725,6 +10158,10 @@ impl PureTermApp {
             if let Some(git_el) = self.view_git_panel() {
                 layers.push(git_el);
             }
+            // GAP-09: Notifications history overlay panel.
+            if let Some(notif_el) = self.view_notifications_panel() {
+                layers.push(notif_el);
+            }
             if let Some(palette_el) = self.view_command_palette() {
                 layers.push(palette_el);
             }
@@ -9904,15 +10341,24 @@ impl PureTermApp {
         let el: Element<'_, Message, Theme, iced::Renderer> =
             crate::ime_widget::ImeWrapper::new(el).into();
 
-        // Active pane gets a subtle border highlight
-        if is_active {
+        // Active pane gets a subtle blue border highlight; a pane with unread
+        // notifications gets an amber attention ring (GAP-09) so the user can
+        // spot which pane needs attention even when it isn't focused. Active
+        // wins when both are true (the blue is the stronger signal).
+        let needs_attention = self.notification_cfg.ring
+            && self.notification_store.needs_attention(pane_id);
+        if is_active || needs_attention {
             container(el)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(move |_| container::Style {
                     border: Border {
-                        color: Color::from_rgba(0.3, 0.6, 1.0, 0.3),
-                        width: 1.0,
+                        color: if is_active {
+                            Color::from_rgba(0.3, 0.6, 1.0, 0.3)
+                        } else {
+                            Color::from_rgba(1.0, 0.7, 0.2, 0.6)
+                        },
+                        width: if is_active { 1.0 } else { 1.5 },
                         radius: 0.0.into(),
                     },
                     ..Default::default()
@@ -10048,6 +10494,9 @@ impl PureTermApp {
                 // GAP-2.1: 窗口获得 OS 焦点 → 路由键盘/IME 到该窗口。iced 0.14 的
                 // `window::Event::Focused` 走同一 listen_with 闭包(携带 win_id)。
                 Event::Window(window::Event::Focused) => Some(Message::WindowFocused(win_id)),
+                // GAP-09: 窗口失去 OS 焦点 → 翻转 `app_focused`,让桌面 toast 门控
+                // (should_toast) 在用户切到别的 app 时允许弹通知。
+                Event::Window(window::Event::Unfocused) => Some(Message::WindowUnfocused(win_id)),
                 Event::Window(window::Event::Rescaled(scale)) => {
                     Some(Message::ScaleFactorChanged(win_id, scale))
                 }
@@ -10248,6 +10697,32 @@ fn tab_title_with_branch(
 
 #[cfg(test)]
 mod tests {
+    // GAP-09: desktop-toast gating regression. The intrusive OS toast is
+    // suppressed when the user can already see the relevant surface.
+    use alacritty_terminal::event::NotifyOccasion;
+
+    #[test]
+    fn gap09_should_toast_always_only_when_pane_not_visible() {
+        use NotifyOccasion::{Always, Invisible, Unfocused};
+        // Visible pane (app focused AND pane active) ⇒ never toast:
+        assert!(!super::should_toast(Always, true, true));
+        assert!(!super::should_toast(Invisible, true, true));
+        // Pane not the active focused pane ⇒ toast:
+        assert!(super::should_toast(Always, false, true));
+        assert!(super::should_toast(Invisible, false, true));
+        assert!(super::should_toast(Unfocused, false, false));
+    }
+
+    #[test]
+    fn gap09_should_toast_unfocused_only_when_app_not_focused() {
+        use NotifyOccasion::Unfocused;
+        // App focused ⇒ never toast an `o=unfocused` signal (gentlest occasion):
+        assert!(!super::should_toast(Unfocused, false, true));
+        assert!(!super::should_toast(Unfocused, true, true));
+        // App not focused ⇒ toast:
+        assert!(super::should_toast(Unfocused, false, false));
+    }
+
     #[test]
     fn agent_indicator_active_shows_bolt() {
         let (label, _) = super::agent_indicator("claude-code", false, 0).unwrap();

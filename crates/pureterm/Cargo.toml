@@ -127,6 +127,8 @@ objc2-app-kit = { version = "0.3.1", default-features = false, features = [
     # GAP-7.8 screenshot: NSImage(TIFFRepresentation) + NSBitmapImageRep(PNG 编码);
     # NSBitmapImageRep 结构体的 re-export 额外要求 NSImageRep feature。
     "NSImage", "NSBitmapImageRep", "NSImageRep",
+    # GAP-09: Dock badge — NSApplication::dockTile() → NSDockTile::setBadgeLabel.
+    "NSDockTile",
 ] }
 objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
     "std", "CALayer", "CAMetalLayer", "objc2-metal",
@@ -139,6 +141,23 @@ objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
 # objc2-app-kit 让 completion block 能引用 NSImage。
 objc2-web-kit = { version = "0.3.2", default-features = false, features = [
     "std", "WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit",
+] }
+# GAP-09: macOS desktop notifications — UNUserNotificationCenter toasts for
+# OSC 9/99/777 + bell + `pureterm notify`. Pinned to 0.3.x (NOT 0.2.x) because
+# 0.2.x is bound to objc2 0.5 / objc2-foundation 0.2, whose `NSString`/`Retained`
+# are *different types* from this crate's objc2 0.6 / objc2-foundation 0.3 line
+# (wry pulls 0.2.2 transitively; we deliberately add the 0.3 line as a direct
+# dep so the types unify). `block2` unlocks the request/post completion-handler
+# methods; `UNNotificationContent` + `UNNotificationTrigger` are BOTH required
+# by `UNNotificationRequest::requestWithIdentifier_content_trigger` even though
+# we pass `None` for the trigger.
+objc2-user-notifications = { version = "0.3.2", default-features = false, features = [
+    "UNUserNotificationCenter",
+    "UNNotificationRequest",
+    "UNNotificationContent",
+    "UNNotificationTrigger",
+    "UNNotificationSound",
+    "block2",
 ] }
 # GAP-7.8 screenshot: NSImage PNG → base64 data URL。
 base64 = "0.22"

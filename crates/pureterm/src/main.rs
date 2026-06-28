@@ -69,6 +69,12 @@ mod surface_snapshot;
 mod macos_menu;
 #[cfg(target_os = "macos")]
 mod macos_reopen;
+/// GAP-09: Dock badge (unread-notification count) via NSDockTile.
+#[cfg(target_os = "macos")]
+mod macos_dock_badge;
+/// GAP-09: macOS desktop notifications (UNUserNotificationCenter toasts).
+#[cfg(target_os = "macos")]
+mod macos_notifications;
 #[cfg(target_os = "macos")]
 mod macos_eyedropper;
 #[cfg(unix)]
@@ -85,6 +91,10 @@ mod resume_bindings;
 mod tmux_cli;
 /// GAP-32: Git overlay panel state + quick-action enum (view lives in iced_app).
 mod git_panel;
+/// GAP-09: in-memory notification store (history + unread + attention + bell throttle).
+mod notification_store;
+/// GAP-09: Notifications overlay panel state (view lives in iced_app).
+mod notification_panel;
 /// GAP-15: per-pane shell-integration state (OSC 133 A/B/C/D state machine).
 mod shell_state;
 /// GAP-15: AI-facing shell context builder (MCP get_shell_context + future AI panel).
@@ -249,6 +259,7 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::OpenSettings => "Settings".into(),
         keymap::Action::FocusAddressBar => "Browser Address Bar".into(),
         keymap::Action::ToggleGitPanel => "Git Panel".into(),
+        keymap::Action::ToggleNotificationsPanel => "Notifications Panel".into(),
         keymap::Action::OpenLazygit => "Open Lazygit".into(),
         keymap::Action::IncreaseFontSize => "Font +".into(),
         keymap::Action::DecreaseFontSize => "Font −".into(),

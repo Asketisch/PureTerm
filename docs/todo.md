@@ -4,12 +4,11 @@
 
 ---
 
-## 🚧 进行中（8）
+## 🚧 进行中（7）
 
 | GAP | 简述 | 类别 | 规划类型 | 优先级 | 详情 |
 |-----|------|------|----------|--------|------|
 | GAP-02 | 错误恢复：Shell exit 触发 + LLM 卡片 + Apply，待 GUI E2E | AI Agent | wrap-up | P0 | [spec](features/GAP-02-error-recovery/spec.md) · [E2E](manual-e2e/gap-02-error-recovery.md) |
-| GAP-09 | 通知系统：ring/面板/Dock 已接，toast/CLI 待补 | 终端交互 | wrap-up | P0 | [spec](features/GAP-09-notification/spec.md) |
 | GAP-01 | AI Chat Panel：Phase 1+2 headless ✅，GUI/配置未接 | AI Agent | feature | P0 | [spec](features/GAP-01-ai-chat-panel/spec.md) |
 | GAP-15 | Shell Integration：OSC 133 + EventBus + MCP，待 GUI E2E | 终端交互 | wrap-up | P0 | [spec](features/GAP-15-shell-integration/spec.md) |
 | GAP-10 | Triggers：库+配置 stub，Wakeup 扫描/highlight 未接 | 终端交互 | feature | P1 | [spec](features/GAP-10-triggers/spec.md) |

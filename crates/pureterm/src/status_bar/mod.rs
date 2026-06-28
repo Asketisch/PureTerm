@@ -64,6 +64,7 @@ pub fn build_registry(cfg: &StatusBarConfig) -> Vec<Box<dyn StatusBarComponent>>
                 "vimode" => Box::new(components::ViMode),
                 "process" => Box::new(components::Process),
                 "agent" => Box::new(components::Agent),
+                "notifications" => Box::new(components::Notifications),
                 "cursor" => Box::new(components::Cursor),
                 "clock" => Box::new(components::Clock),
                 "cpu" => Box::new(components::Cpu::new(cfg.show_sparklines)),

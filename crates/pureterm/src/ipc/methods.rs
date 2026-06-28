@@ -85,6 +85,11 @@ pub enum IpcSideEffect {
     /// with the owning pane. Fire-and-forget; replied immediately.
     #[cfg(unix)]
     AgentSessionStarted { session_id: String, kind: Option<String>, cwd: Option<String> },
+    /// GAP-09: post a desktop notification from the CLI (`pureterm notify`) or
+    /// external IPC caller. `pane_id` None ⇒ active pane. Fire-and-forget; the
+    /// main loop records it in the store (source `Cli`), refreshes the Dock
+    /// badge, and fires a gated toast.
+    ShowNotification { title: Option<String>, body: String, pane_id: Option<u64> },
 }
 
 // ── Handler type ─────────────────────────────────────────────────────────
@@ -877,6 +882,29 @@ impl SocketRouter {
                 .map(|e| serde_json::to_value(&e).unwrap_or(Value::Null))
                 .collect();
             (Ok(serde_json::json!({ "events": arr })), None)
+        });
+
+        // ── notification.* (GAP-09, 1 method) ────────────────────────
+        // `notification.post`: CLI `pureterm notify` / external caller → post a
+        // notification into the active (or specified) pane. Fire-and-forget;
+        // replied immediately and the main loop does the store/toast work.
+        router.register("notification.post", |params, _snap| {
+            let g = |key: &str| params.as_ref().and_then(|p| p.get(key));
+            let body = match g("body").and_then(|v| v.as_str()) {
+                Some(s) if !s.is_empty() => s.to_string(),
+                _ => {
+                    return (
+                        Ok(serde_json::json!({ "posted": false, "reason": "empty body" })),
+                        None,
+                    );
+                }
+            };
+            let title = g("title").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let pane_id = g("pane_id").and_then(|v| v.as_u64());
+            (
+                Ok(serde_json::json!({ "posted": true })),
+                Some(IpcSideEffect::ShowNotification { title, body, pane_id }),
+            )
         });
 
         Arc::new(router)

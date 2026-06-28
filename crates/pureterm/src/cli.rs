@@ -102,6 +102,20 @@ pub enum Command {
         /// Raw JSON params, e.g. '{"index":1}'
         params: Option<String>,
     },
+    /// GAP-09: post a desktop notification into the running PureTerm.
+    /// `pureterm notify "build done"` → `notification.post` RPC → in-app ring +
+    /// status-bar count + Dock badge + (gated) macOS toast. Emits a
+    /// `notification.posted` event with `source:"cli"` (see `pureterm events tail`).
+    Notify {
+        /// Notification body (required).
+        message: String,
+        /// Optional title headline.
+        #[arg(long)]
+        title: Option<String>,
+        /// Target pane id; defaults to the active pane.
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
     /// GAP-7.1: agent hook shim. Reads the agent's hook-event JSON on stdin,
     /// applies PureTerm's `[[agent.hook]]` policy, prints a Claude-Code-protocol
     /// decision. Registered in the agent's own hook config (e.g.
@@ -970,6 +984,15 @@ pub fn run(cli: Cli) {
         Command::Msg { method, params } => {
             let parsed = params.and_then(|s| serde_json::from_str(&s).ok());
             send(&socket, json, (&method, parsed));
+        }
+        // GAP-09: `pureterm notify` → notification.post RPC.
+        Command::Notify { message, title, pane_id } => {
+            let params = serde_json::json!({
+                "body": message,
+                "title": title,
+                "pane_id": pane_id,
+            });
+            send(&socket, json, ("notification.post", Some(params)));
         }
         // GAP-7.1: never returns (exits with the hook decision). Local only.
         Command::Hook { event } => crate::agent_hooks::run_hook_shim(event),

@@ -45,6 +45,11 @@ pub enum TerminalEvent {
     /// with exit code + duration on OutputEnd). Surfaced so the GUI can track
     /// per-pane commands and emit `shell.*` events for the AI context pipeline.
     ShellMark(alacritty_terminal::event::ShellMark),
+    /// GAP-09: OSC 9/99/777 desktop notification parsed from the PTY.
+    Notification(alacritty_terminal::event::Notification),
+    /// GAP-09: terminal bell (0x07) — surfaced as an additional "needs
+    /// attention" signal (was previously dropped by the `_ => return` below).
+    Bell,
 }
 
 /// Bridge: implements `EventListener` by sending through a crossbeam channel.
@@ -75,6 +80,11 @@ impl EventListener for ChannelEventListener {
             // GAP-15: forward OSC 133 shell-integration marks to the GUI (was
             // previously dropped by the `_ => return` catch-all below).
             TEvent::ShellMark(m) => TerminalEvent::ShellMark(m),
+            // GAP-09: forward OSC 9/99/777 notifications and the terminal bell.
+            // Both MUST precede the `_ => return` catch-all below or they are
+            // silently dropped — the same trap that bit ShellMark pre-GAP-15.
+            TEvent::Notification(n) => TerminalEvent::Notification(n),
+            TEvent::Bell => TerminalEvent::Bell,
             _ => return,
         };
         let _ = self.tx.send(mapped);
@@ -921,5 +931,33 @@ mod tests {
         let listener = ChannelEventListener::new(tx);
         listener.send_event(alacritty_terminal::event::Event::MouseCursorDirty);
         assert!(rx.try_recv().is_err(), "MouseCursorDirty should be dropped");
+    }
+
+    #[test]
+    fn gap09_notification_event_forwards_through_bridge() {
+        // GAP-09: OSC 9/99/777 notifications must forward through the bridge
+        // (was dropped by the `_ => return` catch-all — same trap as GAP-15).
+        use alacritty_terminal::event::{Notification, NotifyOccasion, NotifySource};
+        let (tx, rx) = bounded::<TerminalEvent>(16);
+        let listener = ChannelEventListener::new(tx);
+        let n = Notification {
+            title: Some("T".into()),
+            body: "B".into(),
+            id: None,
+            occasion: NotifyOccasion::Always,
+            source: NotifySource::Osc9,
+        };
+        listener.send_event(alacritty_terminal::event::Event::Notification(n.clone()));
+        assert_eq!(rx.try_recv(), Ok(TerminalEvent::Notification(n)));
+    }
+
+    #[test]
+    fn gap09_bell_event_forwards_through_bridge() {
+        // GAP-09: bell (0x07) is an additional "needs attention" signal and must
+        // forward (was dropped by the `_ => return` catch-all).
+        let (tx, rx) = bounded::<TerminalEvent>(16);
+        let listener = ChannelEventListener::new(tx);
+        listener.send_event(alacritty_terminal::event::Event::Bell);
+        assert_eq!(rx.try_recv(), Ok(TerminalEvent::Bell));
     }
 }

@@ -258,6 +258,40 @@ impl Default for ShellIntegrationConfig {
     }
 }
 
+/// GAP-09: `[notification]` settings — Notification System. A missing/malformed
+/// table yields `Default` (so a bad config never breaks startup); each key is
+/// loaded independently (mirrors `GitConfig` / `ShellIntegrationConfig`).
+///
+/// `enabled` is the master switch (false ⇒ no store, no ring, no badge, no
+/// toast, no audit event). `desktop_notifications` gates the intrusive macOS
+/// toast; `dock_badge` gates the Dock unread count; `ring` gates the per-pane
+/// attention ring. `bell_passthrough` surfaces BEL (0x07) as an attention
+/// signal; `bell_throttle_ms` coalesces bell-derived notifications per pane.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NotificationConfig {
+    pub enabled: bool,
+    pub desktop_notifications: bool,
+    pub dock_badge: bool,
+    pub ring: bool,
+    pub bell_passthrough: bool,
+    pub bell_throttle_ms: u64,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            desktop_notifications: true,
+            dock_badge: true,
+            ring: true,
+            bell_passthrough: true,
+            // 1 bell-derived notification per second per pane (stops
+            // `while true; printf '\a'` spam from flooding the store/toast).
+            bell_throttle_ms: 1000,
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load(path: &Path) -> Self {
         let mut config = Self::default();
@@ -662,6 +696,46 @@ impl AppConfig {
         }
         if let Some(b) = table.get("include_command_text").and_then(|v| v.as_bool()) {
             cfg.include_command_text = b;
+        }
+        cfg
+    }
+
+    /// Load the `[notification]` table (GAP-09). A missing/malformed table
+    /// yields `Default`. Mirrors `load_git`: read_to_string → toml::from_str →
+    /// walk `value.get("notification").as_table()`; each key is independently
+    /// optional.
+    pub fn load_notification(path: &Path) -> NotificationConfig {
+        let mut cfg = NotificationConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("notification").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("desktop_notifications").and_then(|v| v.as_bool()) {
+            cfg.desktop_notifications = b;
+        }
+        if let Some(b) = table.get("dock_badge").and_then(|v| v.as_bool()) {
+            cfg.dock_badge = b;
+        }
+        if let Some(b) = table.get("ring").and_then(|v| v.as_bool()) {
+            cfg.ring = b;
+        }
+        if let Some(b) = table.get("bell_passthrough").and_then(|v| v.as_bool()) {
+            cfg.bell_passthrough = b;
+        }
+        if let Some(n) = table.get("bell_throttle_ms").and_then(|v| v.as_integer()) {
+            // Clamp to ≥0 (0 disables throttling, not divide-by-zero since the
+            // store compares wall-clock ms, not a modulo).
+            cfg.bell_throttle_ms = n.max(0) as u64;
         }
         cfg
     }

@@ -15,7 +15,10 @@ use log::error;
 use polling::{Event as PollingEvent, Events, PollMode, Poller};
 use smallvec::SmallVec;
 
-use crate::event::{self, Event, EventListener, ShellMark, ShellMarkKind, WindowSize};
+use crate::event::{
+    self, Event, EventListener, Notification, NotifyOccasion, NotifySource, ShellMark,
+    ShellMarkKind, WindowSize,
+};
 use crate::sync::FairMutex;
 use crate::term::Term;
 use crate::{thread, tty};
@@ -175,6 +178,22 @@ where
             // Scan for OSC 7 CWD reporting.
             if let Some(cwd) = scan_osc7(&buf[..unprocessed]) {
                 self.event_proxy.send_event(Event::CwdChanged(cwd));
+            }
+
+            // GAP-09: scan OSC 9 / 99 / 777 desktop notifications. Skip payloads
+            // with neither a title nor a body (spec: empty notifications are void).
+            for raw in scan_osc_notify(&buf[..unprocessed]) {
+                let body = raw.body.unwrap_or_default();
+                if body.is_empty() && raw.title.is_none() {
+                    continue;
+                }
+                self.event_proxy.send_event(Event::Notification(Notification {
+                    title: raw.title,
+                    body,
+                    id: raw.id,
+                    occasion: raw.occasion.unwrap_or(NotifyOccasion::Always),
+                    source: raw.source,
+                }));
             }
 
             processed += unprocessed;
@@ -776,6 +795,162 @@ mod tests_osc7 {
 }
 
 #[cfg(test)]
+mod tests_osc_notify {
+    use super::*;
+
+    fn notif(buf: &[u8]) -> Vec<RawNotification> {
+        scan_osc_notify(buf).into_iter().collect()
+    }
+
+    // ---- OSC 9 (iTerm2 legacy: single string body, last-wins) ----
+
+    #[test]
+    fn osc9_bel_terminated() {
+        let r = notif(b"\x1b]9;Build complete\x07");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].source, NotifySource::Osc9);
+        assert_eq!(r[0].title, None);
+        assert_eq!(r[0].body.as_deref(), Some("Build complete"));
+        assert!(r[0].id.is_none());
+    }
+
+    #[test]
+    fn osc9_st_terminated() {
+        let r = notif(b"\x1b]9;hi there\x1b\\");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].source, NotifySource::Osc9);
+        assert_eq!(r[0].body.as_deref(), Some("hi there"));
+    }
+
+    #[test]
+    fn osc9_last_of_multiple() {
+        let r = notif(b"\x1b]9;first\x07 some text \x1b]9;second\x07");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].body.as_deref(), Some("second"));
+    }
+
+    // ---- OSC 99 (kitty, chunked) ----
+
+    #[test]
+    fn osc99_simple_title() {
+        // Empty metadata, single payload -> title (p defaults to title).
+        let r = notif(b"\x1b]99;;Hello\x1b\\");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].source, NotifySource::Osc99);
+        assert_eq!(r[0].title.as_deref(), Some("Hello"));
+        assert!(r[0].body.is_none());
+        assert!(r[0].id.is_none());
+    }
+
+    #[test]
+    fn osc99_title_body_chunked() {
+        // Two chunks sharing `i=job1`: d=0 holds the title, the body chunk
+        // (default d=1) flushes one merged notification.
+        let buf = b"\x1b]99;i=job1:d=0;Deploy started\x1b\\\x1b]99;i=job1:p=body;pushing\x1b\\";
+        let r = notif(buf);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].title.as_deref(), Some("Deploy started"));
+        assert_eq!(r[0].body.as_deref(), Some("pushing"));
+        assert_eq!(r[0].id.as_deref(), Some("job1"));
+    }
+
+    #[test]
+    fn osc99_base64_payload() {
+        // e=1 means the payload is base64; "SGVsbG8=" decodes to "Hello".
+        let r = notif(b"\x1b]99;e=1;SGVsbG8=\x07");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].title.as_deref(), Some("Hello"));
+    }
+
+    #[test]
+    fn osc99_occasion_key() {
+        let r = notif(b"\x1b]99;o=invisible;Ping\x1b\\");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].occasion, Some(NotifyOccasion::Invisible));
+    }
+
+    #[test]
+    fn osc99_unknown_payload_type_skipped() {
+        // p=icon is not handled in v1 -> graceful no-op, no notification.
+        let r = notif(b"\x1b]99;p=icon;/tmp/x.png\x1b\\");
+        assert!(r.is_empty());
+    }
+
+    // ---- OSC 777 (urxvt: notify;title;body) ----
+
+    #[test]
+    fn osc777_bel_terminated() {
+        let r = notif(b"\x1b]777;notify;Tests;5 failed\x07");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].source, NotifySource::Osc777);
+        assert_eq!(r[0].title.as_deref(), Some("Tests"));
+        assert_eq!(r[0].body.as_deref(), Some("5 failed"));
+    }
+
+    #[test]
+    fn osc777_st_terminated() {
+        let r = notif(b"\x1b]777;notify;CI;failed\x1b\\");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].title.as_deref(), Some("CI"));
+    }
+
+    #[test]
+    fn osc777_empty_title() {
+        let r = notif(b"\x1b]777;notify;;body only\x07");
+        assert_eq!(r.len(), 1);
+        assert!(r[0].title.is_none());
+        assert_eq!(r[0].body.as_deref(), Some("body only"));
+    }
+
+    #[test]
+    fn osc777_non_notify_skipped() {
+        // First field must be "notify".
+        let r = notif(b"\x1b]777;set_xtitle;a;b\x07");
+        assert!(r.is_empty());
+    }
+
+    // ---- cross-cutting ----
+
+    #[test]
+    fn mixed_osc9_and_osc777() {
+        // OSC 777 is emitted inline; OSC 9 is last-wins so it is emitted at the
+        // buffer end — both scanners fire on the same buffer (order-insensitive).
+        let r = notif(b"\x1b]9;a\x07\x1b]777;notify;T;B\x07");
+        assert_eq!(r.len(), 2);
+        assert!(r.iter().any(|n| n.source == NotifySource::Osc9));
+        assert!(r.iter().any(|n| n.source == NotifySource::Osc777));
+    }
+
+    #[test]
+    fn no_terminator_skipped() {
+        // Cross-buffer (no terminator) -> nothing this read.
+        assert!(notif(b"\x1b]9;hello").is_empty());
+        assert!(notif(b"\x1b]99;;half").is_empty());
+    }
+
+    #[test]
+    fn no_notify_in_plain_text() {
+        assert!(notif(b"just regular output\nno osc here").is_empty());
+    }
+
+    #[test]
+    fn sanitize_id_strips_invalid_chars() {
+        // kitty spec: ids restricted to [a-zA-Z0-9_-+.]; invalid chars filtered.
+        assert_eq!(sanitize_notify_id("a!b@c"), "abc");
+        assert_eq!(sanitize_notify_id("job-1.2_3"), "job-1.2_3");
+        // i=0 is special-cased at the caller (treated as no id) -> not here.
+    }
+
+    #[test]
+    fn decode_base64_basic() {
+        assert_eq!(decode_base64("SGVsbG8=").as_deref(), Some(&b"Hello"[..]));
+        assert_eq!(decode_base64("Zm9v").as_deref(), Some(&b"foo"[..]));
+        assert_eq!(decode_base64("Zm9vYg==").as_deref(), Some(&b"foob"[..]));
+        assert!(decode_base64("!!!").is_none());
+    }
+}
+
+#[cfg(test)]
 mod tests_pty_write_arc {
     //! Verify that `Event::PtyWrite` payloads are wrapped in `Arc<String>` so
     //! multi-window fan-out clones a pointer (atomic increment) instead of
@@ -899,6 +1074,271 @@ fn hex_val(b: u8) -> Option<u8> {
         b'A'..=b'F' => Some(b - b'A' + 10),
         _ => None,
     }
+}
+
+/// GAP-09: one notification scanned off the raw PTY buffer, before the
+/// occasion/source defaults are applied. OSC 99 chunked payloads sharing the
+/// same `i` are merged into a single entry (see `scan_osc_notify`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawNotification {
+    source: NotifySource,
+    title: Option<String>,
+    body: Option<String>,
+    id: Option<String>,
+    occasion: Option<NotifyOccasion>,
+}
+
+/// GAP-09: scan raw bytes for OSC 9 / OSC 99 / OSC 777 notification sequences.
+///
+/// - OSC 9  (iTerm2 legacy):  `\x1b]9;<message>\x07|ST` — single body, **last-wins**
+///   within the buffer (mirrors `scan_osc7`).
+/// - OSC 99 (kitty, chunked): `\x1b]99;<metadata>;<payload>\x07|ST` — `:`-separated
+///   `key=value` metadata. v1 parses `p` (title|body), `i` (id), `d` (0=hold/1=flush),
+///   `e` (1=base64), `o` (occasion). Same-`i` chunks merge; flush on `d=1`. Unknown
+///   payload types (`icon`/`close`/`buttons`/`?`/`alive`) are graceful no-ops (spec
+///   forward-compat). Cross-buffer chunking (a `d=0` chunk in one PTY read, `d=1` in
+///   the next) flushes as a separate notification in v1 — the GUI-side store dedups
+///   by `id` as the safety net.
+/// - OSC 777 (urxvt):          `\x1b]777;notify;<title>;<body>\x07|ST` — stateless.
+///
+/// All three accept BOTH `\x07` (BEL) and `\x1b\\` (ST) terminators (mirrors
+/// `scan_osc133`). Cross-buffer (no terminator) sequences are skipped and
+/// re-scanned on the next read.
+fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
+    let mut out: SmallVec<[RawNotification; 2]> = SmallVec::new();
+    // OSC 9 is last-wins within the buffer (mirrors scan_osc7).
+    let mut last_osc9: Option<String> = None;
+    // OSC 99 chunked entries keyed by sanitized `i`, kept in insertion order so
+    // end-of-buffer flush is deterministic (a HashMap would not be).
+    let mut pending: Vec<(String, RawNotification)> = Vec::new();
+
+    let mut i = 0usize;
+    while i < buf.len() {
+        // Find the next ESC.
+        let Some(pos) = memchr::memchr(0x1b, &buf[i..]) else { break };
+        let start = i + pos;
+        let after_esc = &buf[start..];
+
+        // Identify the OSC type and payload start (offset just after the prefix).
+        // Prefixes are distinguishable: `\x1b]9;` requires `;` right after `9`,
+        // while `\x1b]99;` has a second `9` — so order of checks is irrelevant.
+        let (source, payload_start): (NotifySource, usize) = if after_esc.starts_with(b"\x1b]777;") {
+            (NotifySource::Osc777, start + b"\x1b]777;".len())
+        } else if after_esc.starts_with(b"\x1b]99;") {
+            (NotifySource::Osc99, start + b"\x1b]99;".len())
+        } else if after_esc.starts_with(b"\x1b]9;") {
+            (NotifySource::Osc9, start + b"\x1b]9;".len())
+        } else {
+            i = start + 1;
+            continue;
+        };
+
+        // Scan the payload until BEL (0x07) or ST (\x1b\\). Mirrors scan_osc133.
+        let mut p = payload_start;
+        let mut term_len = 0usize;
+        let mut found = false;
+        while p < buf.len() {
+            match buf[p] {
+                0x07 => {
+                    term_len = 1;
+                    found = true;
+                    break;
+                }
+                0x1b if p + 1 < buf.len() && buf[p + 1] == b'\\' => {
+                    term_len = 2;
+                    found = true;
+                    break;
+                }
+                _ => p += 1,
+            }
+        }
+        if !found {
+            // Cross-buffer sequence — skip this ESC, re-scan from the next byte.
+            i = start + 1;
+            continue;
+        }
+        let next_i = p + term_len;
+        let payload_bytes = &buf[payload_start..p];
+
+        match source {
+            NotifySource::Osc9 => {
+                let s = payload_to_string(payload_bytes);
+                if !s.is_empty() {
+                    last_osc9 = Some(s);
+                }
+            }
+            NotifySource::Osc777 => {
+                let s = payload_to_string(payload_bytes);
+                let parts: Vec<&str> = s.split(';').collect();
+                // Canonical urxvt: `notify;<title>;<body>` (3 fields after prefix).
+                if parts.first() == Some(&"notify") && parts.len() >= 3 {
+                    let title = (!parts[1].is_empty()).then(|| parts[1].to_string());
+                    let body = (!parts[2].is_empty()).then(|| parts[2].to_string());
+                    if title.is_some() || body.is_some() {
+                        out.push(RawNotification {
+                            source: NotifySource::Osc777,
+                            title,
+                            body,
+                            id: None,
+                            occasion: None,
+                        });
+                    }
+                }
+            }
+            NotifySource::Osc99 => {
+                let s = payload_to_string(payload_bytes);
+                // Mandatory two `;`-fields: `<metadata>;<text>` (metadata may be empty).
+                let (meta_str, text) = match s.split_once(';') {
+                    Some((m, t)) => (m, t),
+                    None => (s.as_str(), ""),
+                };
+                // Parse `:`-separated `key=value` metadata (keys are single chars).
+                let mut p_type = "title";
+                let mut id_raw: Option<&str> = None;
+                let mut done = true; // d defaults to 1
+                let mut encoded = false; // e defaults to 0
+                let mut occasion: Option<NotifyOccasion> = None;
+                for kv in meta_str.split(':') {
+                    let Some((k, v)) = kv.split_once('=') else { continue };
+                    let Some(&key) = k.as_bytes().first() else { continue };
+                    match key {
+                        b'p' => p_type = v,
+                        b'i' => id_raw = Some(v),
+                        b'd' => done = v != "0",
+                        b'e' => encoded = v == "1",
+                        b'o' => {
+                            occasion = Some(match v {
+                                "unfocused" => NotifyOccasion::Unfocused,
+                                "invisible" => NotifyOccasion::Invisible,
+                                _ => NotifyOccasion::Always,
+                            })
+                        }
+                        _ => {}
+                    }
+                }
+                // Decode base64 payload if requested.
+                let decoded = if encoded {
+                    match decode_base64(text) {
+                        Some(b) => String::from_utf8_lossy(&b).into_owned(),
+                        None => {
+                            i = next_i;
+                            continue;
+                        }
+                    }
+                } else {
+                    text.to_string()
+                };
+                // Only title/body payloads are handled; others are no-ops.
+                if p_type != "title" && p_type != "body" {
+                    i = next_i;
+                    continue;
+                }
+                // Resolve id: sanitize, treat empty / "0" as None (spec: i=0 unused).
+                let id = id_raw.and_then(|r| {
+                    let s = sanitize_notify_id(r);
+                    (!s.is_empty() && s != "0").then_some(s)
+                });
+
+                if let Some(id) = id {
+                    let pos = pending.iter().position(|(k, _)| k == &id).unwrap_or_else(|| {
+                        pending.push((
+                            id.clone(),
+                            RawNotification {
+                                source: NotifySource::Osc99,
+                                title: None,
+                                body: None,
+                                id: Some(id.clone()),
+                                occasion: None,
+                            },
+                        ));
+                        pending.len() - 1
+                    });
+                    let entry = &mut pending[pos].1;
+                    match p_type {
+                        "title" => entry.title = Some(decoded),
+                        "body" => entry.body = Some(decoded),
+                        _ => {}
+                    }
+                    if occasion.is_some() {
+                        entry.occasion = occasion;
+                    }
+                    if done {
+                        let (_, e) = pending.swap_remove(pos);
+                        out.push(e);
+                    }
+                } else {
+                    // No id -> single-shot (done is effectively true).
+                    let mut e = RawNotification {
+                        source: NotifySource::Osc99,
+                        title: None,
+                        body: None,
+                        id: None,
+                        occasion,
+                    };
+                    match p_type {
+                        "title" => e.title = Some(decoded),
+                        "body" => e.body = Some(decoded),
+                        _ => {}
+                    }
+                    out.push(e);
+                }
+            }
+            NotifySource::Bell | NotifySource::Cli => {}
+        }
+        i = next_i;
+    }
+
+    // Emit the winning OSC 9 (last-wins) as a single notification.
+    if let Some(body) = last_osc9 {
+        out.push(RawNotification {
+            source: NotifySource::Osc9,
+            title: None,
+            body: Some(body),
+            id: None,
+            occasion: None,
+        });
+    }
+    // Flush any OSC 99 chunks held with d=0 that never closed this read.
+    for (_, e) in pending {
+        out.push(e);
+    }
+
+    out
+}
+
+/// GAP-09: lossy UTF-8 conversion of a raw payload slice.
+fn payload_to_string(b: &[u8]) -> String {
+    String::from_utf8_lossy(b).into_owned()
+}
+
+/// GAP-09: sanitize a kitty OSC 99 `i` identifier to `[a-zA-Z0-9_-+.]` (spec
+/// anti-injection rule — ids may be echoed back in response escapes later).
+fn sanitize_notify_id(raw: &str) -> String {
+    raw.chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+'))
+        .collect()
+}
+
+/// GAP-09: decode a standard (RFC 4648) base64 payload (used by kitty OSC 99 `e=1`).
+/// Returns `None` on any invalid character. Padding is optional.
+fn decode_base64(s: &str) -> Option<Vec<u8>> {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let val = |b: u8| TABLE.iter().position(|&t| t == b).map(|p| p as u32);
+    let trimmed = s.trim_end_matches('=');
+    let mut out = Vec::with_capacity(trimmed.len() * 3 / 4);
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for &b in trimmed.as_bytes() {
+        let v = val(b)?;
+        buf = (buf << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+            buf &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
 }
 
 #[cfg(test)]

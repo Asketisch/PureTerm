@@ -20,6 +20,7 @@
 use iced::{Color, Element};
 
 use crate::iced_app::Message;
+use crate::notification_store::NotificationSummary;
 
 use super::git::GitStatus;
 use super::stats::StatSnapshot;
@@ -45,6 +46,8 @@ pub struct BarData<'a> {
     pub process: Option<&'a str>,
     /// Pre-formatted agent indicator `("⚡", color)`, if applicable.
     pub agent: Option<(String, Color)>,
+    /// GAP-09: unread-notification summary (status-bar count). `None`/zero ⇒ hide.
+    pub notifications: Option<NotificationSummary>,
     pub cursor: (usize, usize),
     pub show_sparklines: bool,
 }

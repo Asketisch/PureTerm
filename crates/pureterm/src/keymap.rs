@@ -76,6 +76,8 @@ pub enum Action {
     ToggleGitPanel,
     /// GAP-32: open lazygit in the active pane (panel button / command palette).
     OpenLazygit,
+    /// GAP-09: toggle the Notifications history overlay panel (⌘⇧M).
+    ToggleNotificationsPanel,
 
     // ── Font / window (TOML-declared but not yet wired) ─────────────
     IncreaseFontSize,
@@ -413,6 +415,19 @@ impl Keymap {
         bindings.insert(
             (cmd, BindingKey::Character("B".into())),
             Action::ToggleGitPanel,
+        );
+
+        // ── Notifications panel (GAP-09) ───────────────────────────
+        // ⌘⇧M → ToggleNotificationsPanel ("Messages"). macOS dual-form
+        // (⌘⇧M may report as ⌘M-uppercase), mirroring the ⌘⇧B git-panel trick.
+        // Plain ⌘M/⌘H/⌘Q are left to macOS (minimize/hide/quit).
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("m".into())),
+            Action::ToggleNotificationsPanel,
+        );
+        bindings.insert(
+            (cmd, BindingKey::Character("M".into())),
+            Action::ToggleNotificationsPanel,
         );
 
         // ── Cmd+Option+Arrow → PaneFocusAdjacent ────────────────────
@@ -819,6 +834,8 @@ fn parse_action(s: &str) -> Result<Action, String> {
         // Git panel (GAP-32)
         "ToggleGitPanel" | "GitPanel" => Ok(Action::ToggleGitPanel),
         "OpenLazygit" | "Lazygit" => Ok(Action::OpenLazygit),
+        // Notifications panel (GAP-09)
+        "ToggleNotificationsPanel" | "NotificationsPanel" => Ok(Action::ToggleNotificationsPanel),
 
         // Font / window
         "IncreaseFontSize" | "FontLarger" => Ok(Action::IncreaseFontSize),

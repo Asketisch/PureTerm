@@ -46,6 +46,57 @@ pub struct ShellMark {
     pub command: Option<String>,
 }
 
+/// GAP-09: when a desktop notification should be shown (maps to the kitty OSC 99 `o` key).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyOccasion {
+    /// `o=always` (default) — toast when the source pane is not visible.
+    Always,
+    /// `o=unfocused` — toast only when the application window is not focused.
+    Unfocused,
+    /// `o=invisible` — toast only when the source pane is invisible
+    /// (unfocused app OR in a non-active tab).
+    Invisible,
+}
+
+/// GAP-09: origin of a desktop notification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifySource {
+    /// iTerm2 legacy OSC 9 (`\x1b]9;<msg>`).
+    Osc9,
+    /// kitty OSC 99 (chunked, `p`/`i`/`d`/`e`/`o` metadata).
+    Osc99,
+    /// urxvt OSC 777 (`\x1b]777;notify;<title>;<body>`).
+    Osc777,
+    /// Terminal bell (0x07), surfaced via bell passthrough.
+    Bell,
+    /// `pureterm notify` CLI (posted over the GUI IPC socket).
+    Cli,
+}
+
+/// GAP-09: a desktop notification surfaced from the PTY (OSC 9/99/777),
+/// synthesized from a bell, or posted via the CLI.
+//
+// PureTerm (GAP-09): added so notifications ride `Event::Notification`, exactly
+// like `ShellMark` rides `Event::ShellMark`. Derives `PartialEq, Eq` because the
+// pureterm-crate `TerminalEvent` wraps it and derives the same — every field is
+// `Option<String>`/`String`/`Copy`-enum, so this is a safe additive derive.
+// Timestamps are deliberately NOT here (they are mutable/GUI-side state and
+// would break `Eq`); they live only on the pureterm-side `NotificationEntry`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Notification {
+    /// Best-effort title; `None` for OSC 9 and bell.
+    pub title: Option<String>,
+    /// Message body.
+    pub body: String,
+    /// kitty OSC 99 `i`, sanitized to `[a-zA-Z0-9_-+.]`, used to dedup/update
+    /// in-flight notifications. `None` for OSC 9/777/bell/CLI.
+    pub id: Option<String>,
+    /// kitty OSC 99 `o`; defaults to `Always` when unset.
+    pub occasion: NotifyOccasion,
+    /// Where the notification came from.
+    pub source: NotifySource,
+}
+
 /// Terminal event.
 ///
 /// These events instruct the UI over changes that can't be handled by the terminal emulation layer
@@ -107,6 +158,9 @@ pub enum Event {
 
     /// Working directory changed via OSC 7.
     CwdChanged(String),
+
+    /// GAP-09: desktop notification (OSC 9/99/777 or bell-derived).
+    Notification(Notification),
 }
 
 impl Debug for Event {
@@ -127,6 +181,7 @@ impl Debug for Event {
             Event::ChildExit(status) => write!(f, "ChildExit({status:?})"),
             Event::ShellMark(mark) => write!(f, "ShellMark({:?}, row={})", mark.kind, mark.row),
             Event::CwdChanged(path) => write!(f, "CwdChanged({path})"),
+            Event::Notification(n) => write!(f, "Notification({:?})", n),
         }
     }
 }
