@@ -10,7 +10,7 @@
 
 use serde_json::Value;
 
-/// The 14 event categories. Serialized lowercase (`Feed` → `"feed"`).
+/// The 16 event categories. Serialized lowercase (`Feed` → `"feed"`).
 ///
 /// `Session` carries PTY/daemon-session lifecycle (spawned/exited/reattached/
 /// hibernated/resumed) as a first-class concern, rather than folding it under
@@ -135,7 +135,15 @@ impl TypeFilter {
             }
         }
         if let Some(kind) = &self.kind {
-            if !event.kind.ends_with(kind.as_str()) {
+            // dotted `cat.verb` pins the exact full kind `cat.verb` (category was
+            // verified above). Suffix matching would let `--type feed.resolved`
+            // wrongly match a hypothetical `feed.unresolved`, contradicting the
+            // "exact kind" contract documented on [`TypeFilter`].
+            let expected: String = match &self.category {
+                Some(cat) => format!("{cat}.{kind}"),
+                None => kind.clone(),
+            };
+            if event.kind != expected {
                 return false;
             }
         }
@@ -200,6 +208,19 @@ mod tests {
         let f = TypeFilter::parse(Some("feed.resolved"));
         assert!(f.matches(&ev(Category::Feed, "feed.resolved")));
         assert!(!f.matches(&ev(Category::Feed, "feed.requested")));
+    }
+
+    #[test]
+    fn type_filter_dotted_pins_exact_kind_not_suffix() {
+        // Regression: `--type feed.resolved` must NOT suffix-match `feed.unresolved`.
+        // The dotted filter pins the exact full kind `cat.verb`, not a trailing suffix.
+        let f = TypeFilter::parse(Some("feed.resolved"));
+        assert!(f.matches(&ev(Category::Feed, "feed.resolved")));
+        assert!(!f.matches(&ev(Category::Feed, "feed.unresolved")));
+        // Multi-segment kinds also match exactly, not by trailing suffix.
+        let g = TypeFilter::parse(Some("error_recovery.applied"));
+        assert!(g.matches(&ev(Category::ErrorRecovery, "error_recovery.applied")));
+        assert!(!g.matches(&ev(Category::ErrorRecovery, "error_recovery.not_applied")));
     }
 
     #[test]

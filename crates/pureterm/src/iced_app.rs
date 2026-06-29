@@ -4701,7 +4701,7 @@ impl PureTermApp {
                                             );
                                             self.events.emit(
                                                 crate::events::Category::Shell,
-                                                "block.finished".to_string(),
+                                                "shell.block_finished".to_string(),
                                                 session_id,
                                                 serde_json::json!({
                                                     "pane_id": pane_id.0,

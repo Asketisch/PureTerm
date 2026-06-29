@@ -14,7 +14,7 @@ e2e: manual-e2e/gap-6.7-event-stream.md
 
 ## 概述
 
-`EventBus` 双写架构：events.jsonl（16MiB rotation）+ broadcast（4096 容量）。支持 12 类事件、实时 tail（`pureterm events list/tail`）、~20 个 emit 点。
+`EventBus` 双写架构：events.jsonl（16MiB rotation）+ broadcast（4096 容量）。支持 16 类事件、实时 tail（`pureterm events list/tail`）、~60 个 emit 点。
 
 ## 竞品参考
 
@@ -28,9 +28,9 @@ e2e: manual-e2e/gap-6.7-event-stream.md
 
 **架构**：
 - `EventBus` 双写：events.jsonl 16MiB rotation + broadcast 4096
-- 12 类事件
+- 16 类事件
 - 实时 tail：`pureterm events list/tail`
-- ~20 emit 点（feed/tab/pane/session/config/agent）
+- ~60 emit 点（覆盖全部 16 类：window/workspace/surface/pane/session/notification/feed/agent/sidebar/browser/app/config/git/shell/error_recovery/trigger）
 
 **已完成（本次收尾）**：
 - workspace producer 误分类修正（`workspace.created`/`workspace.switched` 从 `Surface` 修正为 `Workspace`）
@@ -39,10 +39,10 @@ e2e: manual-e2e/gap-6.7-event-stream.md
 
 **非阻塞后续：**
 - `events.subscribe` streaming MCP 工具（需独立流式传输设计，当前 IPC 是阻塞式 `send_rpc`）
-- sidebar producer（被 GAP-6.8 阻塞 —— sidebar 模块尚不存在）
+- sidebar producer：`sidebar.left_opened` / `left_closed` / `right_opened` / `right_closed` **已落地**（iced_app.rs emit）；仅 `events.subscribe` 流式 + GAP-6.8 可编程 DSL 仍 defer
 - `notify`（kqueue/inotify）替轮询：经实测评估弃用 —— macOS `RecommendedWatcher` 走 FSEvents，事件 ~1s 才到（比 150ms 轮询还慢）且其 runloop 会拖住同进程其它线程的 sleep，主平台无收益反有害（详见 `events_log.rs::TAIL_FALLBACK_MS` 注释）
 
-**GAP-09 集成（2026-06-28）：** `Category::Notification` producer 已部分落地 — `notification.posted` / `panel_opened` / `panel_closed` / `all_dismissed`。desktop toast / `pureterm notify` CLI defer 至 GAP-09 收尾。
+**GAP-09 集成（2026-06-28）：** `Category::Notification` producer 已部分落地 — `notification.posted` / `panel_opened` / `panel_closed`。注：`notification.all_dismissed` **尚未接线**（`DismissAllNotifications` 处理器 iced_app.rs 只清 store+badge、不 emit），属 GAP-09 后续。desktop toast / `pureterm notify` CLI defer 至 GAP-09 收尾。
 
 ## 优先级
 
