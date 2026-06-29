@@ -106,6 +106,12 @@ impl ShellState {
     pub fn last_command(&self) -> Option<&FinishedCommand> {
         self.history.last()
     }
+
+    /// Grid row of the most recent OutputStart (C) mark — used by GAP-02 to
+    /// bound command-output capture when a command fails.
+    pub fn last_output_start_row(&self) -> Option<usize> {
+        self.last_c_row
+    }
 }
 
 /// Map a mark kind to its `shell.*` event verb (GAP-15 EventBus namespace).

@@ -550,6 +550,7 @@ fn cold_resume_agent(
             None,
             Some(&argv),
             Some(kind),
+            true,
         )?;
         let ctx = TerminalContext::attach_local_via_daemon(&sid, TermSize::new(80, 24))?;
         return Ok(Arc::new(ctx));
@@ -576,6 +577,7 @@ fn cold_resume_agent(
         None,
         Some(&argv),
         Some(kind),
+        true,
     )?;
     let ctx = TerminalContext::attach_local_via_daemon(&sid, TermSize::new(80, 24))?;
     Ok(Arc::new(ctx))
@@ -615,13 +617,7 @@ fn attach_pane(
 fn synthetic_ssh_profile(name: Option<&str>) -> SshProfile {
     SshProfile {
         name: name.unwrap_or("SSH").to_string(),
-        host: String::new(),
-        user: None,
-        port: None,
-        password: None,
-        key_path: None,
-        shortcut: None,
-        forward_agent: false,
+        ..Default::default()
     }
 }
 

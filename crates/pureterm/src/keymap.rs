@@ -36,6 +36,8 @@ pub enum Action {
     ActivateTabByIndex(usize),
     MovePaneToNewTab,
     MovePaneToNewWindow,
+    /// GAP-25: open a new independent window (⌘⇧N).
+    NewWindow,
 
     // ── Workspace (GAP-2.1) ────────────────────────────────────────
     /// Create a new named workspace, snapshot the current one into the
@@ -72,12 +74,42 @@ pub enum Action {
     /// GAP-3.5: focus the Browser address-bar overlay (⌘L). Navigates the
     /// active Web pane, or spawns one if no Web pane is focused.
     FocusAddressBar,
-    /// GAP-32: toggle the Git overlay panel (⌘⇧B).
+    /// GAP-32: open Git tab in the right sidebar (legacy alias; ⌘⇧B is ToggleRightSidebar).
     ToggleGitPanel,
+    /// GAP-19: toggle the left sidebar (⌘B) — Workspace list + Git summary.
+    ToggleLeftSidebar,
+    /// GAP-19: toggle the right sidebar (⌘⇧B) — Find / Feed / Git tabs.
+    ToggleRightSidebar,
+    /// GAP-19: switch the active right-sidebar tab.
+    SidebarRightMode(crate::sidebar::RightMode),
     /// GAP-32: open lazygit in the active pane (panel button / command palette).
     OpenLazygit,
     /// GAP-09: toggle the Notifications history overlay panel (⌘⇧M).
     ToggleNotificationsPanel,
+    /// GAP-02: toggle / re-analyze the error-recovery card (⌘⇧E).
+    ErrorRecoveryToggle,
+    /// GAP-01: toggle the AI Chat panel (⌘⇧L — ⌘L is Browser address bar).
+    ToggleAiChatPanel,
+    /// GAP-4.2: open hovered / selected URL or file path (⌘⇧O).
+    OpenHoverTarget,
+    /// GAP-36: open hovered / selected file path in editor (semantic history).
+    OpenSemanticInEditor,
+
+    /// GAP-11: toggle instant replay overlay (⌘⇧R).
+    ToggleInstantReplay,
+    /// GAP-11: scrub replay timeline (←/→ in overlay).
+    ReplayScrub(i32),
+    /// GAP-12: jump to previous shell mark (⌘⇧↑).
+    PrevMark,
+    /// GAP-12: jump to next shell mark (⌘⇧↓).
+    NextMark,
+
+    /// GAP-13: toggle broadcast input (⌘⌃B).
+    ToggleBroadcastInput,
+    /// GAP-31: toggle quake-style dock (⌃`).
+    ToggleQuakeDock,
+    /// GAP-30: open Toolbelt tab in right sidebar.
+    ToggleToolbelt,
 
     // ── Font / window (TOML-declared but not yet wired) ─────────────
     IncreaseFontSize,
@@ -319,13 +351,8 @@ impl Keymap {
             (cmd, BindingKey::Character("D".into())),
             Action::SplitVertical,
         );
-        // GAP-3.5: ⌘⇧L → SplitWeb (split a new Web pane + focus address bar).
-        // macOS dual-form: "l" with shift, or "L" without (mirrors ⌘⇧D above).
-        bindings.insert(
-            (cmd_shift, BindingKey::Character("l".into())),
-            Action::SplitWeb,
-        );
-        bindings.insert((cmd, BindingKey::Character("L".into())), Action::SplitWeb);
+        // GAP-3.5 SplitWeb: no default ⌘⇧L binding — GAP-01 AI Chat uses ⌘⇧L.
+        // SplitWeb remains available via command palette / `[[keyboard.bindings]]`.
         // ⌘= → EqualizeSplits
         bindings.insert(
             (cmd, BindingKey::Character("=".into())),
@@ -345,14 +372,32 @@ impl Keymap {
             (cmd_shift, BindingKey::Named(BindingNamedKey::Enter)),
             Action::ToggleZoom,
         );
-        // ⌘⇧N → MovePaneToNewWindow
+        // ⌘⇧N → NewWindow (GAP-25); MovePaneToNewWindow stays on context menu.
         bindings.insert(
             (cmd_shift, BindingKey::Character("n".into())),
-            Action::MovePaneToNewWindow,
+            Action::NewWindow,
         );
         bindings.insert(
             (cmd, BindingKey::Character("N".into())),
-            Action::MovePaneToNewWindow,
+            Action::NewWindow,
+        );
+        // ⌘⇧R → Instant Replay (GAP-11)
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("r".into())),
+            Action::ToggleInstantReplay,
+        );
+        bindings.insert(
+            (cmd, BindingKey::Character("R".into())),
+            Action::ToggleInstantReplay,
+        );
+        // ⌘⇧↑/↓ → mark navigation (GAP-12)
+        bindings.insert(
+            (cmd_shift, BindingKey::Named(BindingNamedKey::ArrowUp)),
+            Action::PrevMark,
+        );
+        bindings.insert(
+            (cmd_shift, BindingKey::Named(BindingNamedKey::ArrowDown)),
+            Action::NextMark,
         );
 
         // ── Clipboard ───────────────────────────────────────────────
@@ -405,17 +450,44 @@ impl Keymap {
             Action::FocusAddressBar,
         );
 
-        // ── Git panel (GAP-32) ─────────────────────────────────────
-        // ⌘⇧B → ToggleGitPanel. macOS dual-form (⌘⇧B may report as ⌘B-uppercase).
-        // Plain ⌘B is intentionally left free.
+        // ── Sidebar (GAP-19) ─────────────────────────────────────────
+        // ⌘B → left sidebar (Workspace + Git summary).
+        bindings.insert(
+            (cmd, BindingKey::Character("b".into())),
+            Action::ToggleLeftSidebar,
+        );
+        // ⌘⇧B → right sidebar (Find / Feed / Git). macOS dual-form.
         bindings.insert(
             (cmd_shift, BindingKey::Character("b".into())),
-            Action::ToggleGitPanel,
+            Action::ToggleRightSidebar,
         );
         bindings.insert(
             (cmd, BindingKey::Character("B".into())),
-            Action::ToggleGitPanel,
+            Action::ToggleRightSidebar,
         );
+
+        // ── GAP-13 Broadcast ─────────────────────────────────────────
+        let cmd_ctrl = cmd | Modifiers::CTRL;
+        bindings.insert(
+            (cmd_ctrl, BindingKey::Character("b".into())),
+            Action::ToggleBroadcastInput,
+        );
+
+        // ── GAP-31 Quake dock ────────────────────────────────────────
+        let ctrl = Modifiers::CTRL;
+        bindings.insert(
+            (ctrl, BindingKey::Named(BindingNamedKey::F(12))), // MVP: F12 when ` not bindable
+            Action::ToggleQuakeDock,
+        );
+
+        // ── GAP-30 Toolbelt ──────────────────────────────────────────
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("t".into())),
+            Action::ToggleToolbelt,
+        );
+
+        // Legacy Git panel alias → right sidebar Git tab.
+        // (Command palette / custom bindings may still say ToggleGitPanel.)
 
         // ── Notifications panel (GAP-09) ───────────────────────────
         // ⌘⇧M → ToggleNotificationsPanel ("Messages"). macOS dual-form
@@ -428,6 +500,40 @@ impl Keymap {
         bindings.insert(
             (cmd, BindingKey::Character("M".into())),
             Action::ToggleNotificationsPanel,
+        );
+
+        // ── Error Recovery (GAP-02) ───────────────────────────────────
+        // ⌘⇧E → toggle / re-analyze failed command. macOS dual-form.
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("e".into())),
+            Action::ErrorRecoveryToggle,
+        );
+        bindings.insert(
+            (cmd, BindingKey::Character("E".into())),
+            Action::ErrorRecoveryToggle,
+        );
+
+        // ── AI Chat Panel (GAP-01) ────────────────────────────────────
+        // ⌘⇧L → ToggleAiChatPanel. macOS dual-form. Plain ⌘L stays on
+        // FocusAddressBar (Browser) — do not bind chat to ⌘L.
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("l".into())),
+            Action::ToggleAiChatPanel,
+        );
+        bindings.insert(
+            (cmd, BindingKey::Character("L".into())),
+            Action::ToggleAiChatPanel,
+        );
+
+        // ── Hover Preview (GAP-4.2) ───────────────────────────────────
+        // ⌘⇧O → open hovered/selected URL or path. macOS dual-form.
+        bindings.insert(
+            (cmd_shift, BindingKey::Character("o".into())),
+            Action::OpenHoverTarget,
+        );
+        bindings.insert(
+            (cmd, BindingKey::Character("O".into())),
+            Action::OpenHoverTarget,
         );
 
         // ── Cmd+Option+Arrow → PaneFocusAdjacent ────────────────────
@@ -803,6 +909,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "PrevTab" | "PreviousTab" => Ok(Action::PrevTab),
         "MovePaneToNewTab" => Ok(Action::MovePaneToNewTab),
         "MovePaneToNewWindow" => Ok(Action::MovePaneToNewWindow),
+        "NewWindow" => Ok(Action::NewWindow),
 
         // Workspace (GAP-2.1)
         "NewWorkspace" => Ok(Action::NewWorkspace),
@@ -833,9 +940,22 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "FocusAddressBar" | "FocusUrlBar" => Ok(Action::FocusAddressBar),
         // Git panel (GAP-32)
         "ToggleGitPanel" | "GitPanel" => Ok(Action::ToggleGitPanel),
+        "ToggleLeftSidebar" | "LeftSidebar" => Ok(Action::ToggleLeftSidebar),
+        "ToggleRightSidebar" | "RightSidebar" => Ok(Action::ToggleRightSidebar),
         "OpenLazygit" | "Lazygit" => Ok(Action::OpenLazygit),
         // Notifications panel (GAP-09)
         "ToggleNotificationsPanel" | "NotificationsPanel" => Ok(Action::ToggleNotificationsPanel),
+        "ErrorRecoveryToggle" | "error_recovery.toggle" => Ok(Action::ErrorRecoveryToggle),
+        "ToggleAiChatPanel" | "AiChatPanel" | "ai_chat.toggle" => Ok(Action::ToggleAiChatPanel),
+        "OpenHoverTarget" | "hover_preview.open" => Ok(Action::OpenHoverTarget),
+        "OpenSemanticTarget" | "semantic_history.open" => Ok(Action::OpenSemanticInEditor),
+        "ToggleInstantReplay" | "instant_replay.toggle" => Ok(Action::ToggleInstantReplay),
+        "ToggleBroadcastInput" | "broadcast.toggle" => Ok(Action::ToggleBroadcastInput),
+        "ToggleQuakeDock" | "quake.toggle" => Ok(Action::ToggleQuakeDock),
+        "ToggleToolbelt" | "toolbelt.toggle" => Ok(Action::ToggleToolbelt),
+        "PrevMark" | "marks.prev" => Ok(Action::PrevMark),
+        "NextMark" | "marks.next" => Ok(Action::NextMark),
+        "NewWindow" | "window.new" => Ok(Action::NewWindow),
 
         // Font / window
         "IncreaseFontSize" | "FontLarger" => Ok(Action::IncreaseFontSize),
@@ -1033,7 +1153,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cmd_shift_l_split_web_dual_form() {
+    fn test_cmd_shift_l_ai_chat_dual_form() {
         let mut km = make_keymap();
         // macOS may report ⌘⇧L as "L" without shift…
         let r1 = km.resolve(
@@ -1041,14 +1161,14 @@ mod tests {
             Modifiers::COMMAND,
             Instant::now(),
         );
-        assert_eq!(r1, ResolveResult::Action(Action::SplitWeb));
+        assert_eq!(r1, ResolveResult::Action(Action::ToggleAiChatPanel));
         // …or as "l" with shift.
         let r2 = km.resolve(
             &Key::Character("l".into()),
             Modifiers::COMMAND | Modifiers::SHIFT,
             Instant::now(),
         );
-        assert_eq!(r2, ResolveResult::Action(Action::SplitWeb));
+        assert_eq!(r2, ResolveResult::Action(Action::ToggleAiChatPanel));
     }
 
     #[test]

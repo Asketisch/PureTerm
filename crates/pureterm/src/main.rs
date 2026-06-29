@@ -1,3 +1,6 @@
+mod automation;
+mod script_cli;
+mod macos_url_scheme;
 mod agent_adapters;
 mod agent_detect;
 #[cfg(all(test, unix))]
@@ -21,10 +24,43 @@ mod agent_sessions;
 /// GAP-01: built-in AI Chat Panel — LLM provider abstraction (Anthropic +
 /// OpenAI-compatible), SSE streaming, Markdown rendering, dockable panel.
 mod ai_chat;
+/// GAP-02: Error Recovery — LLM fix suggestions on command failure.
+mod error_recovery;
+/// GAP-04: Computer Use — desktop screenshot + input stubs.
+mod computer_use;
+/// GAP-08: Natural language shell commands (`# description`).
+mod natural_language;
+/// GAP-07: Soul System — personality files for AI Chat.
+mod soul;
+/// GAP-4.2: Smart Selection Hover Preview — tooltip + semantic actions.
+mod hover_preview;
+/// GAP-33: Port Scanner — listening ports sidebar tab.
+mod port_scanner;
+/// GAP-43: Remote file browse — sidebar Files tab.
+mod remote_files;
+/// GAP-06: Ambient Agents local task queue MVP.
+mod ambient_agents;
+/// GAP-13: Broadcast keyboard input to multiple panes.
+mod broadcast_input;
+/// GAP-18: BiDi text reorder helper.
+mod bidi;
+/// GAP-26: Workspace sidebar groups.
+mod workspace_groups;
+/// GAP-30: Toolbelt sidebar panel.
+mod toolbelt;
+/// GAP-31: Quake-style dropdown terminal.
+mod quake_dock;
+/// GAP-37: Password manager integration for SSH.
+mod password_manager;
+/// GAP-39: Serial & Telnet session types.
+mod serial_telnet;
+/// GAP-42: SSH login scripts.
+mod login_scripts;
 mod app_config;
 /// GAP-3.5: 内置 Browser 面板(WebView)— pane 的第二种内容载体。
 mod browser;
 mod cli;
+mod codeindex;
 mod config_watcher;
 /// GAP-6.7: unified event schema (Category + AppEvent).
 mod events;
@@ -59,19 +95,34 @@ mod ipc;
 /// the roster/whitelist/config pieces stay compiled without the feature.
 mod mcp;
 mod keymap;
+/// GAP-35: LSP client — rust-analyzer stdio + diagnostics.
+mod lsp;
 mod pane_exit;
 mod search;
 mod session_restore;
 mod split_tree;
+/// GAP-19: Dual Sidebar — left (Workspace + Git) / right (Find / Feed / Git).
+mod sidebar;
+/// GAP-3.2: Programmable sidebar DSL (TOML scripts + EventBus).
+mod sidebar_dsl;
+/// GAP-11: Instant Replay — events.jsonl timeline export + scrub viewer.
+mod instant_replay;
+/// GAP-12: Annotations & Marks — OSC 133 grid marks + line notes.
+mod annotations;
+/// GAP-25: Multi-window cross-process IPC (workspace.switch fan-out).
+mod multi_window_ipc;
 mod status_bar;
 mod surface_snapshot;
 #[cfg(target_os = "macos")]
 mod macos_menu;
 #[cfg(target_os = "macos")]
 mod macos_reopen;
-/// GAP-09: Dock badge (unread-notification count) via NSDockTile.
+/// GAP-09 / GAP-21: Dock badge (unread + Feed pending) via NSDockTile.
 #[cfg(target_os = "macos")]
 mod macos_dock_badge;
+/// GAP-21: Dock right-click menu — recent workspaces via NSMenu.
+#[cfg(target_os = "macos")]
+mod macos_dock_menu;
 /// GAP-09: macOS desktop notifications (UNUserNotificationCenter toasts).
 #[cfg(target_os = "macos")]
 mod macos_notifications;
@@ -97,6 +148,8 @@ mod notification_store;
 mod notification_panel;
 /// GAP-15: per-pane shell-integration state (OSC 133 A/B/C/D state machine).
 mod shell_state;
+/// GAP-51: block-based output scaffold (data model + feature flag).
+mod output_blocks;
 /// GAP-10: pattern-match triggers (regex on output → highlight/notify/send_text/exec).
 mod triggers;
 /// GAP-15: AI-facing shell context builder (MCP get_shell_context + future AI panel).
@@ -104,6 +157,58 @@ mod shell_context;
 mod terminal_context;
 mod terminal_shader;
 mod vi_mode_handler;
+/// GAP-05: Voice input (push-to-talk scaffold).
+mod voice_input;
+/// GAP-17: Sixel / Kitty graphics protocol scaffold.
+mod terminal_graphics;
+/// GAP-20: macOS glass / vibrancy effect.
+mod macos_glass_effect;
+/// GAP-22: MacBook Touch Bar scaffold.
+mod macos_touch_bar;
+/// GAP-23: Visual tab bar config.
+mod visual_tab_bar;
+/// GAP-28: Custom window border.
+mod window_border;
+/// GAP-29: Environment badge overlay.
+mod badge_overlay;
+/// GAP-34: File preview (image/PDF/text).
+mod file_preview;
+/// GAP-38: SCP/SFTP file transfer.
+mod file_transfer;
+/// GAP-44: Shared sessions (stub).
+mod shared_sessions;
+/// GAP-45: Auto-update check scaffold.
+mod auto_update;
+/// GAP-49: Plugin system (stub).
+mod plugin_system;
+/// GAP-50: Cloud sync (local bundle MVP).
+mod cloud_sync;
+/// GAP-52: Parameterized workflows.
+mod workflows;
+/// GAP-53: Interactive notebooks.
+mod notebooks;
+/// GAP-54: Background image config.
+mod background_image;
+/// GAP-55: Window transparency + blur.
+mod window_effects;
+/// GAP-56: Focus-follows-mouse.
+mod focus_follows_mouse;
+/// GAP-57: MacBook haptic feedback.
+mod macos_haptic;
+/// GAP-58: Extended theme overrides.
+mod custom_theme;
+/// GAP-59: Emoji rendering channel.
+mod emoji_rendering;
+/// GAP-60: Pane screenshot / export.
+mod pane_capture;
+/// GAP-61: Print support.
+mod print_support;
+/// GAP-4.6: VoiceOver / accessibility announcements.
+mod accessibility;
+/// P4 GAP CLI helpers (plugin, sync, share, …).
+mod p4_cli;
+/// P4 GAP runtime bundle for iced_app.
+mod p4_runtime;
 
 fn main() -> iced::Result {
     env_logger::init();
@@ -233,6 +338,7 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::ActivateTabByIndex(i) => format!("Tab {}", i + 1),
         keymap::Action::MovePaneToNewTab => "Pane → New Tab".into(),
         keymap::Action::MovePaneToNewWindow => "Pane → New Window".into(),
+        keymap::Action::NewWindow => "New Window".into(),
         keymap::Action::NewWorkspace => "New Workspace".into(),
         keymap::Action::NextWorkspace => "Next Workspace".into(),
         keymap::Action::PrevWorkspace => "Previous Workspace".into(),
@@ -261,7 +367,17 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::OpenSettings => "Settings".into(),
         keymap::Action::FocusAddressBar => "Browser Address Bar".into(),
         keymap::Action::ToggleGitPanel => "Git Panel".into(),
+        keymap::Action::ToggleLeftSidebar => "Left Sidebar".into(),
+        keymap::Action::ToggleRightSidebar => "Right Sidebar".into(),
+        keymap::Action::SidebarRightMode(m) => format!("Sidebar: {}", m.label()),
         keymap::Action::ToggleNotificationsPanel => "Notifications Panel".into(),
+        keymap::Action::ErrorRecoveryToggle => "Error Recovery".into(),
+        keymap::Action::ToggleAiChatPanel => "AI Chat Panel".into(),
+        keymap::Action::ToggleInstantReplay => "Instant Replay".into(),
+        keymap::Action::PrevMark => "Previous Mark".into(),
+        keymap::Action::NextMark => "Next Mark".into(),
+        keymap::Action::OpenHoverTarget => "Open URL/Path".into(),
+        keymap::Action::OpenSemanticInEditor => "Open in Editor".into(),
         keymap::Action::OpenLazygit => "Open Lazygit".into(),
         keymap::Action::IncreaseFontSize => "Font +".into(),
         keymap::Action::DecreaseFontSize => "Font −".into(),
@@ -278,6 +394,10 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::SearchToggleRegex => "Toggle Regex".into(),
         keymap::Action::SearchToggleWholeWord => "Toggle Whole Word".into(),
         keymap::Action::SearchToggleFollow => "Toggle Follow Tail".into(),
+        keymap::Action::ReplayScrub(d) => format!("Replay Scrub ({d})"),
+        keymap::Action::ToggleBroadcastInput => "Broadcast Input".into(),
+        keymap::Action::ToggleQuakeDock => "Quake Dock".into(),
+        keymap::Action::ToggleToolbelt => "Toolbelt".into(),
         // GAP-6.4: user-defined commands aren't part of the preset set,
         // but the match must be exhaustive for the `shortcuts` CLI.
         keymap::Action::CustomCommand(id) => format!("Custom: {id}"),

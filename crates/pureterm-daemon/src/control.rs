@@ -13,6 +13,8 @@ use pureterm_jsonrpc::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, ERROR_INVA
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixListener;
 
+use pureterm_ssh::SshForwards;
+
 use crate::session::SessionManager;
 
 /// Shared control-plane state.
@@ -150,6 +152,7 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
         "session.create" => {
             let cols = uparam(request, "cols").unwrap_or(80);
             let rows = uparam(request, "rows").unwrap_or(24);
+            let smallest_screen_wins = bparam(request, "smallest_screen_wins").unwrap_or(true);
             let kind = sparam(request, "kind").unwrap_or_else(|| "local".to_string());
             let sid = if kind == "ssh" {
                 // GAP-5.1 M3: daemon-owned SSH PTY. `password` is resolved + unlocked
@@ -168,6 +171,7 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                 // GAP-5.4: optional ssh-agent forwarding + explicit agent socket.
                 let forward_agent = bparam(request, "forward_agent").unwrap_or(false);
                 let agent_sock = sparam(request, "agent_sock");
+                let forwards = forwards_from_request(request);
                 state.manager.create_ssh(
                     &host,
                     user.as_deref(),
@@ -178,6 +182,8 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                     rows,
                     forward_agent,
                     agent_sock.as_deref(),
+                    forwards,
+                    smallest_screen_wins,
                 )
             } else {
                 let cwd = sparam(request, "working_directory").map(PathBuf::from);
@@ -185,7 +191,7 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
                 // agent_kind tag for hibernation eligibility (GAP-7.3).
                 let argv = aparam(request, "argv");
                 let agent_kind = sparam(request, "agent_kind");
-                state.manager.create_local(cols, rows, cwd, argv, agent_kind)
+                state.manager.create_local(cols, rows, cwd, argv, agent_kind, smallest_screen_wins)
             };
             match sid {
                 Ok(s) => Ok(serde_json::json!({ "session_id": s })),
@@ -323,6 +329,78 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
             Ok(serde_json::json!({ "cleared": true }))
         }
         "pipe.list" => Ok(serde_json::json!({ "sessions": crate::pipe_pane::list(&state.manager) })),
+        // ── remote.* (GAP-43 file browse MVP) ───────────────────────────────
+        "remote.listdir" => {
+            let sid = match sparam(request, "session_id") {
+                Some(s) => s,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing session_id"),
+            };
+            let path = sparam(request, "path").unwrap_or_else(|| ".".to_string());
+            match state.manager.list_dir(&sid, &path) {
+                Ok(entries) => Ok(serde_json::json!({ "path": path, "entries": entries })),
+                Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("remote.listdir failed: {e}"))),
+            }
+        }
+        "remote.read" => {
+            let sid = match sparam(request, "session_id") {
+                Some(s) => s,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing session_id"),
+            };
+            let path = match sparam(request, "path") {
+                Some(p) => p,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing path"),
+            };
+            let max_bytes = request
+                .params
+                .as_ref()
+                .and_then(|p| p.get("max_bytes"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(crate::remote_fs::READ_MAX_BYTES);
+            match state.manager.read_file(&sid, &path, max_bytes) {
+                Ok(result) => Ok(serde_json::to_value(result).unwrap_or(serde_json::json!({}))),
+                Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("remote.read failed: {e}"))),
+            }
+        }
+        "remote.write" => {
+            let sid = match sparam(request, "session_id") {
+                Some(s) => s,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing session_id"),
+            };
+            let path = match sparam(request, "path") {
+                Some(p) => p,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing path"),
+            };
+            let content = match sparam(request, "content") {
+                Some(c) => c,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing content"),
+            };
+            match state.manager.write_file(&sid, &path, &content) {
+                Ok(()) => Ok(serde_json::json!({ "written": true, "path": path })),
+                Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("remote.write failed: {e}"))),
+            }
+        }
+        "remote.find" => {
+            let sid = match sparam(request, "session_id") {
+                Some(s) => s,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing session_id"),
+            };
+            let base = sparam(request, "path").unwrap_or_else(|| ".".to_string());
+            let query = match sparam(request, "query") {
+                Some(q) => q,
+                None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing query"),
+            };
+            let max = request
+                .params
+                .as_ref()
+                .and_then(|p| p.get("max"))
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or(crate::remote_fs::FIND_MAX_RESULTS);
+            match state.manager.find_files(&sid, &base, &query, max) {
+                Ok(matches) => Ok(serde_json::json!({ "path": base, "query": query, "matches": matches })),
+                Err(e) => Err(method_err(id, ERROR_INVALID_PARAMS, format!("remote.find failed: {e}"))),
+            }
+        }
         other => {
             return JsonRpcResponse::method_not_found(id, other);
         }
@@ -367,6 +445,16 @@ fn aparam(request: &JsonRpcRequest, key: &str) -> Option<Vec<String>> {
         .get(key)?
         .as_array()
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+}
+
+/// GAP-40: parse `-L`/`-R`/`-X`/`-Y` knobs from `session.create`.
+fn forwards_from_request(request: &JsonRpcRequest) -> SshForwards {
+    SshForwards {
+        local: aparam(request, "local_forwards").unwrap_or_default(),
+        remote: aparam(request, "remote_forwards").unwrap_or_default(),
+        x11: bparam(request, "forward_x11").unwrap_or(false),
+        x11_trusted: bparam(request, "forward_x11_trusted").unwrap_or(false),
+    }
 }
 
 #[cfg(test)]
@@ -508,5 +596,70 @@ mod tests {
         let result = resp.result.unwrap();
         let sessions = result["sessions"].as_array().unwrap();
         assert!(sessions.is_empty());
+    }
+
+    // ── GAP-43 remote.* dispatch ────────────────────────────────────────────
+    #[test]
+    fn remote_listdir_unknown_session_errors() {
+        let req = JsonRpcRequest::with_params(
+            14,
+            "remote.listdir",
+            serde_json::json!({"session_id": "missing", "path": "."}),
+        );
+        let resp = dispatch(&req, &state());
+        let err = resp.error.expect("expected error");
+        assert_eq!(err.code, ERROR_INVALID_PARAMS);
+    }
+
+    #[test]
+    fn remote_listdir_missing_session_id_errors() {
+        let req = JsonRpcRequest::with_params(15, "remote.listdir", serde_json::json!({}));
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn remote_read_missing_path_errors() {
+        let req = JsonRpcRequest::with_params(
+            16,
+            "remote.read",
+            serde_json::json!({"session_id": "missing", "path": "x"}),
+        );
+        let resp = dispatch(&req, &state());
+        let err = resp.error.expect("expected error");
+        assert_eq!(err.code, ERROR_INVALID_PARAMS);
+    }
+
+    #[test]
+    fn remote_read_unknown_session_errors() {
+        let req = JsonRpcRequest::with_params(
+            17,
+            "remote.read",
+            serde_json::json!({"session_id": "missing", "path": "README.md"}),
+        );
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn remote_write_missing_content_errors() {
+        let req = JsonRpcRequest::with_params(
+            18,
+            "remote.write",
+            serde_json::json!({"session_id": "missing", "path": "x.txt"}),
+        );
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_some());
+    }
+
+    #[test]
+    fn remote_find_missing_query_errors() {
+        let req = JsonRpcRequest::with_params(
+            19,
+            "remote.find",
+            serde_json::json!({"session_id": "missing", "path": "."}),
+        );
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_some());
     }
 }

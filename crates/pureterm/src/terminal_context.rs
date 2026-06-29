@@ -23,6 +23,8 @@ use alacritty_terminal::vte::ansi;
 use crossbeam_channel::{bounded, Receiver, Sender};
 // GAP-15: shell-integration injection opts (OSC 7 + OSC 133).
 use pureterm_daemon::shell_integration::ShellIntegrationOpts;
+#[cfg(unix)]
+use pureterm_ssh::SshForwards;
 
 #[cfg(unix)]
 use crate::ssh::config::SshProfile;
@@ -139,6 +141,12 @@ struct SshCtx {
     /// `puretermd`-owned `ssh -tt` child (set by the daemon paths). `None` for
     /// a direct (non-daemon) SSH context, which cannot survive GUI restart.
     session_id: Option<String>,
+    /// GAP-40: compact forward summary for status-bar (`L2 R1 X`).
+    forward_summary: Option<String>,
+    /// GAP-40: full forward bundle (reconnect + display).
+    ssh_forwards: SshForwards,
+    /// GAP-41: ProxyJump chain for reconnect.
+    ssh_jump_hosts: Vec<String>,
 }
 
 /// The swappable per-connection runtime inside [`SshCtx`].
@@ -283,6 +291,9 @@ fn wire_ssh_daemon(
         reconnect_state: Arc::new(Mutex::new(SshState::Connecting)),
         user_initiated_close: Arc::new(AtomicBool::new(false)),
         session_id: Some(session_id),
+        forward_summary: profile.forwards().summary(),
+        ssh_forwards: profile.forwards(),
+        ssh_jump_hosts: profile.jump_hosts.clone(),
     })
 }
 
@@ -388,6 +399,8 @@ impl TerminalContext {
             cwd.and_then(|p| p.to_str()),
             None,
             None,
+            crate::ssh::config::load_ssh_settings(&crate::app_config::AppConfig::config_path())
+                .smallest_screen_wins,
         )?;
 
         let ctx = wire_local_daemon(&data_path, size, session_id)?;
@@ -502,6 +515,9 @@ impl TerminalContext {
             reconnect_state: Arc::new(Mutex::new(SshState::Connecting)),
             user_initiated_close: Arc::new(AtomicBool::new(false)),
             session_id: None,
+            forward_summary: profile.forwards().summary(),
+            ssh_forwards: profile.forwards(),
+        ssh_jump_hosts: profile.jump_hosts.clone(),
         }))
     }
 
@@ -524,6 +540,9 @@ impl TerminalContext {
         let num_lines: u16 = 24;
         let size = TermSize::new(num_cols as usize, num_lines as usize);
 
+        let settings =
+            crate::ssh::config::load_ssh_settings(&crate::app_config::AppConfig::config_path());
+
         let (session_id, data_path) = daemon_client::create_ssh(
             &daemon_socket,
             &profile.host,
@@ -538,6 +557,8 @@ impl TerminalContext {
             // resolver already honors it (override > $SSH_AUTH_SOCK >
             // launchctl) — pass None to use inherited env / launchctl.
             None,
+            profile.forwards(),
+            settings.smallest_screen_wins,
         )?;
 
         let ctx = wire_ssh_daemon(&data_path, size, profile, password, session_id)?;
@@ -668,6 +689,15 @@ impl TerminalContext {
         }
     }
 
+    /// GAP-40: active SSH forward summary (`L2 R1 X`), if any.
+    #[cfg(unix)]
+    pub fn ssh_forward_summary(&self) -> Option<&str> {
+        match self {
+            TerminalContext::Ssh(ctx) => ctx.forward_summary.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Human-readable profile name (only meaningful for SSH contexts).
     pub fn profile_display(&self) -> Option<&str> {
         match self {
@@ -774,10 +804,9 @@ impl TerminalContext {
                 port: ctx.ssh_port,
                 key_path: ctx.ssh_key_path.clone(),
                 password: ctx.ssh_password.clone(),
-                // GAP-5.4 (follow-up): preserve agent forwarding across
-                // reconnect by storing it on SshCtx. For now a re-spawned
-                // session drops forwarding (forwarding is opt-in per profile).
                 forward_agent: false,
+                forwards: ctx.ssh_forwards.clone(),
+                jump_hosts: ctx.ssh_jump_hosts.clone(),
             }),
         }
     }

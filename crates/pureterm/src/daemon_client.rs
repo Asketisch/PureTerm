@@ -12,6 +12,7 @@ use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use pureterm_jsonrpc::{JsonRpcRequest, JsonRpcResponse};
+use pureterm_ssh::SshForwards;
 
 /// Send a one-shot JSON-RPC request to the daemon and return the response.
 pub fn rpc(
@@ -204,8 +205,13 @@ pub fn create_local(
     cwd: Option<&str>,
     argv: Option<&[String]>,
     agent_kind: Option<&str>,
+    smallest_screen_wins: bool,
 ) -> io::Result<(String, PathBuf)> {
-    let mut params = serde_json::json!({ "cols": cols, "rows": rows });
+    let mut params = serde_json::json!({
+        "cols": cols,
+        "rows": rows,
+        "smallest_screen_wins": smallest_screen_wins,
+    });
     if let Some(c) = cwd {
         params["working_directory"] = serde_json::Value::String(c.to_string());
     }
@@ -251,12 +257,15 @@ pub fn create_ssh(
     rows: u16,
     forward_agent: bool,
     agent_sock_override: Option<&str>,
+    forwards: SshForwards,
+    smallest_screen_wins: bool,
 ) -> io::Result<(String, PathBuf)> {
     let mut params = serde_json::json!({
         "kind": "ssh",
         "host": host,
         "cols": cols,
         "rows": rows,
+        "smallest_screen_wins": smallest_screen_wins,
     });
     if let Some(u) = user {
         params["user"] = serde_json::Value::String(u.to_string());
@@ -276,6 +285,18 @@ pub fn create_ssh(
     }
     if let Some(s) = agent_sock_override {
         params["agent_sock"] = serde_json::Value::String(s.to_string());
+    }
+    if !forwards.local.is_empty() {
+        params["local_forwards"] = serde_json::json!(forwards.local);
+    }
+    if !forwards.remote.is_empty() {
+        params["remote_forwards"] = serde_json::json!(forwards.remote);
+    }
+    if forwards.x11 {
+        params["forward_x11"] = serde_json::Value::Bool(true);
+    }
+    if forwards.x11_trusted {
+        params["forward_x11_trusted"] = serde_json::Value::Bool(true);
     }
 
     let resp = rpc(socket, "session.create", Some(params))?;
@@ -463,6 +484,135 @@ pub fn pipe_list(socket: &Path) -> io::Result<Vec<String>> {
         .into_iter()
         .filter_map(|v| v.as_str().map(|s| s.to_string()))
         .collect())
+}
+
+/// GAP-43: list a directory on a daemon session (local `read_dir` or remote
+/// `ssh -S` over the session ControlMaster socket).
+pub fn remote_listdir(
+    socket: &Path,
+    session_id: &str,
+    path: &str,
+) -> io::Result<Vec<RemoteFileEntry>> {
+    let resp = rpc(
+        socket,
+        "remote.listdir",
+        Some(serde_json::json!({ "session_id": session_id, "path": path })),
+    )?;
+    if let Some(err) = &resp.error {
+        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
+    }
+    let result = resp
+        .result
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no result"))?;
+    let entries = result
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing entries array"))?;
+    serde_json::from_value(serde_json::Value::Array(entries.clone()))
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// One directory entry from `remote.listdir` (mirrors daemon `FileEntry`).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct RemoteFileEntry {
+    pub name: String,
+    pub is_dir: bool,
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
+/// Text payload from `remote.read`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct RemoteFileRead {
+    pub path: String,
+    pub content: String,
+    pub truncated: bool,
+    #[serde(default)]
+    pub size: Option<u64>,
+}
+
+/// GAP-43: read a file from a daemon session (local or SSH), capped at `max_bytes`.
+pub fn remote_read(
+    socket: &Path,
+    session_id: &str,
+    path: &str,
+    max_bytes: u64,
+) -> io::Result<RemoteFileRead> {
+    let resp = rpc(
+        socket,
+        "remote.read",
+        Some(serde_json::json!({
+            "session_id": session_id,
+            "path": path,
+            "max_bytes": max_bytes,
+        })),
+    )?;
+    if let Some(err) = &resp.error {
+        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
+    }
+    let result = resp
+        .result
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no result"))?;
+    serde_json::from_value(result).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
+}
+
+/// Match from `remote.find`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct RemoteFindMatch {
+    pub path: String,
+    pub is_dir: bool,
+}
+
+/// GAP-43: write a text file on a daemon session.
+pub fn remote_write(
+    socket: &Path,
+    session_id: &str,
+    path: &str,
+    content: &str,
+) -> io::Result<()> {
+    let resp = rpc(
+        socket,
+        "remote.write",
+        Some(serde_json::json!({
+            "session_id": session_id,
+            "path": path,
+            "content": content,
+        })),
+    )?;
+    if let Some(err) = &resp.error {
+        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
+    }
+    Ok(())
+}
+
+/// GAP-43: find paths by name on a daemon session.
+pub fn remote_find(
+    socket: &Path,
+    session_id: &str,
+    base: &str,
+    query: &str,
+) -> io::Result<Vec<RemoteFindMatch>> {
+    let resp = rpc(
+        socket,
+        "remote.find",
+        Some(serde_json::json!({
+            "session_id": session_id,
+            "path": base,
+            "query": query,
+        })),
+    )?;
+    if let Some(err) = &resp.error {
+        return Err(io::Error::new(io::ErrorKind::Other, err.message.clone()));
+    }
+    let result = resp
+        .result
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "no result"))?;
+    let matches = result
+        .get("matches")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing matches array"))?;
+    serde_json::from_value(serde_json::Value::Array(matches.clone()))
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
 /// GAP-5.2: list daemon tunnels. Each element is the raw `{ id, host, user,

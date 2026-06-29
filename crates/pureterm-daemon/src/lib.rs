@@ -22,6 +22,7 @@ pub mod idle_probe;
 pub mod known_hosts;
 pub mod osc7;
 pub mod persist;
+pub mod remote_fs;
 pub mod ring_buffer;
 pub mod shell_integration;
 pub mod runtime;

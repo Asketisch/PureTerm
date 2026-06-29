@@ -27,10 +27,11 @@ use alacritty_terminal::event::WindowSize;
 use alacritty_terminal::tty;
 use polling::{Event, PollMode, Poller};
 use pureterm_ssh::agent_sock;
-use pureterm_ssh::{SshCommandBuilder, SshPty};
+use pureterm_ssh::{SshCommandBuilder, SshForwards, SshPty};
 
 use crate::discovery;
 use crate::frame::{self, frame_type};
+use crate::remote_fs::{self, SshSessionMeta};
 use crate::ring_buffer::RingBuffer;
 
 /// Interest keys for the per-session poller.
@@ -85,6 +86,8 @@ pub struct SessionHandle {
     /// GAP-6.6: pipe-pane tap. `Some(tx)` ⇒ the pump feeds PTY output to a
     /// tokio task that writes it to a spawned command's stdin; None ⇒ no pipe.
     pub pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>>,
+    /// GAP-43: ControlMaster socket + host for SSH file browse (`remote.listdir`).
+    pub ssh_meta: Option<SshSessionMeta>,
     stop: Arc<AtomicBool>,
     join: Option<JoinHandle<()>>,
 }
@@ -146,6 +149,7 @@ impl SessionManager {
         cwd: Option<PathBuf>,
         argv: Option<Vec<String>>,
         agent_kind: Option<String>,
+        smallest_screen_wins: bool,
     ) -> io::Result<String> {
         let id = new_session_id();
         let window_size =
@@ -192,7 +196,16 @@ impl SessionManager {
         let hibernated = Arc::new(AtomicBool::new(false));
         let pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> =
             Arc::new(Mutex::new(None));
-        let pump = spawn_pump(pty, listener, stop.clone(), last_output_at.clone(), pipe_feeder.clone());
+        let pump = spawn_pump(
+            pty,
+            listener,
+            stop.clone(),
+            last_output_at.clone(),
+            pipe_feeder.clone(),
+            cols,
+            rows,
+            smallest_screen_wins,
+        );
 
         let handle = Arc::new(Mutex::new(SessionHandle {
             id: id.clone(),
@@ -204,6 +217,7 @@ impl SessionManager {
             last_cpu_active_at,
             hibernated,
             pipe_feeder,
+            ssh_meta: None,
             stop,
             join: Some(pump),
         }));
@@ -226,6 +240,8 @@ impl SessionManager {
         rows: u16,
         forward_agent: bool,
         agent_sock_override: Option<&str>,
+        forwards: SshForwards,
+        smallest_screen_wins: bool,
     ) -> io::Result<String> {
         let id = new_session_id();
 
@@ -238,7 +254,7 @@ impl SessionManager {
         let control_socket =
             ssh_socket_dir.join(format!("{user_seg}@{host}:{}", port.unwrap_or(22)));
 
-        let mut builder = SshCommandBuilder::new(control_socket, host.to_string());
+        let mut builder = SshCommandBuilder::new(control_socket.clone(), host.to_string());
         if let Some(u) = user {
             builder = builder.with_user(u);
         }
@@ -248,6 +264,7 @@ impl SessionManager {
         if let Some(k) = identity_file {
             builder = builder.with_identity_file(k);
         }
+        builder = builder.with_forwards(forwards);
         // GAP-5.4: forward the local ssh-agent to the remote host when asked.
         let agent_sock = if forward_agent {
             builder = builder.with_forward_agent(true);
@@ -274,7 +291,16 @@ impl SessionManager {
         let hibernated = Arc::new(AtomicBool::new(false));
         let pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>> =
             Arc::new(Mutex::new(None));
-        let pump = spawn_pump(ssh_pty, listener, stop.clone(), last_output_at.clone(), pipe_feeder.clone());
+        let pump = spawn_pump(
+            ssh_pty,
+            listener,
+            stop.clone(),
+            last_output_at.clone(),
+            pipe_feeder.clone(),
+            cols,
+            rows,
+            smallest_screen_wins,
+        );
 
         let handle = Arc::new(Mutex::new(SessionHandle {
             id: id.clone(),
@@ -286,11 +312,118 @@ impl SessionManager {
             last_cpu_active_at,
             hibernated,
             pipe_feeder,
+            ssh_meta: Some(SshSessionMeta {
+                control_socket: control_socket.clone(),
+                host: host.to_string(),
+            }),
             stop,
             join: Some(pump),
         }));
         self.sessions.lock().unwrap().insert(id.clone(), handle);
         Ok(id)
+    }
+
+    /// GAP-43: write a text file for a live session.
+    pub fn write_file(&self, sid: &str, path: &str, content: &str) -> io::Result<()> {
+        let sessions = self.sessions.lock().unwrap();
+        let handle = sessions
+            .get(sid)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown session_id"))?;
+        let h = handle.lock().unwrap();
+        match h.kind.as_str() {
+            "local" => remote_fs::write_local_file(path, content),
+            "ssh" => {
+                let meta = h.ssh_meta.as_ref().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::Other, "ssh session missing control socket metadata")
+                })?;
+                remote_fs::write_remote_file(&meta.control_socket, &meta.host, path, content)
+            }
+            other => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("write_file unsupported for session kind {other}"),
+            )),
+        }
+    }
+
+    /// GAP-43: find paths by name under a directory.
+    pub fn find_files(
+        &self,
+        sid: &str,
+        base: &str,
+        query: &str,
+        max: usize,
+    ) -> io::Result<Vec<remote_fs::FindMatch>> {
+        let sessions = self.sessions.lock().unwrap();
+        let handle = sessions
+            .get(sid)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown session_id"))?;
+        let h = handle.lock().unwrap();
+        match h.kind.as_str() {
+            "local" => remote_fs::find_local(base, query, max),
+            "ssh" => {
+                let meta = h.ssh_meta.as_ref().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::Other, "ssh session missing control socket metadata")
+                })?;
+                remote_fs::find_remote(&meta.control_socket, &meta.host, base, query, max)
+            }
+            other => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("find_files unsupported for session kind {other}"),
+            )),
+        }
+    }
+
+    /// GAP-43: read a file for a live session (local `read` or remote `ssh -S head`).
+    pub fn read_file(
+        &self,
+        sid: &str,
+        path: &str,
+        max_bytes: u64,
+    ) -> io::Result<remote_fs::FileReadResult> {
+        let sessions = self.sessions.lock().unwrap();
+        let handle = sessions
+            .get(sid)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown session_id"))?;
+        let h = handle.lock().unwrap();
+        match h.kind.as_str() {
+            "local" => remote_fs::read_local_file(path, max_bytes),
+            "ssh" => {
+                let meta = h.ssh_meta.as_ref().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::Other, "ssh session missing control socket metadata")
+                })?;
+                remote_fs::read_remote_file(&meta.control_socket, &meta.host, path, max_bytes)
+            }
+            other => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("read_file unsupported for session kind {other}"),
+            )),
+        }
+    }
+
+    /// GAP-43: list a directory for a live session (local `read_dir` or remote
+    /// `ssh -S` over the session's ControlMaster socket).
+    pub fn list_dir(&self, sid: &str, path: &str) -> io::Result<Vec<remote_fs::FileEntry>> {
+        let sessions = self.sessions.lock().unwrap();
+        let handle = sessions
+            .get(sid)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown session_id"))?;
+        let h = handle.lock().unwrap();
+        match h.kind.as_str() {
+            "local" => {
+                let p = if path.is_empty() { "." } else { path };
+                remote_fs::list_local_dir(Path::new(p))
+            }
+            "ssh" => {
+                let meta = h.ssh_meta.as_ref().ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::Other, "ssh session missing control socket metadata")
+                })?;
+                remote_fs::list_remote_dir(&meta.control_socket, &meta.host, path)
+            }
+            other => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("list_dir unsupported for session kind {other}"),
+            )),
+        }
     }
 
     /// GAP-6.6: fetch a session handle by id (for pipe-pane control).
@@ -468,10 +601,24 @@ fn spawn_pump<P: PumpablePty + Send + 'static>(
     stop: Arc<AtomicBool>,
     last_output_at: Arc<Mutex<Instant>>,
     pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>>,
+    initial_cols: u16,
+    initial_rows: u16,
+    smallest_screen_wins: bool,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("puretermd-session".into())
-        .spawn(move || run_pump(pty, listener, stop, last_output_at, pipe_feeder))
+        .spawn(move || {
+            run_pump(
+                pty,
+                listener,
+                stop,
+                last_output_at,
+                pipe_feeder,
+                initial_cols,
+                initial_rows,
+                smallest_screen_wins,
+            )
+        })
         .expect("spawn session pump")
 }
 
@@ -497,6 +644,9 @@ fn run_pump<P: PumpablePty + Send + 'static>(
     stop: Arc<AtomicBool>,
     last_output_at: Arc<Mutex<Instant>>,
     pipe_feeder: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<Vec<u8>>>>>,
+    initial_cols: u16,
+    initial_rows: u16,
+    smallest_screen_wins: bool,
 ) {
     let poll = match Poller::new() {
         Ok(p) => p,
@@ -524,6 +674,7 @@ fn run_pump<P: PumpablePty + Send + 'static>(
     // exceeds `SUB_BACKPRESSURE_CAP` is dropped rather than blocking the pump.
     let mut subscribers: Vec<Subscriber> = Vec::new();
     let mut ring = RingBuffer::default();
+    let mut current_pty_size = (initial_cols.max(1), initial_rows.max(1));
     let mut events = polling::Events::with_capacity(std::num::NonZeroUsize::new(64).unwrap());
     let mut buf = [0u8; 8192];
     let mut sub_scratch = [0u8; 8192];
@@ -557,7 +708,13 @@ fn run_pump<P: PumpablePty + Send + 'static>(
                         }
                         .is_ok()
                         {
-                            let mut sub = Subscriber { stream, queue: VecDeque::new(), off: 0 };
+                            let mut sub = Subscriber {
+                                stream,
+                                queue: VecDeque::new(),
+                                off: 0,
+                                cols: current_pty_size.0,
+                                rows: current_pty_size.1,
+                            };
                             // M2: replay scrollback history as SCROLLBACK frames.
                             for wire in scrollback_frames(&ring) {
                                 sub.queue.push_back(wire);
@@ -597,6 +754,7 @@ fn run_pump<P: PumpablePty + Send + 'static>(
                     // Shared key: drain input from every subscriber, drop the
                     // closed/errored ones, then flush any newly-writable queues.
                     let mut to_drop: Vec<usize> = Vec::new();
+                    let mut resize_pending = false;
                     for (i, sub) in subscribers.iter_mut().enumerate() {
                         loop {
                             match handle_subscriber_read(
@@ -609,11 +767,31 @@ fn run_pump<P: PumpablePty + Send + 'static>(
                                     break;
                                 }
                                 ReadOutcome::WouldBlock => break,
+                                ReadOutcome::Resize(cols, rows) => {
+                                    sub.cols = cols.max(1);
+                                    sub.rows = rows.max(1);
+                                    if smallest_screen_wins {
+                                        resize_pending = true;
+                                    } else if (sub.cols, sub.rows) != current_pty_size {
+                                        resize_pty(master_fd, sub.cols, sub.rows);
+                                        current_pty_size = (sub.cols, sub.rows);
+                                    }
+                                }
                                 ReadOutcome::Ok => continue,
                             }
                         }
                     }
                     drop_subscribers(&poll, &mut subscribers, &to_drop);
+                    if smallest_screen_wins
+                        && (resize_pending || !to_drop.is_empty())
+                        && !subscribers.is_empty()
+                    {
+                        let (target_c, target_r) = min_subscriber_size(&subscribers);
+                        if (target_c, target_r) != current_pty_size {
+                            resize_pty(master_fd, target_c, target_r);
+                            current_pty_size = (target_c, target_r);
+                        }
+                    }
                     flush_subscribers(&mut subscribers);
                 }
                 _ => {}
@@ -634,6 +812,9 @@ struct Subscriber {
     queue: VecDeque<Vec<u8>>,
     /// Bytes of `queue.front()` already written to the kernel.
     off: usize,
+    /// Last reported terminal size from this subscriber (GAP-5.3).
+    cols: u16,
+    rows: u16,
 }
 
 impl Subscriber {
@@ -792,6 +973,15 @@ enum ReadOutcome {
     WouldBlock,
     /// Subscriber closed / errored — drop it.
     Closed,
+    /// GAP-5.3: a RESIZE frame was decoded (cols, rows).
+    Resize(u16, u16),
+}
+
+/// GAP-5.3: smallest-screen-wins — min cols/rows across all live subscribers.
+fn min_subscriber_size(subscribers: &[Subscriber]) -> (u16, u16) {
+    subscribers
+        .iter()
+        .fold((u16::MAX, u16::MAX), |(mc, mr), s| (mc.min(s.cols), mr.min(s.rows)))
 }
 
 /// Read one chunk from a subscriber and dispatch any INPUT/RESIZE/PING frames
@@ -823,7 +1013,7 @@ fn handle_subscriber_read(
             }
             frame_type::RESIZE => {
                 if let Ok((cols, rows)) = frame::decode_resize(frame.payload) {
-                    resize_pty(master_fd, cols, rows);
+                    return ReadOutcome::Resize(cols, rows);
                 }
             }
             frame_type::PING => {
@@ -862,6 +1052,27 @@ fn resize_pty(master_fd: std::os::fd::RawFd, cols: u16, rows: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn min_subscriber_size_picks_smallest() {
+        let subs = vec![
+            Subscriber {
+                stream: UnixStream::pair().unwrap().0,
+                queue: VecDeque::new(),
+                off: 0,
+                cols: 120,
+                rows: 40,
+            },
+            Subscriber {
+                stream: UnixStream::pair().unwrap().0,
+                queue: VecDeque::new(),
+                off: 0,
+                cols: 80,
+                rows: 24,
+            },
+        ];
+        assert_eq!(min_subscriber_size(&subs), (80, 24));
+    }
 
     #[test]
     fn session_ids_are_unique() {
@@ -907,7 +1118,7 @@ mod tests {
         assert!(mgr.list().is_empty());
         // create_local spawns a real shell; skip shape-assertions if it fails
         // (e.g. minimal CI without a usable login shell).
-        if let Ok(id) = mgr.create_local(80, 24, None, None, None) {
+        if let Ok(id) = mgr.create_local(80, 24, None, None, None, true) {
             let infos = mgr.list();
             assert_eq!(infos.len(), 1);
             assert_eq!(infos[0].id, id);
@@ -924,7 +1135,7 @@ mod tests {
     fn hibernate_then_resume_round_trip() {
         let _iso = crate::discovery::IsolatedDataDir::new();
         let mgr = SessionManager::default();
-        let id = match mgr.create_local(80, 24, None, None, None) {
+        let id = match mgr.create_local(80, 24, None, None, None, true) {
             Ok(id) => id,
             Err(_) => return, // no usable login shell in this environment
         };
@@ -959,7 +1170,7 @@ mod tests {
     fn local_session_child_survives_subscriber_drop() {
         let _iso = crate::discovery::IsolatedDataDir::new();
         let mgr = SessionManager::default();
-        let id = match mgr.create_local(80, 24, None, None, None) {
+        let id = match mgr.create_local(80, 24, None, None, None, true) {
             Ok(id) => id,
             Err(_) => return, // no usable login shell in this environment
         };

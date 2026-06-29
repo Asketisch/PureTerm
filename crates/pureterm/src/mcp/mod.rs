@@ -122,6 +122,51 @@ pub const TOOLS: &[ToolSpec] = &[
         rpc_method: "browser.screenshot",
         description: "Capture a PNG screenshot of a web pane (returns a base64 data URL; macOS-only).",
     },
+    ToolSpec {
+        name: "search_code",
+        rpc_method: "codeindex.search",
+        description: "Keyword search over the indexed workspace (Tree-sitter chunks + SQLite FTS). Query the workspace root via PURETERM_CODEINDEX_ROOT or cwd.",
+    },
+    ToolSpec {
+        name: "get_file_context",
+        rpc_method: "codeindex.file_context",
+        description: "Return semantic chunks for a source file (functions/classes/modules) from the codebase index.",
+    },
+    ToolSpec {
+        name: "find_symbol",
+        rpc_method: "codeindex.find_symbol",
+        description: "Find definitions by symbol name (substring match) in the indexed workspace.",
+    },
+    ToolSpec {
+        name: "open_url",
+        rpc_method: "automation.open_url",
+        description: "Open a pureterm:// URL (tab/workspace/ssh/command actions) against the running GUI.",
+    },
+    ToolSpec {
+        name: "desktop_screenshot",
+        rpc_method: "computer_use.screenshot",
+        description: "GAP-04: capture the desktop as a PNG data URL (macOS screencapture MVP).",
+    },
+    ToolSpec {
+        name: "desktop_click",
+        rpc_method: "computer_use.click",
+        description: "GAP-04 MVP stub: click at screen coordinates (not yet implemented).",
+    },
+    ToolSpec {
+        name: "desktop_type",
+        rpc_method: "computer_use.type",
+        description: "GAP-04 MVP stub: type text into the focused app (not yet implemented).",
+    },
+    ToolSpec {
+        name: "desktop_key",
+        rpc_method: "computer_use.key",
+        description: "GAP-04 MVP stub: press a key by name (not yet implemented).",
+    },
+    ToolSpec {
+        name: "script_get_cwd",
+        rpc_method: "shell.context",
+        description: "GAP-47: return cwd for the active (or specified) pane — AppleScript/MCP alias for shell.context.",
+    },
 ];
 
 /// Resolve a tool spec by name (case-sensitive). Returns `None` for unknown
@@ -170,6 +215,7 @@ mod tests {
         assert!(names.contains(&"capture_pane"), "missing capture_pane: {names:?}");
         assert!(names.contains(&"send_text"), "missing send_text: {names:?}");
         assert!(names.contains(&"list_surfaces"), "missing list_surfaces: {names:?}");
+        assert!(names.contains(&"search_code"), "missing search_code: {names:?}");
     }
 
     #[test]

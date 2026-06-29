@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use super::command::SshCommandBuilder;
+use super::command::{SshCommandBuilder, SshForwards};
 use super::pty::SshPty;
 
 /// Key for connection pooling (unique per user@host:port)
@@ -177,6 +177,8 @@ impl SshSessionManager {
         password: Option<&str>,
         forward_agent: bool,
         agent_sock_override: Option<&Path>,
+        forwards: SshForwards,
+        jump_hosts: Vec<String>,
     ) -> std::io::Result<(SshPty, PathBuf, Option<std::fs::File>)> {
         let socket_path = self.get_or_create(host, user, port);
 
@@ -190,6 +192,10 @@ impl SshSessionManager {
         }
         if let Some(identity) = identity_file {
             builder = builder.with_identity_file(identity);
+        }
+        builder = builder.with_forwards(forwards);
+        if !jump_hosts.is_empty() {
+            builder = builder.with_jump_hosts(jump_hosts);
         }
 
         // GAP-5.4: forward the local ssh-agent when requested. Resolve the
@@ -282,7 +288,7 @@ mod tests {
         // We don't expect this to succeed (no sshd in test), but the call
         // signature must accept identity_file. The first error is
         // "No such file or directory" for ssh, not a type error.
-        let result = manager.spawn_pty("nonexistent.invalid", None, None, Some("/tmp/key"), None, None, false, None);
+        let result = manager.spawn_pty("nonexistent.invalid", None, None, Some("/tmp/key"), None, None, false, None, SshForwards::default(), Vec::new());
         // Either Ok (sandbox allows ssh) or Err; both are acceptable for
         // this plumbing test.
         let _ = result;

@@ -36,6 +36,8 @@ fn web_tab(tab_num: u64, url: &str) -> (Tab, Arc<BrowserContext>) {
         created_at: Instant::now(),
         zoom_state: None,
         vi_sub_mode: None,
+        vi_registers: Default::default(),
+        vi_pending_register: None,
     };
     (tab, ctx)
 }

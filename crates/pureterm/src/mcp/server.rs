@@ -191,6 +191,52 @@ struct BrowserPaneIdParams {
     pane_id: Option<u64>,
 }
 
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct SearchCodeParams {
+    /// Keyword query (FTS5 prefix tokens).
+    query: String,
+    /// Max hits (default 20).
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct GetFileContextParams {
+    /// Workspace-relative or absolute path.
+    path: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct FindSymbolParams {
+    /// Symbol name substring (e.g. function or class name).
+    name: String,
+    /// Max hits (default 20).
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct OpenUrlParams {
+    /// A `pureterm://` URL (tab/workspace/ssh/command actions).
+    url: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct DesktopClickParams {
+    x: i32,
+    y: i32,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct DesktopTypeParams {
+    text: String,
+}
+
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+struct DesktopKeyParams {
+    key: String,
+}
+
 #[tool_router]
 impl PureTermServer {
     #[tool(description = "Read a terminal pane's buffer as text. Returns JSON {pane_id, text, lines, truncated}. Defaults to the active pane; set visible_only=true for just the viewport.")]
@@ -431,6 +477,125 @@ impl PureTermServer {
         }
         let res = rpc("browser.screenshot", Some(Value::Object(obj)), self.socket.clone()).await?;
         Ok(to_text(res))
+    }
+
+    #[tool(description = "Keyword search the indexed workspace (Rust/Python/JS chunks). Uses SQLite FTS; semantic embeddings TODO. Root: PURETERM_CODEINDEX_ROOT or process cwd. Returns JSON array of hits.")]
+    async fn search_code(&self, params: Parameters<SearchCodeParams>) -> Result<String, String> {
+        let p = params.0;
+        let limit = p.limit.unwrap_or(20);
+        let query = p.query;
+        tokio::task::spawn_blocking(move || {
+            crate::codeindex::with_index(|idx| {
+                let hits = idx.search_code(&query, limit).map_err(|e| e.to_string())?;
+                serde_json::to_string(&hits).map_err(|e| e.to_string())
+            })
+        })
+        .await
+        .map_err(|e| format!("search_code task failed: {e}"))?
+    }
+
+    #[tool(description = "Return Tree-sitter semantic chunks for a file from the codebase index. path is workspace-relative or absolute. Returns JSON {file_path, language, chunks}.")]
+    async fn get_file_context(
+        &self,
+        params: Parameters<GetFileContextParams>,
+    ) -> Result<String, String> {
+        let path = params.0.path;
+        tokio::task::spawn_blocking(move || {
+            crate::codeindex::with_index(|idx| {
+                let ctx = idx.get_file_context(&path).map_err(|e| e.to_string())?;
+                serde_json::to_string(&ctx).map_err(|e| e.to_string())
+            })
+        })
+        .await
+        .map_err(|e| format!("get_file_context task failed: {e}"))?
+    }
+
+    #[tool(description = "Find symbol definitions by name (substring match) in the indexed workspace. Returns JSON array of {file_path, symbol_name, symbol_kind, start_line, end_line}.")]
+    async fn find_symbol(&self, params: Parameters<FindSymbolParams>) -> Result<String, String> {
+        let p = params.0;
+        let limit = p.limit.unwrap_or(20);
+        let name = p.name;
+        tokio::task::spawn_blocking(move || {
+            crate::codeindex::with_index(|idx| {
+                let hits = idx.find_symbol(&name, limit).map_err(|e| e.to_string())?;
+                serde_json::to_string(&hits).map_err(|e| e.to_string())
+            })
+        })
+        .await
+        .map_err(|e| format!("find_symbol task failed: {e}"))?
+    }
+
+    #[tool(description = "Open a pureterm:// URL against the running GUI (new tab, switch workspace/tab, ssh, send command). Returns the Socket API JSON result.")]
+    async fn open_url(&self, params: Parameters<OpenUrlParams>) -> Result<String, String> {
+        let url = params.0.url;
+        let socket = self.socket.clone();
+        tokio::task::spawn_blocking(move || {
+            let action = crate::automation::parse_pureterm_url(&url)?;
+            let res = crate::automation::execute_action(&action, socket)?;
+            Ok(to_text(res))
+        })
+        .await
+        .map_err(|e| format!("open_url task failed: {e}"))?
+    }
+
+    #[tool(description = "GAP-04: capture the full desktop screen as a PNG data URL. macOS uses `screencapture`; other platforms return an error in MVP.")]
+    async fn desktop_screenshot(&self) -> Result<String, String> {
+        tokio::task::spawn_blocking(|| {
+            let screenshot = crate::computer_use::screenshot_data_url()?;
+            serde_json::to_string(&json!({ "ok": true, "screenshot": screenshot }))
+                .map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("desktop_screenshot task failed: {e}"))?
+    }
+
+    #[tool(description = "GAP-04 MVP stub: click at screen coordinates (x, y). Returns ok or a not-implemented error.")]
+    async fn desktop_click(&self, params: Parameters<DesktopClickParams>) -> Result<String, String> {
+        let p = params.0;
+        tokio::task::spawn_blocking(move || {
+            crate::computer_use::click(p.x, p.y)?;
+            serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("desktop_click task failed: {e}"))?
+    }
+
+    #[tool(description = "GAP-04 MVP stub: type text into the focused application.")]
+    async fn desktop_type(&self, params: Parameters<DesktopTypeParams>) -> Result<String, String> {
+        let text = params.0.text;
+        tokio::task::spawn_blocking(move || {
+            crate::computer_use::type_text(&text)?;
+            serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("desktop_type task failed: {e}"))?
+    }
+
+    #[tool(description = "GAP-04 MVP stub: press a key by name (e.g. Return, Tab).")]
+    async fn desktop_key(&self, params: Parameters<DesktopKeyParams>) -> Result<String, String> {
+        let key = params.0.key;
+        tokio::task::spawn_blocking(move || {
+            crate::computer_use::key_press(&key)?;
+            serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
+        })
+        .await
+        .map_err(|e| format!("desktop_key task failed: {e}"))?
+    }
+
+    #[tool(description = "Return cwd for a pane (default: active). GAP-47 AppleScript alias — wraps shell.context.")]
+    async fn script_get_cwd(
+        &self,
+        params: Parameters<GetShellContextParams>,
+    ) -> Result<String, String> {
+        let p = params.0;
+        let mut obj = serde_json::Map::new();
+        if let Some(id) = p.pane_id {
+            obj.insert("pane_id".into(), json!(id));
+        }
+        let res = rpc("shell.context", Some(Value::Object(obj)), self.socket.clone()).await?;
+        let val = res.unwrap_or(Value::Null);
+        let cwd = val.get("cwd").cloned().unwrap_or(Value::Null);
+        Ok(to_text(Some(cwd)))
     }
 }
 

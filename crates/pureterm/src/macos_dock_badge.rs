@@ -1,4 +1,4 @@
-//! GAP-09: macOS Dock badge — shows the unread-notification count on the app icon.
+//! GAP-09 / GAP-21: macOS Dock badge — notification unread + Feed pending count.
 //!
 //! Mirrors `macos_reopen.rs` / `macos_menu.rs`: a small objc2-app-kit shim. The
 //! iced `update()` loop runs on the main thread, so the badge can be set directly

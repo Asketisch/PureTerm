@@ -17,6 +17,7 @@
 //! - [`markdown`] — `pulldown-cmark` → iced text spans.
 //! - [`panel`] — `ChatPanelState` (open/messages/input/in-flight cancel).
 //! - [`session`] — conversation persistence (`<data_dir>/chat/<id>.json`).
+//! - [`context`] — pane context injection + provider wiring for the GUI panel.
 //!
 //! Phased: Phase 1 ships `sse`/`types`/`provider`/`anthropic`/`openai` headless;
 //! Phase 2 adds the panel + markdown + context injection; Phase 3 wires config /
@@ -39,3 +40,5 @@ pub mod markdown;
 pub mod panel;
 /// Conversation persistence (`<data_dir>/chat/<id>.json`, atomic write).
 pub mod session;
+/// Pane context injection + `ChatRequest` / provider wiring.
+pub mod context;

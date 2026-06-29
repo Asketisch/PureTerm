@@ -31,6 +31,8 @@ use std::time::{Duration, Instant};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 
 use super::pty::SshPty;
+use pureterm_ssh::SshForwards;
+
 use super::session::{ConnectionKey, SshSessionManager};
 use crate::split_tree::PaneId;
 
@@ -241,6 +243,10 @@ pub struct ReconnectParams {
     pub password: Option<String>,
     /// GAP-5.4: re-spawn with agent forwarding if the original session had it.
     pub forward_agent: bool,
+    /// GAP-40: replay port/X11 forwards on reconnect.
+    pub forwards: SshForwards,
+    /// GAP-41: jump host chain.
+    pub jump_hosts: Vec<String>,
 }
 
 impl ReconnectParams {
@@ -514,6 +520,8 @@ fn reconnect_worker(
                 params.password.as_deref(),
                 params.forward_agent,
                 None,
+                params.forwards.clone(),
+                params.jump_hosts.clone(),
             );
 
             match spawn_result {
@@ -743,6 +751,8 @@ mod tests {
             key_path: None,
             password: None,
             forward_agent: false,
+            forwards: SshForwards::default(),
+            jump_hosts: Vec::new(),
         };
         let k = p.connection_key();
         assert_eq!(k.host, "h");

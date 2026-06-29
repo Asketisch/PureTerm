@@ -150,6 +150,11 @@ pub enum Command {
         #[command(subcommand)]
         cmd: EventsSub,
     },
+    /// GAP-11: session replay from events.jsonl (list / export).
+    Replay {
+        #[command(subcommand)]
+        cmd: ReplaySub,
+    },
     /// GAP-7.8: drive an embedded web pane over the agent-browser protocol
     /// (`browser.*` JSON-RPC). `--pane-id` (from `pane list`) selects the pane;
     /// omit it to target the first web pane.
@@ -169,6 +174,51 @@ pub enum Command {
     Tmux {
         #[command(subcommand)]
         cmd: crate::tmux_cli::TmuxSub,
+    },
+    /// GAP-47: AppleScript-friendly automation (`osascript` → `pureterm script …`).
+    Script {
+        #[command(subcommand)]
+        cmd: crate::script_cli::ScriptSub,
+    },
+    /// GAP-48: `pureterm://` URL scheme helpers (register / parse / open).
+    Url {
+        #[command(subcommand)]
+        cmd: crate::script_cli::UrlSub,
+    },
+    /// GAP-49: Plugin management (list / install stub).
+    Plugin {
+        #[command(subcommand)]
+        cmd: crate::p4_cli::PluginSub,
+    },
+    /// GAP-50: Config cloud sync (local bundle MVP).
+    Sync {
+        #[command(subcommand)]
+        cmd: crate::p4_cli::SyncSub,
+    },
+    /// GAP-44: Shared session invite / serve stub.
+    Share {
+        #[command(subcommand)]
+        cmd: crate::p4_cli::ShareSub,
+    },
+    /// GAP-45: Check for application updates.
+    Update {
+        #[command(subcommand)]
+        cmd: crate::p4_cli::UpdateSub,
+    },
+    /// GAP-52: Workflow list / render.
+    Workflow {
+        #[command(subcommand)]
+        cmd: crate::p4_cli::WorkflowSub,
+    },
+    /// GAP-53: Notebook show.
+    Notebook {
+        #[command(subcommand)]
+        cmd: crate::p4_cli::NotebookSub,
+    },
+    /// GAP-60: Pane capture export.
+    Capture {
+        #[command(subcommand)]
+        cmd: crate::p4_cli::CaptureSub,
     },
 }
 
@@ -516,6 +566,18 @@ pub enum SshSub {
         /// (`-o ForwardAgent=yes`). Default off (trust risk on untrusted hosts).
         #[arg(short = 'A', long)]
         forward_agent: bool,
+        /// GAP-40: local port forward (`ssh -L`), repeatable (`8080:localhost:80`).
+        #[arg(short = 'L', long = "local-forward")]
+        local_forwards: Vec<String>,
+        /// GAP-40: remote port forward (`ssh -R`), repeatable.
+        #[arg(short = 'R', long = "remote-forward")]
+        remote_forwards: Vec<String>,
+        /// GAP-40: untrusted X11 forwarding (`ssh -X`).
+        #[arg(short = 'X')]
+        forward_x11: bool,
+        /// GAP-40: trusted X11 forwarding (`ssh -Y`).
+        #[arg(short = 'Y')]
+        forward_x11_trusted: bool,
     },
     /// Disconnect (close the SSH tab). GAP-5.6: `--pane-id` targets a specific
     /// pane; omit to disconnect the active pane.
@@ -824,6 +886,27 @@ pub enum FeedSub {
     },
 }
 
+/// GAP-11: instant replay — list/export session timeline from events.jsonl.
+#[derive(Subcommand)]
+pub enum ReplaySub {
+    /// List replay frames (newest first)
+    List {
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Export replay frames to standalone JSONL
+    Export {
+        #[arg(long)]
+        output: std::path::PathBuf,
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long)]
+        session: Option<String>,
+    },
+}
+
 /// GAP-6.7: read/follow the unified event log (`events.jsonl`). Local only.
 #[derive(Subcommand)]
 pub enum EventsSub {
@@ -954,8 +1037,33 @@ pub fn run(cli: Cli) {
         #[cfg(unix)]
         Command::Ssh { cmd } => match &cmd {
             // Daemon-direct interactive client (GAP-5.1 M3 DoD).
-            SshSub::Connect { target: Some(t), port, identity, forward_agent, .. } => {
-                crate::ssh_cli::connect(t, *port, identity.clone(), *forward_agent);
+            SshSub::Connect {
+                target: Some(t),
+                port,
+                identity,
+                forward_agent,
+                local_forwards,
+                remote_forwards,
+                forward_x11,
+                forward_x11_trusted,
+                ..
+            } => {
+                let settings = crate::ssh::config::load_ssh_settings(
+                    &crate::app_config::AppConfig::config_path(),
+                );
+                crate::ssh_cli::connect(
+                    t,
+                    *port,
+                    identity.clone(),
+                    *forward_agent,
+                    pureterm_ssh::SshForwards {
+                        local: local_forwards.clone(),
+                        remote: remote_forwards.clone(),
+                        x11: *forward_x11,
+                        x11_trusted: *forward_x11_trusted,
+                    },
+                    settings.smallest_screen_wins,
+                );
             }
             // GAP-5.2: daemon-direct SOCKS5 tunnel control.
             SshSub::Tunnel { target, port, identity, local_port, password, no_remote_dns, forward_agent } => {
@@ -1040,6 +1148,31 @@ pub fn run(cli: Cli) {
                 });
             }
         },
+        Command::Replay { cmd } => match cmd {
+            ReplaySub::List { limit, session } => {
+                crate::instant_replay::list_replay(
+                    &crate::events_log::events_path(),
+                    session.as_deref(),
+                    limit.unwrap_or(50),
+                );
+            }
+            ReplaySub::Export {
+                output,
+                limit,
+                session,
+            } => match crate::instant_replay::export_replay_jsonl(
+                &crate::events_log::events_path(),
+                &output,
+                session.as_deref(),
+                limit.unwrap_or(4096),
+            ) {
+                Ok(n) => println!("exported {n} frames → {}", output.display()),
+                Err(e) => {
+                    eprintln!("export failed: {e}");
+                    std::process::exit(1);
+                }
+            },
+        },
         // GAP-7.8: all browser ops are synchronous JSON-RPC over the GUI socket
         // (the GUI owns the webview + the agent-browser execution layer). The
         // async JS-ops' deferred reply is awaited inside `send`.
@@ -1092,6 +1225,15 @@ pub fn run(cli: Cli) {
         // GAP-6.6: hybrid — tmux commands dispatch in `tmux_cli` (some need
         // multi-step RPC + local formatting, e.g. capture-pane / list-panes).
         Command::Tmux { cmd } => crate::tmux_cli::dispatch(cmd, &socket, json),
+        Command::Script { cmd } => crate::script_cli::dispatch_script(cmd, &socket, json),
+        Command::Url { cmd } => crate::script_cli::dispatch_url(cmd, &socket, json),
+        Command::Plugin { cmd } => crate::p4_cli::dispatch_plugin(cmd),
+        Command::Sync { cmd } => crate::p4_cli::dispatch_sync(cmd),
+        Command::Share { cmd } => crate::p4_cli::dispatch_share(cmd),
+        Command::Update { cmd } => crate::p4_cli::dispatch_update(cmd),
+        Command::Workflow { cmd } => crate::p4_cli::dispatch_workflow(cmd),
+        Command::Notebook { cmd } => crate::p4_cli::dispatch_notebook(cmd),
+        Command::Capture { cmd } => crate::p4_cli::dispatch_capture(cmd, &socket, json),
     }
 }
 
@@ -1184,7 +1326,7 @@ fn format_event(e: &crate::events::AppEvent) -> String {
 
 /// Send a `(method, params)` tuple to the running PureTerm instance and print
 /// the response (compact or pretty per `json`). Exits 1 on error.
-fn send(socket: &Option<PathBuf>, json: bool, (method, params): (&str, Option<Value>)) {
+pub(crate) fn send(socket: &Option<PathBuf>, json: bool, (method, params): (&str, Option<Value>)) {
     match client::send_rpc(method, params, socket.clone()) {
         Ok(Some(value)) => {
             if json {
@@ -1452,5 +1594,17 @@ mod tests {
             panic!("expected Mcp");
         };
         assert!(matches!(cmd, McpSub::Uninstall { ref client } if client == "claude-code"));
+    }
+
+    #[test]
+    fn script_get_cwd_parses() {
+        let cli = parse(&["script", "get-cwd"]);
+        assert!(matches!(cli.command, Command::Script { .. }));
+    }
+
+    #[test]
+    fn url_parse_parses() {
+        let cli = parse(&["url", "parse", "pureterm://tab/new"]);
+        assert!(matches!(cli.command, Command::Url { .. }));
     }
 }

@@ -4,6 +4,9 @@
 #![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use)]
 #![cfg_attr(clippy, deny(warnings))]
 
+/// GAP-1.2: DECSCL conformance level tracking (VT100–VT400).
+pub mod decscl;
+
 pub mod event;
 pub mod event_loop;
 pub mod grid;

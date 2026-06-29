@@ -158,6 +158,79 @@ impl Default for McpConfig {
     }
 }
 
+/// GAP-47: `[applescript]` — gate macOS automation bridge features.
+#[derive(Clone, Debug)]
+pub struct AppleScriptConfig {
+    pub enabled: bool,
+}
+
+impl Default for AppleScriptConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// GAP-48: `[url_scheme]` — `pureterm://` handler registration + dispatch.
+#[derive(Clone, Debug)]
+pub struct UrlSchemeConfig {
+    pub enabled: bool,
+    /// When true, call `LSSetDefaultHandlerForURLScheme` once at GUI startup.
+    pub register_on_launch: bool,
+}
+
+impl Default for UrlSchemeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            register_on_launch: false,
+        }
+    }
+}
+
+/// GAP-35: `[lsp]` settings — built-in LSP client (rust-analyzer MVP). A
+/// missing/malformed table yields `Default` (`enabled = false`, rust →
+/// `rust-analyzer`) so startup never fails when the binary is absent.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LspConfig {
+    pub enabled: bool,
+    /// Language id → server command (MVP: only `rust` is consumed).
+    pub servers: std::collections::HashMap<String, String>,
+}
+
+impl Default for LspConfig {
+    fn default() -> Self {
+        let mut servers = std::collections::HashMap::new();
+        servers.insert("rust".to_string(), "rust-analyzer".to_string());
+        servers.insert("go".to_string(), "gopls".to_string());
+        servers.insert("python".to_string(), "pyright-langserver".to_string());
+        servers.insert("typescript".to_string(), "typescript-language-server".to_string());
+        servers.insert("javascript".to_string(), "typescript-language-server".to_string());
+        servers.insert("cpp".to_string(), "clangd".to_string());
+        servers.insert("c".to_string(), "clangd".to_string());
+        Self {
+            enabled: false,
+            servers,
+        }
+    }
+}
+
+impl LspConfig {
+    pub fn rust_command(&self) -> String {
+        self.servers
+            .get("rust")
+            .cloned()
+            .unwrap_or_else(|| "rust-analyzer".to_string())
+    }
+
+    pub fn command_for_language(&self, lang: &str) -> Option<String> {
+        self.servers.get(lang).cloned()
+    }
+
+    pub fn command_for_path(&self, path: &Path) -> Option<String> {
+        pureterm_lsp::language_id(path).and_then(|lang| self.command_for_language(lang))
+    }
+}
+
 /// GAP-24: `[statusbar]` settings — Enhanced Status Bar. A missing/malformed
 /// table yields `Default` (all segments, 1s refresh, sparklines on, 24px bar)
 /// so a bad config never breaks startup. `components` is the ordered list of
@@ -232,6 +305,26 @@ impl Default for GitConfig {
     }
 }
 
+/// GAP-19: `[sidebar]` settings — dual sidebar widths (px). Values are clamped
+/// to 120–480 at runtime. A missing/malformed table yields `Default`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SidebarConfig {
+    pub left_width: f32,
+    pub right_width: f32,
+    /// When true, the left sidebar starts open on launch.
+    pub left_default_open: bool,
+}
+
+impl Default for SidebarConfig {
+    fn default() -> Self {
+        Self {
+            left_width: crate::sidebar::DEFAULT_WIDTH,
+            right_width: crate::sidebar::DEFAULT_WIDTH,
+            left_default_open: false,
+        }
+    }
+}
+
 /// GAP-15: `[shell_integration]` settings — Shell Integration. A missing/
 /// malformed table yields `Default` (so a bad config never breaks startup).
 ///
@@ -289,6 +382,148 @@ impl Default for NotificationConfig {
             // 1 bell-derived notification per second per pane (stops
             // `while true; printf '\a'` spam from flooding the store/toast).
             bell_throttle_ms: 1000,
+        }
+    }
+}
+
+/// GAP-02: `[error_recovery]` settings — LLM-powered fix suggestions when a
+/// command fails (non-zero exit via Shell Integration). A missing/malformed
+/// table yields `Default`. API keys are env-only (`api_key_env` overrides the
+/// provider default env var); never stored in TOML.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ErrorRecoveryConfig {
+    pub enabled: bool,
+    pub auto_analyze: bool,
+    /// `"anthropic"` or `"openai"`.
+    pub provider: String,
+    pub model: String,
+    pub max_output_lines: usize,
+    pub max_tokens: u32,
+    /// Optional env var name for the API key (overrides provider default).
+    pub api_key_env: Option<String>,
+    /// OpenAI-compatible base URL (OpenAI provider only).
+    pub openai_base_url: Option<String>,
+}
+
+impl Default for ErrorRecoveryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_analyze: true,
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet-latest".to_string(),
+            max_output_lines: 80,
+            max_tokens: 1024,
+            api_key_env: None,
+            openai_base_url: None,
+        }
+    }
+}
+
+/// GAP-01: `[ai_chat]` settings — built-in AI Chat Panel LLM backend. A
+/// missing/malformed table yields `Default`. API keys are env-only; never
+/// stored in TOML.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AiChatConfig {
+    /// `"anthropic"` or `"openai"`.
+    pub provider: String,
+    pub model: String,
+    pub max_tokens: u32,
+    /// Optional env var name for the API key (overrides provider default).
+    pub api_key_env: Option<String>,
+    /// OpenAI-compatible base URL (OpenAI provider only).
+    pub openai_base_url: Option<String>,
+}
+
+impl Default for AiChatConfig {
+    fn default() -> Self {
+        Self {
+            provider: "anthropic".to_string(),
+            model: "claude-3-5-sonnet-latest".to_string(),
+            max_tokens: 4096,
+            api_key_env: None,
+            openai_base_url: None,
+        }
+    }
+}
+
+/// GAP-07: `[soul]` — SOUL.md / STYLE.md / SKILL.md / MEMORY.md for AI personality.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SoulConfig {
+    pub enabled: bool,
+    /// Override directory (default `~/.config/pureterm/ai/`).
+    pub directory: Option<PathBuf>,
+}
+
+impl Default for SoulConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            directory: None,
+        }
+    }
+}
+
+/// GAP-08: `[natural_language]` — `# description` → shell command card.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NaturalLanguageConfig {
+    pub enabled: bool,
+    pub max_tokens: u32,
+}
+
+impl Default for NaturalLanguageConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_tokens: 512,
+        }
+    }
+}
+
+/// GAP-33: `[port_scanner]` — listening-port sidebar tab.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PortScannerConfig {
+    pub enabled: bool,
+    pub interval_secs: u64,
+    /// Exclude ports strictly below this value (default 1024 = system ports).
+    pub min_port: u16,
+}
+
+impl Default for PortScannerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_secs: 5,
+            min_port: 1024,
+        }
+    }
+}
+
+/// GAP-51: `[block_output]` — block-based output scaffold (off by default).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BlockOutputConfig {
+    pub enabled: bool,
+}
+
+impl Default for BlockOutputConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
+}
+
+/// GAP-36: `[semantic_history]` — Cmd-click file:line → editor.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SemanticHistoryConfig {
+    pub enabled: bool,
+    /// Fallback editor when `$EDITOR` is unset (`code`, `vim`, `emacs`, …).
+    pub editor: String,
+}
+
+impl Default for SemanticHistoryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            editor: "code".to_string(),
         }
     }
 }
@@ -591,6 +826,81 @@ impl AppConfig {
         cfg
     }
 
+    /// GAP-47: load `[applescript]` table.
+    pub fn load_applescript(path: &Path) -> AppleScriptConfig {
+        let mut cfg = AppleScriptConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("applescript").and_then(|m| m.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        cfg
+    }
+
+    /// GAP-48: load `[url_scheme]` table.
+    pub fn load_url_scheme(path: &Path) -> UrlSchemeConfig {
+        let mut cfg = UrlSchemeConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("url_scheme").and_then(|m| m.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("register_on_launch").and_then(|v| v.as_bool()) {
+            cfg.register_on_launch = b;
+        }
+        cfg
+    }
+
+    /// Load the `[lsp]` table (GAP-35). A missing/malformed table yields
+    /// `Default` (`enabled = false`). `[lsp.servers]` maps language ids to
+    /// server binaries; MVP reads `rust` only.
+    pub fn load_lsp(path: &Path) -> LspConfig {
+        let mut cfg = LspConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("lsp").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(servers) = table.get("servers").and_then(|v| v.as_table()) {
+            for (lang, cmd) in servers {
+                if let Some(s) = cmd.as_str() {
+                    let s = s.trim();
+                    if !s.is_empty() {
+                        cfg.servers.insert(lang.clone(), s.to_string());
+                    }
+                }
+            }
+        }
+        cfg
+    }
+
     /// Load the `[statusbar]` table (GAP-24). A missing/malformed table yields
     /// `Default`. Mirrors `load_mcp`: read_to_string → toml::from_str → walk
     /// `value.get("statusbar").as_table()`; each key is independently optional.
@@ -669,6 +979,37 @@ impl AppConfig {
         cfg
     }
 
+    /// Load the `[sidebar]` table (GAP-19). A missing/malformed table yields
+    /// `Default`. Width keys are clamped to 120–480 px.
+    pub fn load_sidebar(path: &Path) -> SidebarConfig {
+        let mut cfg = SidebarConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("sidebar").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(n) = table.get("left_width").and_then(|v| v.as_float()) {
+            cfg.left_width = crate::sidebar::clamp_width(n as f32);
+        } else if let Some(n) = table.get("left_width").and_then(|v| v.as_integer()) {
+            cfg.left_width = crate::sidebar::clamp_width(n as f32);
+        }
+        if let Some(n) = table.get("right_width").and_then(|v| v.as_float()) {
+            cfg.right_width = crate::sidebar::clamp_width(n as f32);
+        } else if let Some(n) = table.get("right_width").and_then(|v| v.as_integer()) {
+            cfg.right_width = crate::sidebar::clamp_width(n as f32);
+        }
+        if let Some(b) = table.get("left_default_open").and_then(|v| v.as_bool()) {
+            cfg.left_default_open = b;
+        }
+        cfg
+    }
+
     /// Load the `[shell_integration]` table (GAP-15). A missing/malformed table
     /// yields `Default`. Mirrors `load_git`: read_to_string → toml::from_str →
     /// walk `value.get("shell_integration").as_table()`; each key is
@@ -697,6 +1038,738 @@ impl AppConfig {
         }
         if let Some(b) = table.get("include_command_text").and_then(|v| v.as_bool()) {
             cfg.include_command_text = b;
+        }
+        cfg
+    }
+
+    /// Load the `[error_recovery]` table (GAP-02). A missing/malformed table
+    /// yields `Default`. Mirrors `load_notification`.
+    pub fn load_error_recovery(path: &Path) -> ErrorRecoveryConfig {
+        let mut cfg = ErrorRecoveryConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("error_recovery").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("auto_analyze").and_then(|v| v.as_bool()) {
+            cfg.auto_analyze = b;
+        }
+        if let Some(s) = table.get("provider").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.provider = s.to_string();
+            }
+        }
+        if let Some(s) = table.get("model").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.model = s.to_string();
+            }
+        }
+        if let Some(n) = table.get("max_output_lines").and_then(|v| v.as_integer()) {
+            cfg.max_output_lines = (n.max(1)) as usize;
+        }
+        if let Some(n) = table.get("max_tokens").and_then(|v| v.as_integer()) {
+            cfg.max_tokens = (n.max(1)) as u32;
+        }
+        if let Some(s) = table.get("api_key_env").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.api_key_env = Some(s.to_string());
+            }
+        }
+        if let Some(s) = table.get("openai_base_url").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.openai_base_url = Some(s.to_string());
+            }
+        }
+        cfg
+    }
+
+    /// Load the `[ai_chat]` table (GAP-01). A missing/malformed table yields
+    /// `Default`. Mirrors `load_error_recovery`.
+    pub fn load_ai_chat(path: &Path) -> AiChatConfig {
+        let mut cfg = AiChatConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("ai_chat").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(s) = table.get("provider").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.provider = s.to_string();
+            }
+        }
+        if let Some(s) = table.get("model").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.model = s.to_string();
+            }
+        }
+        if let Some(n) = table.get("max_tokens").and_then(|v| v.as_integer()) {
+            cfg.max_tokens = (n.max(1)) as u32;
+        }
+        if let Some(s) = table.get("api_key_env").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.api_key_env = Some(s.to_string());
+            }
+        }
+        if let Some(s) = table.get("openai_base_url").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.openai_base_url = Some(s.to_string());
+            }
+        }
+        cfg
+    }
+
+    /// Load the `[soul]` table (GAP-07).
+    pub fn load_soul(path: &Path) -> SoulConfig {
+        let mut cfg = SoulConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("soul").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("directory").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.directory = Some(PathBuf::from(s));
+            }
+        }
+        cfg
+    }
+
+    /// Load the `[natural_language]` table (GAP-08).
+    pub fn load_natural_language(path: &Path) -> NaturalLanguageConfig {
+        let mut cfg = NaturalLanguageConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("natural_language").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("max_tokens").and_then(|v| v.as_integer()) {
+            cfg.max_tokens = (n.max(1)) as u32;
+        }
+        cfg
+    }
+
+    /// Load the `[port_scanner]` table (GAP-33).
+    pub fn load_port_scanner(path: &Path) -> PortScannerConfig {
+        let mut cfg = PortScannerConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("port_scanner").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("interval").and_then(|v| v.as_integer()) {
+            cfg.interval_secs = (n.max(1)) as u64;
+        } else if let Some(n) = table.get("interval_secs").and_then(|v| v.as_integer()) {
+            cfg.interval_secs = (n.max(1)) as u64;
+        }
+        if let Some(n) = table.get("min_port").and_then(|v| v.as_integer()) {
+            cfg.min_port = (n.max(0)) as u16;
+        }
+        cfg
+    }
+
+    /// GAP-06: `[ambient_agents]`
+    pub fn load_ambient_agents(path: &Path) -> crate::ambient_agents::AmbientAgentsConfig {
+        let mut cfg = crate::ambient_agents::AmbientAgentsConfig::default();
+        let Some(table) = Self::load_table(path, "ambient_agents") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("poll_interval_secs").and_then(|v| v.as_integer()) {
+            cfg.poll_interval_secs = (n.max(1)) as u64;
+        }
+        cfg
+    }
+
+    /// GAP-13: `[broadcast_input]`
+    pub fn load_broadcast_input(path: &Path) -> crate::broadcast_input::BroadcastConfig {
+        let mut cfg = crate::broadcast_input::BroadcastConfig::default();
+        let Some(table) = Self::load_table(path, "broadcast_input") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        cfg
+    }
+
+    /// GAP-18: `[terminal].bidi_mode`
+    pub fn load_bidi_mode(path: &Path) -> crate::bidi::BidiMode {
+        let Some(table) = Self::load_table(path, "terminal") else {
+            return crate::bidi::BidiMode::default();
+        };
+        table
+            .get("bidi_mode")
+            .and_then(|v| v.as_str())
+            .map(crate::bidi::BidiMode::parse)
+            .unwrap_or_default()
+    }
+
+    /// GAP-26: `[[workspace_groups]]`
+    pub fn load_workspace_groups(path: &Path) -> Vec<crate::workspace_groups::WorkspaceGroup> {
+        #[derive(serde::Deserialize)]
+        struct Wrap {
+            #[serde(default)]
+            workspace_groups: Vec<crate::workspace_groups::WorkspaceGroup>,
+        }
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return Vec::new(),
+        };
+        toml::from_str::<Wrap>(&contents)
+            .map(|w| w.workspace_groups)
+            .unwrap_or_default()
+    }
+
+    /// GAP-30: `[toolbelt]`
+    pub fn load_toolbelt(path: &Path) -> crate::toolbelt::ToolbeltConfig {
+        let mut cfg = crate::toolbelt::ToolbeltConfig::default();
+        let Some(table) = Self::load_table(path, "toolbelt") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(arr) = table.get("tools").and_then(|v| v.as_array()) {
+            cfg.tools = arr
+                .iter()
+                .filter_map(|v| v.as_str().and_then(crate::toolbelt::ToolbeltTool::parse))
+                .collect();
+        }
+        cfg
+    }
+
+    /// GAP-31: `[quake]`
+    pub fn load_quake(path: &Path) -> crate::quake_dock::QuakeDockConfig {
+        let mut cfg = crate::quake_dock::QuakeDockConfig::default();
+        let Some(table) = Self::load_table(path, "quake") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("height_fraction").and_then(|v| v.as_float()) {
+            cfg.height_fraction = n as f32;
+        }
+        cfg
+    }
+
+    // ── P4 GAP config loaders ───────────────────────────────────────────
+
+    /// GAP-05: `[voice_input]`
+    pub fn load_voice_input(path: &Path) -> crate::voice_input::VoiceInputConfig {
+        let mut cfg = crate::voice_input::VoiceInputConfig::default();
+        let Some(table) = Self::load_table(path, "voice_input") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("api_url").and_then(|v| v.as_str()) {
+            cfg.api_url = s.to_string();
+        }
+        if let Some(b) = table.get("push_to_talk").and_then(|v| v.as_bool()) {
+            cfg.push_to_talk = b;
+        }
+        cfg
+    }
+
+    /// GAP-17: `[terminal_graphics]`
+    pub fn load_terminal_graphics(path: &Path) -> crate::terminal_graphics::TerminalGraphicsConfig {
+        let mut cfg = crate::terminal_graphics::TerminalGraphicsConfig::default();
+        let Some(table) = Self::load_table(path, "terminal_graphics") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("max_images").and_then(|v| v.as_integer()) {
+            cfg.max_images = (n.max(1)) as usize;
+        }
+        cfg
+    }
+
+    /// GAP-20: `[window.glass]`
+    pub fn load_glass_effect(path: &Path) -> crate::macos_glass_effect::GlassEffectConfig {
+        let mut cfg = crate::macos_glass_effect::GlassEffectConfig::default();
+        if let Some(table) = Self::load_table(path, "window") {
+            if let Some(glass) = table.get("glass").and_then(|v| v.as_table()) {
+                if let Some(b) = glass.get("enabled").and_then(|v| v.as_bool()) {
+                    cfg.enabled = b;
+                }
+                if let Some(s) = glass.get("style").and_then(|v| v.as_str()) {
+                    cfg.style = s.to_string();
+                }
+            }
+        }
+        cfg
+    }
+
+    /// GAP-22: `[touch_bar]`
+    pub fn load_touch_bar(path: &Path) -> crate::macos_touch_bar::TouchBarConfig {
+        let mut cfg = crate::macos_touch_bar::TouchBarConfig::default();
+        let Some(table) = Self::load_table(path, "touch_bar") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("show_tabs").and_then(|v| v.as_bool()) {
+            cfg.show_tabs = b;
+        }
+        cfg
+    }
+
+    /// GAP-23: `[tab_bar]`
+    pub fn load_visual_tab_bar(path: &Path) -> crate::visual_tab_bar::VisualTabBarConfig {
+        let mut cfg = crate::visual_tab_bar::VisualTabBarConfig::default();
+        let Some(table) = Self::load_table(path, "tab_bar") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("position").and_then(|v| v.as_str()) {
+            cfg.position = crate::visual_tab_bar::TabBarPosition::parse(s);
+        }
+        if let Some(n) = table.get("height").and_then(|v| v.as_float()) {
+            cfg.height = n as f32;
+        }
+        cfg
+    }
+
+    /// GAP-28: `[window.border]`
+    pub fn load_window_border(path: &Path) -> crate::window_border::WindowBorderConfig {
+        let mut cfg = crate::window_border::WindowBorderConfig::default();
+        if let Some(table) = Self::load_table(path, "window") {
+            if let Some(border) = table.get("border").and_then(|v| v.as_table()) {
+                if let Some(b) = border.get("enabled").and_then(|v| v.as_bool()) {
+                    cfg.enabled = b;
+                }
+                if let Some(n) = border.get("width").and_then(|v| v.as_float()) {
+                    cfg.width = n as f32;
+                }
+                if let Some(s) = border.get("active_color").and_then(|v| v.as_str()) {
+                    cfg.active_color = s.to_string();
+                }
+                if let Some(s) = border.get("inactive_color").and_then(|v| v.as_str()) {
+                    cfg.inactive_color = s.to_string();
+                }
+            }
+        }
+        cfg
+    }
+
+    /// GAP-29: `[badge]`
+    pub fn load_badge_overlay(path: &Path) -> crate::badge_overlay::BadgeOverlayConfig {
+        let mut cfg = crate::badge_overlay::BadgeOverlayConfig::default();
+        let Some(table) = Self::load_table(path, "badge") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("text").and_then(|v| v.as_str()) {
+            cfg.text = s.to_string();
+        }
+        if let Some(s) = table.get("color").and_then(|v| v.as_str()) {
+            cfg.color = s.to_string();
+        }
+        if let Some(s) = table.get("position").and_then(|v| v.as_str()) {
+            cfg.position = crate::badge_overlay::BadgePosition::parse(s);
+        }
+        if let Some(n) = table.get("opacity").and_then(|v| v.as_float()) {
+            cfg.opacity = n as f32;
+        }
+        cfg
+    }
+
+    /// GAP-34: `[file_preview]`
+    pub fn load_file_preview(path: &Path) -> crate::file_preview::FilePreviewConfig {
+        let mut cfg = crate::file_preview::FilePreviewConfig::default();
+        let Some(table) = Self::load_table(path, "file_preview") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        cfg
+    }
+
+    /// GAP-38: `[file_transfer]`
+    pub fn load_file_transfer(path: &Path) -> crate::file_transfer::FileTransferConfig {
+        let mut cfg = crate::file_transfer::FileTransferConfig::default();
+        let Some(table) = Self::load_table(path, "file_transfer") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("prefer_sftp").and_then(|v| v.as_bool()) {
+            cfg.prefer_sftp = b;
+        }
+        cfg
+    }
+
+    /// GAP-44: `[shared_session]`
+    pub fn load_shared_session(path: &Path) -> crate::shared_sessions::SharedSessionConfig {
+        let mut cfg = crate::shared_sessions::SharedSessionConfig::default();
+        let Some(table) = Self::load_table(path, "shared_session") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("port").and_then(|v| v.as_integer()) {
+            cfg.port = (n.max(1).min(65535)) as u16;
+        }
+        if let Some(b) = table.get("read_only_default").and_then(|v| v.as_bool()) {
+            cfg.read_only_default = b;
+        }
+        cfg
+    }
+
+    /// GAP-45: `[update]`
+    pub fn load_auto_update(path: &Path) -> crate::auto_update::AutoUpdateConfig {
+        let mut cfg = crate::auto_update::AutoUpdateConfig::default();
+        let Some(table) = Self::load_table(path, "update") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("auto_check").and_then(|v| v.as_bool()) {
+            cfg.auto_check = b;
+        }
+        if let Some(s) = table.get("channel").and_then(|v| v.as_str()) {
+            cfg.channel = s.to_string();
+        }
+        if let Some(s) = table.get("feed_url").and_then(|v| v.as_str()) {
+            cfg.feed_url = s.to_string();
+        }
+        cfg
+    }
+
+    /// GAP-49: `[plugins]`
+    pub fn load_plugins(path: &Path) -> crate::plugin_system::PluginSystemConfig {
+        let mut cfg = crate::plugin_system::PluginSystemConfig::default();
+        let Some(table) = Self::load_table(path, "plugins") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("directory").and_then(|v| v.as_str()) {
+            cfg.directory = Some(PathBuf::from(s));
+        }
+        cfg
+    }
+
+    /// GAP-50: `[cloud_sync]`
+    pub fn load_cloud_sync(path: &Path) -> crate::cloud_sync::CloudSyncConfig {
+        let mut cfg = crate::cloud_sync::CloudSyncConfig::default();
+        let Some(table) = Self::load_table(path, "cloud_sync") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("gist_id").and_then(|v| v.as_str()) {
+            cfg.gist_id = s.to_string();
+        }
+        if let Some(s) = table.get("token_env").and_then(|v| v.as_str()) {
+            cfg.token_env = s.to_string();
+        }
+        cfg
+    }
+
+    /// GAP-52: `[workflows]` enabled flag (entries via `[[workflows]]`).
+    pub fn load_workflows_enabled(path: &Path) -> crate::workflows::WorkflowsConfig {
+        let mut cfg = crate::workflows::WorkflowsConfig::default();
+        let Some(table) = Self::load_table(path, "workflows") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        cfg
+    }
+
+    /// GAP-53: `[notebooks]`
+    pub fn load_notebooks(path: &Path) -> crate::notebooks::NotebooksConfig {
+        let mut cfg = crate::notebooks::NotebooksConfig::default();
+        let Some(table) = Self::load_table(path, "notebooks") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        cfg
+    }
+
+    /// GAP-54: `[background]`
+    pub fn load_background_image(path: &Path) -> crate::background_image::BackgroundImageConfig {
+        let mut cfg = crate::background_image::BackgroundImageConfig::default();
+        let Some(table) = Self::load_table(path, "background") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("image").and_then(|v| v.as_str()) {
+            cfg.image = PathBuf::from(s);
+        }
+        if let Some(n) = table.get("opacity").and_then(|v| v.as_float()) {
+            cfg.opacity = n as f32;
+        }
+        if let Some(s) = table.get("mode").and_then(|v| v.as_str()) {
+            cfg.mode = crate::background_image::BackgroundMode::parse(s);
+        }
+        cfg
+    }
+
+    /// GAP-55: `[window.effects]`
+    pub fn load_window_effects(path: &Path) -> crate::window_effects::WindowEffectsConfig {
+        let mut cfg = crate::window_effects::WindowEffectsConfig::default();
+        if let Some(table) = Self::load_table(path, "window") {
+            if let Some(fx) = table.get("effects").and_then(|v| v.as_table()) {
+                if let Some(b) = fx.get("enabled").and_then(|v| v.as_bool()) {
+                    cfg.enabled = b;
+                }
+                if let Some(n) = fx.get("opacity").and_then(|v| v.as_float()) {
+                    cfg.opacity = n as f32;
+                }
+                if let Some(b) = fx.get("blur").and_then(|v| v.as_bool()) {
+                    cfg.blur = b;
+                }
+            }
+        }
+        cfg
+    }
+
+    /// GAP-56: `[focus_follows_mouse]`
+    pub fn load_focus_follows_mouse(path: &Path) -> crate::focus_follows_mouse::FocusFollowsMouseConfig {
+        let mut cfg = crate::focus_follows_mouse::FocusFollowsMouseConfig::default();
+        let Some(table) = Self::load_table(path, "focus_follows_mouse") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(n) = table.get("delay_ms").and_then(|v| v.as_integer()) {
+            cfg.delay_ms = (n.max(0)) as u64;
+        }
+        cfg
+    }
+
+    /// GAP-57: `[haptic]`
+    pub fn load_haptic(path: &Path) -> crate::macos_haptic::HapticConfig {
+        let mut cfg = crate::macos_haptic::HapticConfig::default();
+        let Some(table) = Self::load_table(path, "haptic") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("on_tab_switch").and_then(|v| v.as_bool()) {
+            cfg.on_tab_switch = b;
+        }
+        cfg
+    }
+
+    /// GAP-58: `[theme]`
+    pub fn load_custom_theme(path: &Path) -> crate::custom_theme::CustomThemeConfig {
+        let mut cfg = crate::custom_theme::CustomThemeConfig::default();
+        let Some(table) = Self::load_table(path, "theme") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("sidebar_bg").and_then(|v| v.as_str()) {
+            cfg.sidebar_bg = s.to_string();
+        }
+        if let Some(s) = table.get("tab_bar_bg").and_then(|v| v.as_str()) {
+            cfg.tab_bar_bg = s.to_string();
+        }
+        if let Some(s) = table.get("status_bar_bg").and_then(|v| v.as_str()) {
+            cfg.status_bar_bg = s.to_string();
+        }
+        if let Some(b) = table.get("follow_system").and_then(|v| v.as_bool()) {
+            cfg.follow_system = b;
+        }
+        cfg
+    }
+
+    /// GAP-59: `[emoji]`
+    pub fn load_emoji_rendering(path: &Path) -> crate::emoji_rendering::EmojiRenderingConfig {
+        let mut cfg = crate::emoji_rendering::EmojiRenderingConfig::default();
+        let Some(table) = Self::load_table(path, "emoji") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("dedicated_atlas").and_then(|v| v.as_bool()) {
+            cfg.dedicated_atlas = b;
+        }
+        if let Some(s) = table.get("font_fallback").and_then(|v| v.as_str()) {
+            cfg.font_fallback = s.to_string();
+        }
+        cfg
+    }
+
+    /// GAP-60: `[pane_capture]`
+    pub fn load_pane_capture(path: &Path) -> crate::pane_capture::PaneCaptureConfig {
+        let mut cfg = crate::pane_capture::PaneCaptureConfig::default();
+        let Some(table) = Self::load_table(path, "pane_capture") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("default_format").and_then(|v| v.as_str()) {
+            cfg.default_format = s.to_string();
+        }
+        cfg
+    }
+
+    /// GAP-61: `[print]`
+    pub fn load_print_support(path: &Path) -> crate::print_support::PrintSupportConfig {
+        let mut cfg = crate::print_support::PrintSupportConfig::default();
+        let Some(table) = Self::load_table(path, "print") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("include_header").and_then(|v| v.as_bool()) {
+            cfg.include_header = b;
+        }
+        if let Some(b) = table.get("include_footer").and_then(|v| v.as_bool()) {
+            cfg.include_footer = b;
+        }
+        cfg
+    }
+
+    /// GAP-4.6: `[accessibility]`
+    pub fn load_accessibility(path: &Path) -> crate::accessibility::AccessibilityConfig {
+        let mut cfg = crate::accessibility::AccessibilityConfig::default();
+        let Some(table) = Self::load_table(path, "accessibility") else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(b) = table.get("announce_tab_changes").and_then(|v| v.as_bool()) {
+            cfg.announce_tab_changes = b;
+        }
+        if let Some(b) = table.get("announce_notifications").and_then(|v| v.as_bool()) {
+            cfg.announce_notifications = b;
+        }
+        cfg
+    }
+
+    fn load_table(path: &Path, key: &str) -> Option<toml::map::Map<String, toml::Value>> {
+        let contents = std::fs::read_to_string(path).ok()?;
+        let value: toml::Value = toml::from_str(&contents).ok()?;
+        value.get(key).and_then(|t| t.as_table()).cloned()
+    }
+
+    /// Load the `[semantic_history]` table (GAP-36).
+    pub fn load_semantic_history(path: &Path) -> SemanticHistoryConfig {
+        let mut cfg = SemanticHistoryConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("semantic_history").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
+        }
+        if let Some(s) = table.get("editor").and_then(|v| v.as_str()) {
+            let s = s.trim();
+            if !s.is_empty() {
+                cfg.editor = s.to_string();
+            }
+        }
+        cfg
+    }
+
+    /// Load the `[block_output]` table (GAP-51 scaffold).
+    pub fn load_block_output(path: &Path) -> BlockOutputConfig {
+        let mut cfg = BlockOutputConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("block_output").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(b) = table.get("enabled").and_then(|v| v.as_bool()) {
+            cfg.enabled = b;
         }
         cfg
     }
@@ -1764,6 +2837,34 @@ default_capture_lines = 0
         assert!(cfg.enabled_tools.is_empty());
     }
 
+    #[test]
+    fn lsp_missing_is_default_disabled() {
+        let path = write_temp_toml(
+            "pureterm_test_lsp_missing.toml",
+            "font.normal.family = \"mono\"\n",
+        );
+        let cfg = AppConfig::load_lsp(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.rust_command(), "rust-analyzer");
+    }
+
+    #[test]
+    fn lsp_parses_enabled_and_servers() {
+        let toml = r#"
+[lsp]
+enabled = true
+
+[lsp.servers]
+rust = "/usr/local/bin/rust-analyzer"
+"#;
+        let path = write_temp_toml("pureterm_test_lsp.toml", toml);
+        let cfg = AppConfig::load_lsp(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(cfg.enabled);
+        assert_eq!(cfg.rust_command(), "/usr/local/bin/rust-analyzer");
+    }
+
     // ── GAP-15 [shell_integration] ───────────────────────────────────────
 
     #[test]
@@ -1808,6 +2909,24 @@ include_command_text = false
         assert!(cfg.enabled);
         assert!(cfg.inject_zsh);
         assert!(cfg.inject_bash);
+    }
+
+    // ── GAP-51 [block_output] ──────────────────────────────────────────────
+    #[test]
+    fn block_output_missing_is_default_disabled() {
+        let path = write_temp_toml("pureterm_test_block_missing.toml", "# empty\n");
+        let cfg = AppConfig::load_block_output(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+    }
+
+    #[test]
+    fn block_output_parses_enabled() {
+        let toml = "[block_output]\nenabled = true\n";
+        let path = write_temp_toml("pureterm_test_block.toml", toml);
+        let cfg = AppConfig::load_block_output(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(cfg.enabled);
     }
 
     #[test]
@@ -1884,6 +3003,155 @@ action = "highlight"
         assert_eq!(triggers.len(), 1);
         assert_eq!(triggers[0].cfg.pattern, "second");
         assert_eq!(triggers[0].cfg.action.discriminant(), "highlight");
+    }
+
+    #[test]
+    fn error_recovery_missing_is_default_enabled() {
+        let path = write_temp_toml(
+            "pureterm_test_er_missing.toml",
+            "font.normal.family = \"mono\"\n",
+        );
+        let cfg = AppConfig::load_error_recovery(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(cfg.enabled);
+        assert!(cfg.auto_analyze);
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.max_output_lines, 80);
+    }
+
+    #[test]
+    fn ai_chat_missing_is_default() {
+        let path = write_temp_toml(
+            "pureterm_test_ai_chat_missing.toml",
+            "font.normal.family = \"mono\"\n",
+        );
+        let cfg = AppConfig::load_ai_chat(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.model, "claude-3-5-sonnet-latest");
+        assert_eq!(cfg.max_tokens, 4096);
+    }
+
+    #[test]
+    fn soul_missing_is_default_enabled() {
+        let path = write_temp_toml(
+            "pureterm_test_soul_missing.toml",
+            "font.normal.family = \"mono\"\n",
+        );
+        let cfg = AppConfig::load_soul(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(cfg.enabled);
+        assert!(cfg.directory.is_none());
+    }
+
+    #[test]
+    fn soul_parses_directory() {
+        let toml = r#"
+[soul]
+enabled = false
+directory = "/custom/ai"
+"#;
+        let path = write_temp_toml("pureterm_test_soul.toml", toml);
+        let cfg = AppConfig::load_soul(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.directory.as_deref(), Some(Path::new("/custom/ai")));
+    }
+
+    #[test]
+    fn natural_language_parses_fields() {
+        let toml = r#"
+[natural_language]
+enabled = false
+max_tokens = 256
+"#;
+        let path = write_temp_toml("pureterm_test_nl.toml", toml);
+        let cfg = AppConfig::load_natural_language(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.max_tokens, 256);
+    }
+
+    #[test]
+    fn port_scanner_parses_fields() {
+        let toml = r#"
+[port_scanner]
+enabled = false
+interval = 10
+min_port = 8000
+"#;
+        let path = write_temp_toml("pureterm_test_port_scanner.toml", toml);
+        let cfg = AppConfig::load_port_scanner(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.interval_secs, 10);
+        assert_eq!(cfg.min_port, 8000);
+    }
+
+    #[test]
+    fn semantic_history_parses_fields() {
+        let toml = r#"
+[semantic_history]
+enabled = false
+editor = "vim"
+"#;
+        let path = write_temp_toml("pureterm_test_sem_hist.toml", toml);
+        let cfg = AppConfig::load_semantic_history(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.editor, "vim");
+    }
+
+    #[test]
+    fn ai_chat_parses_fields() {
+        let toml = r#"
+[ai_chat]
+provider = "openai"
+model = "gpt-4o-mini"
+max_tokens = 2048
+api_key_env = "MY_OPENAI_KEY"
+openai_base_url = "https://api.example.com/v1"
+"#;
+        let path = write_temp_toml("pureterm_test_ai_chat_fields.toml", toml);
+        let cfg = AppConfig::load_ai_chat(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.model, "gpt-4o-mini");
+        assert_eq!(cfg.max_tokens, 2048);
+        assert_eq!(cfg.api_key_env.as_deref(), Some("MY_OPENAI_KEY"));
+        assert_eq!(
+            cfg.openai_base_url.as_deref(),
+            Some("https://api.example.com/v1")
+        );
+    }
+
+    #[test]
+    fn error_recovery_parses_fields() {
+        let toml = r#"
+[error_recovery]
+enabled = false
+auto_analyze = false
+provider = "openai"
+model = "gpt-4o-mini"
+max_output_lines = 40
+max_tokens = 512
+api_key_env = "MY_OPENAI_KEY"
+openai_base_url = "https://api.example.com/v1"
+"#;
+        let path = write_temp_toml("pureterm_test_er_fields.toml", toml);
+        let cfg = AppConfig::load_error_recovery(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!cfg.enabled);
+        assert!(!cfg.auto_analyze);
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.model, "gpt-4o-mini");
+        assert_eq!(cfg.max_output_lines, 40);
+        assert_eq!(cfg.max_tokens, 512);
+        assert_eq!(cfg.api_key_env.as_deref(), Some("MY_OPENAI_KEY"));
+        assert_eq!(
+            cfg.openai_base_url.as_deref(),
+            Some("https://api.example.com/v1")
+        );
     }
 
     #[test]

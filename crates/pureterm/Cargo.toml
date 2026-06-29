@@ -23,6 +23,9 @@ pureterm-settings = { path = "../pureterm-settings" }
 pureterm-jsonrpc = { workspace = true }
 pureterm-daemon = { path = "../pureterm-daemon" }
 pureterm-ssh = { workspace = true }
+pureterm-codeindex = { workspace = true }
+pureterm-lsp = { workspace = true }
+pureterm-computer-use = { workspace = true }
 alacritty_terminal = { path = "../alacritty_terminal" }
 dirs = "6.0.0"
 iced = { version = "0.14", features = ["advanced", "canvas", "tokio"] }
@@ -39,6 +42,8 @@ notify = "8.0.0"
 # `Response::bytes_stream()` to feed the SSE decoder. default-features=false
 # drops native-tls + the http2/macos bits we don't need.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+# GAP-4.2: Hover Preview — gitignore-aware path metadata checks.
+ignore = "0.4"
 tokio = { version = "1", features = ["sync", "time", "net", "io-util", "process", "macros"] }
 # GAP-24 Enhanced Status Bar: system metrics (CPU/Memory/Network), battery,
 # and local-time clock formatting for the new status-bar segments.
@@ -64,6 +69,7 @@ toml = "0.9"
 # `toml_edit::{Item, Table, ArrayOfTables}` references in iced_app.rs
 # need this dep listed here, not transitively.
 toml_edit = "0.22"
+unicode-bidi = "0.3"
 nucleo-matcher = "0.3"
 # GAP-01 AI Chat: Markdown → text spans for streamed assistant replies. Core
 # parser only (no HTML rendering feature) — the panel maps spans to iced rich
@@ -115,7 +121,7 @@ objc2 = "0.6.1"
 # block2 (0.6，与 objc2-app-kit 0.3.2 一致) 做 ObjC block。
 block2 = "0.6"
 objc2-foundation = { version = "0.3.1", default-features = false, features = [
-    "std", "NSArray", "NSString",
+    "std", "NSArray", "NSString", "NSURL",
     # GAP-7.8 screenshot: NSData(字节读取) + NSDictionary(空 props) + NSError(错误文案)。
     "NSData", "NSDictionary", "NSError",
 ] }

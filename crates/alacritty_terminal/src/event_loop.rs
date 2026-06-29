@@ -160,6 +160,9 @@ where
             // Parse the incoming bytes.
             state.parser.advance(&mut **terminal, &buf[..unprocessed]);
 
+            // PureTerm GAP-1.2: DECSCL (CSI Ps " p) — vte does not handle this.
+            crate::decscl::scan_and_apply(&mut **terminal, &buf[..unprocessed]);
+
             // Scan for OSC 133 shell integration marks.
             let marks = scan_osc133(&buf[..unprocessed]);
             if !marks.is_empty() {

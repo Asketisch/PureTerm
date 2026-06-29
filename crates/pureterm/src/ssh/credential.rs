@@ -299,7 +299,10 @@ mod tests {
     #[test]
     fn test_credential_store_store_retrieve() {
         let temp_dir = std::env::temp_dir();
-        let creds_path = temp_dir.join("test_creds_store_retrieve_" ).with_extension("json");
+        let creds_path = temp_dir.join(format!(
+            "test_creds_store_retrieve_{}",
+            std::process::id()
+        )).with_extension("json");
 
         let store = CredentialStore::new(creds_path.clone());
         store.setup_master("store_retrieve_password").expect("setup failed");

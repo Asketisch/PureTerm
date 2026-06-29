@@ -21,6 +21,7 @@ use crate::selection::{Selection, SelectionRange, SelectionType};
 use crate::smart_selection::SmartSelectionService;
 use crate::term::cell::{Cell, Flags, LineLength};
 use crate::term::color::Colors;
+use crate::decscl::ConformanceLevel;
 use crate::vi_mode::{ViModeCursor, ViMotion};
 use crate::vte::ansi::{
     self, Attr, CharsetIndex, Color, CursorShape, CursorStyle, Handler, Hyperlink, KeyboardModes,
@@ -332,6 +333,9 @@ pub struct Term<T> {
 
     /// Config directly for the terminal.
     config: Config,
+
+    /// GAP-1.2: DECSCL conformance level (CSI Ps " p). Default VT100.
+    conformance_level: ConformanceLevel,
 }
 
 /// Configuration options for the [`Term`].
@@ -447,7 +451,20 @@ impl<T> Term<T> {
             smart_selection: Default::default(),
             title: Default::default(),
             mode: Default::default(),
+            conformance_level: ConformanceLevel::default(),
         }
+    }
+
+    /// GAP-1.2: current DECSCL conformance level.
+    #[inline]
+    pub fn conformance_level(&self) -> ConformanceLevel {
+        self.conformance_level
+    }
+
+    /// GAP-1.2: apply DECSCL level from CSI Ps " p.
+    #[inline]
+    pub fn set_conformance_level(&mut self, level: ConformanceLevel) {
+        self.conformance_level = level;
     }
 
     /// Collect the information about the changes in the lines, which

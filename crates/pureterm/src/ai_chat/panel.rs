@@ -56,6 +56,11 @@ impl ChatPanelState {
         self.inflight_gen.is_some()
     }
 
+    /// Abort the in-flight turn without waiting for a terminal stream event.
+    pub fn stop_streaming(&mut self) {
+        self.inflight_gen = None;
+    }
+
     /// Begin a turn: push the user message + an empty assistant placeholder, and
     /// return a fresh generation id. The caller tags the provider stream's events
     /// with this id so stale chunks are discarded.

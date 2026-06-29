@@ -1,4 +1,4 @@
-//! GAP-4.1: Vi (copy) mode keyboard handler.
+//! GAP-4.1 / GAP-14: Vi (copy) mode keyboard handler.
 //!
 //! When `TermMode::VI` is active on a terminal, keystrokes are interpreted
 //! as vi motions/operations instead of being forwarded to the PTY. This module
@@ -28,6 +28,54 @@ pub enum ViSubMode {
     VisualLine,
     /// Visual block: rectangular selection.
     VisualBlock,
+    /// GAP-14: pending operator (`d`/`c`/`y`) awaiting motion/text-object.
+    OperatorPending(ViOperator),
+}
+
+/// GAP-14: vim operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViOperator {
+    Delete,
+    Change,
+    Yank,
+}
+
+/// GAP-14: named register slot (a–z); `"` + register char.
+#[derive(Debug, Clone, Default)]
+pub struct ViRegisters {
+    slots: [String; 26],
+    pub unnamed: String,
+}
+
+impl ViRegisters {
+    pub fn store(&mut self, reg: Option<char>, text: String) {
+        if text.is_empty() {
+            return;
+        }
+        if let Some(c) = reg {
+            if c.is_ascii_lowercase() {
+                self.slots[(c as u8 - b'a') as usize] = text;
+                return;
+            }
+        }
+        self.unnamed = text;
+    }
+
+    pub fn get(&self, reg: Option<char>) -> Option<&str> {
+        if let Some(c) = reg {
+            if c.is_ascii_lowercase() {
+                let s = &self.slots[(c as u8 - b'a') as usize];
+                if !s.is_empty() {
+                    return Some(s);
+                }
+            }
+        }
+        if !self.unnamed.is_empty() {
+            Some(&self.unnamed)
+        } else {
+            None
+        }
+    }
 }
 
 // ── Vi action result ───────────────────────────────────────────────────
@@ -61,6 +109,8 @@ pub fn handle_vi_keypress(
     text: Option<&str>,
     modifiers: iced::keyboard::Modifiers,
     sub_mode: &mut ViSubMode,
+    registers: &mut ViRegisters,
+    pending_register: &mut Option<char>,
     ctx: &std::sync::Arc<TerminalContext>,
 ) -> ViAction {
     // Escape always exits vi mode (from any sub-mode)
@@ -95,6 +145,41 @@ pub fn handle_vi_keypress(
     // Plain keys (no modifiers)
     if !modifiers.is_empty() {
         return ViAction::Ignored;
+    }
+
+    // GAP-14: operators + put
+    if matches!(*sub_mode, ViSubMode::Normal) {
+        match ch {
+            'd' => {
+                *sub_mode = ViSubMode::OperatorPending(ViOperator::Delete);
+                return ViAction::MotionApplied;
+            }
+            'c' => {
+                *sub_mode = ViSubMode::OperatorPending(ViOperator::Change);
+                return ViAction::MotionApplied;
+            }
+            'p' | 'P' => return put_from_register(registers, ctx, ch == 'P'),
+            '"' if ch == '"' => return ViAction::Ignored,
+            _ => {}
+        }
+    }
+
+    if let ViSubMode::OperatorPending(op) = *sub_mode {
+        match ch {
+            'w' => {
+                apply_motion(ctx, ViMotion::WordRight);
+                let text = capture_word(ctx);
+                return finish_operator(op, &text, registers, sub_mode, ctx);
+            }
+            'd' if matches!(op, ViOperator::Delete) => {
+                // dd — delete line
+                let text = capture_line(ctx);
+                return finish_operator(ViOperator::Delete, &text, registers, sub_mode, ctx);
+            }
+            _ => {
+                *sub_mode = ViSubMode::Normal;
+            }
+        }
     }
 
     match ch {
@@ -138,6 +223,10 @@ pub fn handle_vi_escape(sub_mode: &mut ViSubMode, ctx: &std::sync::Arc<TerminalC
         ViSubMode::Normal => {
             // Exit vi mode entirely
             return true;
+        }
+        ViSubMode::OperatorPending(_) => {
+            *sub_mode = ViSubMode::Normal;
+            false
         }
         ViSubMode::Visual | ViSubMode::VisualLine | ViSubMode::VisualBlock => {
             // Return to normal sub-mode, clear selection
@@ -188,7 +277,7 @@ fn enter_visual(
         ViSubMode::Visual => SelectionType::Simple,
         ViSubMode::VisualLine => SelectionType::Lines,
         ViSubMode::VisualBlock => SelectionType::Block,
-        ViSubMode::Normal => unreachable!(),
+        ViSubMode::Normal | ViSubMode::OperatorPending(_) => unreachable!(),
     };
     let mut sel = Selection::new(sel_type, point, Side::Left);
     sel.update(point, Side::Right);
@@ -213,6 +302,7 @@ fn yank(sub_mode: &mut ViSubMode, ctx: &std::sync::Arc<TerminalContext>) -> ViAc
             ViSubMode::Visual | ViSubMode::VisualLine | ViSubMode::VisualBlock => {
                 // yank existing selection
             }
+            ViSubMode::OperatorPending(_) => {}
         }
         let text = term.selection_to_string().unwrap_or_default();
         // Clear selection and exit vi mode
@@ -229,6 +319,58 @@ fn yank(sub_mode: &mut ViSubMode, ctx: &std::sync::Arc<TerminalContext>) -> ViAc
     }
 
     ViAction::ExitViMode
+}
+
+fn capture_line(ctx: &std::sync::Arc<TerminalContext>) -> String {
+    let mut term = ctx.terminal().lock();
+    let point = term.vi_mode_cursor.point;
+    let start = alacritty_terminal::index::Point::new(point.line, Column(0));
+    let end = alacritty_terminal::index::Point::new(point.line, term.last_column());
+    let mut sel = Selection::new(SelectionType::Lines, start, Side::Left);
+    sel.update(end, Side::Right);
+    sel.include_all();
+    term.selection = Some(sel);
+    term.selection_to_string().unwrap_or_default()
+}
+
+fn capture_word(ctx: &std::sync::Arc<TerminalContext>) -> String {
+    apply_motion(ctx, ViMotion::WordRight);
+    let mut term = ctx.terminal().lock();
+    term.selection_to_string().unwrap_or_default()
+}
+
+fn finish_operator(
+    op: ViOperator,
+    text: &str,
+    registers: &mut ViRegisters,
+    sub_mode: &mut ViSubMode,
+    ctx: &std::sync::Arc<TerminalContext>,
+) -> ViAction {
+    if !text.is_empty() {
+        registers.store(None, text.to_string());
+    }
+    if matches!(op, ViOperator::Delete | ViOperator::Change) {
+        ctx.write_to_pty(b"\x7f"); // MVP: backspace hint
+    }
+    *sub_mode = ViSubMode::Normal;
+    ViAction::MotionApplied
+}
+
+fn put_from_register(
+    registers: &ViRegisters,
+    ctx: &std::sync::Arc<TerminalContext>,
+    before: bool,
+) -> ViAction {
+    if let Some(text) = registers.get(None) {
+        let mut bytes = text.as_bytes().to_vec();
+        if before {
+            // MVP: no cursor motion — paste at PTY
+        }
+        ctx.write_to_pty(&bytes);
+        ViAction::MotionApplied
+    } else {
+        ViAction::Ignored
+    }
 }
 
 // ── Unit tests ─────────────────────────────────────────────────────────
@@ -267,13 +409,9 @@ mod tests {
     }
 
     #[test]
-    fn test_motion_mapping() {
-        // Verify that expected characters map to the right motions.
-        // We can't test apply_motion without a real terminal, but we can
-        // verify the match arm coverage.
-        let motion_chars = ['h', 'j', 'k', 'l', 'w', 'b', 'e', '0', '$', 'g', 'G', '{', '}', '%'];
-        for &ch in &motion_chars {
-            assert!(matches!(ch, 'h'|'j'|'k'|'l'|'w'|'b'|'e'|'0'|'$'|'g'|'G'|'{'|'}'|'%'));
-        }
+    fn registers_store_and_get() {
+        let mut r = ViRegisters::default();
+        r.store(Some('a'), "hello".into());
+        assert_eq!(r.get(Some('a')), Some("hello"));
     }
 }

@@ -1,5 +1,41 @@
 use std::path::PathBuf;
 
+/// GAP-40: port-forward / X11 flags plumbed into `ssh -tt` (`-L`/`-R`/`-X`/`-Y`).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SshForwards {
+    /// Each entry is passed verbatim to `ssh -L` (e.g. `8080:localhost:80`).
+    pub local: Vec<String>,
+    /// Each entry is passed verbatim to `ssh -R`.
+    pub remote: Vec<String>,
+    /// Request untrusted X11 forwarding (`-X`).
+    pub x11: bool,
+    /// Request trusted X11 forwarding (`-Y`; takes precedence over `x11`).
+    pub x11_trusted: bool,
+}
+
+impl SshForwards {
+    /// One-line summary for status-bar / dialog hints (e.g. `L2 R1 X`).
+    pub fn summary(&self) -> Option<String> {
+        let mut parts = Vec::new();
+        if !self.local.is_empty() {
+            parts.push(format!("L{}", self.local.len()));
+        }
+        if !self.remote.is_empty() {
+            parts.push(format!("R{}", self.remote.len()));
+        }
+        if self.x11_trusted {
+            parts.push("Y".into());
+        } else if self.x11 {
+            parts.push("X".into());
+        }
+        if parts.is_empty() {
+            None
+        } else {
+            Some(parts.join(" "))
+        }
+    }
+}
+
 /// SSH command builder for ControlMaster connections
 pub struct SshCommandBuilder {
     socket_path: PathBuf,
@@ -8,6 +44,9 @@ pub struct SshCommandBuilder {
     port: Option<u16>,
     identity_file: Option<String>,
     forward_agent: bool,
+    forwards: SshForwards,
+    /// GAP-41: ProxyJump chain (bastion hosts).
+    jump_hosts: Vec<String>,
 }
 
 impl SshCommandBuilder {
@@ -19,6 +58,8 @@ impl SshCommandBuilder {
             port: None,
             identity_file: None,
             forward_agent: false,
+            forwards: SshForwards::default(),
+            jump_hosts: Vec::new(),
         }
     }
 
@@ -45,6 +86,18 @@ impl SshCommandBuilder {
         self
     }
 
+    /// GAP-40: local/remote port forwards and X11 forwarding.
+    pub fn with_forwards(mut self, forwards: SshForwards) -> Self {
+        self.forwards = forwards;
+        self
+    }
+
+    /// GAP-41: `-J host1,host2` jump host chain.
+    pub fn with_jump_hosts(mut self, hosts: Vec<String>) -> Self {
+        self.jump_hosts = hosts;
+        self
+    }
+
     pub fn build(&self) -> Vec<String> {
         let mut cmd = vec![
             "ssh".to_string(),
@@ -68,6 +121,27 @@ impl SshCommandBuilder {
         if self.forward_agent {
             cmd.push("-o".to_string());
             cmd.push("ForwardAgent=yes".to_string());
+        }
+
+        // GAP-41: ProxyJump chain.
+        if !self.jump_hosts.is_empty() {
+            cmd.push("-J".to_string());
+            cmd.push(self.jump_hosts.join(","));
+        }
+
+        // GAP-40: port forwards + X11 (dynamic `-D` remains GAP-5.2 `ssh tunnel`).
+        for spec in &self.forwards.local {
+            cmd.push("-L".to_string());
+            cmd.push(spec.clone());
+        }
+        for spec in &self.forwards.remote {
+            cmd.push("-R".to_string());
+            cmd.push(spec.clone());
+        }
+        if self.forwards.x11_trusted {
+            cmd.push("-Y".to_string());
+        } else if self.forwards.x11 {
+            cmd.push("-X".to_string());
         }
 
         if let Some(ref user) = self.user {
@@ -119,5 +193,45 @@ mod tests {
     fn forward_agent_explicit_false_omits_option() {
         let cmd = builder().with_forward_agent(false).build();
         assert!(!cmd.iter().any(|a| a == "ForwardAgent=yes"));
+    }
+
+    #[test]
+    fn forwards_emit_l_r_x_y() {
+        let cmd = builder()
+            .with_forwards(SshForwards {
+                local: vec!["8080:localhost:80".into()],
+                remote: vec!["9000:127.0.0.1:22".into()],
+                x11: true,
+                x11_trusted: false,
+            })
+            .build();
+        assert!(cmd.windows(2).any(|w| w == ["-L", "8080:localhost:80"]));
+        assert!(cmd.windows(2).any(|w| w == ["-R", "9000:127.0.0.1:22"]));
+        assert!(cmd.iter().any(|a| a == "-X"));
+        assert!(!cmd.iter().any(|a| a == "-Y"));
+    }
+
+    #[test]
+    fn x11_trusted_prefers_y_over_x() {
+        let cmd = builder()
+            .with_forwards(SshForwards {
+                x11: true,
+                x11_trusted: true,
+                ..Default::default()
+            })
+            .build();
+        assert!(cmd.iter().any(|a| a == "-Y"));
+        assert!(!cmd.iter().any(|a| a == "-X"));
+    }
+
+    #[test]
+    fn forward_summary_counts() {
+        let s = SshForwards {
+            local: vec!["a".into(), "b".into()],
+            remote: vec!["c".into()],
+            x11: true,
+            ..Default::default()
+        };
+        assert_eq!(s.summary().as_deref(), Some("L2 R1 X"));
     }
 }

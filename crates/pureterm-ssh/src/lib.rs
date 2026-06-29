@@ -20,7 +20,7 @@ pub mod pty;
 pub mod session;
 
 #[cfg(unix)]
-pub use command::SshCommandBuilder;
+pub use command::{SshCommandBuilder, SshForwards};
 #[cfg(unix)]
 pub use pty::SshPty;
 #[cfg(unix)]

@@ -206,6 +206,42 @@ impl StatusBarComponent for Agent {
     }
 }
 
+/// GAP-03: codebase indexing progress (optional; hidden unless `codeindex_percent` is set).
+pub struct CodeIndex;
+impl StatusBarComponent for CodeIndex {
+    fn id(&self) -> &'static str {
+        "codeindex"
+    }
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
+        if let Some(pct) = data.codeindex_percent {
+            text_seg(
+                format!(" idx {pct}%"),
+                Color::from_rgba(0.5, 0.75, 1.0, 1.0),
+            )
+        } else {
+            text(String::new()).size(11).into()
+        }
+    }
+}
+
+/// GAP-35: LSP diagnostic summary (errors / warnings).
+pub struct Lsp;
+impl StatusBarComponent for Lsp {
+    fn id(&self) -> &'static str {
+        "lsp"
+    }
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
+        if let Some((errors, warnings)) = data.lsp_summary {
+            text_seg(
+                format!(" LSP {errors}E {warnings}W"),
+                Color::from_rgba(1.0, 0.55, 0.45, 1.0),
+            )
+        } else {
+            text(String::new()).size(11).into()
+        }
+    }
+}
+
 /// GAP-09: unread-notification count. Renders "🔔 N" when there are unread
 /// notifications, nothing otherwise (empty text mirrors Agent/Process).
 pub struct Notifications;

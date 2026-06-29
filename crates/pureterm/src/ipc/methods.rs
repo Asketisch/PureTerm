@@ -90,6 +90,21 @@ pub enum IpcSideEffect {
     /// main loop records it in the store (source `Cli`), refreshes the Dock
     /// badge, and fires a gated toast.
     ShowNotification { title: Option<String>, body: String, pane_id: Option<u64> },
+    /// GAP-48: switch workspace by id, name, or creation-order index.
+    SwitchWorkspace {
+        id: Option<u64>,
+        name: Option<String>,
+        index: Option<usize>,
+        /// GAP-25: when true, switch matching workspace in every window of
+        /// this process and broadcast to other PureTerm instances.
+        all_windows: bool,
+    },
+    /// GAP-25: open a new independent window with tab bar + workspaces.
+    NewWindow,
+    /// GAP-47/48: open an ad-hoc SSH tab from `pureterm://ssh/…` or
+    /// `pureterm script ssh`.
+    #[cfg(unix)]
+    SshOpenTarget { target: String, port: Option<u16> },
 }
 
 // ── Handler type ─────────────────────────────────────────────────────────
@@ -145,6 +160,12 @@ pub struct AppSnapshot {
     pub pane_shell_contexts: std::collections::HashMap<u64, crate::shell_context::ShellContextSummary>,
     /// GAP-10: configured `[[triggers]]` rules (no `send_text` secrets).
     pub triggers: Vec<TriggerListEntry>,
+    /// GAP-48: workspace ids (creation order) for `workspace.list` / switch.
+    pub workspace_ids: Vec<u64>,
+    /// GAP-48: workspace display names aligned with `workspace_ids`.
+    pub workspace_names: Vec<String>,
+    /// GAP-48: active workspace id (`.0`).
+    pub active_workspace_id: u64,
 }
 
 /// GAP-10: one trigger rule for `trigger.list` / MCP `trigger_list`.
@@ -189,6 +210,9 @@ impl Default for AppSnapshot {
             ssh_pane_states: Vec::new(),
             pane_shell_contexts: std::collections::HashMap::new(),
             triggers: Vec::new(),
+            workspace_ids: Vec::new(),
+            workspace_names: Vec::new(),
+            active_workspace_id: 0,
         }
     }
 }
@@ -256,8 +280,7 @@ impl SocketRouter {
         });
 
         router.register("window.create", |_params, _snap| {
-            // Single-window limitation: window.create creates a new tab instead.
-            (Ok(serde_json::json!({"note": "window.create: single-window mode; created new tab instead"})), Some(IpcSideEffect::NewTab))
+            (Ok(serde_json::json!({"created": true})), Some(IpcSideEffect::NewWindow))
         });
 
         router.register("window.close", |_params, snap| {
@@ -314,6 +337,72 @@ impl SocketRouter {
                 Err(e) => return (Err(e), None),
             };
             (Ok(serde_json::json!({"switched": true, "tab_index": idx})), Some(IpcSideEffect::SwitchTab { index: idx }))
+        });
+
+        // ── workspace.* (GAP-48) ───────────────────────────────────────
+        router.register("workspace.list", |_params, snap| {
+            let workspaces: Vec<Value> = snap
+                .workspace_ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    serde_json::json!({
+                        "index": i,
+                        "id": id,
+                        "name": snap.workspace_names.get(i).cloned().unwrap_or_default(),
+                        "active": *id == snap.active_workspace_id,
+                    })
+                })
+                .collect();
+            (Ok(serde_json::json!(workspaces)), None)
+        });
+
+        router.register("workspace.switch", |params, snap| {
+            let id = params
+                .as_ref()
+                .and_then(|p| p.get("id"))
+                .and_then(|v| v.as_u64());
+            let name = params
+                .as_ref()
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let index = params
+                .as_ref()
+                .and_then(|p| p.get("index"))
+                .and_then(|v| v.as_u64())
+                .map(|i| i as usize);
+            let all_windows = params
+                .as_ref()
+                .and_then(|p| p.get("all_windows"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            if id.is_none() && name.as_deref().unwrap_or("").is_empty() && index.is_none() {
+                return (
+                    Err(JsonRpcError {
+                        code: ERROR_INVALID_PARAMS,
+                        message: "workspace.switch requires id, name, or index".into(),
+                        data: None,
+                    }),
+                    None,
+                );
+            }
+            if let Some(i) = index {
+                if i >= snap.workspace_ids.len() {
+                    return (
+                        Err(JsonRpcError {
+                            code: ERROR_INVALID_PARAMS,
+                            message: format!("workspace index {i} out of range"),
+                            data: None,
+                        }),
+                        None,
+                    );
+                }
+            }
+            (
+                Ok(serde_json::json!({"switching": true, "id": id, "name": name, "index": index, "all_windows": all_windows})),
+                Some(IpcSideEffect::SwitchWorkspace { id, name, index, all_windows }),
+            )
         });
 
         // ── pane.* (6 methods) ────────────────────────────────────────
@@ -756,6 +845,37 @@ impl SocketRouter {
                 )
             });
 
+            router.register("ssh.open", |params, _snap| {
+                let target = params
+                    .as_ref()
+                    .and_then(|p| p.get("target"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty());
+                let Some(target) = target else {
+                    return (
+                        Err(JsonRpcError {
+                            code: ERROR_INVALID_PARAMS,
+                            message: "ssh.open requires { \"target\": \"[user@]host[:port]\" }".into(),
+                            data: None,
+                        }),
+                        None,
+                    );
+                };
+                let port = params
+                    .as_ref()
+                    .and_then(|p| p.get("port"))
+                    .and_then(|v| v.as_u64())
+                    .map(|p| p as u16);
+                (
+                    Ok(serde_json::json!({"connecting": true, "target": target, "port": port})),
+                    Some(IpcSideEffect::SshOpenTarget {
+                        target: target.to_string(),
+                        port,
+                    }),
+                )
+            });
+
             router.register("ssh.disconnect", |params, _snap| {
                 // GAP-5.6: real disconnect. Optional { "pane_id": <u64> };
                 // defaults to the active pane. The iced loop flags the pane
@@ -1070,6 +1190,9 @@ mod tests {
             ssh_pane_states: Vec::new(),
             pane_shell_contexts: std::collections::HashMap::new(),
             triggers: Vec::new(),
+            workspace_ids: vec![1],
+            workspace_names: vec!["Default".into()],
+            active_workspace_id: 1,
         }
     }
 
@@ -1160,7 +1283,7 @@ mod tests {
         let router = SocketRouter::new();
         let snap = test_snap();
         let (_, fx) = router.dispatch(6, "window.create", None, &snap);
-        assert!(matches!(fx, Some(IpcSideEffect::NewTab)));
+        assert!(matches!(fx, Some(IpcSideEffect::NewWindow)));
     }
 
     #[test]

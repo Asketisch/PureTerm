@@ -23,6 +23,8 @@ save_to_clipboard = false
 hide_when_typing = false
 
 # GAP-24: Enhanced Status Bar. `components` is the ordered list of segments
+# (cwd, git, ssh, …). Optional GAP-03 segment: add "codeindex" to show indexing
+# progress when an in-process index run is active (MVP stub; usually hidden).
 # rendered left-to-right (with a flexible spacer before any `align_right`
 # segment). Recognized ids: cwd, git, ssh, vimode, process, agent, cpu,
 # memory, network, clock, battery, cursor. Unknown ids are skipped (warn).
@@ -35,10 +37,25 @@ refresh_interval_secs = 1
 show_sparklines = true
 bar_height = 24
 
-# GAP-32: Git Integration — status-bar counts come from [statusbar] above; this
-# section controls the ⌘⇧B overlay panel and the `gh` PR subprocess.
+# GAP-19: Dual Sidebar — ⌘B left (Workspaces + Git summary), ⌘⇧B right
+# (Find / Feed / Git tabs). Widths in px, clamped to 120–480.
+[sidebar]
+left_width = 240
+right_width = 240
+# left_default_open = false
+
+# GAP-35: LSP client (rust-analyzer MVP). Opt-in — set `enabled = true` when
+# `rust-analyzer` is on PATH. Diagnostics surface in the status bar (`lsp`
+# segment) and AI Chat context after opening a `.rs` file via hover preview.
+[lsp]
+enabled = false
+
+[lsp.servers]
+rust = "rust-analyzer"
+
+# section controls the Git sidebar tab and the `gh` PR subprocess.
 [git]
-panel_enabled = true       # ⌘⇧B toggles the Git overlay panel
+panel_enabled = true       # Git tab in the right sidebar (legacy ⌘⇧B alias)
 show_pr = true             # query the linked PR via `gh` (needs `gh auth`)
 pr_refresh_ticks = 30      # PR refresh cadence in status-bar ticks (~30s)
 # lazygit_cmd = "lazygit"  # override the lazygit binary name for the panel button
@@ -69,11 +86,10 @@ bell_throttle_ms = 1000       # ≤1 bell-derived notif per pane per this window
 # title = "Build complete"
 #
 # [[triggers]]
-# name = "capture-url"
-# pattern = "(https://\\S+)"
-# action = "set_variable"
-# variable = "last_url"
-# value = "$1"
+# name = "mark-build"
+# pattern = "^Building"
+# action = "set_mark"
+# mark = "build_start"
 #
 # [[triggers]]
 # name = "fold-build"
@@ -81,4 +97,232 @@ bell_throttle_ms = 1000       # ≤1 bell-derived notif per pane per this window
 # action = "fold"
 # mark = "build_start"
 #
+# GAP-02: Error Recovery — auto LLM fix suggestions on non-zero exit (needs Shell Integration).
+[error_recovery]
+enabled = true
+auto_analyze = true
+provider = "anthropic"
+# model = "claude-3-5-sonnet-latest"
+# max_output_lines = 80
+# max_tokens = 1024
+# api_key_env = "ANTHROPIC_API_KEY"
+# openai_base_url = "https://api.openai.com/v1"
+#
+# GAP-33: Port Scanner — right sidebar "Ports" tab lists listening TCP ports
+# (via `lsof`, refreshed every N seconds). Click row copies localhost:PORT; ↗
+# opens http://localhost:PORT in the browser. Ports below min_port are hidden.
+[port_scanner]
+enabled = true
+interval = 5
+min_port = 1024
+
+# GAP-36: Semantic History — ⌘-click file:line in terminal output opens the
+# file in your editor. `$EDITOR` overrides `editor` below; default is VS Code.
+[semantic_history]
+enabled = true
+editor = "code"
+
+# GAP-01: AI Chat Panel — ⌘⇧L toggles the right-docked chat overlay (⌘L is Browser).
+[ai_chat]
+provider = "anthropic"
+# model = "claude-3-5-sonnet-latest"
+# max_tokens = 4096
+# api_key_env = "ANTHROPIC_API_KEY"
+# openai_base_url = "https://api.openai.com/v1"
+#
+# GAP-07: Soul System — personality files in ~/.config/pureterm/ai/
+# (SOUL.md, STYLE.md, SKILL.md, MEMORY.md) injected into AI Chat system prompt.
+[soul]
+enabled = true
+# directory = "/custom/path/to/ai"
+#
+# GAP-08: Natural language commands — type `# find large files` + Enter to
+# generate a shell command (shared LLM provider with `[ai_chat]`).
+[natural_language]
+enabled = true
+# max_tokens = 512
+#
+# GAP-47: AppleScript bridge MVP — external scripts call `pureterm script …`
+# (e.g. via `osascript` → `do shell script`). Full NSAppleEventManager deferred.
+[applescript]
+enabled = true
+#
+# GAP-48: pureterm:// URL scheme — macOS Info.plist CFBundleURLTypes + handler.
+# Set register_on_launch = true to call LSSetDefaultHandlerForURLScheme at startup.
+[url_scheme]
+enabled = true
+register_on_launch = false
+#
+# GAP-40 / GAP-5.3 / GAP-37: SSH global knobs (per-profile forwards in [[ssh.profiles]]).
+[ssh]
+smallest_screen_wins = true
+password_manager = "auto"   # auto | keychain | 1password | lastpass
+# [[ssh.profiles]]
+# name = "dev"
+# host = "example.com"
+# jump_hosts = ["bastion.example.com"]
+# login_commands = ["cd /app", "docker ps"]
+# session_type = "ssh"      # ssh | telnet | serial
+# local_forwards = ["8080:localhost:80"]
+# remote_forwards = ["9000:127.0.0.1:22"]
+# forward_x11 = false
+#
 # Status bar: add "trigger_count" to [status_bar] components for ⚡ N hit counter.
+#
+# GAP-51: Block-based output scaffold (off by default). When enabled, each OSC
+# 133 D mark appends OutputBlock + `block.finished`; open right sidebar Blocks
+# tab for list/filter/jump. Grid slicing / sum-tree viewport still deferred.
+[block_output]
+enabled = false
+#
+# ── P3 GAP MVPs (2026-06-29) ─────────────────────────────────────────────
+#
+# GAP-06: Ambient Agents — local task queue (cloud/SSE deferred).
+[ambient_agents]
+enabled = false
+poll_interval_secs = 30
+#
+# GAP-13: Broadcast keyboard input to sibling panes (⌘⌃B).
+[broadcast_input]
+enabled = true
+#
+# GAP-18: BiDi text mode for RTL scripts.
+[terminal]
+bidi_mode = "auto"   # auto | ltr | rtl
+#
+# GAP-26: Workspace sidebar groups.
+# [[workspace_groups]]
+# name = "Work"
+# workspaces = ["dev", "staging"]
+#
+# GAP-30: Toolbelt right-sidebar tab (⌘⇧T).
+[toolbelt]
+enabled = true
+tools = ["history", "directories", "snippets", "paste_history"]
+#
+# GAP-31: Quake-style dock (F12 default; enable to use).
+[quake]
+enabled = false
+height_fraction = 0.45
+#
+# GAP-46: UI locale (Settings + main app via pureterm-settings I18n).
+[pureterm]
+locale = "en"
+#
+# ── P4 GAP MVPs (disabled by default unless noted) ────────────────────────
+#
+# GAP-05: Voice input (Whisper API URL required when enabled).
+[voice_input]
+enabled = false
+# api_url = "https://api.openai.com/v1/audio/transcriptions"
+#
+# GAP-17: Sixel / Kitty inline graphics.
+[terminal_graphics]
+enabled = false
+max_images = 64
+#
+# GAP-20 / GAP-55: Window glass + opacity/blur (`[window]` nested tables).
+[window]
+# [window.glass]
+# enabled = false
+# style = "vibrancy"
+# [window.border]
+# enabled = false
+# width = 2.0
+# active_color = "#007AFF"
+# [window.effects]
+# enabled = false
+# opacity = 0.92
+# blur = false
+#
+# GAP-22: Touch Bar (macOS).
+[touch_bar]
+enabled = false
+#
+# GAP-23: Visual tab bar.
+[tab_bar]
+enabled = true
+position = "top"
+height = 28.0
+#
+# GAP-29: Environment badge overlay.
+[badge]
+enabled = false
+# text = "DEV"
+# color = "#FF3B30"
+# position = "bottom-right"
+#
+# GAP-34: File preview on path selection.
+[file_preview]
+enabled = true
+#
+# GAP-38: SCP/SFTP transfers.
+[file_transfer]
+enabled = false
+#
+# GAP-44: Shared sessions (stub).
+[shared_session]
+enabled = false
+port = 8765
+#
+# GAP-45: Auto-update.
+[update]
+enabled = false
+auto_check = false
+channel = "stable"
+#
+# GAP-49: Plugins.
+[plugins]
+enabled = false
+#
+# GAP-50: Cloud sync (local bundle MVP).
+[cloud_sync]
+enabled = false
+#
+# GAP-52: Workflows (`[[workflows]]` entries).
+[workflows]
+enabled = true
+#
+# GAP-53: Notebooks.
+[notebooks]
+enabled = false
+#
+# GAP-54: Background image.
+[background]
+enabled = false
+# image = "/path/to/wallpaper.png"
+# opacity = 0.35
+# mode = "center"
+#
+# GAP-56: Focus follows mouse (split panes).
+[focus_follows_mouse]
+enabled = false
+delay_ms = 150
+#
+# GAP-57: Haptic feedback (macOS).
+[haptic]
+enabled = false
+#
+# GAP-58: Extended theme colors.
+[theme]
+enabled = false
+follow_system = false
+#
+# GAP-59: Emoji rendering.
+[emoji]
+enabled = true
+dedicated_atlas = false
+#
+# GAP-60: Pane capture export.
+[pane_capture]
+enabled = true
+default_format = "txt"
+#
+# GAP-61: Print support.
+[print]
+enabled = false
+#
+# GAP-4.6: Accessibility / VoiceOver announcements.
+[accessibility]
+enabled = true
+announce_tab_changes = true

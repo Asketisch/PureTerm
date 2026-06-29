@@ -34,7 +34,7 @@ use crate::split_tree::{
 use crate::terminal_context::{TerminalContext, TerminalEvent};
 use crate::terminal_shader::{GlyphState, TerminalProgram};
 #[cfg(unix)]
-use crate::ssh::config::{SshProfile, SshProfileRegistry};
+use crate::ssh::config::{SshProfile, SshProfileRegistry, SshSettings};
 #[cfg(unix)]
 use crate::ssh::pty::SshPty;
 #[cfg(unix)]
@@ -54,22 +54,37 @@ fn now_epoch_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// GAP-09: refresh the Dock badge from the current unread count (macOS only,
-/// gated by `[notification].dock_badge`). Takes specific field references so it
-/// is callable from the terminal-event loop, where `self.windows` is borrowed
+/// GAP-21: sum notification unread + Feed pending for Dock badge display.
+fn dock_badge_total(unread: u32, feed_pending: usize) -> u32 {
+    ((unread as u64) + (feed_pending as u64)).min(u32::MAX as u64) as u32
+}
+
+/// GAP-09 / GAP-21: refresh the Dock badge (macOS only, gated by
+/// `[notification].dock_badge`). Takes specific field references so it is
+/// callable from the terminal-event loop, where `self.windows` is borrowed
 /// (a `&self` method would conflict with that borrow).
 fn refresh_dock_badge(
     cfg: &crate::app_config::NotificationConfig,
     store: &crate::notification_store::NotificationStore,
+    feed_pending: usize,
 ) {
     #[cfg(target_os = "macos")]
     if cfg.dock_badge {
-        crate::macos_dock_badge::set_badge(store.summary().total_unread);
+        let total = dock_badge_total(store.summary().total_unread, feed_pending);
+        crate::macos_dock_badge::set_badge(total);
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (cfg, store);
+        let _ = (cfg, store, feed_pending);
     }
+}
+
+/// GAP-21: MRU list for the macOS Dock workspace menu (most recent first).
+pub(crate) fn touch_recent_workspace(list: &mut Vec<WorkspaceId>, id: WorkspaceId) {
+    const MAX_RECENT: usize = 10;
+    list.retain(|&x| x != id);
+    list.insert(0, id);
+    list.truncate(MAX_RECENT);
 }
 
 /// GAP-09: gate the intrusive OS toast (vs. the always-on ring + status count +
@@ -137,6 +152,10 @@ pub struct Tab {
     /// GAP-4.1 Vi/Copy mode sub-mode for the active pane.
     /// `None` = vi mode not active. `Some(ViSubMode)` = vi mode is on.
     pub(crate) vi_sub_mode: Option<crate::vi_mode_handler::ViSubMode>,
+    /// GAP-4.1 Vi registers (`"a-z`).
+    pub(crate) vi_registers: crate::vi_mode_handler::ViRegisters,
+    /// Pending register name before a yank/delete operator completes.
+    pub(crate) vi_pending_register: Option<char>,
 }
 
 impl Tab {
@@ -281,6 +300,18 @@ impl Window {
         }
     }
 
+    /// GAP-25: secondary window — full tab bar + workspaces, not the main instance.
+    pub(crate) fn new_secondary(window_id: window::Id) -> Self {
+        Self {
+            window_id,
+            workspaces: vec![Workspace::new(WorkspaceId(0), "Default".to_string())],
+            active_workspace: WorkspaceId(0),
+            is_main: false,
+            show_tab_bar: true,
+            next_workspace_id: 1,
+        }
+    }
+
     /// 所有 workspace id 按创建顺序(= id 递增)排列。⌃1..9 按索引切换、Next/Prev 环绕用。
     pub(crate) fn workspace_ids_in_order(&self) -> Vec<WorkspaceId> {
         let mut ids: Vec<WorkspaceId> = self.workspaces.iter().map(|w| w.id).collect();
@@ -308,6 +339,8 @@ pub struct PureTermApp {
     windows: Vec<Window>,
     /// 焦点路由:当前活跃窗口的 window::Id(初值 = 主窗)。
     active_window_id: window::Id,
+    /// GAP-21: MRU workspace ids for macOS Dock right-click menu (most recent first).
+    recent_workspace_ids: Vec<WorkspaceId>,
     hovered_tab: Option<TabId>,
     glyph_state: Arc<RefCell<GlyphState>>,
     config: AppConfig,
@@ -360,6 +393,8 @@ pub struct PureTermApp {
     ssh_dialog: Option<SshDialogState>,
     #[cfg(unix)]
     ssh_profiles: Vec<SshProfile>,
+    #[cfg(unix)]
+    ssh_global: SshSettings,
     #[cfg(unix)]
     ssh_manager: Option<Arc<SshSessionManager>>,
     /// GAP-5.6: reconnect/disconnect hub. Eagerly initialized (cheap: just
@@ -444,6 +479,9 @@ pub struct PureTermApp {
     status_bar_git_status: Option<crate::status_bar::GitStatus>,
     // GAP-32: Git Integration — config (`[git]`) + overlay panel state.
     git_cfg: crate::app_config::GitConfig,
+    /// GAP-19: dual sidebar visibility + right tab mode.
+    sidebar: crate::sidebar::SidebarState,
+    sidebar_cfg: crate::app_config::SidebarConfig,
     git_panel: crate::git_panel::GitPanelState,
     // GAP-09: Notifications overlay panel state (reads the store live).
     notification_panel: crate::notification_panel::NotificationPanelState,
@@ -461,7 +499,63 @@ pub struct PureTermApp {
     trigger_hit_total: std::sync::Arc<std::sync::atomic::AtomicU64>,
     // GAP-09: Notification System — `[notification]` config + in-memory store.
     notification_cfg: crate::app_config::NotificationConfig,
+    /// GAP-48: `pureterm://` URL scheme handler config.
+    url_scheme_cfg: crate::app_config::UrlSchemeConfig,
     notification_store: crate::notification_store::NotificationStore,
+    /// GAP-02: Error Recovery — config + inline card state + in-flight cancel.
+    error_recovery_cfg: crate::app_config::ErrorRecoveryConfig,
+    error_recovery: crate::error_recovery::ErrorRecoveryState,
+    error_recovery_cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
+    /// GAP-08: Natural language commands — `# description` → shell command card.
+    natural_language_cfg: crate::app_config::NaturalLanguageConfig,
+    natural_language: crate::natural_language::NaturalLanguageState,
+    natural_language_cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
+    /// GAP-07: Soul System — personality files injected into AI Chat system prompt.
+    soul_cfg: crate::app_config::SoulConfig,
+    soul_prompt: String,
+    /// GAP-4.2: Smart Selection hover preview — tooltip + semantic context menu.
+    hover_preview: crate::hover_preview::HoverPreviewState,
+    /// GAP-36: Cmd-click file:line → editor.
+    semantic_history_cfg: crate::app_config::SemanticHistoryConfig,
+    /// GAP-51: block-based output scaffold — records block boundaries on
+    /// `shell.command_finished` when enabled.
+    block_output_cfg: crate::app_config::BlockOutputConfig,
+    pane_block_stores: HashMap<PaneId, crate::output_blocks::PaneBlockStore>,
+    block_output_filter: crate::output_blocks::BlockExitFilter,
+    block_output_search: String,
+    /// GAP-33: Port scanner sidebar tab.
+    port_scanner_cfg: crate::app_config::PortScannerConfig,
+    port_scanner_entries: Vec<crate::port_scanner::ListeningPort>,
+    /// GAP-43: remote file browse sidebar tab.
+    remote_files: crate::remote_files::RemoteFilesState,
+    /// GAP-06 / GAP-13 / GAP-18 / GAP-26 / GAP-30 / GAP-31 P3 MVPs.
+    ambient_agents_cfg: crate::ambient_agents::AmbientAgentsConfig,
+    ambient_agents: crate::ambient_agents::AmbientAgentsState,
+    broadcast_cfg: crate::broadcast_input::BroadcastConfig,
+    broadcast: crate::broadcast_input::BroadcastState,
+    bidi_mode: crate::bidi::BidiMode,
+    workspace_groups: Vec<crate::workspace_groups::WorkspaceGroup>,
+    toolbelt_cfg: crate::toolbelt::ToolbeltConfig,
+    toolbelt: crate::toolbelt::ToolbeltState,
+    quake_cfg: crate::quake_dock::QuakeDockConfig,
+    quake: crate::quake_dock::QuakeDockState,
+    /// GAP P4: voice, graphics, visual, platform MVPs (bundled).
+    p4: crate::p4_runtime::P4Features,
+    /// GAP-11: Instant Replay scrub viewer.
+    replay_viewer: crate::instant_replay::ReplayViewer,
+    /// GAP-12: per-pane grid marks + line annotations.
+    pane_marks: HashMap<PaneId, crate::annotations::PaneMarks>,
+    /// GAP-3.2: programmable sidebar DSL state (EventBus-driven).
+    sidebar_dsl: crate::sidebar_dsl::SidebarDslState,
+    /// Last-known keyboard modifiers (for Cmd-click semantic history).
+    keyboard_modifiers: iced::keyboard::Modifiers,
+    /// GAP-01: AI Chat Panel — config + panel state + in-flight cancel.
+    ai_chat_cfg: crate::app_config::AiChatConfig,
+    ai_chat_panel: crate::ai_chat::panel::ChatPanelState,
+    ai_chat_cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
+    /// GAP-35: LSP client (rust-analyzer MVP).
+    lsp_cfg: crate::app_config::LspConfig,
+    lsp: crate::lsp::LspState,
     /// GAP-09: whether a PureTerm window holds OS focus. Drives the toast gate
     /// (`should_toast`): true on launch + `WindowFocused`, false on
     /// `WindowUnfocused`.
@@ -674,6 +768,12 @@ fn terminal_content_height(viewport_height: f32, status_bar_height: f32) -> f32 
     (viewport_height - TAB_BAR_HEIGHT - status_bar_height).max(0.0)
 }
 
+/// GAP-19: middle-row height for terminal + sidebars (between top/bottom bars).
+#[inline]
+fn sidebar_content_height(viewport_height: f32, status_bar_height: f32) -> f32 {
+    terminal_content_height(viewport_height, status_bar_height)
+}
+
 /// GAP-7.6: status-bar agent indicator. Returns the label + color to render,
 /// or `None` when the pane has no agent AND no feed is pending. Pure, tested.
 ///
@@ -775,8 +875,14 @@ pub enum Message {
     StatusBarStats(crate::status_bar::StatSnapshot),
     /// GAP-24: async git-status upgrade result `(cwd, status)`.
     GitStatusResult(String, crate::status_bar::GitStatus),
-    /// GAP-32: Git overlay panel — toggle/close/manual-refresh.
+    /// GAP-32: Git overlay panel — toggle/close/manual-refresh (legacy; Git lives in sidebar).
     ToggleGitPanel,
+    /// GAP-19: toggle left sidebar (⌘B).
+    ToggleLeftSidebar,
+    /// GAP-19: toggle right sidebar (⌘⇧B).
+    ToggleRightSidebar,
+    /// GAP-19: switch right-sidebar tab.
+    SidebarRightMode(crate::sidebar::RightMode),
     CloseGitPanel,
     RefreshGitPanel,
     /// GAP-32: recent-commits result `(cwd, [(short_sha, subject), …])`.
@@ -793,6 +899,90 @@ pub enum Message {
     /// GAP-32: lightweight transient toast (e.g. "lazygit not installed").
     Toast(String),
     ToastDismissed,
+    /// GAP-02: error-recovery card — start LLM analysis for a failure context.
+    ErrorRecoveryTrigger(crate::error_recovery::FailureContext),
+    /// GAP-02: streaming LLM chunk (tagged by generation id).
+    ErrorRecoveryChunk {
+        gen: u64,
+        event: crate::ai_chat::types::ChatEvent,
+    },
+    ErrorRecoveryDismiss,
+    ErrorRecoveryApply,
+    ErrorRecoveryStop,
+    ErrorRecoveryToggle,
+    /// GAP-08: natural-language command card — start LLM command generation.
+    NaturalLanguageTrigger(crate::natural_language::NlContext),
+    NaturalLanguageChunk {
+        gen: u64,
+        event: crate::ai_chat::types::ChatEvent,
+    },
+    NaturalLanguageDismiss,
+    NaturalLanguageApply,
+    NaturalLanguageStop,
+    /// GAP-4.2: hover preview — debounce tick, async preview, semantic menu.
+    HoverPreviewDebounced {
+        gen: u64,
+    },
+    HoverPreviewReady {
+        fetch_gen: u64,
+        target: crate::hover_preview::HoverTarget,
+        content: crate::hover_preview::PreviewContent,
+    },
+    HoverPreviewDismiss,
+    HoverPreviewMenuAction(crate::hover_preview::HoverPreviewMenuItem),
+    HoverPreviewMenuHover(Option<crate::hover_preview::HoverPreviewMenuItem>),
+    OpenHoverTarget,
+    /// GAP-36: open semantic file location in editor (⌘-click or action).
+    OpenSemanticInEditor,
+    /// GAP-33: port scanner poll result.
+    PortScannerUpdated(Vec<crate::port_scanner::ListeningPort>),
+    PortScannerCopy(u16),
+    PortScannerOpen(u16),
+    /// GAP-43: remote file browse sidebar tab.
+    RemoteFilesRefresh,
+    RemoteFilesEnterDir(String),
+    RemoteFilesGoUp,
+    RemoteFilesListed {
+        gen: u64,
+        session_id: String,
+        path: String,
+        result: Result<Vec<crate::daemon_client::RemoteFileEntry>, String>,
+    },
+    RemoteFilesOpenFile(String),
+    RemoteFilesRead {
+        gen: u64,
+        session_id: String,
+        path: String,
+        result: Result<crate::daemon_client::RemoteFileRead, String>,
+    },
+    RemoteFilesFindQueryChanged(String),
+    RemoteFilesFindSubmit,
+    RemoteFilesFind {
+        gen: u64,
+        session_id: String,
+        query: String,
+        result: Result<Vec<crate::daemon_client::RemoteFindMatch>, String>,
+    },
+    RemoteFilesSavePreview,
+    RemoteFilesWritten {
+        gen: u64,
+        session_id: String,
+        path: String,
+        result: Result<(), String>,
+    },
+    /// GAP-51: Blocks sidebar — jump / filter / search.
+    BlockOutputJumpToRow(usize),
+    BlockOutputCycleFilter,
+    BlockOutputSearchChanged(String),
+    /// GAP-01: AI Chat panel — toggle / input / send / stream chunks.
+    ToggleAiChatPanel,
+    AiChatInputChanged(String),
+    AiChatSend,
+    AiChatStop,
+    AiChatChunk {
+        gen: u64,
+        event: crate::ai_chat::types::ChatEvent,
+    },
     /// GAP-10: a trigger fired a cross-pane `send_text`. Deferred out of the
     /// explicit target pane id (cross-pane `send_text` only).
     TriggerSendText { pane_id: u64, text: String },
@@ -814,6 +1004,7 @@ pub enum Message {
     NextWorkspace,
     PrevWorkspace,
     ActivateWorkspaceByIndex(usize),
+    ActivateWorkspaceById(WorkspaceId),
     TabHoverEnter(TabId),
     TabHoverExit(TabId),
     // Context menu
@@ -1012,10 +1203,16 @@ pub enum Message {
     // GAP-5.6 SSH reconnect worker → main loop
     #[cfg(unix)]
     SshReconnect(crate::ssh::reconnect::ReconnectUpdate),
-    // GAP-6.7: an event arrived on the in-process broadcast bus. v1 has no
-    // consumer (the JSONL log + `pureterm events tail` are the real consumers);
-    // this variant is the foundation for GAP-6.8 (programmable sidebar).
+    // GAP-6.7: in-process event bus → sidebar DSL + future consumers.
     Event(crate::events::AppEvent),
+    /// GAP-11: toggle instant replay overlay.
+    ToggleInstantReplay,
+    ReplayScrub(i32),
+    /// GAP-12: jump to prev/next shell mark row.
+    PrevMark,
+    NextMark,
+    /// GAP-25: open a new independent window.
+    NewWindow,
 }
 
 /// P4: which `SshProfile` field is being edited in the panel.
@@ -1248,6 +1445,148 @@ fn spawn_ripgrep(
     )
 }
 
+fn spawn_hover_preview_fetch(
+    target: crate::hover_preview::HoverTarget,
+    fetch_gen: u64,
+    cwd: Option<std::path::PathBuf>,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            let preview = crate::hover_preview::fetch_preview(
+                &target,
+                cwd.as_deref(),
+            )
+            .await;
+            (fetch_gen, target, preview)
+        },
+        |(fetch_gen, target, content)| Message::HoverPreviewReady {
+            fetch_gen,
+            target,
+            content,
+        },
+    )
+}
+
+/// GAP-08: stream LLM shell commands into `NaturalLanguageChunk` messages.
+fn spawn_natural_language_stream(
+    ai_cfg: crate::app_config::AiChatConfig,
+    nl_cfg: crate::app_config::NaturalLanguageConfig,
+    ctx: crate::natural_language::NlContext,
+    gen: u64,
+    cancel: std::sync::Arc<tokio::sync::Notify>,
+) -> Task<Message> {
+    use iced::futures::StreamExt;
+
+    let Some(provider) = crate::natural_language::make_provider(&ai_cfg) else {
+        return Task::done(Message::NaturalLanguageChunk {
+            gen,
+            event: crate::ai_chat::types::ChatEvent::Error(
+                "missing API key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)".into(),
+            ),
+        });
+    };
+    let req = crate::natural_language::build_prompt(&ctx, &ai_cfg, &nl_cfg);
+    Task::stream(
+        iced::stream::channel(64, move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+            let mut stream = provider.stream(req, cancel);
+            while let Some(ev) = stream.next().await {
+                let terminal = ev.is_terminal();
+                if output
+                    .try_send(Message::NaturalLanguageChunk {
+                        gen,
+                        event: ev,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                if terminal {
+                    break;
+                }
+            }
+            std::future::pending::<()>().await;
+        }),
+    )
+}
+
+/// GAP-02: stream LLM fix suggestions into `ErrorRecoveryChunk` messages.
+fn spawn_error_recovery_stream(
+    cfg: crate::app_config::ErrorRecoveryConfig,
+    failure: crate::error_recovery::FailureContext,
+    gen: u64,
+    cancel: std::sync::Arc<tokio::sync::Notify>,
+) -> Task<Message> {
+    use iced::futures::StreamExt;
+
+    let Some(provider) = crate::error_recovery::make_provider(&cfg) else {
+        return Task::done(Message::ErrorRecoveryChunk {
+            gen,
+            event: crate::ai_chat::types::ChatEvent::Error(
+                "missing API key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)".into(),
+            ),
+        });
+    };
+    let req = crate::error_recovery::build_prompt(&failure, &cfg);
+    Task::stream(
+        iced::stream::channel(64, move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+            let mut stream = provider.stream(req, cancel);
+            while let Some(ev) = stream.next().await {
+                let terminal = ev.is_terminal();
+                if output
+                    .try_send(Message::ErrorRecoveryChunk {
+                        gen,
+                        event: ev,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+                if terminal {
+                    break;
+                }
+            }
+            std::future::pending::<()>().await;
+        }),
+    )
+}
+
+/// GAP-01: stream assistant replies into `AiChatChunk` messages.
+fn spawn_ai_chat_stream(
+    cfg: crate::app_config::AiChatConfig,
+    req: crate::ai_chat::types::ChatRequest,
+    gen: u64,
+    cancel: std::sync::Arc<tokio::sync::Notify>,
+) -> Task<Message> {
+    use iced::futures::StreamExt;
+
+    let Some(provider) = crate::ai_chat::context::make_provider(&cfg) else {
+        return Task::done(Message::AiChatChunk {
+            gen,
+            event: crate::ai_chat::types::ChatEvent::Error(
+                "missing API key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)".into(),
+            ),
+        });
+    };
+    Task::stream(
+        iced::stream::channel(64, move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
+            let mut stream = provider.stream(req, cancel);
+            while let Some(ev) = stream.next().await {
+                let terminal = ev.is_terminal();
+                if output
+                    .try_send(Message::AiChatChunk { gen, event: ev })
+                    .is_err()
+                {
+                    break;
+                }
+                if terminal {
+                    break;
+                }
+            }
+            std::future::pending::<()>().await;
+        }),
+    )
+}
+
 /// GAP-3.8: open a file:line in the user's `$EDITOR` (default `vim`), detached
 /// so the GUI never blocks. TUI editors without a controlling terminal won't
 /// display — this respects the user's configured EDITOR as-is.
@@ -1416,6 +1755,8 @@ impl PureTermApp {
         // `config_path` into `self` (the PathBuf isn't Copy).
         #[cfg(unix)]
         let ssh_profiles = AppConfig::load_ssh_profiles(&config_path);
+        #[cfg(unix)]
+        let ssh_global = crate::ssh::config::load_ssh_settings(&config_path);
         // GAP-6.4: load user-defined [[commands]] before building the keymap.
         let custom_commands = AppConfig::load_custom_commands(&config_path);
 
@@ -1429,6 +1770,13 @@ impl PureTermApp {
         // GAP-32: Git Integration config (panel toggle, PR refresh, lazygit cmd).
         let git_cfg = AppConfig::load_git(&config_path);
 
+        // GAP-19: Dual Sidebar config (widths, default-open).
+        let sidebar_cfg = AppConfig::load_sidebar(&config_path);
+        let sidebar = crate::sidebar::SidebarState {
+            left_open: sidebar_cfg.left_default_open,
+            ..Default::default()
+        };
+
         // GAP-15: Shell Integration config (master switch, per-shell inject, command-text privacy).
         let shell_integration_cfg = AppConfig::load_shell_integration(&config_path);
 
@@ -1437,11 +1785,41 @@ impl PureTermApp {
 
         // GAP-09: Notification System config (desktop toasts, dock badge, ring, bell throttle).
         let notification_cfg = AppConfig::load_notification(&config_path);
+        let url_scheme_cfg = AppConfig::load_url_scheme(&config_path);
+        // GAP-02: Error Recovery config.
+        let error_recovery_cfg = AppConfig::load_error_recovery(&config_path);
+        let ai_chat_cfg = AppConfig::load_ai_chat(&config_path);
+        let soul_cfg = AppConfig::load_soul(&config_path);
+        let soul_prompt = crate::soul::load_system_prompt_extension(&soul_cfg);
+        let natural_language_cfg = AppConfig::load_natural_language(&config_path);
+        let lsp_cfg = AppConfig::load_lsp(&config_path);
+        let lsp_workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let lsp = crate::lsp::LspState::try_spawn(&lsp_cfg, lsp_workspace);
+        let semantic_history_cfg = AppConfig::load_semantic_history(&config_path);
+        let block_output_cfg = AppConfig::load_block_output(&config_path);
+        let port_scanner_cfg = AppConfig::load_port_scanner(&config_path);
+        let ambient_agents_cfg = AppConfig::load_ambient_agents(&config_path);
+        let broadcast_cfg = AppConfig::load_broadcast_input(&config_path);
+        let bidi_mode = AppConfig::load_bidi_mode(&config_path);
+        let workspace_groups = AppConfig::load_workspace_groups(&config_path);
+        let toolbelt_cfg = AppConfig::load_toolbelt(&config_path);
+        let quake_cfg = AppConfig::load_quake(&config_path);
+        let p4 = crate::p4_runtime::P4Features::load(&config_path);
+        p4.apply_platform_effects();
+        let sidebar_dsl = crate::sidebar_dsl::SidebarDslState::load_from_dir(
+            &crate::sidebar_dsl::sidebars_config_dir(),
+        );
         // Request macOS notification authorization early (best-effort, async —
         // toasts posted before it resolves are dropped, acceptable).
         #[cfg(target_os = "macos")]
         if notification_cfg.enabled && notification_cfg.desktop_notifications {
             crate::macos_notifications::request_authorization();
+        }
+        #[cfg(target_os = "macos")]
+        if url_scheme_cfg.enabled && url_scheme_cfg.register_on_launch {
+            if let Err(e) = crate::macos_url_scheme::register_default_handler() {
+                log::warn!("pureterm:// register_on_launch: {e}");
+            }
         }
 
         // GAP-5.6: peek the saved layout so the window reopens at its last
@@ -1488,6 +1866,7 @@ impl PureTermApp {
             next_tab_id: 0,
             windows: vec![Window::new_main(id)],
             active_window_id: id,
+            recent_workspace_ids: vec![WorkspaceId(0)],
             hovered_tab: None,
             glyph_state,
             config,
@@ -1512,6 +1891,8 @@ impl PureTermApp {
             ssh_dialog: None,
             #[cfg(unix)]
             ssh_profiles,
+            #[cfg(unix)]
+            ssh_global,
             #[cfg(unix)]
             ssh_manager: None,
             #[cfg(unix)]
@@ -1566,13 +1947,53 @@ impl PureTermApp {
             status_bar_git_status: None,
             // GAP-32: Git Integration config + overlay panel state.
             git_cfg,
+            sidebar,
+            sidebar_cfg,
             git_panel: crate::git_panel::GitPanelState::new(),
             // GAP-09: Notifications overlay panel + store + config.
             notification_panel: crate::notification_panel::NotificationPanelState::new(),
             notification_cfg,
+            url_scheme_cfg,
             notification_store: crate::notification_store::NotificationStore::new(
                 crate::notification_store::DEFAULT_HISTORY_CAP,
             ),
+            error_recovery_cfg,
+            error_recovery: crate::error_recovery::ErrorRecoveryState::new(),
+            error_recovery_cancel: None,
+            natural_language_cfg,
+            natural_language: crate::natural_language::NaturalLanguageState::new(),
+            natural_language_cancel: None,
+            soul_cfg,
+            soul_prompt,
+            hover_preview: crate::hover_preview::HoverPreviewState::new(),
+            semantic_history_cfg,
+            block_output_cfg,
+            pane_block_stores: HashMap::new(),
+            block_output_filter: crate::output_blocks::BlockExitFilter::default(),
+            block_output_search: String::new(),
+            port_scanner_cfg,
+            port_scanner_entries: Vec::new(),
+            remote_files: crate::remote_files::RemoteFilesState::default(),
+            ambient_agents_cfg,
+            ambient_agents: crate::ambient_agents::AmbientAgentsState::default(),
+            broadcast_cfg,
+            broadcast: crate::broadcast_input::BroadcastState::default(),
+            bidi_mode,
+            workspace_groups,
+            toolbelt_cfg,
+            toolbelt: crate::toolbelt::ToolbeltState::default(),
+            quake_cfg,
+            quake: crate::quake_dock::QuakeDockState::default(),
+            p4,
+            replay_viewer: crate::instant_replay::ReplayViewer::default(),
+            pane_marks: HashMap::new(),
+            sidebar_dsl,
+            keyboard_modifiers: iced::keyboard::Modifiers::default(),
+            ai_chat_cfg,
+            ai_chat_panel: crate::ai_chat::panel::ChatPanelState::new(),
+            ai_chat_cancel: None,
+            lsp_cfg,
+            lsp,
             app_focused: true,
             last_git_branch: HashMap::new(),
             // GAP-15: Shell Integration.
@@ -1614,7 +2035,7 @@ impl PureTermApp {
         #[cfg(not(unix))]
         let restored = false;
         if !restored {
-            let first_id = app.create_tab(app.viewport_size.width, app.viewport_size.height);
+            let first_id = app.create_tab(app.terminal_viewport_width(), app.viewport_size.height);
             app.set_active_tab(first_id);
         }
 
@@ -1681,6 +2102,8 @@ impl PureTermApp {
             created_at: Instant::now(),
             zoom_state: None,
             vi_sub_mode: None,
+            vi_registers: Default::default(),
+            vi_pending_register: None,
         };
         // field-path:只借 self.windows,与后续 self.events / self.i18n disjoint。
         let aw = self.active_window_id;
@@ -1719,7 +2142,7 @@ impl PureTermApp {
         let (cols, rows, cw, ch) = {
             let gs = self.glyph_state.borrow();
             let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-            let cols = (self.viewport_size.width / gs.cell_width).floor().max(1.0) as usize;
+            let cols = (self.terminal_viewport_width() / gs.cell_width).floor().max(1.0) as usize;
             let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
             (cols, rows, gs.cell_width as u16, gs.cell_height as u16)
         };
@@ -1738,6 +2161,7 @@ impl PureTermApp {
             None,
             Some(argv),
             Some(kind),
+            self.ssh_global.smallest_screen_wins,
         ) {
             Ok(v) => v,
             Err(e) => {
@@ -1778,6 +2202,8 @@ impl PureTermApp {
             created_at: Instant::now(),
             zoom_state: None,
             vi_sub_mode: None,
+            vi_registers: Default::default(),
+            vi_pending_register: None,
         });
         self.set_active_tab(id);
         self.events.emit(
@@ -1868,6 +2294,8 @@ impl PureTermApp {
                     created_at: Instant::now(),
                     zoom_state: None,
                     vi_sub_mode: None,
+            vi_registers: Default::default(),
+            vi_pending_register: None,
                 });
                 has_tab = true;
                 // GAP-6.7: reattaching to a surviving daemon session (distinct from
@@ -1910,17 +2338,19 @@ impl PureTermApp {
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访 self.windows
         // 遍历活跃 workspace 的 tabs(只借 self.windows,不借 *self)。
-        let vw = self.viewport_size.width;
+        let vw = self.terminal_viewport_width();
         let aw = self.active_window_id;
+        #[cfg(unix)]
+        let ssh_smallest = self.ssh_global.smallest_screen_wins;
+        #[cfg(not(unix))]
+        let ssh_smallest = false;
         if let Some(ws) = self
             .windows
             .iter_mut()
             .find(|w| w.window_id == aw)
             .and_then(|w| w.active_workspace_mut())
         {
-            for tab in &mut ws.tabs {
-                Self::resize_panes_in_tab(tab, vw, terminal_height, cw, ch);
-            }
+            Self::resize_workspace_panes(ws, vw, terminal_height, cw, ch, ssh_smallest);
         }
 
         log::info!(
@@ -2148,6 +2578,113 @@ impl PureTermApp {
         self.active_ws_mut()?.active_tab_mut()
     }
 
+    /// GAP-19: terminal column width after open sidebars.
+    fn terminal_viewport_width(&self) -> f32 {
+        self.sidebar.terminal_width(
+            self.viewport_size.width,
+            self.sidebar_cfg.left_width,
+            self.sidebar_cfg.right_width,
+        )
+    }
+
+    /// GAP-19: open the right sidebar on a mode (optionally refresh Git data).
+    fn open_right_sidebar(&mut self, mode: crate::sidebar::RightMode) -> Task<Message> {
+        self.sidebar.right_open = true;
+        self.sidebar.right_mode = mode;
+        if mode == crate::sidebar::RightMode::Git {
+            return self.open_git_sidebar_tab();
+        }
+        if mode == crate::sidebar::RightMode::Files {
+            return self.open_remote_files_tab();
+        }
+        Task::none()
+    }
+
+    /// GAP-43: refresh the Files tab for the active pane's daemon session.
+    fn open_remote_files_tab(&mut self) -> Task<Message> {
+        let Some(ctx) = self.active_terminal_ctx() else {
+            self.remote_files.clear();
+            return Task::none();
+        };
+        let Some(session_id) = ctx.session_id().map(str::to_string) else {
+            self.remote_files.clear();
+            return Task::done(Message::Toast(
+                "Files tab needs a puretermd session (local or SSH).".to_string(),
+            ));
+        };
+        self.remote_files.session_label = Some(if ctx.is_ssh() {
+            format!(
+                "SSH · {}",
+                ctx.profile_display().unwrap_or("session")
+            )
+        } else {
+            format!("local · {session_id}")
+        });
+        let path = if self.remote_files.session_id.as_deref() == Some(session_id.as_str()) {
+            self.remote_files.path.clone()
+        } else {
+            ".".to_string()
+        };
+        self.spawn_remote_files_listdir(session_id, path)
+    }
+
+    fn spawn_remote_files_listdir(&mut self, session_id: String, path: String) -> Task<Message> {
+        let gen = self.remote_files.begin_fetch(&session_id, &path);
+        crate::remote_files::spawn_listdir(session_id, path, gen)
+    }
+
+    fn spawn_remote_files_read(&mut self, session_id: String, path: String) -> Task<Message> {
+        let gen = self.remote_files.begin_read(&path);
+        crate::remote_files::spawn_read(session_id, path, gen)
+    }
+
+    fn spawn_remote_files_find(&mut self, session_id: String, base: String, query: String) -> Task<Message> {
+        let gen = self.remote_files.begin_find(&query);
+        crate::remote_files::spawn_find(session_id, base, query, gen)
+    }
+
+    /// GAP-19: populate git panel state and spawn refresh tasks for the Git tab.
+    fn open_git_sidebar_tab(&mut self) -> Task<Message> {
+        if !self.git_cfg.panel_enabled {
+            return Task::none();
+        }
+        let Some(cwd) = self.active_pane_cwd() else {
+            return Task::done(Message::Toast(
+                "Git panel needs a pane with a known cwd (zsh/bash).".to_string(),
+            ));
+        };
+        let cwd = cwd.to_string_lossy().to_string();
+        self.git_panel.open_for(&cwd);
+        self.git_panel.pr_refreshing = self.git_cfg.show_pr;
+        self.events.emit(
+            crate::events::Category::Git,
+            "git.panel_opened",
+            None,
+            serde_json::json!({ "cwd": cwd, "via": "sidebar" }),
+        );
+        let mut tasks = vec![
+            crate::status_bar::spawn_git_status(cwd.clone()),
+            crate::gh_pr::spawn_git_log(cwd.clone()),
+        ];
+        if self.git_cfg.show_pr {
+            tasks.push(crate::gh_pr::spawn_gh_pr(cwd));
+        }
+        Task::batch(tasks)
+    }
+
+    /// GAP-19: when Feed focuses a request, show it in the right sidebar.
+    #[cfg(unix)]
+    fn sidebar_show_feed(&mut self) {
+        self.sidebar.right_open = true;
+        self.sidebar.right_mode = crate::sidebar::RightMode::Feed;
+    }
+
+    /// GAP-19: resize terminal panes after sidebar toggle/width change.
+    fn sidebar_layout_changed(&mut self) -> Task<Message> {
+        self.resize_active_tab_panes();
+        Task::none()
+    }
+
     /// GAP-10: publish trigger highlight + fold regions into shared renderer Arcs.
     fn publish_trigger_overlay_for_view(&self, pane_id: PaneId, publish: bool) {
         if publish {
@@ -2200,11 +2737,47 @@ impl PureTermApp {
             .unwrap_or(WorkspaceId(0))
     }
 
+    /// GAP-21: refresh Dock badge from notification store + Feed pending count.
+    fn refresh_dock_badge_from_state(&self) {
+        #[cfg(unix)]
+        let feed_pending = self.feed_panel.pending_count();
+        #[cfg(not(unix))]
+        let feed_pending = 0;
+        refresh_dock_badge(&self.notification_cfg, &self.notification_store, feed_pending);
+    }
+
+    /// GAP-21: sync recent workspace names to the macOS Dock menu + consume picks.
+    #[cfg(target_os = "macos")]
+    fn sync_dock_workspace_menu(&self) -> Option<WorkspaceId> {
+        let entries: Vec<(u64, String)> = self
+            .recent_workspace_ids
+            .iter()
+            .filter_map(|&id| {
+                self.active_window()
+                    .and_then(|w| w.workspace(id))
+                    .map(|ws| (id.0, ws.name.clone()))
+            })
+            .collect();
+        crate::macos_dock_menu::set_workspace_entries(entries);
+        crate::macos_dock_menu::consume_workspace_switch().map(WorkspaceId)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn sync_dock_workspace_menu(&self) -> Option<WorkspaceId> {
+        None
+    }
+
+    /// GAP-21: record a workspace visit for the Dock MRU menu.
+    fn touch_recent_workspace(&mut self, id: WorkspaceId) {
+        touch_recent_workspace(&mut self.recent_workspace_ids, id);
+    }
+
     /// 切到 target workspace(纯指针切换,不动 `workspaces` → 不丢 Surface 状态),
     /// 刷新后续状态。
     fn apply_workspace_switch(&mut self, target: WorkspaceId) {
         let switched = self.active_window_mut().map_or(false, |w| w.switch_to(target));
         if switched {
+            self.touch_recent_workspace(target);
             self.refresh_status_bar_cwd();
             self.reposition_web_panes();
             self.mark_layout_dirty();
@@ -2215,6 +2788,135 @@ impl PureTermApp {
                 serde_json::json!({ "workspace": self.active_ws().map(|ws| ws.name.clone()).unwrap_or_default() }),
             );
         }
+    }
+
+    /// GAP-25: switch workspace in every open window (by name or index).
+    fn apply_workspace_switch_all_windows(
+        &mut self,
+        id: Option<u64>,
+        name: Option<&str>,
+        index: Option<usize>,
+    ) {
+        let window_ids: Vec<window::Id> = self.windows.iter().map(|w| w.window_id).collect();
+        for win_id in window_ids {
+            if let Some(target) =
+                self.resolve_workspace_target_for_window(win_id, id, name, index)
+            {
+                if let Some(w) = self.windows.iter_mut().find(|w| w.window_id == win_id) {
+                    w.switch_to(target);
+                }
+            }
+        }
+        if let Some(ws) = self.active_ws() {
+            self.touch_recent_workspace(ws.id);
+        }
+        self.refresh_status_bar_cwd();
+        self.reposition_web_panes();
+        self.mark_layout_dirty();
+        self.events.emit(
+            crate::events::Category::Workspace,
+            "workspace.switched",
+            None,
+            serde_json::json!({
+                "workspace": self.active_ws().map(|ws| ws.name.clone()).unwrap_or_default(),
+                "all_windows": true,
+            }),
+        );
+    }
+
+    fn resolve_workspace_target_for_window(
+        &self,
+        win_id: window::Id,
+        id: Option<u64>,
+        name: Option<&str>,
+        index: Option<usize>,
+    ) -> Option<WorkspaceId> {
+        let win = self.windows.iter().find(|w| w.window_id == win_id)?;
+        if let Some(id) = id {
+            let ws = WorkspaceId(id);
+            return if win.workspace(ws).is_some() { Some(ws) } else { None };
+        }
+        if let Some(name) = name.filter(|n| !n.is_empty()) {
+            return win.workspaces.iter().find(|w| w.name == name).map(|w| w.id);
+        }
+        if let Some(i) = index {
+            return win.workspace_ids_in_order().get(i).copied();
+        }
+        None
+    }
+
+    fn scroll_active_pane_to_row(&mut self, row: usize) {
+        if let Some(tab) = self.active_tab_mut() {
+            let pane_id = tab.active_pane;
+            if let Some(pane) = tab.panes.get(&pane_id) {
+                if let Some(ctx) = pane.terminal() {
+                    let mut term = ctx.terminal().lock_unfair();
+                    let display_offset = term.grid().display_offset();
+                    let screen_lines = term.grid().screen_lines();
+                    if row >= display_offset && row < display_offset + screen_lines {
+                        return;
+                    }
+                    let target = row.saturating_sub(screen_lines / 2);
+                    term.grid_mut()
+                        .scroll_display(Scroll::Delta(target as i32 - display_offset as i32));
+                }
+            }
+        }
+    }
+
+    /// GAP-12: jump to previous (`prev=true`) or next shell mark.
+    fn jump_shell_mark(&mut self, prev: bool) {
+        let pane_id = self.active_tab_ref().map(|t| t.active_pane);
+        let cursor_row = self
+            .active_terminal_ctx()
+            .map(|ctx| {
+                let term = ctx.terminal().lock_unfair();
+                term.grid().cursor.point.line.0 as usize
+            })
+            .unwrap_or(0);
+        if let Some(pid) = pane_id {
+            if let Some(marks) = self.pane_marks.get(&pid) {
+                let row = if prev {
+                    marks.prev_mark_row(cursor_row)
+                } else {
+                    marks.next_mark_row(cursor_row)
+                };
+                if let Some(r) = row {
+                    self.scroll_active_pane_to_row(r);
+                }
+            }
+        }
+    }
+
+    /// GAP-25: spawn a secondary window with tab bar + default workspace.
+    fn open_new_window(&mut self) -> Task<Message> {
+        let settings = window::Settings {
+            size: Size::new(1024.0, 768.0),
+            decorations: true,
+            resizable: true,
+            closeable: true,
+            transparent: true,
+            ..Default::default()
+        };
+        let (win_id, task) = window::open(settings);
+        let gs = self.glyph_state.borrow();
+        let cw = gs.cell_width;
+        let ch = gs.cell_height;
+        drop(gs);
+        self.windows.push(Window::new_secondary(win_id));
+        self.active_window_id = win_id;
+        let _ = self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
+        let resize_task = window::set_resize_increments(win_id, Some(Size::new(cw, ch)));
+        self.events.emit(
+            crate::events::Category::Window,
+            "window.opened",
+            None,
+            serde_json::json!({ "secondary": true }),
+        );
+        Task::batch(vec![
+            task.map(|_| Message::TerminalWakeup),
+            resize_task.map(|_: ()| Message::TerminalWakeup),
+        ])
     }
 
     fn active_terminal_ctx(&self) -> Option<Arc<TerminalContext>> {
@@ -2465,7 +3167,7 @@ impl PureTermApp {
         let layout = tab.split_tree.compute_layout(
             0.0,
             0.0,
-            self.viewport_size.width,
+            self.terminal_viewport_width(),
             terminal_height,
         );
         let rect = *layout.get(&pane_id)?;
@@ -2520,15 +3222,54 @@ impl PureTermApp {
             ));
             return;
         };
+        self.connect_ssh_with_profile(profile);
+    }
 
+    /// GAP-47/48: connect using an ephemeral or configured SSH profile.
+    #[cfg(unix)]
+    fn connect_ssh_with_profile(&mut self, profile: crate::ssh::config::SshProfile) {
         let host = profile.host.clone();
         let user = profile.user.clone();
         let port = profile.port;
         let key_path = profile.key_path.clone();
         let profile_name = profile.name.clone();
+        let login_cmds = profile.login_commands.clone();
+        let login_delay = profile.login_delay_ms;
+        let login_on_error =
+            crate::login_scripts::LoginErrorPolicy::parse(&profile.login_on_error);
+
+        // GAP-39: non-SSH profiles — MVP uses external CLI when available.
+        match profile.session_type() {
+            crate::serial_telnet::SessionType::Telnet | crate::serial_telnet::SessionType::Serial => {
+                let argv = crate::serial_telnet::spawn_argv(
+                    profile.session_type(),
+                    &host,
+                    port.unwrap_or(23),
+                    &profile.serial_settings(),
+                );
+                let Some(argv) = argv else {
+                    self.show_ssh_error("No telnet/serial CLI (telnet, nc, cu, or screen) found on PATH".into());
+                    return;
+                };
+                self.show_ssh_error(format!(
+                    "Serial/Telnet MVP: run `{}` from a local shell tab (daemon route deferred)",
+                    argv.join(" ")
+                ));
+                return;
+            }
+            crate::serial_telnet::SessionType::Ssh => {}
+        }
 
         // Retrieve password for auto-fill.
-        // Priority: CredentialStore (encrypted) > TOML plaintext password.
+        // Priority: CredentialStore > password manager > TOML plaintext.
+        let pm_src = crate::password_manager::PasswordManagerSource::parse(
+            &self.ssh_global.password_manager,
+        );
+        let pm_ref = profile
+            .password_ref
+            .as_ref()
+            .map(|r| r.to_ref())
+            .unwrap_or_default();
         let password = self
             .ssh_credential_store
             .as_ref()
@@ -2543,6 +3284,15 @@ impl PureTermApp {
                 store.retrieve(&key).ok()
             })
             .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            .or_else(|| {
+                crate::password_manager::resolve_password(
+                    pm_src,
+                    &host,
+                    user.as_deref(),
+                    port.unwrap_or(22),
+                    &pm_ref,
+                )
+            })
             .or(profile.password.clone());
 
         // GAP-5.1 M3: prefer the persistent daemon so the SSH session survives
@@ -2553,6 +3303,16 @@ impl PureTermApp {
                 let id = self.push_ssh_tab(profile_name.clone(), ctx);
                 self.ssh_dialog = None;
                 self.set_active_tab(id);
+                if !login_cmds.is_empty() {
+                    if let Some(login_ctx) = self.active_terminal_ctx() {
+                        crate::login_scripts::run_login_commands(
+                            login_ctx,
+                            login_cmds,
+                            login_delay,
+                            login_on_error,
+                        );
+                    }
+                }
                 // GAP-6.7: SSH tab + daemon session created.
                 self.events.emit(
                     crate::events::Category::Surface,
@@ -2591,6 +3351,8 @@ impl PureTermApp {
             password.as_deref(),
             profile.forward_agent,
             None,
+            profile.forwards(),
+            profile.jump_hosts.clone(),
         );
 
         match spawn_result {
@@ -2604,6 +3366,16 @@ impl PureTermApp {
                         let id = self.push_ssh_tab(profile_name.clone(), ctx);
                         self.ssh_dialog = None;
                         self.set_active_tab(id);
+                        if !login_cmds.is_empty() {
+                            if let Some(login_ctx) = self.active_terminal_ctx() {
+                                crate::login_scripts::run_login_commands(
+                                    login_ctx,
+                                    login_cmds,
+                                    login_delay,
+                                    login_on_error,
+                                );
+                            }
+                        }
                     },
                     Err(e) => {
                         self.show_ssh_error(self.i18n.t_fmt(
@@ -2619,6 +3391,60 @@ impl PureTermApp {
                     &[("err", &e.to_string())],
                 ));
             },
+        }
+    }
+
+    /// GAP-48: resolve workspace switch target from id / name / index.
+    fn resolve_workspace_target(
+        &self,
+        id: Option<u64>,
+        name: Option<&str>,
+        index: Option<usize>,
+    ) -> Option<WorkspaceId> {
+        let win = self.active_window()?;
+        if let Some(id) = id {
+            let ws = WorkspaceId(id);
+            return if win.workspace(ws).is_some() { Some(ws) } else { None };
+        }
+        if let Some(name) = name.filter(|n| !n.is_empty()) {
+            return win
+                .workspaces
+                .iter()
+                .find(|w| w.name == name)
+                .map(|w| w.id);
+        }
+        if let Some(i) = index {
+            return win.workspace_ids_in_order().get(i).copied();
+        }
+        None
+    }
+
+    /// GAP-48: execute a parsed `pureterm://` action inside the GUI loop.
+    fn execute_automation_action(
+        &mut self,
+        action: crate::automation::AutomationAction,
+    ) -> Task<Message> {
+        use crate::automation::AutomationAction as A;
+        use crate::ipc::IpcSideEffect as Fx;
+        match action {
+            A::NewTab => self.execute_ipc_side_effect(Fx::NewTab),
+            A::SwitchTab { index } => self.execute_ipc_side_effect(Fx::SwitchTab { index }),
+            A::SwitchWorkspace { id, name, index } => {
+                self.execute_ipc_side_effect(Fx::SwitchWorkspace {
+                    id,
+                    name,
+                    index,
+                    all_windows: false,
+                })
+            }
+            A::SendText { text, pane_id } => {
+                self.execute_ipc_side_effect(Fx::SendText { pane_id, text })
+            }
+            #[cfg(unix)]
+            A::SshOpen { target, port } => {
+                self.execute_ipc_side_effect(Fx::SshOpenTarget { target, port })
+            }
+            A::Open { cwd: _ } => self.execute_ipc_side_effect(Fx::NewTab),
         }
     }
 
@@ -2842,7 +3668,7 @@ impl PureTermApp {
         // Apply initial size
         let gs = self.glyph_state.borrow();
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-        let cols = (self.viewport_size.width / gs.cell_width).floor().max(1.0) as usize;
+        let cols = (self.terminal_viewport_width() / gs.cell_width).floor().max(1.0) as usize;
         let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
         terminal_ctx.resize(cols, rows, gs.cell_width as u16, gs.cell_height as u16);
         drop(gs);
@@ -2883,6 +3709,8 @@ impl PureTermApp {
             created_at: Instant::now(),
             zoom_state: None,
             vi_sub_mode: None,
+            vi_registers: Default::default(),
+            vi_pending_register: None,
         };
         let aw = self.active_window_id;
         self.windows
@@ -3375,6 +4203,9 @@ impl PureTermApp {
                             ) {
                                 Ok(handle) => {
                                     log::info!("IPC listener started: {}", handle.socket_path.display());
+                                    crate::multi_window_ipc::register_window_socket(
+                                        &handle.socket_path,
+                                    );
                                     self.ipc_handle = Some(handle);
                                 }
                                 Err(e) => {
@@ -3401,6 +4232,8 @@ impl PureTermApp {
                     if !self.delegate_installed {
                         crate::macos_reopen::add_reopen_method();
                         crate::macos_menu::install_edit_menu();
+                        crate::macos_dock_menu::add_dock_menu_methods();
+                        crate::macos_url_scheme::add_open_urls_method();
                         self.delegate_installed = true;
                     }
                     // Handle menu-bar triggered clipboard actions.
@@ -3422,6 +4255,17 @@ impl PureTermApp {
                     if crate::macos_menu::consume_select_all() {
                         return Task::done(Message::SelectAll);
                     }
+                    if let Some(ws_id) = self.sync_dock_workspace_menu() {
+                        return Task::done(Message::ActivateWorkspaceById(ws_id));
+                    }
+                    if self.url_scheme_cfg.enabled {
+                        while let Some(url) = crate::macos_url_scheme::consume_pending_url() {
+                            match crate::automation::parse_pureterm_url(&url) {
+                                Ok(action) => return self.execute_automation_action(action),
+                                Err(e) => log::warn!("pureterm:// URL parse failed: {e}"),
+                            }
+                        }
+                    }
                     if !self.metal_layer_configured {
                         self.metal_layer_configured = true;
                         set_metal_presents_with_transaction();
@@ -3442,7 +4286,7 @@ impl PureTermApp {
                         // PureTerm: 每个主窗口都从 Tab 1 开始计数（避免 dock 重新打开时
                         // 跨窗口累加 `next_tab_id`，导致新窗口首个 tab 叫 "Tab 6"）。
                         self.next_tab_id = 0;
-                        let first_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                        let first_id = self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                         self.set_active_tab(first_id);
                         self.metal_layer_configured = false;
                         self.glyph_state.borrow_mut().mark_atlas_dirty();
@@ -3774,9 +4618,110 @@ impl PureTermApp {
                                     self.events.emit(
                                         crate::events::Category::Shell,
                                         format!("shell.{}", shell_mark_kind_str(mark.kind)),
-                                        session_id,
+                                        session_id.clone(),
                                         data,
                                     );
+
+                                    // GAP-51: record block boundary on command finish.
+                                    if self.block_output_cfg.enabled
+                                        && mark.kind
+                                            == alacritty_terminal::event::ShellMarkKind::OutputEnd
+                                    {
+                                        if let Some(ref cmd) = finalized {
+                                            let output_start = self
+                                                .pane_shell_state
+                                                .get(pane_id)
+                                                .and_then(|s| s.last_output_start_row());
+                                            let output_text = self.pane_terminal_ctx(*pane_id).map(|ctx| {
+                                                let term = ctx.terminal().lock_unfair();
+                                                let start = output_start
+                                                    .unwrap_or_else(|| cmd.pane_row_at_b.saturating_add(1));
+                                                crate::surface_snapshot::capture_row_range(
+                                                    &term,
+                                                    start,
+                                                    mark.row,
+                                                    512,
+                                                )
+                                            });
+                                            let store = self
+                                                .pane_block_stores
+                                                .entry(*pane_id)
+                                                .or_default();
+                                            let block = store.push_from_command(
+                                                pane_id.0,
+                                                cmd,
+                                                mark.row,
+                                                output_start,
+                                                output_text,
+                                            );
+                                            self.events.emit(
+                                                crate::events::Category::Shell,
+                                                "block.finished".to_string(),
+                                                session_id,
+                                                serde_json::json!({
+                                                    "pane_id": pane_id.0,
+                                                    "block_id": block.id,
+                                                    "command_row": block.command_row,
+                                                    "output_start_row": block.output_start_row,
+                                                    "output_end_row": block.output_end_row,
+                                                    "exit_code": block.exit_code,
+                                                    "duration_us": block.duration_us,
+                                                    "command": block.command,
+                                                }),
+                                            );
+                                        }
+                                    }
+
+                                    // GAP-02: auto-analyze on non-zero exit (Shell Integration).
+                                    if mark.kind
+                                        == alacritty_terminal::event::ShellMarkKind::OutputEnd
+                                    {
+                                        let integrated = self
+                                            .pane_shell_state
+                                            .get(pane_id)
+                                            .map(|s| s.integrated)
+                                            .unwrap_or(false);
+                                        let exit = mark.exit_code;
+                                        if crate::error_recovery::should_auto_analyze(
+                                            exit,
+                                            integrated,
+                                            &self.error_recovery_cfg,
+                                        ) {
+                                            if let Some(ctx) = self.pane_terminal_ctx(*pane_id) {
+                                                let shell_st = self
+                                                    .pane_shell_state
+                                                    .get(pane_id)
+                                                    .cloned()
+                                                    .unwrap_or_default();
+                                                let output = {
+                                                    let term = ctx.terminal();
+                                                    let guard = term.lock();
+                                                    let start = shell_st
+                                                        .last_output_start_row()
+                                                        .unwrap_or(0);
+                                                    crate::surface_snapshot::capture_row_range(
+                                                        &guard,
+                                                        start,
+                                                        mark.row,
+                                                        self.error_recovery_cfg.max_output_lines,
+                                                    )
+                                                };
+                                                let failure =
+                                                    crate::error_recovery::FailureContext {
+                                                        pane_id: pane_id.0,
+                                                        command: finalized
+                                                            .as_ref()
+                                                            .and_then(|c| c.text.clone()),
+                                                        exit_code: exit.unwrap_or(1),
+                                                        cwd: self.pane_cwds.get(pane_id).cloned(),
+                                                        output_text: output,
+                                                    };
+                                                deferred_send_text.push(
+                                                    Message::ErrorRecoveryTrigger(failure),
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
                                 // GAP-09: OSC 9/99/777 desktop notification —
                                 // record in the in-memory store (status-bar
@@ -3803,6 +4748,16 @@ impl PureTermApp {
                                         refresh_dock_badge(
                                             &self.notification_cfg,
                                             &self.notification_store,
+                                            {
+                                                #[cfg(unix)]
+                                                {
+                                                    self.feed_panel.pending_count()
+                                                }
+                                                #[cfg(not(unix))]
+                                                {
+                                                    0
+                                                }
+                                            },
                                         );
                                         fire_toast(
                                             &self.notification_cfg,
@@ -3887,6 +4842,16 @@ impl PureTermApp {
                                         refresh_dock_badge(
                                             &self.notification_cfg,
                                             &self.notification_store,
+                                            {
+                                                #[cfg(unix)]
+                                                {
+                                                    self.feed_panel.pending_count()
+                                                }
+                                                #[cfg(not(unix))]
+                                                {
+                                                    0
+                                                }
+                                            },
                                         );
                                         fire_toast(
                                             &self.notification_cfg,
@@ -4123,20 +5088,78 @@ impl PureTermApp {
             // follow-up; v1 clears the indicator, which is the visible effect.)
             Message::FocusNotificationPane(pane_id) => {
                 self.notification_store.clear_unread(pane_id);
-                refresh_dock_badge(&self.notification_cfg, &self.notification_store);
+                self.refresh_dock_badge_from_state();
                 return Task::none();
             }
             // GAP-09: "Dismiss all" — clear the store + Dock badge.
             Message::DismissAllNotifications => {
                 self.notification_store.clear_all();
-                refresh_dock_badge(&self.notification_cfg, &self.notification_store);
+                self.refresh_dock_badge_from_state();
                 return Task::none();
             }
+            Message::ToggleLeftSidebar => {
+                self.sidebar.left_open = !self.sidebar.left_open;
+                self.events.emit(
+                    crate::events::Category::Sidebar,
+                    if self.sidebar.left_open {
+                        "sidebar.left_opened"
+                    } else {
+                        "sidebar.left_closed"
+                    },
+                    None,
+                    serde_json::json!({}),
+                );
+                return self.sidebar_layout_changed();
+            }
+            Message::ToggleRightSidebar => {
+                self.sidebar.right_open = !self.sidebar.right_open;
+                if !self.sidebar.right_open {
+                    self.git_panel.close();
+                } else if self.sidebar.right_mode == crate::sidebar::RightMode::Git {
+                    return Task::batch([
+                        self.open_git_sidebar_tab(),
+                        self.sidebar_layout_changed(),
+                    ]);
+                }
+                self.events.emit(
+                    crate::events::Category::Sidebar,
+                    if self.sidebar.right_open {
+                        "sidebar.right_opened"
+                    } else {
+                        "sidebar.right_closed"
+                    },
+                    None,
+                    serde_json::json!({ "mode": self.sidebar.right_mode.label() }),
+                );
+                return self.sidebar_layout_changed();
+            }
+            Message::SidebarRightMode(mode) => {
+                self.sidebar.right_mode = mode;
+                self.sidebar.right_open = true;
+                if mode == crate::sidebar::RightMode::Git {
+                    return Task::batch([
+                        self.open_git_sidebar_tab(),
+                        self.sidebar_layout_changed(),
+                    ]);
+                }
+                if mode == crate::sidebar::RightMode::Files {
+                    return Task::batch([
+                        self.open_remote_files_tab(),
+                        self.sidebar_layout_changed(),
+                    ]);
+                }
+                return self.sidebar_layout_changed();
+            }
             Message::ToggleGitPanel => {
+                // Legacy alias: open/close Git tab in the right sidebar.
                 if !self.git_cfg.panel_enabled {
                     return Task::none();
                 }
-                if self.git_panel.open {
+                if self.sidebar.right_open
+                    && self.sidebar.right_mode == crate::sidebar::RightMode::Git
+                    && self.git_panel.open
+                {
+                    self.sidebar.right_open = false;
                     self.git_panel.close();
                     self.events.emit(
                         crate::events::Category::Git,
@@ -4144,35 +5167,19 @@ impl PureTermApp {
                         None,
                         serde_json::json!({}),
                     );
-                    return Task::none();
+                    return self.sidebar_layout_changed();
                 }
-                let Some(cwd) = self.active_pane_cwd() else {
-                    // OSC 7 only fires for zsh/bash — fish/nu/remote panes have
-                    // no known cwd, so the panel can't resolve a repo.
-                    return Task::done(Message::Toast(
-                        "Git panel needs a pane with a known cwd (zsh/bash).".to_string(),
-                    ));
-                };
-                let cwd = cwd.to_string_lossy().to_string();
-                self.git_panel.open_for(&cwd);
-                self.git_panel.pr_refreshing = self.git_cfg.show_pr;
-                self.events.emit(
-                    crate::events::Category::Git,
-                    "git.panel_opened",
-                    None,
-                    serde_json::json!({ "cwd": cwd }),
-                );
-                let mut tasks = vec![
-                    crate::status_bar::spawn_git_status(cwd.clone()),
-                    crate::gh_pr::spawn_git_log(cwd.clone()),
-                ];
-                if self.git_cfg.show_pr {
-                    tasks.push(crate::gh_pr::spawn_gh_pr(cwd));
-                }
-                return Task::batch(tasks);
+                return Task::batch([
+                    self.open_right_sidebar(crate::sidebar::RightMode::Git),
+                    self.sidebar_layout_changed(),
+                ]);
             }
             Message::CloseGitPanel => {
                 self.git_panel.close();
+                if self.sidebar.right_mode == crate::sidebar::RightMode::Git {
+                    self.sidebar.right_open = false;
+                    return self.sidebar_layout_changed();
+                }
             }
             Message::RefreshGitPanel => {
                 if let Some(cwd) = self.git_panel.cwd.clone() {
@@ -4247,6 +5254,465 @@ impl PureTermApp {
             }
             Message::ToastDismissed => {
                 self.toast = None;
+            }
+            Message::ErrorRecoveryTrigger(failure) => {
+                return self.begin_error_recovery(failure);
+            }
+            Message::ErrorRecoveryChunk { gen, event } => {
+                self.error_recovery.apply_chunk(gen, &event);
+                if event.is_terminal() {
+                    if let Some(failure) = self.error_recovery.failure.as_ref() {
+                        let session_id = self
+                            .pane_terminal_ctx(PaneId(failure.pane_id))
+                            .and_then(|c| c.session_id().map(|s| s.to_string()));
+                        self.events.emit(
+                            crate::events::Category::ErrorRecovery,
+                            "error_recovery.suggested",
+                            session_id,
+                            serde_json::json!({
+                                "pane_id": failure.pane_id,
+                                "exit_code": failure.exit_code,
+                                "has_fix": self.error_recovery.suggested_command.is_some(),
+                            }),
+                        );
+                    }
+                }
+            }
+            Message::ErrorRecoveryDismiss => {
+                if self.error_recovery.is_streaming() {
+                    if let Some(c) = self.error_recovery_cancel.take() {
+                        c.notify_one();
+                    }
+                }
+                self.error_recovery.dismiss();
+            }
+            Message::ErrorRecoveryStop => {
+                if let Some(c) = self.error_recovery_cancel.take() {
+                    c.notify_one();
+                }
+                self.error_recovery.stop_streaming();
+            }
+            Message::ErrorRecoveryApply => {
+                if let (Some(cmd), Some(pane_id)) = (
+                    self.error_recovery.suggested_command.clone(),
+                    self.error_recovery.pane_id,
+                ) {
+                    if let Some(ctx) = self.pane_terminal_ctx(PaneId(pane_id)) {
+                        let mut bytes = cmd.into_bytes();
+                        bytes.push(b'\n');
+                        ctx.write_to_pty(&bytes);
+                    }
+                    let session_id = self
+                        .pane_terminal_ctx(PaneId(pane_id))
+                        .and_then(|c| c.session_id().map(|s| s.to_string()));
+                    self.events.emit(
+                        crate::events::Category::ErrorRecovery,
+                        "error_recovery.applied",
+                        session_id,
+                        serde_json::json!({ "pane_id": pane_id }),
+                    );
+                    self.error_recovery.dismiss();
+                }
+            }
+            Message::ErrorRecoveryToggle => {
+                if self.error_recovery.open {
+                    return Task::done(Message::ErrorRecoveryDismiss);
+                }
+                let pane_id = self
+                    .active_tab_ref()
+                    .map(|t| t.active_pane)
+                    .unwrap_or(PaneId(0));
+                let shell_st = self
+                    .pane_shell_state
+                    .get(&pane_id)
+                    .cloned()
+                    .unwrap_or_default();
+                if !shell_st.integrated {
+                    return Task::done(Message::Toast(
+                        "Error Recovery requires Shell Integration (local zsh/bash)".into(),
+                    ));
+                }
+                let Some(cmd) = shell_st
+                    .history
+                    .iter()
+                    .rev()
+                    .find(|c| c.exit_code.is_some_and(|e| e != 0))
+                    .cloned()
+                else {
+                    return Task::done(Message::Toast(
+                        "No recent failed command in this pane".into(),
+                    ));
+                };
+                let output = if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
+                    let term = ctx.terminal();
+                    let guard = term.lock();
+                    let start = shell_st.last_output_start_row().unwrap_or(cmd.pane_row_at_b);
+                    crate::surface_snapshot::capture_row_range(
+                        &guard,
+                        start,
+                        cmd.pane_row_at_b.saturating_add(20),
+                        self.error_recovery_cfg.max_output_lines,
+                    )
+                } else {
+                    String::new()
+                };
+                let failure = crate::error_recovery::FailureContext {
+                    pane_id: pane_id.0,
+                    command: cmd.text,
+                    exit_code: cmd.exit_code.unwrap_or(1),
+                    cwd: self.pane_cwds.get(&pane_id).cloned(),
+                    output_text: output,
+                };
+                return self.begin_error_recovery(failure);
+            }
+            Message::NaturalLanguageTrigger(ctx) => {
+                return self.begin_natural_language(ctx);
+            }
+            Message::NaturalLanguageChunk { gen, event } => {
+                self.natural_language.apply_chunk(gen, &event);
+            }
+            Message::NaturalLanguageDismiss => {
+                if self.natural_language.is_streaming() {
+                    if let Some(c) = self.natural_language_cancel.take() {
+                        c.notify_one();
+                    }
+                }
+                self.natural_language.dismiss();
+            }
+            Message::NaturalLanguageStop => {
+                if let Some(c) = self.natural_language_cancel.take() {
+                    c.notify_one();
+                }
+                self.natural_language.stop_streaming();
+            }
+            Message::NaturalLanguageApply => {
+                if let (Some(cmd), Some(pane_id)) = (
+                    self.natural_language.suggested_command.clone(),
+                    self.natural_language.pane_id,
+                ) {
+                    if let Some(ctx) = self.pane_terminal_ctx(PaneId(pane_id)) {
+                        ctx.write_to_pty(cmd.as_bytes());
+                    }
+                    self.natural_language.dismiss();
+                }
+            }
+            Message::HoverPreviewDebounced { gen } => {
+                if let Some((fetch_gen, target)) = self.hover_preview.on_debounce(gen) {
+                    let cwd = self
+                        .pane_cwds
+                        .get(&PaneId(target.pane_id))
+                        .map(std::path::PathBuf::from);
+                    return spawn_hover_preview_fetch(target, fetch_gen, cwd);
+                }
+            }
+            Message::HoverPreviewReady {
+                fetch_gen,
+                target,
+                content,
+            } => {
+                self.hover_preview
+                    .apply_preview(fetch_gen, &target, content);
+            }
+            Message::HoverPreviewDismiss => {
+                self.hover_preview.dismiss();
+            }
+            Message::HoverPreviewMenuAction(item) => {
+                if let Some(menu) = self.hover_preview.context_menu.take() {
+                    let cwd = self
+                        .pane_cwds
+                        .get(&PaneId(menu.target.pane_id))
+                        .map(|s| std::path::Path::new(s.as_str()));
+                    match item {
+                        crate::hover_preview::HoverPreviewMenuItem::Open => {
+                            crate::hover_preview::open_target(&menu.target, cwd);
+                        }
+                        crate::hover_preview::HoverPreviewMenuItem::Copy => {
+                            crate::hover_preview::copy_target(&menu.target.text);
+                        }
+                        crate::hover_preview::HoverPreviewMenuItem::OpenInEditor => {
+                            crate::hover_preview::open_in_editor_target(
+                                &menu.target,
+                                cwd,
+                                &self.semantic_history_cfg.editor,
+                            );
+                            if let Some(path) = crate::hover_preview::resolved_path_for_target(
+                                &menu.target,
+                                cwd,
+                            ) {
+                                self.lsp.did_open_path(&path);
+                            }
+                        }
+                    }
+                    self.hover_preview.dismiss();
+                }
+            }
+            Message::HoverPreviewMenuHover(item) => {
+                if let Some(ref mut menu) = self.hover_preview.context_menu {
+                    menu.hovered = item;
+                }
+            }
+            Message::OpenHoverTarget => {
+                let pane_id = self.active_tab_ref().map(|t| t.active_pane);
+                let target = self
+                    .hover_preview
+                    .active_target()
+                    .cloned()
+                    .or_else(|| {
+                        let pane_id = pane_id?;
+                        let ctx = self.pane_terminal_ctx(pane_id)?;
+                        let text = ctx.terminal().lock().selection_to_string()?;
+                        let rule_id = if text.starts_with("http://")
+                            || text.starts_with("https://")
+                            || text.starts_with("ssh://")
+                        {
+                            "url".to_string()
+                        } else if text.starts_with('/') || text.starts_with("~/") {
+                            "file-path".to_string()
+                        } else {
+                            return None;
+                        };
+                        Some(crate::hover_preview::HoverTarget {
+                            pane_id: pane_id.0,
+                            line: 0,
+                            column: 0,
+                            rule_id,
+                            text,
+                        })
+                    });
+                if let Some(target) = target {
+                    let cwd = self
+                        .pane_cwds
+                        .get(&PaneId(target.pane_id))
+                        .map(|s| std::path::Path::new(s.as_str()));
+                    crate::hover_preview::open_target(&target, cwd);
+                }
+            }
+            Message::OpenSemanticInEditor => {
+                if !self.semantic_history_cfg.enabled {
+                    return Task::none();
+                }
+                let pane_id = self.active_tab_ref().map(|t| t.active_pane);
+                let editor = self.semantic_history_cfg.editor.clone();
+                let target = self
+                    .hover_preview
+                    .active_target()
+                    .cloned()
+                    .or_else(|| {
+                        let pane_id = pane_id?;
+                        self.semantic_target_at_pane(pane_id)
+                    })
+                    .or_else(|| {
+                        let pane_id = pane_id?;
+                        let ctx = self.pane_terminal_ctx(pane_id)?;
+                        let text = ctx.terminal().lock().selection_to_string()?;
+                        Some(crate::hover_preview::HoverTarget {
+                            pane_id: pane_id.0,
+                            line: 0,
+                            column: 0,
+                            rule_id: "semantic-path".to_string(),
+                            text,
+                        })
+                    });
+                if let Some(target) = target {
+                    let cwd = self
+                        .pane_cwds
+                        .get(&PaneId(target.pane_id))
+                        .map(|s| std::path::Path::new(s.as_str()));
+                    crate::hover_preview::open_in_editor_target(&target, cwd, &editor);
+                    if let Some(path) =
+                        crate::hover_preview::resolved_path_for_target(&target, cwd)
+                    {
+                        self.lsp.did_open_path(&path);
+                    }
+                }
+            }
+            Message::PortScannerUpdated(rows) => {
+                self.port_scanner_entries = rows;
+            }
+            Message::PortScannerCopy(port) => {
+                let text = format!("localhost:{port}");
+                crate::hover_preview::copy_target(&text);
+                return Task::done(Message::Toast(format!("Copied {text}")));
+            }
+            Message::PortScannerOpen(port) => {
+                let url = format!("http://localhost:{port}");
+                crate::hover_preview::open_target(
+                    &crate::hover_preview::HoverTarget {
+                        pane_id: 0,
+                        line: 0,
+                        column: 0,
+                        rule_id: "url".into(),
+                        text: url,
+                    },
+                    None,
+                );
+            }
+            Message::RemoteFilesRefresh => {
+                return self.open_remote_files_tab();
+            }
+            Message::RemoteFilesEnterDir(name) => {
+                let Some(session_id) = self
+                    .active_terminal_ctx()
+                    .and_then(|c| c.session_id().map(str::to_string))
+                else {
+                    return Task::none();
+                };
+                let path = crate::remote_files::join_dir(&self.remote_files.path, &name);
+                return self.spawn_remote_files_listdir(session_id, path);
+            }
+            Message::RemoteFilesGoUp => {
+                let Some(session_id) = self
+                    .active_terminal_ctx()
+                    .and_then(|c| c.session_id().map(str::to_string))
+                else {
+                    return Task::none();
+                };
+                let Some(path) = crate::remote_files::parent_dir(&self.remote_files.path) else {
+                    return Task::none();
+                };
+                return self.spawn_remote_files_listdir(session_id, path);
+            }
+            Message::RemoteFilesListed {
+                gen,
+                session_id,
+                path,
+                result,
+            } => {
+                self.remote_files
+                    .apply_listing(gen, &session_id, &path, result);
+            }
+            Message::RemoteFilesOpenFile(name) => {
+                let Some(session_id) = self
+                    .remote_files
+                    .session_id
+                    .clone()
+                    .or_else(|| {
+                        self.active_terminal_ctx()
+                            .and_then(|c| c.session_id().map(str::to_string))
+                    })
+                else {
+                    return Task::none();
+                };
+                let path = crate::remote_files::join_dir(&self.remote_files.path, &name);
+                return self.spawn_remote_files_read(session_id, path);
+            }
+            Message::RemoteFilesRead {
+                gen,
+                session_id,
+                path,
+                result,
+            } => {
+                self.remote_files
+                    .apply_read(gen, &session_id, &path, result);
+            }
+            Message::RemoteFilesFindQueryChanged(q) => {
+                self.remote_files.find_query = q;
+            }
+            Message::RemoteFilesFindSubmit => {
+                let query = self.remote_files.find_query.trim().to_string();
+                if query.is_empty() {
+                    return Task::none();
+                }
+                let Some(session_id) = self
+                    .remote_files
+                    .session_id
+                    .clone()
+                    .or_else(|| {
+                        self.active_terminal_ctx()
+                            .and_then(|c| c.session_id().map(str::to_string))
+                    })
+                else {
+                    return Task::none();
+                };
+                let base = self.remote_files.path.clone();
+                return self.spawn_remote_files_find(session_id, base, query);
+            }
+            Message::RemoteFilesFind {
+                gen,
+                session_id,
+                query,
+                result,
+            } => {
+                self.remote_files
+                    .apply_find(gen, &session_id, &query, result);
+            }
+            Message::RemoteFilesSavePreview => {
+                let Some(session_id) = self.remote_files.session_id.clone() else {
+                    return Task::none();
+                };
+                let Some(path) = self.remote_files.preview_path.clone() else {
+                    return Task::none();
+                };
+                let Some(read) = self.remote_files.preview.clone() else {
+                    return Task::none();
+                };
+                let gen = self.remote_files.begin_write();
+                return crate::remote_files::spawn_write(session_id, path, read.content, gen);
+            }
+            Message::RemoteFilesWritten {
+                gen,
+                session_id,
+                path,
+                result,
+            } => {
+                if !self.remote_files.write_gen_matches(gen)
+                    || self.remote_files.session_id.as_deref() != Some(session_id.as_str())
+                {
+                    return Task::none();
+                }
+                match result {
+                    Ok(()) => {
+                        return Task::done(Message::Toast(format!("Saved {path}")));
+                    }
+                    Err(e) => {
+                        self.remote_files.preview_error = Some(e);
+                    }
+                }
+            }
+            Message::BlockOutputJumpToRow(row) => {
+                self.scroll_active_pane_to_row(row);
+            }
+            Message::BlockOutputCycleFilter => {
+                self.block_output_filter = self.block_output_filter.cycle();
+            }
+            Message::BlockOutputSearchChanged(q) => {
+                self.block_output_search = q;
+            }
+            Message::ToggleAiChatPanel => {
+                if self.ai_chat_panel.open {
+                    if self.ai_chat_panel.is_streaming() {
+                        if let Some(c) = self.ai_chat_cancel.take() {
+                            c.notify_one();
+                        }
+                    }
+                    self.ai_chat_panel.close();
+                } else {
+                    self.ai_chat_panel.open();
+                }
+            }
+            Message::AiChatInputChanged(text) => {
+                self.ai_chat_panel.set_input(text);
+            }
+            Message::AiChatSend => {
+                return self.send_ai_chat_message();
+            }
+            Message::AiChatStop => {
+                if let Some(c) = self.ai_chat_cancel.take() {
+                    c.notify_one();
+                }
+                if self.ai_chat_panel.is_streaming() {
+                    if let Some(last) = self.ai_chat_panel.messages.last_mut() {
+                        if last.role == crate::ai_chat::types::ChatRole::Assistant
+                            && last.content.is_empty()
+                        {
+                            last.content = "(stopped)".to_string();
+                        }
+                    }
+                    self.ai_chat_panel.stop_streaming();
+                }
+            }
+            Message::AiChatChunk { gen, event } => {
+                self.ai_chat_panel.apply_chunk(gen, &event);
             }
             Message::TriggerSendText { pane_id, text } => {
                 // GAP-10: deferred cross-pane send_text — runs outside the Wakeup
@@ -4365,17 +5831,19 @@ impl PureTermApp {
                         terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                     // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访
                     // self.windows 遍历活跃 workspace 的 tabs(只借 self.windows)。
-                    let vw = self.viewport_size.width;
+                    let vw = self.terminal_viewport_width();
                     let aw = self.active_window_id;
+                    #[cfg(unix)]
+                    let ssh_smallest = self.ssh_global.smallest_screen_wins;
+                    #[cfg(not(unix))]
+                    let ssh_smallest = false;
                     if let Some(ws) = self
                         .windows
                         .iter_mut()
                         .find(|w| w.window_id == aw)
                         .and_then(|w| w.active_workspace_mut())
                     {
-                        for tab in &mut ws.tabs {
-                            Self::resize_panes_in_tab(tab, vw, terminal_height, cw, ch);
-                        }
+                        Self::resize_workspace_panes(ws, vw, terminal_height, cw, ch, ssh_smallest);
                     }
                 }
             }
@@ -4570,7 +6038,7 @@ impl PureTermApp {
                 }
             }
             Message::NewTab => {
-                let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                let new_id = self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                 self.set_active_tab(new_id);
             }
             Message::CloseTab(tab_id) => {
@@ -4683,10 +6151,11 @@ impl PureTermApp {
                     .map(|w| format!("Workspace {}", w.next_workspace_id))
                     .unwrap_or_default();
                 if let Some(w) = self.active_window_mut() {
-                    w.create_workspace(&name);
+                    let ws_id = w.create_workspace(&name);
+                    self.touch_recent_workspace(ws_id);
                 }
                 // create_workspace 已切到新 workspace;为其建首个 tab。
-                let tab_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                let tab_id = self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                 self.set_active_tab(tab_id);
                 self.refresh_status_bar_cwd();
                 self.reposition_web_panes();
@@ -4709,6 +6178,9 @@ impl PureTermApp {
                 if let Some(&target) = ids.get(i) {
                     self.apply_workspace_switch(target);
                 }
+            }
+            Message::ActivateWorkspaceById(id) => {
+                self.apply_workspace_switch(id);
             }
             Message::ClipboardPaste(text) => {
                 if let Some(ctx) = self.active_terminal_ctx() {
@@ -4829,6 +6301,9 @@ impl PureTermApp {
                 self.surface_search =
                     Some(SearchState::new(alacritty_terminal::index::Direction::Right, at_bottom));
                 self.refresh_surface_search_pattern();
+                self.sidebar.right_open = true;
+                self.sidebar.right_mode = crate::sidebar::RightMode::Find;
+                return self.sidebar_layout_changed();
             }
             Message::SurfaceSearchQuery(q) => {
                 if let Some(ref mut s) = self.surface_search {
@@ -4959,6 +6434,9 @@ impl PureTermApp {
                     running: false,
                     error,
                 });
+                self.sidebar.right_open = true;
+                self.sidebar.right_mode = crate::sidebar::RightMode::Find;
+                return self.sidebar_layout_changed();
             }
             Message::DirSearchQuery(q) => {
                 let spawn = if let Some(state) = self.dir_search.as_mut() {
@@ -5148,6 +6626,23 @@ impl PureTermApp {
                             action: t.cfg.action.discriminant().to_string(),
                         })
                         .collect(),
+                    workspace_ids: self
+                        .active_window()
+                        .map(|w| w.workspace_ids_in_order().into_iter().map(|id| id.0).collect())
+                        .unwrap_or_default(),
+                    workspace_names: self
+                        .active_window()
+                        .map(|w| {
+                            w.workspace_ids_in_order()
+                                .into_iter()
+                                .filter_map(|id| w.workspace(id).map(|ws| ws.name.clone()))
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    active_workspace_id: self
+                        .active_window()
+                        .map(|w| w.active_workspace.0)
+                        .unwrap_or(0),
                 };
 
                 let (resp, side_effect) = self.ipc_router.dispatch(
@@ -5175,6 +6670,7 @@ impl PureTermApp {
                     .map(|p| (Some(p.req.session_id.clone()), p.req.resume.clone()));
                 let (session_id, resume) = captured.unwrap_or((None, None));
                 self.feed_panel.resolve(id, choice, crate::feed_panel::ResolveSource::User);
+                self.refresh_dock_badge_from_state();
                 self.events.emit(
                     crate::events::Category::Feed,
                     "feed.resolved",
@@ -5215,6 +6711,7 @@ impl PureTermApp {
                         .get(&id)
                         .map(|p| p.req.session_id.clone());
                     self.feed_panel.resolve(id, crate::feed_client::FeedChoice::Deny, crate::feed_panel::ResolveSource::Timeout);
+                    self.refresh_dock_badge_from_state();
                     self.events.emit(
                         crate::events::Category::Feed,
                         "feed.resolved",
@@ -5226,6 +6723,7 @@ impl PureTermApp {
             #[cfg(unix)]
             Message::FeedClearSession { session_id } => {
                 self.feed_panel.clear_session(&session_id);
+                self.refresh_dock_badge_from_state();
             }
             #[cfg(unix)]
             Message::HibernationScanTick => {
@@ -5332,7 +6830,7 @@ impl PureTermApp {
                                 let gs = self.glyph_state.borrow();
                                 let terminal_height =
                                     terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-                                let cols = (self.viewport_size.width / gs.cell_width)
+                                let cols = (self.terminal_viewport_width() / gs.cell_width)
                                     .floor()
                                     .max(1.0) as usize;
                                 let rows = (terminal_height / gs.cell_height)
@@ -5429,10 +6927,32 @@ impl PureTermApp {
             // GAP-6.7: in-process event bus subscriber. v1 has no consumer —
             // events are persisted in `emit()` and consumed via the JSONL log /
             // `pureterm events tail`. This arm is the hook for GAP-6.8.
-            Message::Event(_event) => {
+            Message::Event(event) => {
+                self.sidebar_dsl.on_event(&event);
                 #[cfg(debug_assertions)]
-                log::trace!("events: {} (seq {})", _event.kind, _event.seq);
+                log::trace!("events: {} (seq {})", event.kind, event.seq);
             }
+            Message::ToggleInstantReplay => {
+                let sid = self
+                    .active_terminal_ctx()
+                    .and_then(|c| c.session_id().map(|s| s.to_string()));
+                self.replay_viewer
+                    .toggle(self.events.path(), sid.as_deref());
+                return Task::none();
+            }
+            Message::ReplayScrub(delta) => {
+                self.replay_viewer.scrub(delta);
+                return Task::none();
+            }
+            Message::PrevMark => {
+                self.jump_shell_mark(true);
+                return Task::none();
+            }
+            Message::NextMark => {
+                self.jump_shell_mark(false);
+                return Task::none();
+            }
+            Message::NewWindow => return self.open_new_window(),
             Message::PtyExited(tab_id) => {
                 // 子进程退出，关闭对应 tab
                 return Task::done(Message::CloseTab(tab_id));
@@ -5747,6 +7267,8 @@ impl PureTermApp {
                         created_at: Instant::now(),
                         zoom_state: None,
                         vi_sub_mode: None,
+            vi_registers: Default::default(),
+            vi_pending_register: None,
                     });
                     self.set_active_tab(new_tab_id);
                     self.resize_active_tab_panes();
@@ -5769,6 +7291,8 @@ impl PureTermApp {
                         created_at: Instant::now(),
                         zoom_state: None,
                         vi_sub_mode: None,
+            vi_registers: Default::default(),
+            vi_pending_register: None,
                     };
                     let settings = window::Settings {
                         size: Size::new(1024.0, 768.0),
@@ -5816,7 +7340,7 @@ impl PureTermApp {
                 // GAP-09: focusing a pane clears its unread notifications +
                 // refreshes the Dock badge (the user has now seen them).
                 self.notification_store.clear_unread(pane_id);
-                refresh_dock_badge(&self.notification_cfg, &self.notification_store);
+                self.refresh_dock_badge_from_state();
                 // GAP-6.7: focus moved to another pane.
                 self.events.emit(
                     crate::events::Category::Pane,
@@ -5826,6 +7350,23 @@ impl PureTermApp {
                 );
             }
             Message::PaneMousePressed(pane_id) => {
+                // GAP-36: Cmd-click semantic history — open file:line in editor.
+                if self.semantic_history_cfg.enabled && self.keyboard_modifiers.command() {
+                    if let Some(target) = self.semantic_target_at_pane(pane_id) {
+                        let cwd = self
+                            .pane_cwds
+                            .get(&pane_id)
+                            .map(|s| std::path::Path::new(s.as_str()));
+                        let editor = self.semantic_history_cfg.editor.clone();
+                        crate::hover_preview::open_in_editor_target(&target, cwd, &editor);
+                        if let Some(path) =
+                            crate::hover_preview::resolved_path_for_target(&target, cwd)
+                        {
+                            self.lsp.did_open_path(&path);
+                        }
+                        return Task::none();
+                    }
+                }
                 // 1) 把 pane 设为活跃(原 PaneFocused 副作用)。
                 // T2b-1:field-path 直访 self.windows → 活跃 workspace。
                 let aw = self.active_window_id;
@@ -5896,6 +7437,7 @@ impl PureTermApp {
                 };
             }
             Message::PaneMouseScroll(pane_id, delta) => {
+                self.hover_preview.dismiss_tooltip();
                 self.handle_scroll_for_pane(pane_id, delta);
             }
             Message::PaneCursorMoved(pane_id, pos) => {
@@ -5943,6 +7485,30 @@ impl PureTermApp {
                 }
             }
             Message::PaneRightClick(pane_id) => {
+                // GAP-4.2: semantic target under cursor → hover preview menu.
+                if let Some(target) = self.hover_target_at_pane(pane_id) {
+                    if let Some((tab_id, _)) = self.tabs().iter()
+                        .find(|t| t.panes.contains_key(&pane_id))
+                        .map(|t| (t.id, ()))
+                    {
+                        self.set_active_tab(tab_id);
+                        if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == tab_id) {
+                            tab.active_pane = pane_id;
+                        }
+                    }
+                    self.context_menu = None;
+                    self.hover_preview.show_context_menu(
+                        target,
+                        (
+                            self.last_global_cursor_pos.x,
+                            self.last_global_cursor_pos.y,
+                        ),
+                    );
+                    self.color_picker_tab = None;
+                    self.renaming_tab = None;
+                    self.tab_list = None;
+                    return Task::none();
+                }
                 // 在 pane 上右键：切换活跃 tab+ pane，然后弹出 context menu
                 if let Some((tab_id, _)) = self.tabs().iter()
                     .find(|t| t.panes.contains_key(&pane_id))
@@ -6162,16 +7728,8 @@ impl PureTermApp {
                     name: self
                         .i18n
                         .t_fmt("ssh.new_profile", &[("n", &next_n.to_string())]),
-                    host: String::new(),
-                    user: None,
-                    // Pre-fill 22 (standard SSH port) so the Port
-                    // input isn't blank on first edit. Matches the
-                    // `pureterm-settings` SSH Profiles page behavior.
                     port: Some(22),
-                    password: None,
-                    key_path: None,
-                    shortcut: None,
-                    forward_agent: false,
+                    ..Default::default()
                 };
                 self.ssh_profiles.push(new_profile.clone());
                 if let Some(ref mut s) = self.ssh_settings {
@@ -6338,7 +7896,7 @@ impl PureTermApp {
                     if let Some(divider) = tab.split_tree.compute_divider_by_split_id(
                         drag.split_id,
                         0.0, 0.0,
-                        self.viewport_size.width, terminal_height,
+                        self.terminal_viewport_width(), terminal_height,
                     ) {
                         drag.divider_screen_pos = match divider.direction {
                             SplitDirection::Horizontal => divider.rect.x,
@@ -6379,22 +7937,27 @@ impl PureTermApp {
                     // 必须在 mut borrow 之前先取出 self 数据，避免借用冲突
                     let cw: u16 = self.glyph_state.borrow().cell_width as u16;
                     let ch: u16 = self.glyph_state.borrow().cell_height as u16;
-                    let viewport_w = self.viewport_size.width;
+                    let viewport_w = self.terminal_viewport_width();
                     let terminal_height =
                         terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
 
                     // T2b-1:field-path 直访 self.windows → 活跃 workspace。
                     let aw = self.active_window_id;
-                    let ws_tab: Option<&mut Tab> = self
+                    #[cfg(unix)]
+                    let ssh_smallest = self.ssh_global.smallest_screen_wins;
+                    #[cfg(not(unix))]
+                    let ssh_smallest = false;
+                    if let Some(ws) = self
                         .windows
                         .iter_mut()
                         .find(|w| w.window_id == aw)
                         .and_then(|w| w.active_workspace_mut())
-                        .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == drag.tab_id));
-                    if let Some(tab) = ws_tab {
-                        tab.split_tree.update_split_ratio_by_id(drag.split_id, new_ratio);
+                    {
+                        if let Some(tab) = ws.tabs.iter_mut().find(|t| t.id == drag.tab_id) {
+                            tab.split_tree.update_split_ratio_by_id(drag.split_id, new_ratio);
+                        }
                         // 同步 resize PTY，让 term 网格与视觉 bounds 同步，避免拖动时字体变形
-                        Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+                        Self::resize_workspace_panes(ws, viewport_w, terminal_height, cw, ch, ssh_smallest);
                     }
                 }
             }
@@ -6402,34 +7965,28 @@ impl PureTermApp {
                 // 结束选区拖动:清掉 drag 标志,但保留 term.selection 让 Cmd+C 仍能拷。
                 self.selection_drag = None;
                 if let Some(drag) = self.drag_state.take() {
-                    // 触发最终 PTY resize
-                    // T2b-1:field-path 直访 self.windows → 活跃 workspace;self.viewport_size
-                    // / self.glyph_state 与 self.windows disjoint,可同借。
                     let aw = self.active_window_id;
-                    let tab_opt: Option<&mut Tab> = self
+                    let terminal_w = self.terminal_viewport_width();
+                    let terminal_height = terminal_content_height(
+                        self.viewport_size.height,
+                        self.status_bar_cfg.effective_height(),
+                    );
+                    let gs = self.glyph_state.borrow();
+                    let cw = gs.cell_width as u16;
+                    let ch = gs.cell_height as u16;
+                    drop(gs);
+                    #[cfg(unix)]
+                    let ssh_smallest = self.ssh_global.smallest_screen_wins;
+                    #[cfg(not(unix))]
+                    let ssh_smallest = false;
+                    if let Some(ws) = self
                         .windows
                         .iter_mut()
                         .find(|w| w.window_id == aw)
                         .and_then(|w| w.active_workspace_mut())
-                        .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == drag.tab_id));
-                    if let Some(tab) = tab_opt {
-                        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-                        let layout = tab.split_tree.compute_layout(
-                            0.0, 0.0, self.viewport_size.width, terminal_height,
-                        );
-                        let gs = self.glyph_state.borrow();
-                        let cw = gs.cell_width as u16;
-                        let ch = gs.cell_height as u16;
-                        drop(gs);
-                        for (pid, rect) in &layout {
-                            if let Some(pane) = tab.panes.get(pid) {
-                                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
-                                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
-                                if let Some(ctx) = pane.terminal() {
-                                    ctx.resize(cols, rows, cw, ch);
-                                }
-                            }
-                        }
+                    {
+                        let _ = drag;
+                        Self::resize_workspace_panes(ws, terminal_w, terminal_height, cw, ch, ssh_smallest);
                     }
                 }
             }
@@ -6462,6 +8019,8 @@ impl PureTermApp {
                     tab.split_tree.remove(pane_id)
                 };
                 if let Some(new_active) = new_active {
+                    let terminal_w = self.terminal_viewport_width();
+                    let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                     let tab = self
                         .windows
                         .iter_mut()
@@ -6489,9 +8048,8 @@ impl PureTermApp {
                     self.pane_trigger_state.remove(&pane_id);
                     tab.active_pane = new_active;
                     // Resize remaining panes
-                    let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                     let layout = tab.split_tree.compute_layout(
-                        0.0, 0.0, self.viewport_size.width, terminal_height,
+                        0.0, 0.0, terminal_w, terminal_height,
                     );
                     let gs = self.glyph_state.borrow();
                     let cw = gs.cell_width as u16;
@@ -6519,6 +8077,10 @@ impl PureTermApp {
 
         match event {
             KEvent::KeyPressed { key: Key::Named(Named::Escape), .. } => {
+                if self.hover_preview.context_menu.is_some() {
+                    self.hover_preview.dismiss();
+                    return Task::none();
+                }
                 if self.context_menu.is_some()
                     || self.renaming_tab.is_some()
                     || self.color_picker_tab.is_some()
@@ -6547,6 +8109,16 @@ impl PureTermApp {
                 // GAP-09: Escape closes the Notifications overlay panel.
                 if self.notification_panel.open {
                     self.notification_panel.close();
+                    return Task::none();
+                }
+                // GAP-01: Escape closes the AI Chat panel.
+                if self.ai_chat_panel.open {
+                    if self.ai_chat_panel.is_streaming() {
+                        if let Some(c) = self.ai_chat_cancel.take() {
+                            c.notify_one();
+                        }
+                    }
+                    self.ai_chat_panel.close();
                     return Task::none();
                 }
                 // GAP-4.1: Escape in vi mode → close search bar first, then exit visual/vi mode
@@ -6671,6 +8243,11 @@ impl PureTermApp {
                 if modifiers.command() && modifiers.shift() {
                     return Task::done(Message::ToggleZoom);
                 }
+                if let Some(ref menu) = self.hover_preview.context_menu {
+                    if let Some(item) = menu.hovered {
+                        return Task::done(Message::HoverPreviewMenuAction(item));
+                    }
+                }
                 if let Some(ref menu) = self.context_menu {
                     if let Some(item) = menu.hovered_item {
                         return Task::done(Message::ContextMenuAction(item));
@@ -6694,6 +8271,9 @@ impl PureTermApp {
                     return Task::done(Message::SshConnect(selected));
                 }
                 // Fall through to send Enter to PTY
+                if let Some(task) = self.try_natural_language_enter() {
+                    return task;
+                }
                 if let Some(ctx) = self.active_terminal_ctx() {
                     ctx.write_to_pty(b"\r");
                 }
@@ -6707,12 +8287,14 @@ impl PureTermApp {
                         || self.ssh_settings.is_some()
                         || self.command_palette.is_some()
                         || self.context_menu.is_some()
+                        || self.hover_preview.context_menu.is_some()
                         || self.renaming_tab.is_some()
                         || self.tab_list.is_some()
                         || self.vi_search.is_some()
                         || self.surface_search.is_some()
                         || self.dir_search.is_some()
-                        || self.address_bar.is_some())
+                        || self.address_bar.is_some()
+                        || self.ai_chat_panel.open)
                 {
                     // GAP-4.1: Forward printable text to vi search bar
                     if self.vi_search.is_some() {
@@ -6740,12 +8322,17 @@ impl PureTermApp {
                     let vi_sub = self.active_tab_ref().and_then(|t| t.vi_sub_mode);
                     let ctx_opt = self.active_terminal_ctx();
                     if let (Some(mut sub_mode), Some(ctx)) = (vi_sub, ctx_opt) {
-                        let action = crate::vi_mode_handler::handle_vi_keypress(
-                            text.as_deref(),
-                            modifiers,
-                            &mut sub_mode,
-                            &ctx,
-                        );
+                        let action = {
+                            let tab = self.active_tab_mut().expect("active tab");
+                            crate::vi_mode_handler::handle_vi_keypress(
+                                text.as_deref(),
+                                modifiers,
+                                &mut sub_mode,
+                                &mut tab.vi_registers,
+                                &mut tab.vi_pending_register,
+                                &ctx,
+                            )
+                        };
                         match action {
                             crate::vi_mode_handler::ViAction::ExitViMode => {
                                 ctx.terminal().lock().toggle_vi_mode();
@@ -6800,10 +8387,37 @@ impl PureTermApp {
                     let bytes = self.key_to_bytes(&key, text.as_deref(), modifiers);
                     if !bytes.is_empty() {
                         ctx.write_to_pty(&bytes);
+                        // GAP-13: duplicate input to sibling panes when broadcasting.
+                        if self.broadcast_cfg.enabled && self.broadcast.enabled {
+                            if let (Some(win), Some(tab)) =
+                                (self.active_window(), self.active_tab_ref())
+                            {
+                                if let Some(focus) =
+                                    self.active_terminal_ctx_and_id().map(|(id, _)| id)
+                                {
+                                    let targets = crate::broadcast_input::collect_target_panes(
+                                        win,
+                                        tab.id,
+                                        self.broadcast.scope,
+                                        focus,
+                                    );
+                                    if let Some(ws) = win.active_workspace() {
+                                        crate::broadcast_input::write_to_panes(
+                                            &ws.tabs,
+                                            &targets,
+                                            &bytes,
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
-            KEvent::KeyReleased { .. } | KEvent::ModifiersChanged(_) => {}
+            KEvent::KeyReleased { .. } => {}
+            KEvent::ModifiersChanged(m) => {
+                self.keyboard_modifiers = m;
+            }
         }
         Task::none()
     }
@@ -6876,10 +8490,206 @@ impl PureTermApp {
     /// command palette, and context menu. The actual business logic
     /// lives in the `update()` match arms; this method only produces
     /// the appropriate `Message` variant.
+    /// GAP-02: start (or restart) LLM analysis for a command failure.
+    fn begin_error_recovery(
+        &mut self,
+        failure: crate::error_recovery::FailureContext,
+    ) -> Task<Message> {
+        if !self.error_recovery_cfg.enabled {
+            return Task::done(Message::Toast(
+                "Error Recovery is disabled in config".into(),
+            ));
+        }
+        if let Some(c) = self.error_recovery_cancel.take() {
+            c.notify_one();
+        }
+        let cancel = std::sync::Arc::new(tokio::sync::Notify::new());
+        self.error_recovery_cancel = Some(cancel.clone());
+        let gen = self.error_recovery.begin_analysis(failure.clone());
+        let session_id = self
+            .pane_terminal_ctx(PaneId(failure.pane_id))
+            .and_then(|c| c.session_id().map(|s| s.to_string()));
+        self.events.emit(
+            crate::events::Category::ErrorRecovery,
+            "error_recovery.triggered",
+            session_id,
+            serde_json::json!({
+                "pane_id": failure.pane_id,
+                "exit_code": failure.exit_code,
+                "command": failure.command,
+            }),
+        );
+        spawn_error_recovery_stream(
+            self.error_recovery_cfg.clone(),
+            failure,
+            gen,
+            cancel,
+        )
+    }
+
+    /// GAP-08: start LLM shell-command generation for a `# description` input.
+    fn begin_natural_language(
+        &mut self,
+        ctx: crate::natural_language::NlContext,
+    ) -> Task<Message> {
+        if !self.natural_language_cfg.enabled {
+            return Task::done(Message::Toast(
+                "Natural language commands are disabled in config".into(),
+            ));
+        }
+        if let Some(c) = self.natural_language_cancel.take() {
+            c.notify_one();
+        }
+        let cancel = std::sync::Arc::new(tokio::sync::Notify::new());
+        self.natural_language_cancel = Some(cancel.clone());
+        let gen = self.natural_language.begin_analysis(ctx.clone());
+        spawn_natural_language_stream(
+            self.ai_chat_cfg.clone(),
+            self.natural_language_cfg.clone(),
+            ctx,
+            gen,
+            cancel,
+        )
+    }
+
+    /// GAP-08: if the active pane input line is `# description`, clear it and
+    /// start natural-language command generation instead of executing.
+    fn try_natural_language_enter(&mut self) -> Option<Task<Message>> {
+        if !self.natural_language_cfg.enabled {
+            return None;
+        }
+        let pane_id = self.active_tab_ref()?.active_pane;
+        let ctx = self.pane_terminal_ctx(pane_id)?;
+        let line = {
+            let term = ctx.terminal().lock();
+            crate::surface_snapshot::capture_cursor_line(&*term)
+        };
+        let description = crate::natural_language::parse_description(&line)?;
+        ctx.write_to_pty(crate::natural_language::CLEAR_INPUT_LINE);
+        let nl_ctx = crate::natural_language::NlContext {
+            pane_id: pane_id.0,
+            description,
+            cwd: self.pane_cwds.get(&pane_id).cloned(),
+        };
+        Some(self.begin_natural_language(nl_ctx))
+    }
+
+    /// GAP-4.2: detect previewable smart-selection target under the pane cursor.
+    fn hover_target_at_pane(&self, pane_id: PaneId) -> Option<crate::hover_preview::HoverTarget> {
+        let ctx = self
+            .tabs()
+            .iter()
+            .find(|t| t.panes.contains_key(&pane_id))?
+            .panes
+            .get(&pane_id)?
+            .terminal()?
+            .clone();
+        let pos = self.last_cursor_pos;
+        let display_offset = ctx.terminal().lock().grid().display_offset();
+        let (point, _) = self.pane_local_pixel_to_grid(pane_id, pos, display_offset)?;
+        let m = {
+            let term = ctx.terminal().lock();
+            crate::hover_preview::smart_match_at_point(&*term, point)?
+        };
+        Some(crate::hover_preview::HoverTarget::from_match(
+            pane_id.0, point, &m,
+        ))
+    }
+
+    /// GAP-36: file:line target at cursor (smart selection + compiler paths).
+    fn semantic_target_at_pane(&self, pane_id: PaneId) -> Option<crate::hover_preview::HoverTarget> {
+        let ctx = self
+            .tabs()
+            .iter()
+            .find(|t| t.panes.contains_key(&pane_id))?
+            .panes
+            .get(&pane_id)?
+            .terminal()?
+            .clone();
+        let pos = self.last_cursor_pos;
+        let display_offset = ctx.terminal().lock().grid().display_offset();
+        let (point, _) = self.pane_local_pixel_to_grid(pane_id, pos, display_offset)?;
+        let term = ctx.terminal().lock();
+        crate::hover_preview::semantic_target_at_point(&*term, pane_id.0, point)
+    }
+
+    /// GAP-4.2: debounce hover preview on pane mouse move.
+    fn handle_hover_preview_move(&mut self, pane_id: PaneId) -> Task<Message> {
+        if self.vi_search.is_some()
+            || self.surface_search.is_some()
+            || self.selection_drag.is_some()
+        {
+            self.hover_preview.dismiss_tooltip();
+            return Task::none();
+        }
+        let target = self.hover_target_at_pane(pane_id);
+        let pos = (
+            self.last_global_cursor_pos.x,
+            self.last_global_cursor_pos.y,
+        );
+        let Some(gen) = self.hover_preview.on_mouse_move(target, pos) else {
+            return Task::none();
+        };
+        Task::perform(
+            async move {
+                tokio::time::sleep(crate::hover_preview::debounce_duration()).await;
+            },
+            move |_| Message::HoverPreviewDebounced { gen },
+        )
+    }
+
+    /// GAP-01: send the chat input as a new turn with active-pane context.
+    fn send_ai_chat_message(&mut self) -> Task<Message> {
+        let user_text = self.ai_chat_panel.input.trim().to_string();
+        if user_text.is_empty() || self.ai_chat_panel.is_streaming() {
+            return Task::none();
+        }
+
+        let pane_id = self
+            .active_tab_ref()
+            .map(|t| t.active_pane)
+            .unwrap_or(PaneId(0));
+        let shell_st = self.pane_shell_state.get(&pane_id).cloned();
+        let cwd = self.pane_cwds.get(&pane_id).cloned();
+
+        let context_block = if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
+            let term = ctx.terminal();
+            let guard = term.lock();
+            crate::ai_chat::context::build_pane_context(
+                shell_st.as_ref(),
+                cwd.as_deref(),
+                Some(&*guard),
+                Some(&self.lsp.context_block()),
+            )
+        } else {
+            crate::ai_chat::context::build_pane_context(
+                shell_st.as_ref(),
+                cwd.as_deref(),
+                None,
+                Some(&self.lsp.context_block()),
+            )
+        };
+
+        self.ai_chat_panel.set_input("");
+        if let Some(c) = self.ai_chat_cancel.take() {
+            c.notify_one();
+        }
+        let cancel = std::sync::Arc::new(tokio::sync::Notify::new());
+        self.ai_chat_cancel = Some(cancel.clone());
+        let gen = self.ai_chat_panel.begin_turn(&user_text);
+        let req = crate::ai_chat::context::build_request(
+            &self.ai_chat_cfg,
+            &self.ai_chat_panel.messages,
+            &context_block,
+            &self.soul_prompt,
+        );
+        spawn_ai_chat_stream(self.ai_chat_cfg.clone(), req, gen, cancel)
+    }
+
     fn dispatch_action(&mut self, action: Action) -> Task<Message> {
         match action {
             Action::NewTab => {
-                let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                let new_id = self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                 self.set_active_tab(new_id);
                 Task::none()
             }
@@ -6901,6 +8711,7 @@ impl PureTermApp {
             Action::ActivateTabByIndex(i) => Task::done(Message::ActivateTabByIndex(i)),
             Action::MovePaneToNewTab => Task::done(Message::MovePaneToNewTab),
             Action::MovePaneToNewWindow => Task::done(Message::MovePaneToNewWindow),
+            Action::NewWindow => Task::done(Message::NewWindow),
             // GAP-2.1 Workspace
             Action::NewWorkspace => Task::done(Message::NewWorkspace),
             Action::NextWorkspace => Task::done(Message::NextWorkspace),
@@ -6969,8 +8780,22 @@ impl PureTermApp {
             Action::FocusAddressBar => Task::done(Message::AddressBarOpen),
             // GAP-32: ⌘⇧B Git panel / lazygit.
             Action::ToggleGitPanel => Task::done(Message::ToggleGitPanel),
+            Action::ToggleLeftSidebar => Task::done(Message::ToggleLeftSidebar),
+            Action::ToggleRightSidebar => Task::done(Message::ToggleRightSidebar),
+            Action::SidebarRightMode(m) => Task::done(Message::SidebarRightMode(m)),
             // GAP-09: ⌘⇧M Notifications panel.
             Action::ToggleNotificationsPanel => Task::done(Message::ToggleNotificationsPanel),
+            Action::ErrorRecoveryToggle => Task::done(Message::ErrorRecoveryToggle),
+            Action::ToggleInstantReplay => Task::done(Message::ToggleInstantReplay),
+            Action::ReplayScrub(d) => Task::done(Message::ReplayScrub(d)),
+            Action::PrevMark => Task::done(Message::PrevMark),
+            Action::NextMark => Task::done(Message::NextMark),
+            Action::ToggleBroadcastInput
+            | Action::ToggleQuakeDock
+            | Action::ToggleToolbelt => Task::none(),
+            Action::OpenHoverTarget => Task::done(Message::OpenHoverTarget),
+            Action::OpenSemanticInEditor => Task::done(Message::OpenSemanticInEditor),
+            Action::ToggleAiChatPanel => Task::done(Message::ToggleAiChatPanel),
             Action::OpenLazygit => {
                 Task::done(Message::GitQuickAction(crate::git_panel::GitQuickAction::Lazygit))
             }
@@ -7250,6 +9075,7 @@ impl PureTermApp {
         self.status_bar_cfg = new_sb;
         // GAP-32: reload `[git]` config (panel toggle / PR refresh / lazygit cmd).
         self.git_cfg = AppConfig::load_git(&self.config_path);
+        self.sidebar_cfg = AppConfig::load_sidebar(&self.config_path);
         // GAP-15: reload `[shell_integration]` config.
         self.shell_integration_cfg = AppConfig::load_shell_integration(&self.config_path);
         // GAP-10: reload `[[triggers]]` rules (regex recompiled on load).
@@ -7258,6 +9084,22 @@ impl PureTermApp {
         // (re)enabled, (re)request authorization (idempotent — system prompts
         // only once).
         self.notification_cfg = AppConfig::load_notification(&self.config_path);
+        self.url_scheme_cfg = AppConfig::load_url_scheme(&self.config_path);
+        self.error_recovery_cfg = AppConfig::load_error_recovery(&self.config_path);
+        self.ai_chat_cfg = AppConfig::load_ai_chat(&self.config_path);
+        self.soul_cfg = AppConfig::load_soul(&self.config_path);
+        self.soul_prompt = crate::soul::load_system_prompt_extension(&self.soul_cfg);
+        self.natural_language_cfg = AppConfig::load_natural_language(&self.config_path);
+        self.semantic_history_cfg = AppConfig::load_semantic_history(&self.config_path);
+        self.port_scanner_cfg = AppConfig::load_port_scanner(&self.config_path);
+        self.p4.reload_configs(&self.config_path);
+        self.p4.apply_platform_effects();
+        let new_lsp_cfg = AppConfig::load_lsp(&self.config_path);
+        if new_lsp_cfg != self.lsp_cfg {
+            self.lsp_cfg = new_lsp_cfg.clone();
+            let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            self.lsp = crate::lsp::LspState::try_spawn(&new_lsp_cfg, workspace);
+        }
         #[cfg(target_os = "macos")]
         if self.notification_cfg.enabled && self.notification_cfg.desktop_notifications {
             crate::macos_notifications::request_authorization();
@@ -7282,10 +9124,19 @@ impl PureTermApp {
 
             let terminal_height =
                 terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-            let viewport_w = self.viewport_size.width;
-
-            for tab in self.tabs_mut() {
-                Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+            let viewport_w = self.terminal_viewport_width();
+            let aw = self.active_window_id;
+            #[cfg(unix)]
+            let ssh_smallest = self.ssh_global.smallest_screen_wins;
+            #[cfg(not(unix))]
+            let ssh_smallest = false;
+            if let Some(ws) = self
+                .windows
+                .iter_mut()
+                .find(|w| w.window_id == aw)
+                .and_then(|w| w.active_workspace_mut())
+            {
+                Self::resize_workspace_panes(ws, viewport_w, terminal_height, cw, ch, ssh_smallest);
             }
         }
 
@@ -7313,7 +9164,7 @@ impl PureTermApp {
         match fx {
             // ── Tab operations ──
             Fx::NewTab => {
-                let new_id = self.create_tab(self.viewport_size.width, self.viewport_size.height);
+                let new_id = self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                 self.set_active_tab(new_id);
                 Task::none()
             }
@@ -7398,7 +9249,22 @@ impl PureTermApp {
                     let _ = std::fs::create_dir_all(&socket_dir);
                     self.ssh_manager = Some(Arc::new(SshSessionManager::new(socket_dir, 30)));
                 }
-                self.connect_ssh_tab(profile_index);
+                if let Some(profile) = self.ssh_profiles.get(profile_index).cloned() {
+                    self.connect_ssh_with_profile(profile);
+                }
+                Task::none()
+            }
+            #[cfg(unix)]
+            Fx::SshOpenTarget { target, port } => {
+                if self.ssh_manager.is_none() {
+                    let socket_dir = std::env::temp_dir().join("pureterm-ssh");
+                    let _ = std::fs::create_dir_all(&socket_dir);
+                    self.ssh_manager = Some(Arc::new(SshSessionManager::new(socket_dir, 30)));
+                }
+                match crate::automation::ssh_profile_from_target(&target, port) {
+                    Ok(profile) => self.connect_ssh_with_profile(profile),
+                    Err(e) => log::warn!("ssh.open: {e}"),
+                }
                 Task::none()
             }
             #[cfg(unix)]
@@ -7458,6 +9324,34 @@ impl PureTermApp {
                 self.handle_agent_session_started(session_id, kind, cwd);
                 Task::none()
             }
+            Fx::SwitchWorkspace {
+                id,
+                name,
+                index,
+                all_windows,
+            } => {
+                if all_windows {
+                    self.apply_workspace_switch_all_windows(id, name.as_deref(), index);
+                    if let Some(path) = self.ipc_handle.as_ref().map(|h| h.socket_path.clone()) {
+                        let params = crate::multi_window_ipc::workspace_switch_params(
+                            id,
+                            name.as_deref(),
+                            index,
+                            false,
+                        );
+                        let _ = crate::multi_window_ipc::broadcast_workspace_switch(
+                            params,
+                            Some(path.as_path()),
+                        );
+                    }
+                } else if let Some(ws_id) =
+                    self.resolve_workspace_target(id, name.as_deref(), index)
+                {
+                    self.apply_workspace_switch(ws_id);
+                }
+                Task::none()
+            }
+            Fx::NewWindow => self.open_new_window(),
             // GAP-09: `pureterm notify` / external IPC → post a notification
             // (source Cli) into the active or specified pane.
             Fx::ShowNotification { title, body, pane_id } => {
@@ -7493,7 +9387,7 @@ impl PureTermApp {
                     now_ms,
                     self.notification_cfg.bell_throttle_ms,
                 );
-                refresh_dock_badge(&self.notification_cfg, &self.notification_store);
+                self.refresh_dock_badge_from_state();
                 fire_toast(&self.notification_cfg, &n, pane_visible, self.app_focused);
                 let mut data = serde_json::json!({
                     "pane_id": pid.0,
@@ -7673,7 +9567,7 @@ impl PureTermApp {
     /// GAP-7.4: Feed 面板可见性(view 的 has_overlay / layers 用;跨平台守卫)。
     #[cfg(unix)]
     fn feed_panel_visible(&self) -> bool {
-        self.feed_panel.is_visible()
+        self.feed_panel.is_visible() && !self.sidebar.feed_in_sidebar()
     }
     #[cfg(not(unix))]
     fn feed_panel_visible(&self) -> bool {
@@ -7727,6 +9621,7 @@ impl PureTermApp {
         match outcome {
             InboundOutcome::ErrorReplied => {}
             InboundOutcome::Focused => {
+                self.sidebar_show_feed();
                 self.events.emit(
                     crate::events::Category::Feed,
                     "feed.requested",
@@ -7760,6 +9655,7 @@ impl PureTermApp {
                 }
             }
         }
+        self.refresh_dock_badge_from_state();
         Task::none()
     }
 
@@ -8076,28 +9972,156 @@ impl PureTermApp {
     /// 在拖动分割线、窗口 resize、分屏/关闭 pane 等情况后调用，
     /// 让 term 网格的 cols/rows 与视觉 bounds 保持一致。
     ///
-    /// `cw`/`ch` 是当前 cell 尺寸（像素）。`viewport_w` 是窗口宽度，
-    /// `terminal_height` 是 tab bar 以下的可用高度。
-    /// 接收显式参数以避免借用冲突（调用方在 mut 借用之前取出 self 数据）。
+    /// `session_mins` — GAP-5.3: when `smallest_screen_wins` is on, maps
+    /// daemon `session_id` → min(cols)×min(rows) across every attached pane
+    /// in the workspace (precomputed by `apply_viewport_resize`).
     fn resize_panes_in_tab(
         tab: &mut Tab,
         viewport_w: f32,
         terminal_height: f32,
         cw: u16,
         ch: u16,
+        session_mins: &std::collections::HashMap<String, (usize, usize)>,
+        smallest_screen_wins: bool,
     ) {
         let layout = tab.split_tree.compute_layout(
             0.0, 0.0, viewport_w, terminal_height,
         );
         for (pane_id, rect) in &layout {
             if let Some(pane) = tab.panes.get(pane_id) {
-                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
-                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                let mut cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                let mut rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                if smallest_screen_wins {
+                    if let Some(ctx) = pane.terminal() {
+                        if let Some(sid) = ctx.session_id() {
+                            if let Some((mc, mr)) = session_mins.get(sid) {
+                                cols = *mc;
+                                rows = *mr;
+                            }
+                        }
+                    }
+                }
                 if let Some(ctx) = pane.terminal() {
                     ctx.resize(cols, rows, cw, ch);
                 }
             }
         }
+    }
+
+    /// GAP-5.3: min(cols)×min(rows) per shared daemon session across all tabs.
+    fn compute_session_min_sizes(
+        tabs: &[Tab],
+        viewport_w: f32,
+        terminal_height: f32,
+        cw: u16,
+        ch: u16,
+    ) -> std::collections::HashMap<String, (usize, usize)> {
+        use std::collections::HashMap;
+        let mut mins: HashMap<String, (usize, usize)> = HashMap::new();
+        for tab in tabs {
+            let layout = tab.split_tree.compute_layout(0.0, 0.0, viewport_w, terminal_height);
+            for (pane_id, rect) in &layout {
+                let Some(pane) = tab.panes.get(pane_id) else { continue };
+                let Some(ctx) = pane.terminal() else { continue };
+                let Some(sid) = ctx.session_id() else { continue };
+                let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
+                let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
+                mins.entry(sid.to_string())
+                    .and_modify(|(mc, mr)| {
+                        *mc = (*mc).min(cols);
+                        *mr = (*mr).min(rows);
+                    })
+                    .or_insert((cols, rows));
+            }
+        }
+        mins
+    }
+
+    fn resize_workspace_panes(
+        ws: &mut Workspace,
+        viewport_w: f32,
+        terminal_height: f32,
+        cw: u16,
+        ch: u16,
+        smallest_screen_wins: bool,
+    ) {
+        let session_mins = if smallest_screen_wins {
+            Self::compute_session_min_sizes(&ws.tabs, viewport_w, terminal_height, cw, ch)
+        } else {
+            std::collections::HashMap::new()
+        };
+        for tab in &mut ws.tabs {
+            Self::resize_panes_in_tab(
+                tab,
+                viewport_w,
+                terminal_height,
+                cw,
+                ch,
+                &session_mins,
+                smallest_screen_wins,
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    fn session_mins_for_tabs(
+        &self,
+        tabs: &[Tab],
+        viewport_w: f32,
+        terminal_height: f32,
+        cw: u16,
+        ch: u16,
+    ) -> std::collections::HashMap<String, (usize, usize)> {
+        if self.ssh_global.smallest_screen_wins {
+            Self::compute_session_min_sizes(tabs, viewport_w, terminal_height, cw, ch)
+        } else {
+            std::collections::HashMap::new()
+        }
+    }
+
+    #[cfg(not(unix))]
+    fn session_mins_for_tabs(
+        &self,
+        _tabs: &[Tab],
+        _viewport_w: f32,
+        _terminal_height: f32,
+        _cw: u16,
+        _ch: u16,
+    ) -> std::collections::HashMap<String, (usize, usize)> {
+        std::collections::HashMap::new()
+    }
+
+    fn smallest_screen_wins_enabled(&self) -> bool {
+        #[cfg(unix)]
+        {
+            self.ssh_global.smallest_screen_wins
+        }
+        #[cfg(not(unix))]
+        {
+            false
+        }
+    }
+
+    fn resize_one_tab_in_workspace(
+        &self,
+        tabs: &[Tab],
+        tab: &mut Tab,
+        viewport_w: f32,
+        terminal_height: f32,
+        cw: u16,
+        ch: u16,
+    ) {
+        let session_mins =
+            self.session_mins_for_tabs(tabs, viewport_w, terminal_height, cw, ch);
+        Self::resize_panes_in_tab(
+            tab,
+            viewport_w,
+            terminal_height,
+            cw,
+            ch,
+            &session_mins,
+            self.smallest_screen_wins_enabled(),
+        );
     }
 
     /// Coalesced/trailing resize: apply `viewport_size` to every pane's grid
@@ -8122,17 +10146,19 @@ impl PureTermApp {
         let ch: u16 = self.glyph_state.borrow().cell_height as u16;
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         // T2b-1:viewport_size 是 Copy,先按值取出;再用 field-path 直访 self.windows。
-        let vw = self.viewport_size.width;
+        let vw = self.terminal_viewport_width();
         let aw = self.active_window_id;
+        #[cfg(unix)]
+        let ssh_smallest = self.ssh_global.smallest_screen_wins;
+        #[cfg(not(unix))]
+        let ssh_smallest = false;
         if let Some(ws) = self
             .windows
             .iter_mut()
             .find(|w| w.window_id == aw)
             .and_then(|w| w.active_workspace_mut())
         {
-            for tab in &mut ws.tabs {
-                Self::resize_panes_in_tab(tab, vw, terminal_height, cw, ch);
-            }
+            Self::resize_workspace_panes(ws, vw, terminal_height, cw, ch, ssh_smallest);
         }
         // GAP-3.5: web pane 的 wry WebView 跟随 resize 一起重定位。
         self.reposition_web_panes();
@@ -8149,7 +10175,7 @@ impl PureTermApp {
     /// 取 `&self`:所有写都经 `BrowserContext` 的内部可变性(`Mutex`),不触碰
     /// `self.tabs()`,故可在不可变遍历中调用。
     fn reposition_web_panes(&self) {
-        let vw = self.viewport_size.width;
+        let vw = self.terminal_viewport_width();
         let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         for tab in self.tabs() {
             // 纯终端 tab 快速跳过,避免无谓的 compute_layout。
@@ -8246,9 +10272,9 @@ impl PureTermApp {
             self.shell_integration_opts(),
         ));
 
-        // Find the tab and perform the split
-        // T2b-1:field-path 直访 self.windows → 活跃 workspace;self.viewport_size /
-        // self.glyph_state 与 self.windows disjoint,可同借。
+        // Calculate new pane dimensions from layout
+        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
+        let viewport_w = self.terminal_viewport_width();
         let aw = self.active_window_id;
         let tab = match self
             .windows
@@ -8266,17 +10292,15 @@ impl PureTermApp {
         // 丢失新建 pane。
         tab.restore_zoom_if_any();
 
-        // Calculate new pane dimensions from layout
-        let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-        let layout = tab.split_tree.compute_layout(
-            0.0, 0.0, self.viewport_size.width, terminal_height,
+        let _layout = tab.split_tree.compute_layout(
+            0.0, 0.0, viewport_w, terminal_height,
         );
 
         tab.split_tree.split(active_pane_id, new_pane_id, direction);
 
         // Compute new layout to get the new pane's size
         let new_layout = tab.split_tree.compute_layout(
-            0.0, 0.0, self.viewport_size.width, terminal_height,
+            0.0, 0.0, viewport_w, terminal_height,
         );
 
         let gs = self.glyph_state.borrow();
@@ -8369,6 +10393,8 @@ impl PureTermApp {
             // T2b-1:field-path 直访 self.windows → 活跃 workspace;后续
             // ssh_manager / pane_cwds / viewport_size / glyph_state 均与
             // self.windows disjoint,可同借。
+            let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
+            let viewport_w = self.terminal_viewport_width();
             let aw = self.active_window_id;
             let tab = self
                 .windows
@@ -8394,9 +10420,8 @@ impl PureTermApp {
             self.pane_trigger_state.remove(&active_pane_id);
             tab.active_pane = new_active;
             // Resize remaining panes
-            let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
             let layout = tab.split_tree.compute_layout(
-                0.0, 0.0, self.viewport_size.width, terminal_height,
+                0.0, 0.0, viewport_w, terminal_height,
             );
             let gs = self.glyph_state.borrow();
             let cw = gs.cell_width as u16;
@@ -8424,15 +10449,24 @@ impl PureTermApp {
     /// 在活跃 tab 上调用 `resize_panes_in_tab`,使用当前 viewport 与 cell 尺寸。
     /// 任何修改 active tab 的 split_tree(equalize / swap / zoom / detach)后都应调用。
     fn resize_active_tab_panes(&mut self) {
-        let active_tab_id = self.active_tab_id();
-        let viewport_w = self.viewport_size.width;
+        let viewport_w = self.terminal_viewport_width();
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let (cw, ch) = {
             let gs = self.glyph_state.borrow();
             (gs.cell_width as u16, gs.cell_height as u16)
         };
-        if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == active_tab_id) {
-            Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+        let aw = self.active_window_id;
+        #[cfg(unix)]
+        let ssh_smallest = self.ssh_global.smallest_screen_wins;
+        #[cfg(not(unix))]
+        let ssh_smallest = false;
+        if let Some(ws) = self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+        {
+            Self::resize_workspace_panes(ws, viewport_w, terminal_height, cw, ch, ssh_smallest);
         }
     }
 
@@ -8475,13 +10509,25 @@ impl PureTermApp {
             (gs.cell_width as u16, gs.cell_height as u16)
         };
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-        let viewport_w = self.viewport_size.width;
-        for tab in self.tabs_mut() {
-            if tab.split_tree.contains(pid) {
-                tab.split_tree.resize_ratio(pid, delta_ratio);
-                Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
-                break;
+        let viewport_w = self.terminal_viewport_width();
+        let aw = self.active_window_id;
+        #[cfg(unix)]
+        let ssh_smallest = self.ssh_global.smallest_screen_wins;
+        #[cfg(not(unix))]
+        let ssh_smallest = false;
+        if let Some(ws) = self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+        {
+            for tab in &mut ws.tabs {
+                if tab.split_tree.contains(pid) {
+                    tab.split_tree.resize_ratio(pid, delta_ratio);
+                    break;
+                }
             }
+            Self::resize_workspace_panes(ws, viewport_w, terminal_height, cw, ch, ssh_smallest);
         }
     }
 
@@ -8577,17 +10623,25 @@ impl PureTermApp {
             (gs.cell_width as u16, gs.cell_height as u16)
         };
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-        let viewport_w = self.viewport_size.width;
-        if let Some(tab) = self.tabs_mut().get_mut(dst_tab_index) {
-            let at = tab.active_pane;
-            tab.split_tree.split(at, src, direction);
-            tab.panes.insert(src, pane);
-            tab.active_pane = src;
-            Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
-        }
-        // 3. Resync the source tab's grid (its layout shrank).
-        if let Some(tab) = self.tabs_mut().get_mut(src_tab_idx) {
-            Self::resize_panes_in_tab(tab, viewport_w, terminal_height, cw, ch);
+        let viewport_w = self.terminal_viewport_width();
+        let aw = self.active_window_id;
+        #[cfg(unix)]
+        let ssh_smallest = self.ssh_global.smallest_screen_wins;
+        #[cfg(not(unix))]
+        let ssh_smallest = false;
+        if let Some(ws) = self
+            .windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+        {
+            if let Some(tab) = ws.tabs.get_mut(dst_tab_index) {
+                let at = tab.active_pane;
+                tab.split_tree.split(at, src, direction);
+                tab.panes.insert(src, pane);
+                tab.active_pane = src;
+            }
+            Self::resize_workspace_panes(ws, viewport_w, terminal_height, cw, ch, ssh_smallest);
         }
     }
 
@@ -8611,7 +10665,7 @@ impl PureTermApp {
     fn resize_tab_panes(&mut self, tab: &mut Tab) {
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let layout = tab.split_tree.compute_layout(
-            0.0, 0.0, self.viewport_size.width, terminal_height,
+            0.0, 0.0, self.terminal_viewport_width(), terminal_height,
         );
 
         let gs = self.glyph_state.borrow();
@@ -8880,10 +10934,15 @@ impl PureTermApp {
                 if let Some(tab) = self.active_tab_ref() {
                     if let Some(pane) = tab.panes.get(&tab.active_pane) {
                         if let Some(snap) = pane.terminal().and_then(|c| c.ssh_state_snapshot()) {
+                            let fwd = pane.terminal().and_then(|c| c.ssh_forward_summary());
                             break 'ssh Some(match snap {
                                 // GAP-5.6: reconnect-state-aware indicator.
                                 SshStateSnapshot::Connected => (
-                                    "  SSH".to_string(),
+                                    if let Some(f) = fwd {
+                                        format!("  SSH {f}")
+                                    } else {
+                                        "  SSH".to_string()
+                                    },
                                     Color::from_rgba(0.9, 0.5, 0.5, 1.0),
                                 ),
                                 SshStateSnapshot::Reconnecting { attempt } => (
@@ -8936,6 +10995,7 @@ impl PureTermApp {
                 crate::vi_mode_handler::ViSubMode::Visual => "  -- VISUAL --",
                 crate::vi_mode_handler::ViSubMode::VisualLine => "  -- VLINE --",
                 crate::vi_mode_handler::ViSubMode::VisualBlock => "  -- VBLOCK --",
+                crate::vi_mode_handler::ViSubMode::OperatorPending(_) => "  -- OP --",
             });
 
         // GAP-7.6: agent indicator (⚡ active / ❄ hibernated / ⏳ feed pending).
@@ -8959,6 +11019,14 @@ impl PureTermApp {
             } else {
                 None
             },
+            codeindex_percent: crate::codeindex::indexing_percent(),
+            lsp_summary: self.lsp.summary().and_then(|s| {
+                if s.errors > 0 || s.warnings > 0 {
+                    Some((s.errors, s.warnings))
+                } else {
+                    None
+                }
+            }),
         };
 
         // Iterate the configured component list; right-aligned components render
@@ -9215,12 +11283,21 @@ impl PureTermApp {
         } else {
             for (idx, profile) in self.ssh_profiles.iter().enumerate() {
                 let is_selected = idx == dialog.selected;
+                let fwd = profile.forwards().summary();
                 let label = format!(
                     "{}{}",
                     if is_selected { "▶ " } else { "  " },
                     profile.name
                 );
-                let row_btn = button(text(label).size(14))
+                profile_list = profile_list.push(
+                    text(label).size(14),
+                );
+                if let Some(f) = fwd {
+                    profile_list = profile_list.push(
+                        text(format!("     ↪ {f}")).size(11),
+                    );
+                }
+                let row_btn = button(text("").size(1))
                     .on_press(Message::SshDialogSelect(idx))
                     .width(Length::Fill)
                     .style(if is_selected {
@@ -9228,6 +11305,7 @@ impl PureTermApp {
                     } else {
                         button::secondary
                     });
+                // Invisible hit target over the label rows above.
                 profile_list = profile_list.push(row_btn);
             }
         }
@@ -9476,6 +11554,9 @@ impl PureTermApp {
         use iced::Length;
 
         let req = self.feed_panel.focused_request()?;
+        if self.sidebar.feed_in_sidebar() {
+            return None;
+        }
         let id = req.ipc_id;
 
         // 决策按钮工厂。
@@ -9686,7 +11767,7 @@ impl PureTermApp {
         use iced::widget::{button, column, container, row, scrollable, space, text};
         use iced::Length;
 
-        if !self.git_panel.open {
+        if !self.git_panel.open || self.sidebar.git_in_sidebar() {
             return None;
         }
 
@@ -9916,6 +11997,216 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(8.0).y(48.0).into())
     }
 
+    /// GAP-01: right-docked AI Chat panel (⌘⇧L). Message list + input + stream Stop.
+    fn view_ai_chat_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use crate::ai_chat::types::ChatRole;
+        use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
+        use iced::Length;
+
+        if !self.ai_chat_panel.open {
+            return None;
+        }
+
+        const PANEL_W: f32 = 380.0;
+
+        let mut body = column![
+            row![
+                text("AI Chat").size(15),
+                space().width(Length::Fill),
+                text(format!("{} / {}", self.ai_chat_cfg.provider, self.ai_chat_cfg.model))
+                    .size(9)
+                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.45)),
+                if self.ai_chat_panel.is_streaming() {
+                    button(text("Stop").size(11))
+                        .on_press(Message::AiChatStop)
+                        .padding([2, 6])
+                        .style(button::secondary)
+                } else {
+                    button(text("×").size(15))
+                        .on_press(Message::ToggleAiChatPanel)
+                        .padding([2, 8])
+                        .style(button::secondary)
+                },
+            ]
+            .spacing(6),
+        ]
+        .spacing(6);
+
+        let mut messages_col = column![].spacing(8);
+        if self.ai_chat_panel.messages.is_empty() {
+            messages_col = messages_col.push(
+                text("Ask about commands, errors, or code. Active pane context is attached on send.")
+                    .size(11)
+                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.45)),
+            );
+        } else {
+            for msg in &self.ai_chat_panel.messages {
+                let (label, color) = match msg.role {
+                    ChatRole::User => (
+                        "You",
+                        Color::from_rgba(0.55, 0.75, 1.0, 1.0),
+                    ),
+                    ChatRole::Assistant => (
+                        "Assistant",
+                        Color::from_rgba(0.75, 0.9, 0.75, 1.0),
+                    ),
+                };
+                let content = if msg.content.is_empty()
+                    && msg.role == ChatRole::Assistant
+                    && self.ai_chat_panel.is_streaming()
+                {
+                    "…".to_string()
+                } else {
+                    msg.content.clone()
+                };
+                messages_col = messages_col.push(
+                    column![
+                        text(label).size(10).color(color),
+                        text(content).size(12),
+                    ]
+                    .spacing(2),
+                );
+            }
+        }
+
+        body = body.push(
+            scrollable(messages_col)
+                .height(Length::Fixed(self.viewport_size.height * 0.55)),
+        );
+
+        let input_row = row![
+            text_input("Message…", &self.ai_chat_panel.input)
+                .on_input(Message::AiChatInputChanged)
+                .on_submit(Message::AiChatSend)
+                .width(Length::Fill),
+            button(text("Send").size(12))
+                .on_press(Message::AiChatSend)
+                .padding([4, 10])
+                .style(button::primary),
+        ]
+        .spacing(6);
+        body = body.push(input_row);
+
+        let panel = container(body.padding(10))
+            .width(Length::Fixed(PANEL_W))
+            .max_height(self.viewport_size.height * 0.85)
+            .style(container::bordered_box);
+        let x = (self.viewport_size.width - PANEL_W).max(0.0);
+        Some(iced::widget::pin(panel).x(x).y(48.0).into())
+    }
+
+    /// GAP-4.2: hit-test the semantic hover-preview context menu.
+    fn hover_preview_menu_item_at(
+        &self,
+        pos: Point,
+    ) -> Option<crate::hover_preview::HoverPreviewMenuItem> {
+        let menu = self.hover_preview.context_menu.as_ref()?;
+        const ITEM_H: f32 = 28.0;
+        const MENU_W: f32 = 200.0;
+        let x0 = menu.position.0;
+        let y0 = menu.position.1;
+        let items: Vec<_> = crate::hover_preview::HoverPreviewMenuItem::ALL
+            .iter()
+            .copied()
+            .filter(|item| item.applies_to(&menu.target.rule_id))
+            .collect();
+        let menu_h = items.len() as f32 * ITEM_H + 8.0;
+        if pos.x < x0 || pos.x > x0 + MENU_W || pos.y < y0 || pos.y > y0 + menu_h {
+            return None;
+        }
+        let idx = ((pos.y - y0 - 4.0) / ITEM_H) as usize;
+        items.get(idx).copied()
+    }
+
+    /// GAP-4.2: smart-selection hover tooltip near the cursor.
+    fn view_hover_preview_tooltip(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{column, container, text};
+
+        if !self.hover_preview.is_visible() {
+            return None;
+        }
+        let target = self.hover_preview.target.as_ref()?;
+        let (x, y) = self.hover_preview.position;
+        let header = text(target.text.clone()).size(11);
+        let body = match &self.hover_preview.content {
+            crate::hover_preview::PreviewContent::Loading => text("Loading…").size(11),
+            crate::hover_preview::PreviewContent::Url { title, .. } => {
+                text(title.as_deref().unwrap_or("(no title)")).size(12)
+            }
+            crate::hover_preview::PreviewContent::Path {
+                kind,
+                size_label,
+                modified,
+                gitignored,
+            } => {
+                let kind_s = match kind {
+                    crate::hover_preview::PathKind::File => "file",
+                    crate::hover_preview::PathKind::Directory => "directory",
+                    crate::hover_preview::PathKind::Missing => "not found",
+                };
+                let mut detail = kind_s.to_string();
+                if let Some(s) = size_label {
+                    detail.push_str(" · ");
+                    detail.push_str(s);
+                }
+                if let Some(m) = modified {
+                    detail.push_str(" · ");
+                    detail.push_str(m);
+                }
+                if *gitignored {
+                    detail.push_str(" · gitignored");
+                }
+                text(detail).size(11)
+            }
+            crate::hover_preview::PreviewContent::Error(msg) => text(msg.clone()).size(11),
+        };
+        let card = container(column![header, body].spacing(4))
+            .padding([8, 10])
+            .style(container::bordered_box)
+            .max_width(360.0);
+        let tx = x + 12.0;
+        let ty = (y + 16.0).min(self.viewport_size.height - 80.0);
+        Some(iced::widget::pin(card).x(tx).y(ty).into())
+    }
+
+    /// GAP-4.2: right-click semantic menu (open / copy / editor).
+    fn view_hover_preview_menu(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, text};
+
+        let menu = self.hover_preview.context_menu.as_ref()?;
+        let items: Vec<_> = crate::hover_preview::HoverPreviewMenuItem::ALL
+            .iter()
+            .copied()
+            .filter(|item| item.applies_to(&menu.target.rule_id))
+            .collect();
+        let mut col = column![].spacing(0);
+        for item in items {
+            let label = item.label();
+            let hovered = menu.hovered == Some(item);
+            let btn: Element<'_, Message, Theme, iced::Renderer> = button(text(label).size(12))
+                .width(Length::Fill)
+                .padding([6, 10])
+                .on_press(Message::HoverPreviewMenuAction(item))
+                .style(if hovered {
+                    button::primary
+                } else {
+                    button::text
+                })
+                .into();
+            col = col.push(btn);
+        }
+        let panel = container(col)
+            .width(Length::Fixed(200.0))
+            .padding(4)
+            .style(container::bordered_box);
+        Some(
+            iced::widget::pin(panel)
+                .x(menu.position.0)
+                .y(menu.position.1)
+                .into(),
+        )
+    }
+
     /// GAP-32: transient toast pill (bottom-center), shown for ~3.5s.
     fn view_toast(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{container, text};
@@ -9926,6 +12217,148 @@ impl PureTermApp {
         let x = (self.viewport_size.width * 0.5 - 150.0).max(0.0);
         let y = (self.viewport_size.height - 60.0).max(0.0);
         Some(iced::widget::pin(pill).x(x).y(y).into())
+    }
+
+    /// GAP-02: bottom inline card for LLM fix suggestions on command failure.
+    fn view_error_recovery_card(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, row, scrollable, space, text};
+        use iced::Length;
+
+        if !self.error_recovery.open {
+            return None;
+        }
+
+        let failure = self.error_recovery.failure.as_ref()?;
+        let cmd_label = failure
+            .command
+            .as_deref()
+            .unwrap_or("<unknown>");
+        let header = text(format!(
+            "Error Recovery — exit {} — `{}`",
+            failure.exit_code, cmd_label
+        ))
+        .size(13);
+
+        let suggestion = if self.error_recovery.suggestion.is_empty()
+            && self.error_recovery.is_streaming()
+        {
+            "Analyzing…".to_string()
+        } else if self.error_recovery.suggestion.is_empty() {
+            "(no suggestion yet)".to_string()
+        } else {
+            self.error_recovery.suggestion.clone()
+        };
+
+        let mut body = column![
+            row![
+                text("Error Recovery").size(15),
+                space().width(Length::Fill),
+                if self.error_recovery.is_streaming() {
+                    button(text("Stop").size(11))
+                        .on_press(Message::ErrorRecoveryStop)
+                        .padding([2, 6])
+                        .style(button::secondary)
+                } else {
+                    button(text("×").size(15))
+                        .on_press(Message::ErrorRecoveryDismiss)
+                        .padding([2, 8])
+                        .style(button::secondary)
+                },
+            ]
+            .spacing(4),
+            header,
+            scrollable(text(suggestion).size(12)).height(Length::Fixed(120.0)),
+        ]
+        .spacing(6)
+        .padding(10);
+
+        if let Some(fix) = &self.error_recovery.suggested_command {
+            body = body.push(
+                row![
+                    text(format!("Suggested: `{fix}`")).size(11),
+                    space().width(Length::Fill),
+                    button(text("Apply").size(12))
+                        .on_press(Message::ErrorRecoveryApply)
+                        .padding([4, 10])
+                        .style(button::primary),
+                ]
+                .spacing(8),
+            );
+        }
+
+        let card_h = 220.0;
+        let panel = container(body)
+            .width(Length::Fill)
+            .style(container::bordered_box);
+        let y = (self.viewport_size.height - card_h - 32.0).max(48.0);
+        Some(iced::widget::pin(panel).x(8.0).y(y).into())
+    }
+
+    /// GAP-08: bottom inline card for `# description` → shell command suggestions.
+    fn view_natural_language_card(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        use iced::widget::{button, column, container, row, scrollable, space, text};
+        use iced::Length;
+
+        if !self.natural_language.open {
+            return None;
+        }
+
+        let ctx = self.natural_language.context.as_ref()?;
+        let header = text(format!("Natural language — `{}`", ctx.description)).size(13);
+
+        let suggestion = if self.natural_language.suggestion.is_empty()
+            && self.natural_language.is_streaming()
+        {
+            "Generating command…".to_string()
+        } else if self.natural_language.suggestion.is_empty() {
+            "(no suggestion yet)".to_string()
+        } else {
+            self.natural_language.suggestion.clone()
+        };
+
+        let mut body = column![
+            row![
+                text("Shell command").size(15),
+                space().width(Length::Fill),
+                if self.natural_language.is_streaming() {
+                    button(text("Stop").size(11))
+                        .on_press(Message::NaturalLanguageStop)
+                        .padding([2, 6])
+                        .style(button::secondary)
+                } else {
+                    button(text("×").size(15))
+                        .on_press(Message::NaturalLanguageDismiss)
+                        .padding([2, 8])
+                        .style(button::secondary)
+                },
+            ]
+            .spacing(4),
+            header,
+            scrollable(text(suggestion).size(12)).height(Length::Fixed(100.0)),
+        ]
+        .spacing(6)
+        .padding(10);
+
+        if let Some(fix) = &self.natural_language.suggested_command {
+            body = body.push(
+                row![
+                    text(format!("Suggested: `{fix}`")).size(11),
+                    space().width(Length::Fill),
+                    button(text("Apply").size(12))
+                        .on_press(Message::NaturalLanguageApply)
+                        .padding([4, 10])
+                        .style(button::primary),
+                ]
+                .spacing(8),
+            );
+        }
+
+        let card_h = 200.0;
+        let panel = container(body)
+            .width(Length::Fill)
+            .style(container::bordered_box);
+        let y = (self.viewport_size.height - card_h - 32.0).max(48.0);
+        Some(iced::widget::pin(panel).x(8.0).y(y).into())
     }
 
     /// P5 GAP-5.9: render the command palette as a centered overlay.
@@ -10099,6 +12532,9 @@ impl PureTermApp {
         use iced::Length;
 
         let s = self.surface_search.as_ref()?;
+        if self.sidebar.search_in_sidebar() {
+            return None;
+        }
 
         let input = text_input("Find…", &s.query)
             .on_input(Message::SurfaceSearchQuery)
@@ -10197,6 +12633,9 @@ impl PureTermApp {
         use iced::Length;
 
         let s = self.dir_search.as_ref()?;
+        if self.sidebar.search_in_sidebar() {
+            return None;
+        }
 
         let mut body = column![text("Find in Directory").size(16)]
             .spacing(6)
@@ -10345,6 +12784,213 @@ impl PureTermApp {
         Some(pin(panel).x(x).y(y).into())
     }
 
+    /// GAP-11: instant replay scrub overlay (bottom bar).
+    fn view_replay_overlay(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        if !self.replay_viewer.open {
+            return None;
+        }
+        let frame = self
+            .replay_viewer
+            .current()
+            .map(|f| format!("[{}] {} — {}", f.ts, f.kind, f.summary))
+            .unwrap_or_else(|| "No replay frames".to_string());
+        let pos = self.replay_viewer.position_label();
+        let bar = row![
+            text(format!("Replay {pos}")).size(12),
+            space().width(Length::Fill),
+            button(text("◀")).on_press(Message::ReplayScrub(-1)).padding(4),
+            button(text("▶")).on_press(Message::ReplayScrub(1)).padding(4),
+            button(text("✕"))
+                .on_press(Message::ToggleInstantReplay)
+                .padding(4),
+        ]
+        .spacing(8)
+        .padding([6, 10])
+        .width(Length::Fill);
+        let body = column![bar, text(frame).size(11)].spacing(4).padding(8);
+        Some(
+            container(body)
+                .width(Length::Fill)
+                .style(|_| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(0.08, 0.08, 0.10, 0.95))),
+                    ..Default::default()
+                })
+                .into(),
+        )
+    }
+
+    /// GAP-19: left sidebar (Workspace list + Git summary).
+    fn view_left_sidebar(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        if !self.sidebar.left_open {
+            return None;
+        }
+        let width = crate::sidebar::clamp_width(self.sidebar_cfg.left_width);
+        let height = sidebar_content_height(
+            self.viewport_size.height,
+            self.status_bar_cfg.effective_height(),
+        );
+        let active_ws = self.active_window()?.active_workspace;
+        let rows: Vec<crate::sidebar::left::WorkspaceRow> = self
+            .active_window()?
+            .workspaces
+            .iter()
+            .map(|ws| crate::sidebar::left::WorkspaceRow {
+                id: ws.id,
+                name: ws.name.clone(),
+                active: ws.id == active_ws,
+                tab_count: ws.tabs.len(),
+            })
+            .collect();
+        let git_status = self.status_bar_git_status.as_ref();
+        let git = crate::sidebar::left::GitSummary {
+            branch: git_status
+                .and_then(|g| g.branch.as_deref())
+                .or(self.status_bar_git_branch.as_deref()),
+            ahead: git_status.and_then(|g| g.ahead),
+            behind: git_status.and_then(|g| g.behind),
+            dirty: git_status
+                .map(|g| g.staged + g.unstaged + g.untracked + g.unmerged > 0)
+                .unwrap_or(false),
+        };
+        let dsl_items: Vec<(String, String)> = self
+            .sidebar_dsl
+            .items
+            .iter()
+            .map(|i| (i.icon.clone(), i.text.clone()))
+            .collect();
+        Some(crate::sidebar::left::view(
+            &rows,
+            git,
+            &dsl_items,
+            width,
+            height,
+        ))
+    }
+
+    /// GAP-19: right sidebar (Find / Feed / Git tabs).
+    fn view_right_sidebar(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        if !self.sidebar.right_open {
+            return None;
+        }
+        let width = crate::sidebar::clamp_width(self.sidebar_cfg.right_width);
+        let height = sidebar_content_height(
+            self.viewport_size.height,
+            self.status_bar_cfg.effective_height(),
+        );
+
+        let surface = self.surface_search.as_ref().map(|s| {
+            crate::sidebar::right::SurfaceFindData {
+                query: &s.query,
+                case_sensitive: s.flags.case_sensitive,
+                regex_mode: s.flags.regex_mode,
+                whole_word: s.flags.whole_word,
+                follow_tail: s.follow_tail,
+            }
+        });
+        let dir = self.dir_search.as_ref().map(|d| {
+            crate::sidebar::right::DirFindData {
+                query: &d.query,
+                running: d.running,
+                error: d.error.as_deref(),
+                results: &d.results,
+            }
+        });
+        let git = crate::sidebar::right::GitTabData {
+            status: self.git_panel.status.as_ref(),
+            pr: self.git_panel.pr.as_ref(),
+            pr_refreshing: self.git_panel.pr_refreshing,
+            pr_error: self.git_panel.pr_error.as_deref(),
+            last_log: &self.git_panel.last_log,
+            cwd: self.git_panel.cwd.as_deref(),
+            show_pr: self.git_cfg.show_pr,
+        };
+        let ports = crate::sidebar::right::PortScannerTabData {
+            entries: &self.port_scanner_entries,
+            scanning: self.port_scanner_cfg.enabled && self.port_scanner_entries.is_empty(),
+        };
+        let files = crate::sidebar::right::RemoteFilesTabData {
+            path: &self.remote_files.path,
+            entries: &self.remote_files.entries,
+            loading: self.remote_files.loading,
+            error: self.remote_files.error.as_deref(),
+            session_label: self.remote_files.session_label.as_deref(),
+            can_go_up: crate::remote_files::parent_dir(&self.remote_files.path).is_some(),
+            preview_path: self.remote_files.preview_path.as_deref(),
+            preview_loading: self.remote_files.preview_loading,
+            preview: self.remote_files.preview.as_ref(),
+            preview_error: self.remote_files.preview_error.as_deref(),
+            find_query: &self.remote_files.find_query,
+            find_results: &self.remote_files.find_results,
+            find_loading: self.remote_files.find_loading,
+            find_error: self.remote_files.find_error.as_deref(),
+        };
+        let empty_blocks: &[crate::output_blocks::OutputBlock] = &[];
+        let active_blocks = self
+            .active_tab_ref()
+            .map(|t| t.active_pane)
+            .and_then(|pid| self.pane_block_stores.get(&pid))
+            .map(|s| s.blocks())
+            .unwrap_or(empty_blocks);
+        let blocks = crate::sidebar::right::BlocksTabData {
+            blocks: active_blocks,
+            exit_filter: self.block_output_filter,
+            search: &self.block_output_search,
+            enabled: self.block_output_cfg.enabled,
+        };
+        let toolbelt = crate::sidebar::right::ToolbeltTabData {
+            history: &self.toolbelt.command_history,
+            bookmarks: &self.toolbelt.bookmarks,
+            snippets: &self.toolbelt.snippets,
+            paste_history: &self.toolbelt.paste_history,
+        };
+
+        #[cfg(unix)]
+        {
+            let feed_req = self.feed_panel.focused_request();
+            let feed_subject = feed_req.as_ref().and_then(|r| r.subject());
+            let feed_event = feed_req.map(|r| r.event.clone());
+            let feed_tool = feed_req.and_then(|r| r.tool_name.clone());
+            let feed_reason = feed_req.map(|r| r.reason.clone());
+            Some(crate::sidebar::right::view(
+                self.sidebar.right_mode,
+                width,
+                height,
+                self.block_output_cfg.enabled,
+                surface,
+                dir,
+                git,
+                ports,
+                files,
+                blocks,
+                toolbelt,
+                feed_req.is_some(),
+                feed_subject,
+                feed_event,
+                feed_tool,
+                feed_reason,
+                self.feed_panel.focused_remaining_secs(),
+                self.feed_panel.pending_count(),
+                feed_req.map(|r| r.ipc_id),
+            ))
+        }
+        #[cfg(not(unix))]
+        {
+            Some(crate::sidebar::right::view(
+                self.sidebar.right_mode,
+                width,
+                height,
+                self.block_output_cfg.enabled,
+                surface,
+                dir,
+                git,
+                ports,
+                files,
+                blocks,
+                toolbelt,
+            ))
+        }
+    }
+
     pub fn view(&self, id: window::Id) -> Element<'_, Message, Theme, iced::Renderer> {
         if let Some(ref state) = self.settings_state {
             if state.owns_window(id) {
@@ -10356,7 +13002,7 @@ impl PureTermApp {
         // GAP-2.1 Phase 4:detached 已折叠进统一 `windows`,用 window_for 查找,
         // !w.is_main 守卫避免误命中主窗(id == main_window 时直接走主窗路径)。
         if let Some(w) = self.window_for(id) {
-            if !w.is_main {
+            if !w.is_main && !w.show_tab_bar {
                 let pane_entry = w
                     .active_tab()
                     .and_then(|t| t.panes.iter().next());
@@ -10391,12 +13037,22 @@ impl PureTermApp {
         }
 
         if Some(id) != self.main_window {
-            return container("")
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into();
+            let secondary = self
+                .window_for(id)
+                .map(|w| w.show_tab_bar && !w.is_main)
+                .unwrap_or(false);
+            if !secondary {
+                return container("")
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into();
+            }
         }
 
+        let terminal_h = sidebar_content_height(
+            self.viewport_size.height,
+            self.status_bar_cfg.effective_height(),
+        );
         let terminal: Element<'_, Message, Theme, iced::Renderer> =
             if let Some(tab) = self.active_tab_ref() {
                 self.view_split_tree(tab)
@@ -10407,8 +13063,22 @@ impl PureTermApp {
                     .into()
             };
 
+        // GAP-19: left | terminal | right three-column middle row.
+        let mut middle = row![].width(Length::Fill).height(Length::Fixed(terminal_h));
+        if let Some(left) = self.view_left_sidebar() {
+            middle = middle.push(left);
+        }
+        middle = middle.push(
+            container(terminal)
+                .width(Length::Fill)
+                .height(Length::Fill),
+        );
+        if let Some(right) = self.view_right_sidebar() {
+            middle = middle.push(right);
+        }
+
         let base: Element<'_, Message, Theme, iced::Renderer> =
-            column![self.view_top_bar(), terminal, self.view_bottom_bar()]
+            column![self.view_top_bar(), middle, self.view_bottom_bar()]
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into();
@@ -10434,10 +13104,13 @@ impl PureTermApp {
             || self.feed_panel_visible()
             || self.hibernate_panel_visible()
             || self.detect_panel_visible()
-            // GAP-32: Git overlay panel (⌘⇧B) — not unix-gated (git/gh are cross-platform).
-            || self.git_panel.open;
+            // GAP-32: Git overlay retired — Git lives in the right sidebar tab.
+            // Keep git_panel.open for refresh/state only; no overlay layer.
+            || self.ai_chat_panel.open
+            || self.error_recovery.open
+            || self.replay_viewer.open;
 
-        if has_overlay || self.toast.is_some() {
+        if has_overlay || self.toast.is_some() || self.error_recovery.open || self.replay_viewer.open {
             // No full-screen `dismiss` overlay here. The previous design
             // used `opaque(mouse_area.on_press(Dismiss))` to catch
             // outside-clicks, but iced 0.14's `MouseArea` calls
@@ -10501,6 +13174,13 @@ impl PureTermApp {
             if let Some(notif_el) = self.view_notifications_panel() {
                 layers.push(notif_el);
             }
+            // GAP-01: AI Chat panel (right dock).
+            if let Some(chat_el) = self.view_ai_chat_panel() {
+                layers.push(chat_el);
+            }
+            if let Some(replay_el) = self.view_replay_overlay() {
+                layers.push(replay_el);
+            }
             if let Some(palette_el) = self.view_command_palette() {
                 layers.push(palette_el);
             }
@@ -10525,11 +13205,37 @@ impl PureTermApp {
                 layers.push(ab_el);
             }
 
+            // GAP-02: Error Recovery inline card (bottom).
+            if let Some(er_el) = self.view_error_recovery_card() {
+                layers.push(er_el);
+            }
+            // GAP-08: Natural language command card (bottom).
+            if let Some(nl_el) = self.view_natural_language_card() {
+                layers.push(nl_el);
+            }
+
+            // GAP-4.2: semantic hover preview menu / tooltip.
+            if let Some(menu_el) = self.view_hover_preview_menu() {
+                layers.push(menu_el);
+            }
+            if let Some(tip_el) = self.view_hover_preview_tooltip() {
+                layers.push(tip_el);
+            }
+
             // GAP-32: transient toast (top-most layer).
             if let Some(toast_el) = self.view_toast() {
                 layers.push(toast_el);
             }
 
+            stack(layers)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else if self.hover_preview.is_visible() {
+            let mut layers = vec![base];
+            if let Some(tip_el) = self.view_hover_preview_tooltip() {
+                layers.push(tip_el);
+            }
             stack(layers)
                 .width(Length::Fill)
                 .height(Length::Fill)
@@ -10542,7 +13248,7 @@ impl PureTermApp {
     /// Render the split tree for a tab.
     fn view_split_tree(&self, tab: &Tab) -> Element<'_, Message, Theme, iced::Renderer> {
         let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
-        self.view_node(&tab.split_tree, tab.active_pane, tab.id, self.viewport_size.width, terminal_h)
+        self.view_node(&tab.split_tree, tab.active_pane, tab.id, self.terminal_viewport_width(), terminal_h)
     }
 
     /// Recursively render a split node.
@@ -11205,5 +13911,12 @@ mod tests {
             super::tab_title_with_branch(None, "#1", Some(""), true),
             "#1"
         );
+    }
+
+    #[test]
+    fn dock_badge_total_sums_unread_and_feed_pending() {
+        assert_eq!(super::dock_badge_total(3, 2), 5);
+        assert_eq!(super::dock_badge_total(0, 0), 0);
+        assert_eq!(super::dock_badge_total(u32::MAX, 1), u32::MAX);
     }
 }

@@ -21,6 +21,8 @@ use signal_hook::low_level::pipe as signal_pipe;
 
 use pureterm_daemon::frame::{self, frame_type};
 
+use pureterm_ssh::SshForwards;
+
 use crate::daemon_client;
 
 const STDIN_KEY: usize = 0;
@@ -28,8 +30,22 @@ const DATA_KEY: usize = 1;
 const WINCH_KEY: usize = 2;
 
 /// Connect the current terminal to a persistent daemon SSH session.
-pub fn connect(target: &str, port: Option<u16>, identity: Option<String>, forward_agent: bool) {
-    if let Err(msg) = run_connect(target, port, identity, forward_agent) {
+pub fn connect(
+    target: &str,
+    port: Option<u16>,
+    identity: Option<String>,
+    forward_agent: bool,
+    forwards: SshForwards,
+    smallest_screen_wins: bool,
+) {
+    if let Err(msg) = run_connect(
+        target,
+        port,
+        identity,
+        forward_agent,
+        forwards,
+        smallest_screen_wins,
+    ) {
         // Make sure errors are visible even after (attempted) raw-mode teardown.
         eprintln!("\n[pureterm ssh] {msg}");
         std::process::exit(1);
@@ -41,6 +57,8 @@ fn run_connect(
     port: Option<u16>,
     identity: Option<String>,
     forward_agent: bool,
+    forwards: SshForwards,
+    smallest_screen_wins: bool,
 ) -> Result<(), String> {
     let (user, host) = parse_target(target).ok_or_else(|| {
         format!("invalid target {target:?}; expected [user@]host")
@@ -61,6 +79,8 @@ fn run_connect(
         rows,
         forward_agent,
         None,
+        forwards,
+        smallest_screen_wins,
     )
     .map_err(|e| format!("create ssh session failed: {e}"))?;
 

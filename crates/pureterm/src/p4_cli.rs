@@ -1,0 +1,233 @@
+//! P4 GAP CLI dispatch — plugin, sync, share, update, workflow, notebook, capture.
+
+use std::path::PathBuf;
+
+use clap::Subcommand;
+
+use crate::app_config::AppConfig;
+
+#[derive(Subcommand, Clone)]
+pub enum PluginSub {
+    /// List installed plugins (`~/.config/pureterm/plugins/`).
+    List,
+    /// Create a stub plugin directory + manifest.
+    Install {
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum SyncSub {
+    /// Export config to local sync bundle.
+    Push,
+    /// Restore config from local sync bundle.
+    Pull,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum ShareSub {
+    /// Print share invite URL (WebSocket server stub).
+    Invite {
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+    },
+    /// Start shared session server (stub).
+    Serve,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum UpdateSub {
+    /// Check for updates (Sparkle / feed deferred).
+    Check,
+}
+
+#[derive(Subcommand, Clone)]
+pub enum WorkflowSub {
+    /// List workflows from config TOML.
+    List,
+    /// Render workflow steps with `--param key=value`.
+    Run {
+        name: String,
+        #[arg(long = "param", value_parser = parse_kv)]
+        params: Vec<(String, String)>,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum NotebookSub {
+    /// Print notebook JSON cells.
+    Show {
+        path: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum CaptureSub {
+    /// Export pane snapshot text via Socket API (`surface.snapshot`).
+    Export {
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, default_value = "txt")]
+        format: String,
+        #[arg(long)]
+        pane_id: Option<u64>,
+    },
+}
+
+fn parse_kv(s: &str) -> Result<(String, String), String> {
+    let (k, v) = s
+        .split_once('=')
+        .ok_or_else(|| "expected key=value".to_string())?;
+    Ok((k.to_string(), v.to_string()))
+}
+
+pub fn dispatch_plugin(cmd: PluginSub) {
+    let cfg = AppConfig::load_plugins(&AppConfig::config_path());
+    match cmd {
+        PluginSub::List => {
+            let entries = crate::plugin_system::list_plugins(&cfg);
+            if entries.is_empty() {
+                println!("no plugins (enable [plugins].enabled or install one)");
+            } else {
+                for e in entries {
+                    println!("{}  {}", e.name, e.path.display());
+                }
+            }
+        }
+        PluginSub::Install { name } => match crate::plugin_system::install_stub(&cfg, &name) {
+            Ok(p) => println!("installed stub plugin at {}", p.display()),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+    }
+}
+
+pub fn dispatch_sync(cmd: SyncSub) {
+    let path = AppConfig::config_path();
+    let cfg = AppConfig::load_cloud_sync(&path);
+    match cmd {
+        SyncSub::Push => match crate::cloud_sync::sync_push(&cfg, &path) {
+            Ok(p) => println!("pushed → {}", p.display()),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+        SyncSub::Pull => match crate::cloud_sync::sync_pull(&cfg, &path) {
+            Ok(()) => println!("pulled config into {}", path.display()),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+    }
+}
+
+pub fn dispatch_share(cmd: ShareSub) {
+    let cfg = AppConfig::load_shared_session(&AppConfig::config_path());
+    match cmd {
+        ShareSub::Invite { host } => match crate::shared_sessions::create_invite(&cfg, &host) {
+            Ok(inv) => {
+                println!("url: {}", inv.url);
+                println!("token: {}", inv.token);
+                println!("read_only: {}", inv.read_only);
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+        ShareSub::Serve => {
+            if let Err(e) = crate::shared_sessions::serve_stub(&cfg) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+pub fn dispatch_update(cmd: UpdateSub) {
+    let cfg = AppConfig::load_auto_update(&AppConfig::config_path());
+    match cmd {
+        UpdateSub::Check => {
+            let r = crate::auto_update::check_for_updates(&cfg);
+            println!("{}", r.message);
+            if let Some(v) = r.latest_available {
+                println!("latest: {v}");
+            }
+        }
+    }
+}
+
+pub fn dispatch_workflow(cmd: WorkflowSub) {
+    let path = AppConfig::config_path();
+    let cfg = AppConfig::load_workflows_enabled(&path);
+    if !cfg.enabled {
+        eprintln!("workflows disabled");
+        std::process::exit(1);
+    }
+    let raw = std::fs::read_to_string(&path).unwrap_or_default();
+    let workflows = crate::workflows::load_workflows_from_toml(&raw);
+    match cmd {
+        WorkflowSub::List => {
+            if workflows.is_empty() {
+                println!("no [[workflows]] in config");
+            } else {
+                for w in &workflows {
+                    println!("{} — {}", w.name, w.description);
+                }
+            }
+        }
+        WorkflowSub::Run { name, params } => {
+            let Some(wf) = workflows.iter().find(|w| w.name == name) else {
+                eprintln!("workflow not found: {name}");
+                std::process::exit(1);
+            };
+            for step in wf.render_steps(&params) {
+                println!("{step}");
+            }
+        }
+    }
+}
+
+pub fn dispatch_notebook(cmd: NotebookSub) {
+    let cfg = AppConfig::load_notebooks(&AppConfig::config_path());
+    if !cfg.enabled {
+        eprintln!("notebooks disabled");
+        std::process::exit(1);
+    }
+    match cmd {
+        NotebookSub::Show { path } => match crate::notebooks::Notebook::load(&path) {
+            Ok(nb) => {
+                println!("{}", nb.title);
+                for (i, cell) in nb.cells.iter().enumerate() {
+                    println!("  [{i}] {cell:?}");
+                }
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+    }
+}
+
+pub fn dispatch_capture(cmd: CaptureSub, socket: &Option<PathBuf>, json: bool) {
+    let _cfg = AppConfig::load_pane_capture(&AppConfig::config_path());
+    match cmd {
+        CaptureSub::Export {
+            output,
+            format,
+            pane_id,
+        } => {
+            let params = serde_json::json!({ "pane_id": pane_id });
+            crate::cli::send(socket, json, ("surface.snapshot", Some(params)));
+            eprintln!(
+                "GAP-60: snapshot RPC sent; save to {} (format={format}) wiring deferred",
+                output.display()
+            );
+        }
+    }
+}

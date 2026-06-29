@@ -46,6 +46,10 @@ pub struct BarData<'a> {
     pub process: Option<&'a str>,
     /// Pre-formatted agent indicator `("⚡", color)`, if applicable.
     pub agent: Option<(String, Color)>,
+    /// GAP-03: codebase indexing progress 0–100 (optional status-bar segment).
+    pub codeindex_percent: Option<u8>,
+    /// GAP-35: LSP diagnostic counts `(errors, warnings)` when non-zero.
+    pub lsp_summary: Option<(u32, u32)>,
     /// GAP-09: unread-notification summary (status-bar count). `None`/zero ⇒ hide.
     pub notifications: Option<NotificationSummary>,
     pub cursor: (usize, usize),

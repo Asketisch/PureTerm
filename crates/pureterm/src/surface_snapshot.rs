@@ -103,6 +103,50 @@ pub fn capture(
     )
 }
 
+/// GAP-02: capture the visible viewport as text, keeping at most the last
+/// `max_lines` lines. Runs under the term lock — keep `max_lines` modest.
+pub fn capture_visible_tail(term: &Term<ChannelEventListener>, max_lines: usize) -> String {
+    let start = Point::new(
+        Line(term.topmost_line().0 + term.grid().display_offset() as i32),
+        Column(0),
+    );
+    let end = Point::new(term.bottommost_line(), term.last_column());
+    let full = term.bounds_to_string(start, end);
+    tail_lines(&full, max_lines).0
+}
+
+/// GAP-08: read the terminal grid line under the cursor (current input line).
+pub fn capture_cursor_line(term: &Term<ChannelEventListener>) -> String {
+    let cursor = &term.grid().cursor;
+    let line = cursor.point.line;
+    let start = Point::new(line, Column(0));
+    let end = Point::new(line, term.last_column());
+    term.bounds_to_string(start, end).trim_end().to_string()
+}
+
+/// GAP-02: capture grid text between two cursor rows (inclusive), as recorded
+/// by OSC 133 marks. Falls back to visible tail when the range is empty or
+/// inverted.
+pub fn capture_row_range(
+    term: &Term<ChannelEventListener>,
+    start_row: usize,
+    end_row: usize,
+    max_lines: usize,
+) -> String {
+    if start_row > end_row {
+        return capture_visible_tail(term, max_lines);
+    }
+    let top = Line(start_row as i32);
+    let bottom = Line(end_row as i32);
+    let start = Point::new(top, Column(0));
+    let end = Point::new(bottom, term.last_column());
+    let full = term.bounds_to_string(start, end);
+    if full.trim().is_empty() {
+        return capture_visible_tail(term, max_lines);
+    }
+    tail_lines(&full, max_lines).0
+}
+
 #[cfg(test)]
 mod tests {
     use super::{capture, tail_lines};

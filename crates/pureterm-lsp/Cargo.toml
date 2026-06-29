@@ -1,0 +1,16 @@
+[package]
+name = "pureterm-lsp"
+version = "0.1.0"
+edition = "2021"
+description = "GAP-35: JSON-RPC stdio LSP client (rust-analyzer MVP) for PureTerm"
+
+[dependencies]
+log = "0.4"
+parking_lot = "0.12"
+pureterm-jsonrpc = { workspace = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"

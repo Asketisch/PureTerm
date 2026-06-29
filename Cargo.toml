@@ -10,12 +10,18 @@ members = [
     "crates/pureterm-jsonrpc",
     "crates/pureterm-daemon",
     "crates/pureterm-ssh",
+    "crates/pureterm-codeindex",
+    "crates/pureterm-lsp",
+    "crates/pureterm-computer-use",
 ]
 
 [workspace.dependencies]
 pureterm-alacritty-runtime = { path = "crates/pureterm-alacritty-runtime" }
 pureterm-jsonrpc = { path = "crates/pureterm-jsonrpc" }
 pureterm-ssh = { path = "crates/pureterm-ssh" }
+pureterm-codeindex = { path = "crates/pureterm-codeindex" }
+pureterm-lsp = { path = "crates/pureterm-lsp" }
+pureterm-computer-use = { path = "crates/pureterm-computer-use" }
 
 [profile.release]
 opt-level = 3

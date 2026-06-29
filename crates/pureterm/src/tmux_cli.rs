@@ -794,6 +794,9 @@ mod tests {
                 ssh_pane_states: Vec::new(),
                 pane_shell_contexts: std::collections::HashMap::new(),
                 triggers: Vec::new(),
+                workspace_ids: vec![1],
+                workspace_names: vec!["Default".into()],
+                active_workspace_id: 1,
             }
         }
 

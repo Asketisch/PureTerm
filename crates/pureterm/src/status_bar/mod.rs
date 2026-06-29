@@ -79,6 +79,8 @@ pub fn build_registry(
                 "memory" => Box::new(components::Memory::new(cfg.show_sparklines)),
                 "network" => Box::new(components::Network::new(cfg.show_sparklines)),
                 "battery" => Box::new(components::Battery::new()),
+                "codeindex" => Box::new(components::CodeIndex),
+                "lsp" => Box::new(components::Lsp),
                 other => {
                     log::warn!("statusbar: unknown component '{}', skipping", other);
                     return None;

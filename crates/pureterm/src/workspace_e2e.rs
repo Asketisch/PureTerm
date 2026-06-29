@@ -36,6 +36,8 @@ fn web_tab(tab_num: u64, url: &str) -> (Tab, Arc<BrowserContext>) {
         created_at: Instant::now(),
         zoom_state: None,
         vi_sub_mode: None,
+        vi_registers: Default::default(),
+        vi_pending_register: None,
     };
     (tab, ctx)
 }
@@ -250,4 +252,24 @@ fn build_layout_snapshot_captures_all_windows_and_workspaces() {
     assert_eq!(captured_work_url, Some("https://work.example"), "非活跃 workspace 的 pane url 被捕获");
     let captured_det_url = det_snap.workspaces[0].tabs[0].panes[0].url.as_deref();
     assert_eq!(captured_det_url, Some("https://detached.example"), "detached pane url 被捕获");
+}
+
+/// GAP-21: Dock menu MRU list keeps most recent workspace first, capped at 10.
+#[test]
+fn touch_recent_workspace_mru_order() {
+    use crate::iced_app::{touch_recent_workspace, WorkspaceId};
+
+    let mut list = vec![WorkspaceId(0)];
+    touch_recent_workspace(&mut list, WorkspaceId(1));
+    assert_eq!(list, vec![WorkspaceId(1), WorkspaceId(0)]);
+
+    touch_recent_workspace(&mut list, WorkspaceId(0));
+    assert_eq!(list, vec![WorkspaceId(0), WorkspaceId(1)]);
+
+    for i in 2..=12 {
+        touch_recent_workspace(&mut list, WorkspaceId(i));
+    }
+    assert_eq!(list.len(), 10);
+    assert_eq!(list[0], WorkspaceId(12));
+    assert!(!list.contains(&WorkspaceId(1)));
 }

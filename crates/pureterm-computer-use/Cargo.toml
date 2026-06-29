@@ -1,0 +1,7 @@
+[package]
+name = "pureterm-computer-use"
+version = "0.1.0"
+edition = "2021"
+description = "GAP-04: desktop screenshot + input stubs for AI Computer Use"
+
+[dependencies]
