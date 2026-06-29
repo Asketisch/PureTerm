@@ -37,7 +37,8 @@
 - 实现:`crates/pureterm/src/iced_app.rs`(`Window`/`Workspace` 模型 + `build_layout_snapshot` + 焦点路由)+ `session_restore.rs`(v2 快照树 + `restore_one_tab` + 折叠恢复)+ `keymap.rs`(Action/键位)
 - 自动 E2E harness 全绿:430 pureterm 单测(`workspace_e2e` 切换不丢 Surface Arc 身份 + 多窗口模型 / `keyboard_routing_e2e` 焦点指针路由 / `session_restore` v2 round-trip + v1→v2 迁移 / `build_layout_snapshot` 捕获全窗口)
 - pixel smoke:`docs/manual-e2e/gap-2.1-workspace.md`(非 CI gate,detached 真实焦点 + 跨重启恢复待人工执行)
-- **未做(独立后续)**:CLI `workspace` 命令组(独立 phase);侧栏拖拽调宽(defer)
+- **未做(独立后续)**:CLI `workspace` 命令组(独立 phase);侧栏拖拽调宽(defer);close / rename workspace 操作(plan.md Phase 3 曾列但从未实现,DoD 不依赖,记 follow-up)
+- **Review（2026-06-29）**:修 5 bug —— ① v1→v2 迁移改「先写盘、成功后才把旧 v1 改名 `.bak`」(写失败不丢 v1,`save_atomic_to()->bool` + `migrate_v1_to_v2_in` 路径参数化);② 关闭 detached 窗口补 `mark_layout_dirty`(此前 retain 后不排期持久化 → 重启复现);③ `flush_layout_if_dirty` 抽 `dirty_should_clear` 纯函数,仅在 capture 前后时间戳一致时清 dirty(防 debounce 丢最终态;iced 单线程故当前非 live bug,纯防御硬化);④ `WindowClosed` 焦点回退由「仅弹回主窗」改为「回退到任意存活窗口」,修「聚焦主窗被关 + detached 存活」时 `main_window` 已 None → snap-back 跳过 → `active_window_id` 悬空 → 下条按键撞 `tabs().expect` panic;⑤ `NewWorkspace` 加无活跃窗口防御早退(避免下方无条件 `create_tab` → `.expect` latent panic)。+ 后台 PTY 持续产字进 grid 的 DoD 浴(`gap21_background_grid_accumulates_without_event_polling`,补既有「仅 Arc 身份」较弱断言)+ 迁移先写后改名 tempdir 单测 + debounce re-arm 单测;wakeup loop 注释订正(只扫活跃窗口·活跃 workspace,后台 grid 字节靠 alacritty IO 线程独立喂养)。745 pureterm 单测全绿。
 
 ---
 

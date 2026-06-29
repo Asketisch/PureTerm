@@ -148,11 +148,28 @@ pub fn load() -> Option<LayoutSnapshot> {
     migrate_v1_to_v2()
 }
 
-/// 读 v1 `gui-sessions.json` → 包成 v2 → 旧文件重命名 `.bak`(永不 unlink)→
-/// 持久化 v2(下次 `load` 直接命中 v2 路径)。任一步失败均回退 fresh start(None)。
+/// 读 v1 `gui-sessions.json` → 包成 v2 → 持久化 v2(成功后旧文件改名 `.bak`,
+/// 永不 unlink)→ 下次 `load` 直接命中 v2 路径。任一步失败均回退 fresh start(None)。
 fn migrate_v1_to_v2() -> Option<LayoutSnapshot> {
-    let legacy_path = legacy_v1_path();
-    let data = std::fs::read(&legacy_path).ok()?;
+    #[cfg(unix)]
+    {
+        migrate_v1_to_v2_in(&legacy_v1_path(), &state_path())
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+/// v1→v2 迁移核心(路径参数化,便于 tempdir 单测)。**先持久化 v2,写成功后才把
+/// 旧 v1 改名 `.bak`**——确保写盘失败时不丢 v1 数据(下次启动 `load()` 重跑迁移
+/// 仍能读到旧 v1)。旧文件改名 `.bak`(保留,永不 unlink,便于回退/排查)。
+#[cfg(unix)]
+fn migrate_v1_to_v2_in(
+    legacy_path: &std::path::Path,
+    target: &std::path::Path,
+) -> Option<LayoutSnapshot> {
+    let data = std::fs::read(legacy_path).ok()?;
     let v1 = match serde_json::from_slice::<LegacyV1Snapshot>(&data) {
         Ok(s) if s.version == 1 => s,
         Ok(other) => {
@@ -168,54 +185,68 @@ fn migrate_v1_to_v2() -> Option<LayoutSnapshot> {
         }
     };
     let v2 = wrap_v1_into_v2(v1.tabs, v1.active_tab, v1.viewport);
-    // 旧文件改名 .bak(保留,永不 unlink,便于回退/排查)。
-    let bak = legacy_path.with_extension("json.bak");
-    if let Err(e) = std::fs::rename(&legacy_path, &bak) {
-        log::warn!("session_restore: rename legacy → .bak failed: {e}");
+    // 先持久化 v2(原子写);只有写成功才把旧 v1 改名 `.bak`,避免写失败丢 v1。
+    if save_atomic_to(&v2, target) {
+        let bak = legacy_path.with_extension("json.bak");
+        if let Err(e) = std::fs::rename(legacy_path, &bak) {
+            log::warn!("session_restore: rename legacy → .bak failed: {e}");
+        }
+        log::info!("session_restore: migrated v1 gui-sessions.json → v2 workspaces.json");
+    } else {
+        log::warn!(
+            "session_restore: v2 persist failed; keeping legacy gui-sessions.json for retry"
+        );
     }
-    // 持久化 v2,下次启动直接命中 v2 路径(best-effort,失败不阻塞)。
-    #[cfg(unix)]
-    save_atomic(&v2);
-    log::info!("session_restore: migrated v1 gui-sessions.json → v2 workspaces.json");
     Some(v2)
 }
 
-/// Atomically write the snapshot. Best-effort: logs on failure (recovery is
-/// optional — a failed write must never crash the GUI).
+/// Atomically write the snapshot to `path`. Returns `true` on success.
+/// Best-effort: logs on failure (recovery is optional — a failed write must
+/// never crash the GUI). The `bool` lets callers gate destructive follow-ups
+/// (e.g. v1→v2 migration renaming the legacy file away) on a confirmed write,
+/// so a failed persist can never strand the source data.
 #[cfg(unix)]
-pub fn save_atomic(snapshot: &LayoutSnapshot) {
+pub fn save_atomic_to(snapshot: &LayoutSnapshot, path: &std::path::Path) -> bool {
     use std::io::Write;
 
-    let path = state_path();
     let Some(dir) = path.parent() else {
         log::warn!("session_restore: snapshot path has no parent");
-        return;
+        return false;
     };
     if let Err(e) = std::fs::create_dir_all(dir) {
         log::warn!("session_restore: create_dir_all failed: {e}");
-        return;
+        return false;
     }
     let json = match serde_json::to_string_pretty(snapshot) {
         Ok(s) => s,
         Err(e) => {
             log::warn!("session_restore: serialize failed: {e}");
-            return;
+            return false;
         }
     };
     let mut tmp = match tempfile::NamedTempFile::new_in(dir) {
         Ok(t) => t,
         Err(e) => {
             log::warn!("session_restore: temp file failed: {e}");
-            return;
+            return false;
         }
     };
     if let Err(e) = tmp.write_all(json.as_bytes()) {
         log::warn!("session_restore: write failed: {e}");
-        return;
+        return false;
     }
-    if let Err(e) = tmp.persist(&path) {
+    if let Err(e) = tmp.persist(path) {
         log::warn!("session_restore: persist failed: {e}");
+        return false;
     }
+    true
+}
+
+/// Atomically write the snapshot to the default state path.
+/// Thin wrapper over [`save_atomic_to`] (best-effort: ignores the result).
+#[cfg(unix)]
+pub fn save_atomic(snapshot: &LayoutSnapshot) {
+    let _ = save_atomic_to(snapshot, &state_path());
 }
 
 #[cfg(unix)]
@@ -831,5 +862,62 @@ mod tests {
         let det = back.windows.iter().find(|w| !w.is_main).unwrap();
         assert_eq!(det.workspaces.len(), 1);
         assert_eq!(det.workspaces[0].tabs[0].panes[0].session_id.as_deref(), Some("d1"));
+    }
+
+    /// GAP-2.1 review (BUG-A): v1→v2 迁移必须「先持久化 v2、成功后才把旧 v1 改名
+    /// `.bak`」,且可重入(legacy 改名后再次调用不丢数据、安全返回 None)。路径参数化的
+    /// `migrate_v1_to_v2_in` + tempdir 端到端锁这条数据安全契约。
+    #[cfg(unix)]
+    #[test]
+    fn migrate_v1_to_v2_in_persists_before_renaming_and_is_idempotent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let legacy = dir.path().join("gui-sessions.json");
+        let target = dir.path().join("workspaces.json");
+
+        // 写一份最小 v1 快照到 legacy。
+        let tab = one_pane_tab_snap(
+            "zsh",
+            7,
+            PaneSnapshot {
+                session_id: Some("daemon-7".into()),
+                kind: "local".into(),
+                ssh_profile: None,
+                title: "zsh".into(),
+                agent_session_id: None,
+                agent_kind: None,
+                url: None,
+            },
+        );
+        let v1_json = serde_json::json!({
+            "version": 1,
+            "viewport": { "w": 800.0, "h": 600.0 },
+            "active_tab": 0,
+            "tabs": [ serde_json::to_value(&tab).unwrap() ],
+        })
+        .to_string();
+        std::fs::write(&legacy, v1_json).unwrap();
+
+        // 首次迁移:返回 Some,target 已生成,legacy 已改名 .bak(先写后改名)。
+        let v2 = migrate_v1_to_v2_in(&legacy, &target).expect("migrate returns Some");
+        assert_eq!(v2.version, SNAPSHOT_VERSION);
+        assert!(target.exists(), "v2 workspaces.json 已持久化");
+        assert!(!legacy.exists(), "旧 v1 已改名 .bak");
+        assert!(
+            dir.path().join("gui-sessions.json.bak").exists(),
+            ".bak 保留(永不 unlink)"
+        );
+        // 持久化的 v2 可独立 round-trip —— load() 的 v2 路径契约。
+        let on_disk: LayoutSnapshot =
+            serde_json::from_slice(&std::fs::read(&target).unwrap()).unwrap();
+        assert_eq!(on_disk.windows.len(), 1);
+        assert!(on_disk.windows[0].is_main);
+        assert_eq!(
+            on_disk.windows[0].workspaces[0].tabs[0].panes[0].session_id.as_deref(),
+            Some("daemon-7")
+        );
+
+        // 幂等:legacy 已 .bak → 再次调用 read 失败 → None(不重跑、不丢数据)。
+        let again = migrate_v1_to_v2_in(&legacy, &target);
+        assert!(again.is_none(), "legacy 已改名,二次迁移安全返回 None");
     }
 }

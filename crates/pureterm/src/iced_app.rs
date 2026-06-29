@@ -87,6 +87,14 @@ pub(crate) fn touch_recent_workspace(list: &mut Vec<WorkspaceId>, id: WorkspaceI
     list.truncate(MAX_RECENT);
 }
 
+/// GAP-2.1 review (BUG-C): decide whether to clear the layout-dirty flag after
+/// a debounced flush. Clears only when no layout change landed during the
+/// capture/write (the timestamp is unchanged); otherwise keeps dirty so the
+/// next tick re-flushes the newer state. Pure (no `&self`) so it is unit-testable.
+fn dirty_should_clear(changed_at_before: Option<Instant>, changed_at_after: Option<Instant>) -> bool {
+    changed_at_before == changed_at_after
+}
+
 /// GAP-09: gate the intrusive OS toast (vs. the always-on ring + status count +
 /// Dock badge). `pane_visible` = the emitting pane is the active pane in the
 /// focused window's active tab; `app_focused` = a PureTerm window holds OS
@@ -2510,9 +2518,17 @@ impl PureTermApp {
         if !ready {
             return;
         }
+        let change_at_before = self.last_layout_change_at;
         let snapshot = self.capture_layout();
         crate::session_restore::save_atomic(&snapshot);
-        self.layout_dirty = false;
+        // GAP-2.1 review (BUG-C): only clear dirty if no layout change landed
+        // during capture/write; otherwise keep dirty so the next tick re-flushes
+        // the newer state. Defensive — iced `update()` is single-threaded and
+        // `capture_layout` does not mutate `last_layout_change_at`, so this is
+        // not triggerable today, but hardens against any future async path.
+        if dirty_should_clear(change_at_before, self.last_layout_change_at) {
+            self.layout_dirty = false;
+        }
     }
 
     /// GAP-5.6: end the daemon session backing a pane on a user-initiated
@@ -4309,7 +4325,10 @@ impl PureTermApp {
                     self.apply_viewport_resize();
                 }
 
-                // 消费所有 tab 中所有 pane 的 PTY 事件（Wakeup / Exit）
+                // 仅消费「活跃窗口·活跃 workspace」下所有 pane 的 PTY 事件（Wakeup / Exit）。
+                // 后台 pane 的 grid 字节由 alacritty IO 线程独立喂养(切换回来即见全部
+                // scrollback,DoD 满足);其 Exit / GAP-10 triggers / GAP-09 通知延迟到切回
+                // 时处理(bounded(64) 通道满则丢通知,grid 字节不丢)。
                 // T2b-1:field-path 直访 self.windows(只读),与循环体内
                 // self.pane_cwds / self.status_bar_* 的 mut disjoint。
                 let mut exited_panes = Vec::new();
@@ -5923,13 +5942,22 @@ impl PureTermApp {
                     );
                 }
                 // 从统一 vec 移除已关窗口(main 或 detached)。
+                let removed_any = self.windows.iter().any(|w| w.window_id == win_id);
                 self.windows.retain(|w| w.window_id != win_id);
-                // GAP-2.1: 若关掉的是当前焦点窗口,把路由指针弹回主窗,避免后续
-                // 按键/IME 落到已不存在的窗口上(active_window_id 必须恒指向存活窗口)。
-                if win_id == self.active_window_id {
-                    if let Some(main) = self.main_window {
-                        self.active_window_id = main;
-                    }
+                // GAP-2.1 review (BUG-D): active_window_id 必须恒指向存活窗口。覆盖
+                // 「聚焦中的主窗被关、仍有 detached 存活」——此时 main_window 已置 None
+                // (上方),旧的主窗-only snap-back 会跳过,留下指向已移除窗口的悬空 id,
+                // 下一条按键/IME 会撞 tabs().expect() panic。改为回退到任意存活窗口。
+                if self.window_for(self.active_window_id).is_none() {
+                    self.active_window_id = self
+                        .main_window
+                        .or_else(|| self.windows.first().map(|w| w.window_id))
+                        .unwrap_or(self.active_window_id);
+                }
+                // GAP-2.1 review (BUG-B): detached 窗被移除 → 排期持久化,否则重启后该
+                // 窗因 daemon 会话仍活而复现(主窗关闭已在上方同步 save_atomic,此处跳过)。
+                if removed_any && !is_main {
+                    self.mark_layout_dirty();
                 }
                 // PureTerm: 全部窗口（主终端 + 设置 + detached）都关闭时退出进程
                 // （Alacritty 上游规范行为）。这样 16ms TerminalWakeup 循环里
@@ -6169,6 +6197,12 @@ impl PureTermApp {
             }
             // ── GAP-2.1 Workspace(hybrid flat-active + background-swap)────────
             Message::NewWorkspace => {
+                // GAP-2.1 review (BUG-E): active_window_id 应恒指向存活窗口;防御性早退,
+                // 避免下方无条件 create_tab() 在 active_ws() 为 None 时撞 .expect() panic
+                // (正常流程不触发)。
+                if self.active_window().is_none() {
+                    return Task::none();
+                }
                 // 为活跃 Window 建新 workspace(自动切到它),再为其起一个 fresh shell
                 // tab(复用 NewTab 的 PTY spawn 路径)。旧 workspace 的 PTY 状态完整保留
                 // 在 `windows[aw].workspaces` 里(纯指针切换,不丢 Surface 状态)。
@@ -13948,5 +13982,21 @@ mod tests {
         assert_eq!(super::dock_badge_total(3, 2), 5);
         assert_eq!(super::dock_badge_total(0, 0), 0);
         assert_eq!(super::dock_badge_total(u32::MAX, 1), u32::MAX);
+    }
+
+    /// GAP-2.1 review (BUG-C): flush 后是否清 dirty 取决于 capture 前后时间戳是否
+    /// 一致 —— 期间有新变更则保留 dirty,下个 tick 再 flush(防 debounce 丢最终态)。
+    #[test]
+    fn gap21_dirty_should_clear_only_when_no_change_during_flush() {
+        use std::time::Instant;
+        let t0 = Instant::now();
+        let t1 = Instant::now();
+        // 期间无新变更(时间戳未动) → 清 dirty。
+        assert!(super::dirty_should_clear(Some(t0), Some(t0)));
+        assert!(super::dirty_should_clear(None, None));
+        // 期间有新变更(时间戳变了) → 保留 dirty。
+        assert!(!super::dirty_should_clear(Some(t0), Some(t1)));
+        assert!(!super::dirty_should_clear(None, Some(t0)));
+        assert!(!super::dirty_should_clear(Some(t0), None));
     }
 }

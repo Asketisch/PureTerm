@@ -38,3 +38,4 @@ plan: plan.md
 
 - 侧边栏 Workspace 切换器（依赖 GAP-19 Dual Sidebar）
 - CLI `workspace` 命令组（Phase 5，可独立排期）
+- close / rename workspace 操作（plan.md Phase 3 曾列 `create/switch/rename/close_workspace`，但 rename/close 从未实现；DoD「切换不丢 PTY」不依赖，记 follow-up，2026-06-29 review 确认）

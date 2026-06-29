@@ -4,7 +4,7 @@
 
 | GAP | 简述 | 类别 | 规划类型 | 优先级 | 闭环日期 | Review | 详情 |
 |-----|------|------|----------|--------|----------|--------|------|
-| GAP-2.1 | Surface/Pane/Workspace/Window 四层抽象 | 核心架构 | arch | P0 | 2026-06-25 | 未完成 | [spec](features/GAP-2.1-workspace/spec.md) |
+| GAP-2.1 | Surface/Pane/Workspace/Window 四层抽象 | 核心架构 | arch | P0 | 2026-06-25 | ✅ | [spec](features/GAP-2.1-workspace/spec.md) |
 | GAP-3.5 | 内置 Browser 面板 / WebView | UI/外壳 | feature | P1 | 2026-06-25 | 未完成 | [spec](features/GAP-3.5-browser-panel/spec.md) |
 | GAP-1.3 | 标题栈 (CSI 22/23t + OSC 0/2) | 终端交互 | feature | P2 | 2026-06-25 | 未完成 | [spec](features/GAP-1.3-title-stack/spec.md) |
 | GAP-5.4 | SSH Agent Forwarding | SSH/网络 | integration | P2 | 2026-06-24 | 未完成 | [spec](features/GAP-40-ssh-forwarding/spec.md) |

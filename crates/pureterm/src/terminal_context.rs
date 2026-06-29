@@ -989,4 +989,45 @@ mod tests {
         listener.send_event(alacritty_terminal::event::Event::Bell);
         assert_eq!(rx.try_recv(), Ok(TerminalEvent::Bell));
     }
+
+    /// GAP-2.1 DoD(2026-06-29 review):切走 workspace 后,后台 PTY 持续产出的输出
+    /// 必须累进进其 grid,切回来即见全部 scrollback。本仓既有测试只断言 Arc 身份存活
+    /// (`switch_workspace_preserves_inactive_workspace_surface`,较弱);本测试直接锁
+    /// 保活机制本身——字节进 grid **不依赖 iced wakeup 轮询**。模拟后台 pane:用
+    /// `parser.advance` 把字节喂进 grid(如同 alacritty IO 线程 `term.lock().advance()`,
+    /// 与 iced 主循环解耦),而事件 channel(`_rx`)从不被 drain(wakeup 循环此刻不
+    /// 轮询该 pane),断言 grid 仍累进。
+    #[test]
+    fn gap21_background_grid_accumulates_without_event_polling() {
+        let term = blank_term();
+
+        // 「切走」前:喂一行。
+        {
+            let mut parser: ansi::Processor = ansi::Processor::new();
+            let mut t = term.lock();
+            parser.advance(&mut *t, b"line-before-switch\r\n");
+        }
+        let before = grid_string(&term);
+        assert!(before.contains("line-before-switch"), "初始内容未进 grid: {before:?}");
+
+        // 「切走后」:模拟后台 PTY 持续产出——字节直接进 grid(IO 线程独立喂养);
+        // 此刻不 drain 事件 channel(不调 poll_terminal_event),正如 iced 的 16ms
+        // wakeup 循环只轮询活跃窗口·活跃 workspace。
+        {
+            let mut parser: ansi::Processor = ansi::Processor::new();
+            let mut t = term.lock();
+            parser.advance(&mut *t, b"produced-while-backgrounded\r\n");
+        }
+
+        // 「切回来」:grid 既含切换前内容,也含后台期间产出的新内容(未丢)。
+        let after = grid_string(&term);
+        assert!(
+            after.contains("line-before-switch"),
+            "切换前内容丢失(DoD): {after:?}"
+        );
+        assert!(
+            after.contains("produced-while-backgrounded"),
+            "后台期间产出未进 grid(DoD 失守): {after:?}"
+        );
+    }
 }
