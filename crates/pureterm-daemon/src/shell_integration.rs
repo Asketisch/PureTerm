@@ -81,11 +81,11 @@ _pt_precmd() {
   local rc=$?
   if [ -n "${__pt_cmd_start:-}" ]; then
     local now=$EPOCHREALTIME
-    # Float subtract: EPOCHREALTIME's fractional part is *nanoseconds* on this
-    # platform (10 digits), not microseconds — the old `${now#*.}` arithmetic
-    # treated it as µs and produced wildly wrong durations (e.g. 1e9 µs for a
-    # 100ms command). ×1e6 → µs; `${_%.*}` strips the float fraction so the
-    # scanner parses a clean u64 (zsh has no `int()` without zsh/mathfunc).
+    # EPOCHREALTIME is seconds.microseconds (a 6-digit µs fraction). Subtracting
+    # two float-seconds gives the elapsed seconds; ×1e6 → µs. `${_%.*}` strips
+    # the float fraction so the scanner parses a clean u64 (zsh has no `int()`
+    # without zsh/mathfunc). The old `${now#*.}` form took the *fraction* (a
+    # fixed-ish sub-second value) instead of the *delta*, giving nonsense.
     local dur=$(( (now - __pt_cmd_start) * 1000000 ))
     _pt_ms D "exit=$rc;duration=${dur%.*}"
     unset __pt_cmd_start
@@ -181,7 +181,8 @@ pub fn prepare_shell_env(tag: &str, opts: ShellIntegrationOpts) -> HashMap<Strin
         let zdot_dir = format!("/tmp/.pureterm-zdotdir-{}", tag);
         let escaped = real_zdotdir.replace('"', "\\\"");
         let zshenv = ZSH_ZSHENV.replace("__REAL_ZDOTDIR__", &escaped);
-        let _ = std::fs::write(format!("{}/.zshenv", zdot_dir), zshenv);
+        // 0o600 via write_private — see osc7::write_private (embeds real ZDOTDIR).
+        let _ = crate::osc7::write_private(&format!("{}/.zshenv", zdot_dir), &zshenv);
     }
 
     env
@@ -244,5 +245,27 @@ mod tests {
         assert!(env["PROMPT_COMMAND"].contains(r"\e]133;"), "BEL-terminated mark");
         let zshenv = zshenv_for("gap15-term");
         assert!(zshenv.contains(r"\e]133;"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn temp_zdotdir_is_owner_only() {
+        use std::os::unix::fs::MetadataExt;
+        const TAG: &str = "gap15-perms";
+        let dir_path = format!("/tmp/.pureterm-zdotdir-{}", TAG);
+        // Clear any stale dir from a prior run so this measures the freshly
+        // created perms, not a leftover from before the 0o700/0o600 hardening.
+        let _ = std::fs::remove_dir_all(&dir_path);
+
+        let _ = prepare_shell_env(TAG, ShellIntegrationOpts::all_on());
+
+        let dir = std::fs::metadata(&dir_path).expect("temp ZDOTDIR created");
+        let file = std::fs::metadata(format!("{dir_path}/.zshenv")).expect(".zshenv created");
+        // The .zshenv embeds the user's real ZDOTDIR/HOME path and is sourced by
+        // the shell, so neither the dir (0700) nor the file (0600) may carry any
+        // group/other bits — and 0700/0600 are umask-safe (umask only clears
+        // bits). GAP-15 review hardening.
+        assert_eq!(dir.mode() & 0o777, 0o700, "temp ZDOTDIR must be 0700");
+        assert_eq!(file.mode() & 0o777, 0o600, ".zshenv must be 0600");
     }
 }

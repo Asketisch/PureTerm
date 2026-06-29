@@ -5,8 +5,8 @@ category: 终端交互
 plan_type: wrap-up
 priority: P0
 effort: L
-status: in-progress
-closed: null
+status: done
+closed: 2026-06-28
 ---
 
 # Shell Integration（Shell 集成）
@@ -29,12 +29,25 @@ closed: null
 v1 交付：
 - `crates/pureterm-daemon/src/shell_integration.rs`：`prepare_shell_env(tag, opts)` 在 `prepare_osc7_env` 基础上覆写 zsh `.zshenv`（precmd/preexec/chpwd）与 bash `PROMPT_COMMAND`（DEBUG trap + 武装哨兵），发 BEL 终结的 OSC 133；`PURETERM_SI_PID` 哨兵防同进程重复注入。
 - `TerminalEvent::ShellMark` 桥接（vendored `ShellMark` 补 `PartialEq,Eq` derive + `send_event` arm）。
-- `crates/pureterm/src/shell_state.rs`：per-pane A/B/C/D 状态机，D 时从 grid 取命令文本（`bounds_to_string`），记录 exit/duration，裁到 64 条。
+- `crates/pureterm/src/shell_state.rs`：per-pane A/B/C/D 状态机；命令文本来自 shell 在 B mark 里 hex 编码发的 `cmd=`（scanner 解码进 `mark.command` —— 不从 grid 取：B 事件到达时输出已进 grid、行会漂移），D 时 finalize exit/duration，history 裁到 64 条。
 - `Category::Shell` + `shell.{prompt_started,command_started,output_started,command_finished}` 事件（JSONL 持久化）。
 - `crates/pureterm/src/shell_context.rs` + IPC `shell.context` + MCP `get_shell_context` 工具：返回 cwd / last_command / recent_commands；SSH/fish pane 优雅降级 `integrated:false`。
 - `[shell_integration]` 配置（`enabled`/`inject_zsh`/`inject_bash`/`include_command_text`）。
 
 配置门控仅作用于 GUI 直接 PTY 回退路径；daemon 路径（无 config 访问）始终全集成（与 OSC 7 既有 always-on 一致）—— 已知局限，后续 gap 可经 RPC 透传 opts。
+
+其它已知局限（Review 记录）：bash 集成覆写整个 `PROMPT_COMMAND`（OSC 7 旧实现会 `${PROMPT_COMMAND:+;$PROMPT_COMMAND}` 保留用户值，本 gap 未保留——自定义 `PROMPT_COMMAND` 如 starship precmd / git status 会丢失；安全保留有风险，留后续）；temp ZDOTDIR（`/tmp/.pureterm-zdotdir-<tag>`）现 dir `0700` / `.zshenv` `0600`（防世界可读泄露真实 `$HOME`），但生命周期清理（会话结束 rm）留后续 gap。
+
+## Review ✅（2026-06-29）
+
+审计结论：OSC 133 scanner / `ShellMark` 事件桥（`_ => return` 丢事件陷阱已修，`terminal_context.rs:84`）/ A/B/C/D 状态机 / `shell.context` IPC / `get_shell_context` MCP 全部正确且有测试覆盖；IPC 每请求重建 live snapshot（`iced_app.rs:6597`），无陈旧数据 bug。修 4 处：
+
+- **BUG-1 [MED]** 两处 pane 关闭点（`iced_app.rs` SSH/exit 路径 + `close_active_pane`）清了 `pane_cwds`/`pane_osc_title`/`pane_trigger_state`，漏了 `pane_shell_state`（GAP-15）+ `pane_block_stores`（GAP-51）→ pane id 单调不复用，长期会话随 pane 开关无界泄漏。修：两处补齐 `pane_shell_state`/`pane_block_stores.remove`（沿用既有 disjoint-field 借用模式——`tab` 借 `self.windows` 期间不能用 `&mut self` 方法）。
+- **BUG-2 [LOW]** temp ZDOTDIR 创建默认权限（0755/0644），`.zshenv` 含真实 `$HOME`。修：dir `0700` / file `0600`（`DirBuilderExt`/`OpenOptionsExt`；`0700` 顺带堵 /tmp 可猜路径的预填竞态）。生命周期清理留后续。
+- **BUG-3 [LOW/doc]** zsh 脚本注释误称 `EPOCHREALTIME` 小数部分是纳秒（10 位）；实为微秒（6 位）。代码本就正确，订正注释。
+- **BUG-4 [LOW/limitation]** bash 集成覆写用户 `PROMPT_COMMAND` → 见上「已知局限」，不改。
+
+新增测试：`temp_zdotdir_is_owner_only`（断言 0700/0600）。单测：pureterm 745 绿、daemon `shell_integration` 6 绿（排 `instance_lock` + 真机 PTY 环境性失败，与本 gap 无关）。
 
 **待人工 GUI E2E**（见下「验证 runbook」）。**后续 gap（本 gap 不做）：** 视觉 grid marks / scroll-to-mark（新 `Flags::MARK` + shader）、fish/nu、OSC 1337 host/user、click-to-SCP + 拖拽上传、Settings UI 页。
 

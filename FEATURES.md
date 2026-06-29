@@ -195,6 +195,7 @@
 - **配置**:`[shell_integration]`(`enabled`/`inject_zsh`/`inject_bash`/`include_command_text`);门控仅 GUI 直接 PTY 回退路径 — daemon 路径始终 `ShellIntegrationOpts::all_on()`(与 OSC 7 always-on 一致)
 - 单测:shell_state/shell_context/events/app_config 21 绿 + daemon `shell_integration` 单测;pixel smoke 见 `docs/features/GAP-15-shell-integration/spec.md` runbook
 - **DoD 待人工**:GUI 真机 E2E(zsh/bash `events tail --type shell` + MCP `get_shell_context`);**未做(独立后续)**:视觉 grid marks、fish/nu、click-to-SCP
+- **Review ✅（2026-06-29）**:审计正确(scanner/事件桥/状态机/IPC/MCP 全对;IPC 每请求重建 live snapshot 无陈旧 bug)。修 4 处:① **[MED]** 两处 pane 关闭点漏清 `pane_shell_state`(GAP-15)+`pane_block_stores`(GAP-51) → pane id 单调不复用致无界内存泄漏,两处补齐(沿用既有 disjoint-field 借用,`tab` 借 `self.windows` 期间不能用 `&mut self` 方法);② **[LOW]** temp ZDOTDIR 默认 0755/0644 含真实 `$HOME` → dir `0700`/file `0600`(`DirBuilderExt`/`OpenOptionsExt`,0700 顺带堵 /tmp 可猜路径预填竞态;生命周期清理留后续);③ **[LOW/doc]** zsh 注释误称 `EPOCHREALTIME` 小数是纳秒(实为微秒 6 位),代码本对,订正注释;④ **[LOW/limit]** bash 集成覆写用户 `PROMPT_COMMAND`(OSC 7 旧实现会保留)→ 记为已知局限不改。+ 新增 `temp_zdotdir_is_owner_only` 单测;745 pureterm + daemon `shell_integration` 6 绿(排 instance_lock + 真机 PTY 环境性失败)。
 
 ### GAP-35 LSP Client（2026-06-29）
 - **Crate**:`pureterm-lsp` JSON-RPC stdio;`hover` + `completion` + `publishDiagnostics`

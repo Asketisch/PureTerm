@@ -8116,9 +8116,16 @@ impl PureTermApp {
                         }
                     }
                     tab.panes.remove(&pane_id);
+                    // Drop per-pane state for the closed pane. Pane ids are never
+                    // reused, so any map missed here leaks for the whole session —
+                    // keep this list in sync with `close_active_pane` and add new
+                    // per-pane maps in both places. (GAP-15 review: the prior code
+                    // omitted pane_shell_state/pane_block_stores, leaking them.)
                     self.pane_cwds.remove(&pane_id);
                     self.pane_osc_title.remove(&pane_id);
                     self.pane_trigger_state.remove(&pane_id);
+                    self.pane_shell_state.remove(&pane_id);   // GAP-15
+                    self.pane_block_stores.remove(&pane_id);  // GAP-51 (same leak)
                     tab.active_pane = new_active;
                     // Resize remaining panes
                     let layout = tab.split_tree.compute_layout(
@@ -10497,9 +10504,14 @@ impl PureTermApp {
                 }
             }
             tab.panes.remove(&active_pane_id);
+            // Drop per-pane state for the closed pane. Keep in sync with the
+            // SSH/exit pane-close path above (see its comment) — pane ids are
+            // never reused, so any map missed here leaks for the session.
             self.pane_cwds.remove(&active_pane_id);
             self.pane_osc_title.remove(&active_pane_id);
             self.pane_trigger_state.remove(&active_pane_id);
+            self.pane_shell_state.remove(&active_pane_id);   // GAP-15
+            self.pane_block_stores.remove(&active_pane_id);  // GAP-51 (same leak)
             tab.active_pane = new_active;
             // Resize remaining panes
             let layout = tab.split_tree.compute_layout(

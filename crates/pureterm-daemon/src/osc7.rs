@@ -14,10 +14,27 @@
 //! unrelated spawns that happen before the restore.
 
 use std::collections::HashMap;
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
 /// The OSC 7 printf body: emits `ESC ] 7 ; file://$HOST$PWD ST` so the
 /// terminal learns the shell's current working directory.
 const OSC7_FUNC: &str = r#"_pt_osc7() { printf '\e]7;file://%s%s\e\\' "$HOST" "$PWD"; }"#;
+
+/// Write `content` to `path` at mode `0o600` (owner-only). The temp ZDOTDIR
+/// `.zshenv` embeds the user's real `ZDOTDIR`/`HOME` path, so it must not be
+/// world-readable. Shared by OSC 7 and OSC 133 (GAP-15) injection. Errors are
+/// surfaced (callers swallow them with `let _ =`, matching the prior behavior).
+pub(crate) fn write_private(path: &str, content: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)?;
+    f.write_all(content.as_bytes())?;
+    Ok(())
+}
 
 /// Build the environment-variable set that injects the OSC 7 cwd-reporting
 /// hook into a freshly spawned local shell.
@@ -43,7 +60,11 @@ pub fn prepare_osc7_env(tag: &str) -> HashMap<String, String> {
 
     // -- zsh: ZDOTDIR bootstrap --
     let zdot_dir = format!("/tmp/.pureterm-zdotdir-{}", tag);
-    let _ = std::fs::create_dir_all(&zdot_dir);
+    // Owner-only (0700): the `.zshenv` written inside embeds the user's real
+    // ZDOTDIR/HOME path and is sourced by the shell, so neither the dir nor the
+    // file may be world-accessible. The 0700 dir also blocks a pre-population
+    // race on the (guessable) `/tmp` path on shared hosts. (GAP-15 review.)
+    let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&zdot_dir);
     let zshenv_content = format!(
         r#"# PureTerm zsh bootstrap — restores original ZDOTDIR and loads OSC 7 hook.
 ZDOTDIR="{real_zdotdir}"
@@ -55,7 +76,7 @@ _pt_osc7
         real_zdotdir = real_zdotdir.replace('"', "\\\""),
         osc7_func = OSC7_FUNC,
     );
-    let _ = std::fs::write(format!("{}/.zshenv", zdot_dir), zshenv_content);
+    let _ = write_private(&format!("{}/.zshenv", zdot_dir), &zshenv_content);
     env.insert("ZDOTDIR".to_string(), zdot_dir);
 
     // -- bash: PROMPT_COMMAND env var --
