@@ -3,7 +3,7 @@
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -22,6 +22,8 @@ use crate::transport::{read_message, write_message};
 #[derive(Clone, Debug)]
 pub struct LspClientConfig {
     pub command: String,
+    /// Extra argv for the language server (e.g. `["--stdio"]` for pyright/ts-ls).
+    pub args: Vec<String>,
     pub workspace_root: PathBuf,
 }
 
@@ -48,12 +50,16 @@ pub struct LspClient {
     pending: Arc<Mutex<std::collections::HashMap<u64, mpsc::Sender<Value>>>>,
     next_id: AtomicU64,
     open_versions: Arc<Mutex<std::collections::HashMap<String, i32>>>,
+    /// Flipped to `false` by the reader thread when the server's stdout closes,
+    /// so callers can stop trusting cached diagnostics (BUG-3).
+    alive: Arc<AtomicBool>,
 }
 
 impl LspClient {
     /// Spawn language server and complete the initialize handshake.
     pub fn spawn(cfg: LspClientConfig) -> Result<Self, LspError> {
         let mut child = Command::new(&cfg.command)
+            .args(&cfg.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -71,9 +77,11 @@ impl LspClient {
 
         let store = Arc::new(Mutex::new(DiagnosticStore::default()));
         let pending = Arc::new(Mutex::new(std::collections::HashMap::new()));
+        let alive = Arc::new(AtomicBool::new(true));
         let store_reader = Arc::clone(&store);
         let pending_reader = Arc::clone(&pending);
-        thread::spawn(move || reader_loop(stdout, store_reader, pending_reader));
+        let alive_reader = Arc::clone(&alive);
+        thread::spawn(move || reader_loop(stdout, store_reader, pending_reader, alive_reader));
 
         let writer = Arc::new(Mutex::new(Some(stdin)));
         let client = Self {
@@ -83,6 +91,7 @@ impl LspClient {
             pending,
             next_id: AtomicU64::new(1),
             open_versions: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            alive,
         };
 
         client.initialize(&cfg.workspace_root)?;
@@ -91,6 +100,11 @@ impl LspClient {
 
     pub fn store(&self) -> Arc<Mutex<DiagnosticStore>> {
         Arc::clone(&self.store)
+    }
+
+    /// Whether the reader thread is still draining the server's stdout.
+    pub fn is_alive(&self) -> bool {
+        self.alive.load(Ordering::SeqCst)
     }
 
     pub fn summary(&self) -> crate::diagnostic::DiagnosticSummary {
@@ -153,18 +167,23 @@ impl LspClient {
 
     fn initialize(&self, root: &Path) -> Result<(), LspError> {
         let root_uri = path_to_uri(root);
-        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
-        self.send(json!({
-            "jsonrpc": JSONRPC_VERSION,
-            "id": id,
-            "method": "initialize",
-            "params": {
+        // Send the `initialize` request and WAIT for the response before
+        // announcing `initialized` (LSP handshake order, BUG-2). Reading the
+        // response also surfaces a server-side rejection / capability error
+        // instead of silently dropping it.
+        let result = self.request(
+            "initialize",
+            json!({
                 "processId": std::process::id(),
                 "rootUri": root_uri,
                 "capabilities": {},
                 "clientInfo": { "name": "pureterm", "version": env!("CARGO_PKG_VERSION") }
-            }
-        }))?;
+            }),
+            Duration::from_secs(3),
+        )?;
+        // `result` holds InitializeResult (server capabilities); kept for future
+        // per-feature gating (hover/completion providers). Unused for the MVP.
+        let _ = result;
         self.notify("initialized", json!({}))?;
         Ok(())
     }
@@ -211,6 +230,10 @@ impl LspClient {
 
 impl Drop for LspClient {
     fn drop(&mut self) {
+        // Ask the server to shut down gracefully before killing it (BUG-4).
+        // Best-effort: ignore timeouts/errors and fall back to SIGKILL.
+        let _ = self.request("shutdown", Value::Null, Duration::from_millis(500));
+        let _ = self.notify("exit", Value::Null);
         let _ = self.writer.lock().take();
         let _ = self.child.kill();
         let _ = self.child.wait();
@@ -221,6 +244,7 @@ fn reader_loop(
     stdout: std::process::ChildStdout,
     store: Arc<Mutex<DiagnosticStore>>,
     pending: Arc<Mutex<std::collections::HashMap<u64, mpsc::Sender<Value>>>>,
+    alive: Arc<AtomicBool>,
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
@@ -248,6 +272,10 @@ fn reader_loop(
             }
         }
     }
+    // Server stdout closed / errored: mark the client dead and drop stale
+    // diagnostics so the status bar / AI chat don't keep showing them (BUG-3).
+    alive.store(false, Ordering::SeqCst);
+    store.lock().clear();
 }
 
 fn parse_hover_markdown(result: &Value) -> Option<String> {

@@ -556,6 +556,10 @@ pub struct PureTermApp {
     /// GAP-35: LSP client (rust-analyzer MVP).
     lsp_cfg: crate::app_config::LspConfig,
     lsp: crate::lsp::LspState,
+    /// Workspace root the running LSP server was spawned with (BUG-1): kept in
+    /// sync with the active pane's project root so diagnostics target the right
+    /// project instead of the (often `/`) process launch cwd.
+    lsp_workspace_root: PathBuf,
     /// GAP-09: whether a PureTerm window holds OS focus. Drives the toast gate
     /// (`should_toast`): true on launch + `WindowFocused`, false on
     /// `WindowUnfocused`.
@@ -1793,8 +1797,10 @@ impl PureTermApp {
         let soul_prompt = crate::soul::load_system_prompt_extension(&soul_cfg);
         let natural_language_cfg = AppConfig::load_natural_language(&config_path);
         let lsp_cfg = AppConfig::load_lsp(&config_path);
-        let lsp_workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let lsp = crate::lsp::LspState::try_spawn(&lsp_cfg, lsp_workspace);
+        let lsp_workspace = crate::lsp::project_root_for(
+            &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        );
+        let lsp = crate::lsp::LspState::try_spawn(&lsp_cfg, lsp_workspace.clone());
         let semantic_history_cfg = AppConfig::load_semantic_history(&config_path);
         let block_output_cfg = AppConfig::load_block_output(&config_path);
         let port_scanner_cfg = AppConfig::load_port_scanner(&config_path);
@@ -1994,6 +2000,7 @@ impl PureTermApp {
             ai_chat_cancel: None,
             lsp_cfg,
             lsp,
+            lsp_workspace_root: lsp_workspace,
             app_focused: true,
             last_git_branch: HashMap::new(),
             // GAP-15: Shell Integration.
@@ -4560,6 +4567,25 @@ impl PureTermApp {
                                                 crate::status_bar::read_git_branch(
                                                     std::path::Path::new(cwd),
                                                 );
+                                        }
+                                        // BUG-1: keep the LSP workspace root in sync
+                                        // with the active pane's project, re-spawning
+                                        // the language server only when the project
+                                        // root actually changes (so it targets the
+                                        // right project, not the launch cwd).
+                                        if let Some(cwd) = self.status_bar_cwd.as_ref() {
+                                            let new_root = crate::lsp::project_root_for(
+                                                std::path::Path::new(cwd),
+                                            );
+                                            if self.lsp_cfg.enabled
+                                                && new_root != self.lsp_workspace_root
+                                            {
+                                                self.lsp_workspace_root = new_root.clone();
+                                                self.lsp = crate::lsp::LspState::try_spawn(
+                                                    &self.lsp_cfg,
+                                                    new_root,
+                                                );
+                                            }
                                         }
                                     }
                                 }
@@ -9097,7 +9123,11 @@ impl PureTermApp {
         let new_lsp_cfg = AppConfig::load_lsp(&self.config_path);
         if new_lsp_cfg != self.lsp_cfg {
             self.lsp_cfg = new_lsp_cfg.clone();
-            let workspace = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let workspace = self
+                .active_pane_cwd()
+                .map(|c| crate::lsp::project_root_for(&c))
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            self.lsp_workspace_root = workspace.clone();
             self.lsp = crate::lsp::LspState::try_spawn(&new_lsp_cfg, workspace);
         }
         #[cfg(target_os = "macos")]

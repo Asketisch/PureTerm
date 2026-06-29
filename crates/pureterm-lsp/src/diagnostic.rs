@@ -63,6 +63,11 @@ impl DiagnosticStore {
         }
     }
 
+    /// Drop all tracked diagnostics (e.g. when the server dies, BUG-3).
+    pub fn clear(&mut self) {
+        self.by_uri.clear();
+    }
+
     pub fn summary(&self) -> DiagnosticSummary {
         let mut errors = 0u32;
         let mut warnings = 0u32;
@@ -152,11 +157,24 @@ pub fn parse_publish_diagnostics(params: &serde_json::Value) -> Option<(String, 
 }
 
 /// Map a local path to an LSP `file://` URI (Unix MVP).
+///
+/// Reserved bytes (spaces, non-ASCII, etc.) are percent-encoded so the URI is
+/// valid and round-trips against servers that normalize the same way (BUG-5).
 pub fn path_to_uri(path: &Path) -> String {
     let abs = path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf());
-    format!("file://{}", abs.display())
+    let mut out = String::from("file://");
+    for &b in abs.to_string_lossy().as_bytes() {
+        match b {
+            // Unreserved + path separator stay literal; everything else is encoded.
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(b as char);
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 fn uri_to_display_path(uri: &str) -> String {
@@ -223,5 +241,14 @@ mod tests {
         let s = store.summary();
         assert_eq!(s.errors, 1);
         assert_eq!(s.warnings, 1);
+    }
+
+    /// BUG-5: `file://` URIs must percent-encode reserved bytes (spaces,
+    /// non-ASCII) instead of emitting an invalid raw URI.
+    #[test]
+    fn path_to_uri_percent_encodes_reserved_bytes() {
+        // Non-existent path so canonicalize falls back to the raw path.
+        let uri = path_to_uri(Path::new("/Users/a b/文 件.rs"));
+        assert_eq!(uri, "file:///Users/a%20b/%E6%96%87%20%E4%BB%B6.rs");
     }
 }

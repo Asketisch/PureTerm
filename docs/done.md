@@ -29,7 +29,7 @@
 | GAP-21 | Dock Badge（通知 + Feed 角标 + Dock 最近 Workspace 菜单） | UI/外壳 | wrap-up | P4 | 2026-06-28 | 未完成 | [spec](features/GAP-21-dock-badge/spec.md) |
 | GAP-03 | Codebase Indexing MVP（Tree-sitter + SQLite FTS + MCP 搜索工具） | AI Agent | feature | P1 | 2026-06-28 | 已完成 | [spec](features/GAP-03-codebase-indexing/spec.md) |
 | GAP-19 | Dual Sidebar（⌘B 左 / ⌘⇧B 右 — Workspace + Find/Feed/Git） | UI/外壳 | feature | P1 | 2026-06-29 | 未完成 | [spec](features/GAP-19-dual-sidebar/spec.md) |
-| GAP-35 | LSP Client（多语言 server 配置 + hover/completion + 诊断） | 开发者工具 | integration | P1 | 2026-06-29 | 未完成 | [spec](features/GAP-35-lsp-client/spec.md) |
+| GAP-35 | LSP Client（多语言 server 配置 + hover/completion + 诊断） | 开发者工具 | integration | P1 | 2026-06-29 | 已完成 | [spec](features/GAP-35-lsp-client/spec.md) |
 | GAP-47 | macOS AppleScript 自动化 MVP（CLI + MCP） | 平台 | platform | P2 | 2026-06-29 | 未完成 | [spec](features/GAP-47-apple-script/spec.md) |
 | GAP-48 | `pureterm://` URL Scheme（macOS 注册 + tab/workspace/ssh） | 平台 | platform | P2 | 2026-06-29 | 未完成 | [spec](features/GAP-48-url-scheme/spec.md) |
 | GAP-33 | Port Scanner（右侧边栏 Ports 标签 + lsof 周期扫描） | 开发者工具 | feature | P2 | 2026-06-29 | 未完成 | [spec](features/GAP-33-port-scanner/spec.md) |
