@@ -2,7 +2,7 @@
 
 > ✅ **已 flip（2026-06-28）** — GAP-09 已翻 🚧→✅（全 6 阶段代码闭环 + 610 pureterm 单测绿 + runbook + 四处同步）。下方场景作为**非阻塞 follow-up**，跑完勾选即可；**非 CI gate。**
 >
-> **Automated harness:** scanner 17（`alacritty_terminal::tests_osc_notify`）+ store 9 + config 3 + bridge 2 + `should_toast` 2 = **33 GAP-09 单测绿**；`cargo test -p pureterm` **610** green。
+> **Automated harness:** scanner 18（`alacritty_terminal::tests_osc_notify`，含跨读 pin `split_across_reads_is_dropped`）+ store 9 + `should_toast` 2 = **29 GAP-09 单测绿**；`cargo test -p pureterm` 全量无回归。**Review ✅（2026-06-29）**：修 BUG-1（节流铃铛仍弹 toast / 写审计 —— `NotificationStore::post()` 返回值三处调用点门控）/ BUG-2（跨 PTY 读通知丢失的误导性注释订正 + pin 测试）/ BUG-3（`EventBus` Mutex 中毒加固）。
 
 > CI 自动 harness 已覆盖**逻辑不变量**:
 > - `NotificationStore::post` unread/attention/bell 节流 / OSC 99 same-id replace / ring cap 淘汰

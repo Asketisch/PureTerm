@@ -4785,7 +4785,7 @@ impl PureTermApp {
                                             pane_id: *pane_id,
                                             received_at: now_ms,
                                         };
-                                        self.notification_store.post(
+                                        let posted = self.notification_store.post(
                                             entry,
                                             now_ms,
                                             self.notification_cfg.bell_throttle_ms,
@@ -4803,12 +4803,6 @@ impl PureTermApp {
                                                     0
                                                 }
                                             },
-                                        );
-                                        fire_toast(
-                                            &self.notification_cfg,
-                                            &n,
-                                            pane_visible,
-                                            self.app_focused,
                                         );
 
                                         let session_id = ctx.session_id().map(|s| s.to_string());
@@ -4846,12 +4840,25 @@ impl PureTermApp {
                                         if let Some(id) = &n.id {
                                             data["id"] = serde_json::json!(id);
                                         }
-                                        self.events.emit(
-                                            crate::events::Category::Notification,
-                                            "notification.posted",
-                                            session_id,
-                                            data,
-                                        );
+                                        // GAP-09 BUG-1 fix: gate the toast + audit event on
+                                        // `post()`'s bool. OSC sources aren't throttled today
+                                        // (always true), but this keeps the contract consistent
+                                        // with the Bell handler and future-proofs any throttle
+                                        // extension.
+                                        if posted {
+                                            fire_toast(
+                                                &self.notification_cfg,
+                                                &n,
+                                                pane_visible,
+                                                self.app_focused,
+                                            );
+                                            self.events.emit(
+                                                crate::events::Category::Notification,
+                                                "notification.posted",
+                                                session_id,
+                                                data,
+                                            );
+                                        }
                                     }
                                 }
                                 // GAP-09: bell (0x07) — surface as an attention
@@ -4879,7 +4886,7 @@ impl PureTermApp {
                                             pane_id: *pane_id,
                                             received_at: now_ms,
                                         };
-                                        self.notification_store.post(
+                                        let posted = self.notification_store.post(
                                             entry,
                                             now_ms,
                                             self.notification_cfg.bell_throttle_ms,
@@ -4898,24 +4905,30 @@ impl PureTermApp {
                                                 }
                                             },
                                         );
-                                        fire_toast(
-                                            &self.notification_cfg,
-                                            &bell_notif,
-                                            pane_visible,
-                                            self.app_focused,
-                                        );
-                                        let session_id = ctx.session_id().map(|s| s.to_string());
-                                        self.events.emit(
-                                            crate::events::Category::Notification,
-                                            "notification.posted",
-                                            session_id,
-                                            serde_json::json!({
-                                                "pane_id": pane_id.0,
-                                                "source": "bell",
-                                                "occasion": "always",
-                                                "body": "Bell",
-                                            }),
-                                        );
+                                        // GAP-09 BUG-1 fix: honor `post()`'s contract — a
+                                        // bell suppressed by the per-pane throttle returns
+                                        // false, so skip the desktop toast + audit event (the
+                                        // store entry / dock badge are already correct).
+                                        if posted {
+                                            fire_toast(
+                                                &self.notification_cfg,
+                                                &bell_notif,
+                                                pane_visible,
+                                                self.app_focused,
+                                            );
+                                            let session_id = ctx.session_id().map(|s| s.to_string());
+                                            self.events.emit(
+                                                crate::events::Category::Notification,
+                                                "notification.posted",
+                                                session_id,
+                                                serde_json::json!({
+                                                    "pane_id": pane_id.0,
+                                                    "source": "bell",
+                                                    "occasion": "always",
+                                                    "body": "Bell",
+                                                }),
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -9446,13 +9459,12 @@ impl PureTermApp {
                     pane_id: pid,
                     received_at: now_ms,
                 };
-                self.notification_store.post(
+                let posted = self.notification_store.post(
                     entry,
                     now_ms,
                     self.notification_cfg.bell_throttle_ms,
                 );
                 self.refresh_dock_badge_from_state();
-                fire_toast(&self.notification_cfg, &n, pane_visible, self.app_focused);
                 let mut data = serde_json::json!({
                     "pane_id": pid.0,
                     "source": "cli",
@@ -9462,12 +9474,18 @@ impl PureTermApp {
                 if let Some(t) = &n.title {
                     data["title"] = serde_json::json!(t);
                 }
-                self.events.emit(
-                    crate::events::Category::Notification,
-                    "notification.posted",
-                    None,
-                    data,
-                );
+                // GAP-09 BUG-1 fix: gate the toast + audit event on `post()`'s bool. Cli is
+                // never throttled today (always true), but this keeps the contract consistent
+                // with the OSC/Bell handlers.
+                if posted {
+                    fire_toast(&self.notification_cfg, &n, pane_visible, self.app_focused);
+                    self.events.emit(
+                        crate::events::Category::Notification,
+                        "notification.posted",
+                        None,
+                        data,
+                    );
+                }
                 Task::none()
             }
         }
@@ -13990,7 +14008,11 @@ mod tests {
     fn gap21_dirty_should_clear_only_when_no_change_during_flush() {
         use std::time::Instant;
         let t0 = Instant::now();
-        let t1 = Instant::now();
+        // Force t1 != t0: two consecutive Instant::now() calls frequently return
+        // the same value on fast machines, which would make dirty_should_clear
+        // (an equality check) wrongly return "equal -> clear". +1ns guarantees a
+        // distinct timestamp so the "changed during flush" assertions are stable.
+        let t1 = t0 + std::time::Duration::from_nanos(1);
         // 期间无新变更(时间戳未动) → 清 dirty。
         assert!(super::dirty_should_clear(Some(t0), Some(t0)));
         assert!(super::dirty_should_clear(None, None));

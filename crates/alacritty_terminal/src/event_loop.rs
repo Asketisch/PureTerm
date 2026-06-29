@@ -932,6 +932,20 @@ mod tests_osc_notify {
     }
 
     #[test]
+    fn split_across_reads_is_dropped() {
+        // Documents the v1 limitation: `scan_osc_notify` is stateless across PTY
+        // reads — the read loop resets `unprocessed`, so partial bytes are NOT
+        // retained. A notification whose terminator lands in the next read is
+        // dropped (the head half has no terminator; the tail half has no ESC).
+        // Same limitation as `scan_osc7`/`scan_osc133` — see the `scan_osc_notify`
+        // doc comment.
+        let head = b"\x1b]9;Build complete, but split"; // no terminator
+        let tail = b" across the read\x07"; // no ESC
+        assert!(notif(head).is_empty(), "no terminator -> nothing this read");
+        assert!(notif(tail).is_empty(), "no ESC in the tail -> nothing; head was discarded");
+    }
+
+    #[test]
     fn no_notify_in_plain_text() {
         assert!(notif(b"just regular output\nno osc here").is_empty());
     }
@@ -1105,8 +1119,12 @@ struct RawNotification {
 /// - OSC 777 (urxvt):          `\x1b]777;notify;<title>;<body>\x07|ST` — stateless.
 ///
 /// All three accept BOTH `\x07` (BEL) and `\x1b\\` (ST) terminators (mirrors
-/// `scan_osc133`). Cross-buffer (no terminator) sequences are skipped and
-/// re-scanned on the next read.
+/// `scan_osc133`). Cross-buffer (no terminator) sequences are skipped; the
+/// partial bytes are NOT retained across reads (the read loop resets
+/// `unprocessed`), so a notification split across two PTY reads is dropped.
+/// This matches the `scan_osc7`/`scan_osc133` limitation and is rare in
+/// practice (notifications are small, single `write`). See
+/// `split_across_reads_is_dropped`.
 fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
     let mut out: SmallVec<[RawNotification; 2]> = SmallVec::new();
     // OSC 9 is last-wins within the buffer (mirrors scan_osc7).
@@ -1156,7 +1174,11 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
             }
         }
         if !found {
-            // Cross-buffer sequence — skip this ESC, re-scan from the next byte.
+            // Cross-buffer (no terminator) sequence — skip this ESC and continue
+            // scanning the rest of THIS buffer. The partial payload is NOT retained
+            // for the next read, so a notification split across two PTY reads is
+            // dropped (see the `scan_osc_notify` doc comment + the
+            // `split_across_reads_is_dropped` test).
             i = start + 1;
             continue;
         }

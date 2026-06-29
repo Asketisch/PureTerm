@@ -84,7 +84,11 @@ impl EventBus {
             data,
         };
         {
-            let _guard = self.log_lock.lock().unwrap();
+            // Poison-resilient: if a prior `emit` panicked while holding this
+            // std Mutex (the critical section swallows its own I/O errors, so a
+            // poison is unlikely), recover the guard instead of panicking on the
+            // iced main thread (which would kill all future notifications).
+            let _guard = self.log_lock.lock().unwrap_or_else(|e| e.into_inner());
             events_log::append_to_path(&self.path, &event);
         }
         let _ = self.tx.send(event);
