@@ -108,7 +108,10 @@ fn collect_chunks(
         if let Some(chunk) = node_to_chunk(lang, source, tree, node) {
             out.push(chunk);
         }
-        return;
+        // Fall through and keep descending so nested definitions — methods inside
+        // `impl`/`mod`, methods inside Python/JS classes — get their own chunks too.
+        // (Previously this `return`ed, folding every nested def into its parent and
+        // making them invisible to find_symbol/search_code — see GAP-03 audit.)
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -193,5 +196,31 @@ mod tests {
         let src = "function add(a, b) { return a + b; }\n";
         let chunks = chunk_source(SourceLanguage::JavaScript, src);
         assert!(chunks.iter().any(|c| c.symbol_name.as_deref() == Some("add")));
+    }
+
+    // Regression for GAP-03 B1: nested definitions must get their own chunks.
+    #[test]
+    fn rust_impl_methods_are_chunked() {
+        let src = "struct Foo;\nimpl Foo {\n    fn bar(&self) {}\n    fn baz(&self) {}\n}\n";
+        let chunks = chunk_source(SourceLanguage::Rust, src);
+        let names: Vec<_> = chunks.iter().filter_map(|c| c.symbol_name.as_deref()).collect();
+        assert!(names.contains(&"bar"), "impl method `bar` must be chunked: {names:?}");
+        assert!(names.contains(&"baz"), "impl method `baz` must be chunked: {names:?}");
+    }
+
+    #[test]
+    fn rust_mod_inner_fn_is_chunked() {
+        let src = "mod m {\n    fn inner() {}\n}\n";
+        let chunks = chunk_source(SourceLanguage::Rust, src);
+        let names: Vec<_> = chunks.iter().filter_map(|c| c.symbol_name.as_deref()).collect();
+        assert!(names.contains(&"inner"), "mod inner fn must be chunked: {names:?}");
+    }
+
+    #[test]
+    fn python_class_method_is_chunked() {
+        let src = "class Foo:\n    def bar(self):\n        return 1\n";
+        let chunks = chunk_source(SourceLanguage::Python, src);
+        let names: Vec<_> = chunks.iter().filter_map(|c| c.symbol_name.as_deref()).collect();
+        assert!(names.contains(&"bar"), "class method `bar` must be chunked: {names:?}");
     }
 }

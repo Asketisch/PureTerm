@@ -2,6 +2,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
@@ -70,7 +71,9 @@ pub struct IndexStats {
 pub struct CodeIndex {
     root: PathBuf,
     db: Connection,
-    pub progress: IndexProgress,
+    /// Shared handle (atomics inside) so progress is observable while a scan
+    /// runs under an outer lock — see GAP-03 B3 fix in the glue.
+    pub progress: Arc<IndexProgress>,
 }
 
 impl CodeIndex {
@@ -86,7 +89,7 @@ impl CodeIndex {
         Ok(Self {
             root,
             db,
-            progress: IndexProgress::default(),
+            progress: Arc::new(IndexProgress::default()),
         })
     }
 
@@ -187,7 +190,14 @@ impl CodeIndex {
     }
 
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<SymbolHit>, IndexError> {
-        let pattern = format!("%{name}%");
+        // Escape LIKE wildcards so the user's `name` is matched literally. The query
+        // below declares `ESCAPE '\'`; without this, `%`/`_`/`\` in the input acted as
+        // wildcards (e.g. searching "100%" matched everything). (GAP-03 B2 fix.)
+        let escaped = name
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        let pattern = format!("%{escaped}%");
         let mut stmt = self.db.prepare(
             "SELECT file_path, symbol_name, symbol_kind, start_line, end_line
              FROM chunks
@@ -379,5 +389,44 @@ mod tests {
     fn fts_query_builder() {
         assert_eq!(fts_query("hello world"), "\"hello\"* OR \"world\"*");
         assert_eq!(fts_query("   "), "");
+    }
+
+    // Regression for GAP-03 B2: `_`/`%` in the symbol name are matched literally.
+    #[test]
+    fn find_symbol_escapes_like_wildcards() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("src")).unwrap();
+        fs::write(
+            tmp.path().join("src/w.rs"),
+            "fn foo_bar() {}\nfn fooxbar() {}\n",
+        )
+        .unwrap();
+        let idx = CodeIndex::open(tmp.path()).unwrap();
+        idx.index_workspace().unwrap();
+        let hits = idx.find_symbol("foo_bar", 10).unwrap();
+        let names: Vec<&str> = hits.iter().map(|h| h.symbol_name.as_str()).collect();
+        assert!(names.contains(&"foo_bar"), "literal `foo_bar` must match: {names:?}");
+        assert!(
+            !names.contains(&"fooxbar"),
+            "`_` must be literal, not a single-char wildcard: {names:?}"
+        );
+    }
+
+    // Regression for GAP-03 B3: progress is a shared handle readable without the index.
+    #[test]
+    fn progress_handle_is_shareable() {
+        use std::sync::Arc;
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("a.rs"), "fn a() {}\n").unwrap();
+        let idx = CodeIndex::open(tmp.path()).unwrap();
+        let handle: Arc<IndexProgress> = idx.progress.clone();
+        assert!(Arc::ptr_eq(&handle, &idx.progress));
+        idx.progress.reset(10);
+        assert!(handle.is_running());
+        idx.progress.inc();
+        assert_eq!(handle.snapshot(), (1, 10));
+        idx.progress.finish();
+        assert!(!handle.is_running());
+        assert_eq!(handle.percent(), None);
     }
 }
