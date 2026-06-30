@@ -54,6 +54,13 @@ pub fn ping(socket: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Process-wide cache of the verified daemon socket path. `ensure_daemon` is
+/// called once per restored pane (see `terminal_context`), so without this the
+/// cold spawn-poll and the staleness RPC would repeat per pane. The cached path
+/// is re-pinged on every call (cheap, one local-socket round-trip) and evicted
+/// if it ever fails, so a daemon crash self-heals on the next call.
+static LIVE_SOCKET: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
 /// Ensure the daemon is running (spawn-on-demand).
 ///
 /// Returns the daemon socket path on success. If the daemon is already
@@ -62,6 +69,16 @@ pub fn ping(socket: &Path) -> bool {
 /// code actually runs. Otherwise spawns `puretermd` as a detached child and
 /// polls until the socket becomes reachable (up to ~5s).
 pub fn ensure_daemon() -> io::Result<PathBuf> {
+    // Fast path: a previously verified socket that still pings. The lock is
+    // held only to clone the path out — never across ping/spawn (which would
+    // serialize callers).
+    let cached: Option<PathBuf> = LIVE_SOCKET.lock().unwrap().clone();
+    if let Some(p) = &cached {
+        if ping(p) {
+            return Ok(p.clone());
+        }
+    }
+
     let socket = pureterm_daemon::discovery::socket_path();
     if ping(&socket) {
         // Reachable, but possibly a stale binary from before a repackage.
@@ -69,9 +86,13 @@ pub fn ensure_daemon() -> io::Result<PathBuf> {
         if let Err(e) = restart_if_stale(&socket) {
             log::warn!("daemon staleness check failed: {e}");
         }
-        return Ok(socket);
+    } else {
+        spawn_daemon(&socket)?;
     }
-    spawn_daemon(&socket)
+    // Here the daemon is up — either it was already warm, restarted, or freshly
+    // spawned (spawn_daemon only returns Ok after its poll confirms a ping).
+    *LIVE_SOCKET.lock().unwrap() = Some(socket.clone());
+    Ok(socket)
 }
 
 /// Spawn `puretermd` as a detached child and poll until its socket becomes
@@ -98,12 +119,15 @@ fn spawn_daemon(socket: &Path) -> io::Result<PathBuf> {
 
     cmd.spawn()?;
 
-    // Poll-connect with backoff up to ~5s.
-    for _attempt in 0..25 {
-        std::thread::sleep(Duration::from_millis(200));
+    // Poll-connect: ping FIRST so an already-booted daemon returns with zero
+    // sleep, then back off at a fine 50ms granularity. Same ~5s total ceiling
+    // (100 × 50ms) as before, but far less wasted slack on the cold path now
+    // that the daemon binds its socket early (Stage B in control::serve).
+    for _attempt in 0..100 {
         if ping(socket) {
             return Ok(socket.to_path_buf());
         }
+        std::thread::sleep(Duration::from_millis(50));
     }
 
     Err(io::Error::new(io::ErrorKind::TimedOut, "puretermd did not become reachable"))

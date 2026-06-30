@@ -36,6 +36,11 @@ pub struct ControlState {
     /// GAP-6.6: wait-for channel/lock store (tmux `wait-for`). Waiters park
     /// here until a signaler wakes them (or the daemon shuts down).
     pub wait_channels: Arc<tokio::sync::Mutex<std::collections::HashMap<String, Vec<tokio::sync::oneshot::Sender<()>>>>>,
+    /// Cold-launch boot gate: `false` until `deferred_init` finishes the
+    /// non-critical post-bind setup (known_hosts, tunnel restore, CPU sampler).
+    /// `tunnel.start` during this ~tens-of-ms window returns a retryable error
+    /// rather than starting a tunnel whose TOFU host-key store isn't loaded yet.
+    pub init_done: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl ControlState {
@@ -54,6 +59,7 @@ impl ControlState {
             runtime: None,
             tunnels: crate::tunnel::TunnelManager::default(),
             wait_channels: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
+            init_done: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
@@ -77,6 +83,53 @@ fn persist_tunnels(state: &ControlState) {
     crate::persist::save_tunnels(&crate::discovery::tunnels_file(), &cfg);
 }
 
+/// Non-critical daemon initialization, run AFTER the control socket binds (see
+/// `serve`) so a cold GUI launch reaches `daemon.ping` without waiting for this
+/// setup. These steps previously ran inline in `runtime::run` before
+/// `UnixListener::bind`, gating the socket on known_hosts/tunnel-restore/CPU
+/// work and inflating cold-start latency.
+fn deferred_init(state: Arc<ControlState>) {
+    // GAP-5.2: open the TOFU known_hosts store and hand it to the tunnel
+    // manager. A failure to open (rare: data dir unreadable) degrades to the
+    // legacy accept-all host-key behavior rather than crashing the daemon.
+    match crate::known_hosts::KnownHosts::open(crate::discovery::known_hosts_file()) {
+        Ok(kh) => state.tunnels.set_known_hosts(Arc::new(kh)),
+        Err(e) => log::warn!("known_hosts: open failed, TOFU disabled: {e}"),
+    }
+
+    // GAP-5.2: config-only restore — reload tunnel configs so they survive a
+    // daemon restart, registered as Stopped (no listener/task). The user
+    // re-starts them explicitly via tunnel.start. Secrets were never persisted,
+    // so a password-auth tunnel re-enters NeedAuth on re-start.
+    if let Some(file) = crate::persist::load_tunnels(&crate::discovery::tunnels_file()) {
+        let n = file.tunnels.len();
+        for cfg in file.tunnels {
+            state.tunnels.register_stopped(cfg);
+        }
+        if n > 0 {
+            log::info!("restored {n} tunnel config(s) (config-only; use tunnel.start to connect)");
+        }
+    }
+
+    // GAP-7.3: periodic CPU sample tick drives `cpu_idle_secs` for every
+    // session — the dual idle condition for hibernation, alongside PTY-output
+    // idle recorded by the pump. Runs concurrently with the control listener.
+    if let Some(rt) = state.runtime.as_ref().cloned() {
+        let tick_state = state.clone();
+        rt.spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                tick_state.manager.sample_cpu_pass();
+            }
+        });
+    }
+
+    // Mark init complete: `tunnel.start` (TOFU-gated on this flag) may now proceed.
+    state
+        .init_done
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Bind the control socket and serve until the runtime is cancelled.
 pub async fn serve(socket_path: PathBuf, state: Arc<ControlState>) -> std::io::Result<()> {
     if socket_path.exists() {
@@ -87,6 +140,15 @@ pub async fn serve(socket_path: PathBuf, state: Arc<ControlState>) -> std::io::R
     crate::discovery::restrict_socket(&socket_path); // GAP-5.1 M5: owner-only
     let listener = UnixListener::from_std(listener)?;
     log::info!("puretermd control socket: {}", socket_path.display());
+
+    // Cold-launch responsiveness: run non-critical init (known_hosts, tunnel
+    // restore, CPU sampler) AFTER the socket is bound so the GUI's spawn-poll
+    // detects the daemon ASAP. These never block serving — `register_stopped`
+    // only inserts Stopped entries, and `tunnel.start` is gated on `init_done`.
+    let init_state = state.clone();
+    tokio::spawn(async move {
+        deferred_init(init_state);
+    });
 
     loop {
         match listener.accept().await {
@@ -259,6 +321,13 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
             let Some(rt) = state.runtime.as_ref().cloned() else {
                 return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "daemon runtime unavailable");
             };
+            // Cold-launch TOFU gate: known_hosts is loaded by `deferred_init`
+            // (deferred past socket bind for fast startup). Starting a tunnel
+            // before that would skip TOFU host-key checking. Retryable — the
+            // init window is ~tens of ms after a cold spawn.
+            if !state.init_done.load(std::sync::atomic::Ordering::SeqCst) {
+                return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "daemon initializing, retry");
+            }
             let host = match sparam(request, "host") {
                 Some(h) => h,
                 None => return JsonRpcResponse::err(id, ERROR_INVALID_PARAMS, "missing host"),

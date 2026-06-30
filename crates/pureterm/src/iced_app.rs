@@ -341,6 +341,10 @@ impl Window {
 
 pub struct PureTermApp {
     main_window: Option<window::Id>,
+    /// Cold-launch bootstrap gate: `false` until `DaemonReady` creates the
+    /// first terminal. While `false`, `view()` paints an instant placeholder
+    /// and `update()` short-circuits messages that assume a live tab exists.
+    booted: bool,
     next_tab_id: u64,
     /// GAP-2.1 Phase 4:窗口的唯一真源。windows[0] = 主窗(is_main=true);
     /// 其余(Phase 4 T2b-2 起)= detached 窗口。每个 Window 持 workspaces: Vec<Workspace>。
@@ -857,6 +861,9 @@ struct ClickTracker {
 #[derive(Debug, Clone)]
 pub enum Message {
     MainWindowOpened(window::Id),
+    /// Cold-launch bootstrap complete (daemon ensured off-thread). `true` if
+    /// the daemon is reachable; `false` falls back to a direct local PTY.
+    DaemonReady(bool),
     TerminalWakeup,
     /// GAP-5.6: periodic tick (~4 Hz) from a `time::every` subscription that
     /// flushes the layout snapshot to disk if it has been dirty for ≥500 ms
@@ -1463,6 +1470,28 @@ fn spawn_ripgrep(
     )
 }
 
+/// Cold-launch bootstrap: ensure `puretermd` is reachable on a background
+/// thread so the GUI main thread (and window paint) never blocks on the
+/// spawn-poll. The first terminal is then created on the GUI thread in
+/// `DaemonReady` (warm path, ms-scale RPCs). Modeled on `spawn_ripgrep`.
+fn spawn_daemon_ready() -> Task<Message> {
+    Task::perform(
+        async move {
+            #[cfg(unix)]
+            {
+                tokio::task::spawn_blocking(|| crate::daemon_client::ensure_daemon().is_ok())
+                    .await
+                    .unwrap_or(false)
+            }
+            #[cfg(not(unix))]
+            {
+                true
+            }
+        },
+        Message::DaemonReady,
+    )
+}
+
 fn spawn_hover_preview_fetch(
     target: crate::hover_preview::HoverTarget,
     fetch_gen: u64,
@@ -1884,8 +1913,9 @@ impl PureTermApp {
         let mut i18n = I18n::new();
         i18n.set_locale(&locale);
 
-        let mut app = Self {
+        let app = Self {
             main_window: Some(id),
+            booted: false,
             next_tab_id: 0,
             windows: vec![Window::new_main(id)],
             active_window_id: id,
@@ -2051,31 +2081,13 @@ impl PureTermApp {
             events: crate::events_bus::EventBus::new(crate::events_log::events_path()),
         };
 
-        // GAP-5.6: try to restore the previous tab/pane layout by re-attaching
-        // to daemon sessions that survived the GUI restart. Falls back to a
-        // single fresh tab when there's nothing to restore. The daemon path
-        // (and therefore recovery) is unix-only.
-        #[cfg(unix)]
-        let restored = app.try_restore_layout(saved_layout);
-        #[cfg(not(unix))]
-        let restored = false;
-        if !restored {
-            let first_id = app.create_tab(app.terminal_viewport_width(), app.viewport_size.height);
-            app.set_active_tab(first_id);
-        }
-
-        // GAP-7.6: scan once at startup for external agent processes (e.g. a
-        // `claude` started in another terminal) so the detect-resume panel can
-        // prompt immediately. Cheap (`ps` ~10-30ms) and unix-only; the periodic
-        // re-scan is driven by the DetectScanTick subscription.
-        #[cfg(unix)]
-        if app.detect_cfg.enabled && app.detect_cfg.scan_on_startup && !app.vault_agents.is_empty()
-        {
-            let detected = crate::agent_detect::scan(&app.vault_agents);
-            app.detect_panel
-                .refresh(crate::agent_detect::with_sessions(detected));
-        }
-
+        // Cold-launch bootstrap: daemon attach + first-terminal creation used
+        // to run here synchronously, blocking the window paint ~5s on a cold
+        // daemon (ensure_daemon spawn-poll). It now runs off-thread —
+        // MainWindowOpened kicks `spawn_daemon_ready` (ensure_daemon on a
+        // background thread), and `DaemonReady` creates the tab/terminal on the
+        // GUI thread once the daemon is up. The window paints a placeholder
+        // instantly in the meantime (see `view` + the `booted` gate in update).
         (app, task.map(Message::MainWindowOpened))
     }
 
@@ -4205,6 +4217,25 @@ impl PureTermApp {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // Cold-launch guard: until DaemonReady creates the first terminal, the
+        // app has zero tabs/panes. Short-circuit messages that would touch a
+        // terminal (and hit `.expect("active tab")` / `.unwrap()` on empty
+        // state). Allow only lifecycle/window/tick messages that are safe — or
+        // required — pre-boot. Dropped ticks are harmless (periodic).
+        if !self.booted
+            && !matches!(
+                message,
+                Message::DaemonReady(_)
+                    | Message::MainWindowOpened(_)
+                    | Message::TerminalWakeup
+                    | Message::LayoutSaveTick
+                    | Message::WindowResized(_, _)
+                    | Message::WindowFocused(_)
+                    | Message::WindowClosed(_)
+            )
+        {
+            return Task::none();
+        }
         match message {
             Message::MainWindowOpened(id) => {
                 self.main_window = Some(id);
@@ -4257,7 +4288,48 @@ impl PureTermApp {
                 drop(gs);
                 // GAP-3.5: 窗口已开 → content NSView 可用 → realize 恢复的 web pane。
                 self.reposition_web_panes();
-                return window::set_resize_increments(id, Some(Size::new(cw, ch)));
+                // Cold-launch: kick the daemon bootstrap off the main thread so
+                // the window stays responsive. DaemonReady finishes first-tab
+                // creation on the GUI thread once the daemon is reachable.
+                let resize = window::set_resize_increments(id, Some(Size::new(cw, ch)));
+                return Task::batch([resize, spawn_daemon_ready()]);
+            }
+            Message::DaemonReady(daemon_ok) => {
+                // Daemon ensured off-thread (or confirmed unreachable). Now
+                // create the first terminal on the GUI thread — the work that
+                // used to block `new()` and stall the window paint. On failure
+                // create_tab's new_local_auto falls back to a direct local PTY.
+                if !daemon_ok {
+                    log::warn!("daemon unreachable on bootstrap; falling back to direct PTY");
+                }
+                #[cfg(unix)]
+                {
+                    let saved_layout = crate::session_restore::load();
+                    let restored = self.try_restore_layout(saved_layout);
+                    if !restored {
+                        let first_id = self
+                            .create_tab(self.terminal_viewport_width(), self.viewport_size.height);
+                        self.set_active_tab(first_id);
+                    }
+                    // GAP-7.6: startup scan for external agent processes
+                    // (`ps` ~10-30ms, unix-only); periodic re-scan is separate.
+                    if self.detect_cfg.enabled
+                        && self.detect_cfg.scan_on_startup
+                        && !self.vault_agents.is_empty()
+                    {
+                        let detected = crate::agent_detect::scan(&self.vault_agents);
+                        self.detect_panel
+                            .refresh(crate::agent_detect::with_sessions(detected));
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let first_id =
+                        self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
+                    self.set_active_tab(first_id);
+                }
+                self.booted = true;
+                return Task::none();
             }
             Message::TerminalWakeup => {
                 #[cfg(target_os = "macos")]
@@ -13119,6 +13191,18 @@ impl PureTermApp {
             if state.owns_window(id) {
                 return state.view(id).map(Message::Settings);
             }
+        }
+
+        // Cold-launch placeholder (main window only): paint instantly while the
+        // daemon bootstrap runs off-thread; the first terminal is created in
+        // DaemonReady. Non-main windows don't exist during boot, so fall through.
+        if !self.booted && Some(id) == self.main_window {
+            return container("Starting PureTerm…")
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .into();
         }
 
         // Detached windows render their own terminal(单 workspace 单 tab)
