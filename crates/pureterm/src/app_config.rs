@@ -3240,4 +3240,32 @@ mark = "build_start"
         assert!(matches!(triggers[1].cfg.action, TriggerAction::SetMark { .. }));
         assert!(matches!(triggers[2].cfg.action, TriggerAction::Fold { .. }));
     }
+
+    /// GAP-19: `[sidebar]` widths clamp on load (integer below MIN, float above
+    /// MAX) and `left_default_open` is honored; a missing table yields Default.
+    #[test]
+    fn load_sidebar_clamps_widths_and_reads_default_open() {
+        let toml = r#"
+[sidebar]
+left_width = 50
+right_width = 999.0
+left_default_open = true
+"#;
+        let path = write_temp_toml("pureterm_test_sidebar.toml", toml);
+        let cfg = AppConfig::load_sidebar(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg.left_width, crate::sidebar::MIN_WIDTH); // 50 → 120
+        assert_eq!(cfg.right_width, crate::sidebar::MAX_WIDTH); // 999 → 480
+        assert!(cfg.left_default_open);
+    }
+
+    #[test]
+    fn load_sidebar_missing_table_yields_default() {
+        let toml = "[other]\nkey = 1\n";
+        let path = write_temp_toml("pureterm_test_sidebar_missing.toml", toml);
+        let cfg = AppConfig::load_sidebar(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(cfg, SidebarConfig::default());
+        assert!(!cfg.left_default_open); // default false
+    }
 }

@@ -234,6 +234,9 @@ pub(crate) struct Window {
     pub(crate) active_workspace: WorkspaceId,
     pub(crate) is_main: bool,
     pub(crate) show_tab_bar: bool,
+    /// GAP-19: per-window dual-sidebar state (visibility + right mode + widths).
+    /// Per-window so toggling/resizing in one window does not affect others.
+    pub(crate) sidebar: crate::sidebar::SidebarState,
     next_workspace_id: u64,
 }
 
@@ -246,6 +249,7 @@ impl Window {
             active_workspace: WorkspaceId(0),
             is_main: true,
             show_tab_bar: true,
+            sidebar: crate::sidebar::SidebarState::default(),
             next_workspace_id: 1,
         }
     }
@@ -304,6 +308,7 @@ impl Window {
             active_workspace: WorkspaceId(0),
             is_main: false,
             show_tab_bar: false,
+            sidebar: crate::sidebar::SidebarState::default(),
             next_workspace_id: 1,
         }
     }
@@ -316,6 +321,7 @@ impl Window {
             active_workspace: WorkspaceId(0),
             is_main: false,
             show_tab_bar: true,
+            sidebar: crate::sidebar::SidebarState::default(),
             next_workspace_id: 1,
         }
     }
@@ -448,6 +454,9 @@ pub struct PureTermApp {
     command_palette: Option<CommandPaletteState>,
     // Split pane drag state
     drag_state: Option<DragState>,
+    /// GAP-19: sidebar divider drag (Left/Right). Motion is driven by
+    /// `GlobalCursorMoved`; cleared on `GlobalMouseRelease`.
+    sidebar_drag: Option<crate::sidebar::SidebarSide>,
     /// 文本选择拖动状态：按下时开启，松手时清。`term.selection` 本身保留。
     selection_drag: Option<SelectionDragState>,
     /// 多击连击跟踪（单击 = Simple, 双击 = Semantic, 三击 = Lines）。
@@ -492,8 +501,7 @@ pub struct PureTermApp {
     status_bar_git_status: Option<crate::status_bar::GitStatus>,
     // GAP-32: Git Integration — config (`[git]`) + overlay panel state.
     git_cfg: crate::app_config::GitConfig,
-    /// GAP-19: dual sidebar visibility + right tab mode.
-    sidebar: crate::sidebar::SidebarState,
+    /// GAP-19: `[sidebar]` config (launch defaults); runtime state is per-`Window`.
     sidebar_cfg: crate::app_config::SidebarConfig,
     git_panel: crate::git_panel::GitPanelState,
     // GAP-09: Notifications overlay panel state (reads the store live).
@@ -911,6 +919,9 @@ pub enum Message {
     ToggleRightSidebar,
     /// GAP-19: switch right-sidebar tab.
     SidebarRightMode(crate::sidebar::RightMode),
+    /// GAP-19: started dragging a sidebar divider (drag-to-resize). Motion is
+    /// driven by the existing `GlobalCursorMoved`/`GlobalMouseRelease` flow.
+    SidebarDividerPress(crate::sidebar::SidebarSide),
     CloseGitPanel,
     RefreshGitPanel,
     /// GAP-32: recent-commits result `(cwd, [(short_sha, subject), …])`.
@@ -1847,10 +1858,13 @@ impl PureTermApp {
         // GAP-32: Git Integration config (panel toggle, PR refresh, lazygit cmd).
         let git_cfg = AppConfig::load_git(&config_path);
 
-        // GAP-19: Dual Sidebar config (widths, default-open).
+        // GAP-19: Dual Sidebar config (widths, default-open) — launch defaults
+        // for the main window's per-window sidebar state.
         let sidebar_cfg = AppConfig::load_sidebar(&config_path);
-        let sidebar = crate::sidebar::SidebarState {
+        let main_sidebar = crate::sidebar::SidebarState {
             left_open: sidebar_cfg.left_default_open,
+            left_width: crate::sidebar::clamp_width(sidebar_cfg.left_width),
+            right_width: crate::sidebar::clamp_width(sidebar_cfg.right_width),
             ..Default::default()
         };
 
@@ -1947,7 +1961,11 @@ impl PureTermApp {
             main_window: Some(id),
             booted: false,
             next_tab_id: 0,
-            windows: vec![Window::new_main(id)],
+            windows: {
+                let mut main_window = Window::new_main(id);
+                main_window.sidebar = main_sidebar;
+                vec![main_window]
+            },
             active_window_id: id,
             recent_workspace_ids: vec![WorkspaceId(0)],
             hovered_tab: None,
@@ -2020,6 +2038,7 @@ impl PureTermApp {
             tab_list: None,
             drag_state: None,
             selection_drag: None,
+            sidebar_drag: None,
             click_tracker: None,
             command_palette: None,
             last_self_write: None,
@@ -2030,7 +2049,6 @@ impl PureTermApp {
             status_bar_git_status: None,
             // GAP-32: Git Integration config + overlay panel state.
             git_cfg,
-            sidebar,
             sidebar_cfg,
             git_panel: crate::git_panel::GitPanelState::new(),
             // GAP-09: Notifications overlay panel + store + config.
@@ -2625,6 +2643,10 @@ impl PureTermApp {
     fn window_for_mut(&mut self, id: window::Id) -> Option<&mut Window> {
         self.windows.iter_mut().find(|w| w.window_id == id)
     }
+    /// GAP-19: active window's per-window sidebar state (read).
+    fn active_sidebar(&self) -> Option<&crate::sidebar::SidebarState> {
+        self.active_window().map(|w| &w.sidebar)
+    }
     fn active_ws(&self) -> Option<&Workspace> {
         self.active_window()?.active_workspace()
     }
@@ -2654,19 +2676,19 @@ impl PureTermApp {
         self.active_ws_mut()?.active_tab_mut()
     }
 
-    /// GAP-19: terminal column width after open sidebars.
+    /// GAP-19: terminal column width after open sidebars (active window).
     fn terminal_viewport_width(&self) -> f32 {
-        self.sidebar.terminal_width(
-            self.viewport_size.width,
-            self.sidebar_cfg.left_width,
-            self.sidebar_cfg.right_width,
-        )
+        self.active_sidebar()
+            .map(|s| s.terminal_width(self.viewport_size.width))
+            .unwrap_or(self.viewport_size.width)
     }
 
     /// GAP-19: open the right sidebar on a mode (optionally refresh Git data).
     fn open_right_sidebar(&mut self, mode: crate::sidebar::RightMode) -> Task<Message> {
-        self.sidebar.right_open = true;
-        self.sidebar.right_mode = mode;
+        if let Some(w) = self.active_window_mut() {
+            w.sidebar.right_open = true;
+            w.sidebar.right_mode = mode;
+        }
         if mode == crate::sidebar::RightMode::Git {
             return self.open_git_sidebar_tab();
         }
@@ -2751,8 +2773,10 @@ impl PureTermApp {
     /// GAP-19: when Feed focuses a request, show it in the right sidebar.
     #[cfg(unix)]
     fn sidebar_show_feed(&mut self) {
-        self.sidebar.right_open = true;
-        self.sidebar.right_mode = crate::sidebar::RightMode::Feed;
+        if let Some(w) = self.active_window_mut() {
+            w.sidebar.right_open = true;
+            w.sidebar.right_mode = crate::sidebar::RightMode::Feed;
+        }
     }
 
     /// GAP-19: resize terminal panes after sidebar toggle/width change.
@@ -2979,7 +3003,17 @@ impl PureTermApp {
         let cw = gs.cell_width;
         let ch = gs.cell_height;
         drop(gs);
-        self.windows.push(Window::new_secondary(win_id));
+        // GAP-19: secondary window gets its own sidebar seeded from the config
+        // defaults (left_default_open + clamped widths), independent of the
+        // main window's runtime sidebar state.
+        let mut secondary = Window::new_secondary(win_id);
+        secondary.sidebar = crate::sidebar::SidebarState {
+            left_open: self.sidebar_cfg.left_default_open,
+            left_width: crate::sidebar::clamp_width(self.sidebar_cfg.left_width),
+            right_width: crate::sidebar::clamp_width(self.sidebar_cfg.right_width),
+            ..Default::default()
+        };
+        self.windows.push(secondary);
         self.active_window_id = win_id;
         let _ = self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
         let resize_task = window::set_resize_increments(win_id, Some(Size::new(cw, ch)));
@@ -5319,10 +5353,16 @@ impl PureTermApp {
                 return Task::none();
             }
             Message::ToggleLeftSidebar => {
-                self.sidebar.left_open = !self.sidebar.left_open;
+                let now_open = match self.active_window_mut() {
+                    Some(w) => {
+                        w.sidebar.left_open = !w.sidebar.left_open;
+                        w.sidebar.left_open
+                    }
+                    None => return Task::none(),
+                };
                 self.events.emit(
                     crate::events::Category::Sidebar,
-                    if self.sidebar.left_open {
+                    if now_open {
                         "sidebar.left_opened"
                     } else {
                         "sidebar.left_closed"
@@ -5333,30 +5373,50 @@ impl PureTermApp {
                 return self.sidebar_layout_changed();
             }
             Message::ToggleRightSidebar => {
-                self.sidebar.right_open = !self.sidebar.right_open;
-                if !self.sidebar.right_open {
+                // GAP-19 per-window: flip the active window's right sidebar.
+                let (now_open, mode) = match self.active_window_mut() {
+                    Some(w) => {
+                        w.sidebar.right_open = !w.sidebar.right_open;
+                        (w.sidebar.right_open, w.sidebar.right_mode)
+                    }
+                    None => return Task::none(),
+                };
+                // Review BUG-1: emit the sidebar visibility event for EVERY
+                // toggle — the Git-mode reopen early-return used to skip it.
+                self.events.emit(
+                    crate::events::Category::Sidebar,
+                    crate::sidebar::right_sidebar_event(now_open),
+                    None,
+                    serde_json::json!({ "mode": mode.label() }),
+                );
+                if !now_open {
                     self.git_panel.close();
-                } else if self.sidebar.right_mode == crate::sidebar::RightMode::Git {
+                    // Review BUG-2: pair the close with `git.panel_closed` when
+                    // on the Git tab, mirroring `open_git_sidebar_tab`'s
+                    // `git.panel_opened` (only `ToggleGitPanel` emitted it before).
+                    if mode == crate::sidebar::RightMode::Git {
+                        self.events.emit(
+                            crate::events::Category::Git,
+                            "git.panel_closed",
+                            None,
+                            serde_json::json!({}),
+                        );
+                    }
+                    return self.sidebar_layout_changed();
+                }
+                if mode == crate::sidebar::RightMode::Git {
                     return Task::batch([
                         self.open_git_sidebar_tab(),
                         self.sidebar_layout_changed(),
                     ]);
                 }
-                self.events.emit(
-                    crate::events::Category::Sidebar,
-                    if self.sidebar.right_open {
-                        "sidebar.right_opened"
-                    } else {
-                        "sidebar.right_closed"
-                    },
-                    None,
-                    serde_json::json!({ "mode": self.sidebar.right_mode.label() }),
-                );
                 return self.sidebar_layout_changed();
             }
             Message::SidebarRightMode(mode) => {
-                self.sidebar.right_mode = mode;
-                self.sidebar.right_open = true;
+                if let Some(w) = self.active_window_mut() {
+                    w.sidebar.right_mode = mode;
+                    w.sidebar.right_open = true;
+                }
                 if mode == crate::sidebar::RightMode::Git {
                     return Task::batch([
                         self.open_git_sidebar_tab(),
@@ -5376,11 +5436,16 @@ impl PureTermApp {
                 if !self.git_cfg.panel_enabled {
                     return Task::none();
                 }
-                if self.sidebar.right_open
-                    && self.sidebar.right_mode == crate::sidebar::RightMode::Git
-                    && self.git_panel.open
-                {
-                    self.sidebar.right_open = false;
+                let was_open_git = self
+                    .active_sidebar()
+                    .map(|s| {
+                        s.right_open && s.right_mode == crate::sidebar::RightMode::Git
+                    })
+                    .unwrap_or(false);
+                if was_open_git && self.git_panel.open {
+                    if let Some(w) = self.active_window_mut() {
+                        w.sidebar.right_open = false;
+                    }
                     self.git_panel.close();
                     self.events.emit(
                         crate::events::Category::Git,
@@ -5397,8 +5462,14 @@ impl PureTermApp {
             }
             Message::CloseGitPanel => {
                 self.git_panel.close();
-                if self.sidebar.right_mode == crate::sidebar::RightMode::Git {
-                    self.sidebar.right_open = false;
+                let on_git = self
+                    .active_sidebar()
+                    .map(|s| s.right_mode == crate::sidebar::RightMode::Git)
+                    .unwrap_or(false);
+                if on_git {
+                    if let Some(w) = self.active_window_mut() {
+                        w.sidebar.right_open = false;
+                    }
                     return self.sidebar_layout_changed();
                 }
             }
@@ -6576,8 +6647,10 @@ impl PureTermApp {
                 self.surface_search =
                     Some(SearchState::new(alacritty_terminal::index::Direction::Right, at_bottom));
                 self.refresh_surface_search_pattern();
-                self.sidebar.right_open = true;
-                self.sidebar.right_mode = crate::sidebar::RightMode::Find;
+                if let Some(w) = self.active_window_mut() {
+                    w.sidebar.right_open = true;
+                    w.sidebar.right_mode = crate::sidebar::RightMode::Find;
+                }
                 return self.sidebar_layout_changed();
             }
             Message::SurfaceSearchQuery(q) => {
@@ -6709,8 +6782,10 @@ impl PureTermApp {
                     running: false,
                     error,
                 });
-                self.sidebar.right_open = true;
-                self.sidebar.right_mode = crate::sidebar::RightMode::Find;
+                if let Some(w) = self.active_window_mut() {
+                    w.sidebar.right_open = true;
+                    w.sidebar.right_mode = crate::sidebar::RightMode::Find;
+                }
                 return self.sidebar_layout_changed();
             }
             Message::DirSearchQuery(q) => {
@@ -8265,10 +8340,33 @@ impl PureTermApp {
                         Self::resize_workspace_panes(ws, viewport_w, terminal_height, cw, ch, ssh_smallest);
                     }
                 }
+                // GAP-19: sidebar divider drag-to-resize. `pos` is window-content
+                // absolute coords, so the left divider tracks pos.x and the right
+                // divider tracks (viewport_w - pos.x). Widths are clamped 120–480.
+                if let Some(side) = self.sidebar_drag {
+                    let viewport_w = self.viewport_size.width;
+                    let new_width = match side {
+                        crate::sidebar::SidebarSide::Left => {
+                            crate::sidebar::clamp_width(pos.x)
+                        }
+                        crate::sidebar::SidebarSide::Right => {
+                            crate::sidebar::clamp_width(viewport_w - pos.x)
+                        }
+                    };
+                    if let Some(w) = self.active_window_mut() {
+                        match side {
+                            crate::sidebar::SidebarSide::Left => w.sidebar.left_width = new_width,
+                            crate::sidebar::SidebarSide::Right => w.sidebar.right_width = new_width,
+                        }
+                    }
+                    self.resize_active_tab_panes();
+                }
             }
             Message::GlobalMouseRelease => {
                 // 结束选区拖动:清掉 drag 标志,但保留 term.selection 让 Cmd+C 仍能拷。
                 self.selection_drag = None;
+                // GAP-19: end a sidebar divider drag (if any).
+                self.sidebar_drag = None;
                 if let Some(drag) = self.drag_state.take() {
                     let aw = self.active_window_id;
                     let terminal_w = self.terminal_viewport_width();
@@ -8298,6 +8396,12 @@ impl PureTermApp {
             Message::DividerRelease => {
                 // 兼容旧路径：清理 drag_state（若 GlobalMouseRelease 未触发）
                 self.drag_state = None;
+            }
+            Message::SidebarDividerPress(side) => {
+                // GAP-19: begin a sidebar divider drag. Clicking the divider
+                // focuses its window first, so active_window is the target; the
+                // live drag is driven by GlobalCursorMoved above.
+                self.sidebar_drag = Some(side);
             }
             Message::PtyExitedPane(tab_id, pane_id) => {
                 // Close specific pane, keep tab alive if other panes exist
@@ -9910,7 +10014,10 @@ impl PureTermApp {
     /// GAP-7.4: Feed 面板可见性(view 的 has_overlay / layers 用;跨平台守卫)。
     #[cfg(unix)]
     fn feed_panel_visible(&self) -> bool {
-        self.feed_panel.is_visible() && !self.sidebar.feed_in_sidebar()
+        self.feed_panel.is_visible()
+            && !self
+                .active_sidebar()
+                .map_or(false, |s| s.feed_in_sidebar())
     }
     #[cfg(not(unix))]
     fn feed_panel_visible(&self) -> bool {
@@ -11912,7 +12019,7 @@ impl PureTermApp {
         use iced::Length;
 
         let req = self.feed_panel.focused_request()?;
-        if self.sidebar.feed_in_sidebar() {
+        if self.active_sidebar().map_or(false, |s| s.feed_in_sidebar()) {
             return None;
         }
         let id = req.ipc_id;
@@ -12125,7 +12232,9 @@ impl PureTermApp {
         use iced::widget::{button, column, container, row, scrollable, space, text};
         use iced::Length;
 
-        if !self.git_panel.open || self.sidebar.git_in_sidebar() {
+        if !self.git_panel.open
+            || self.active_sidebar().map_or(false, |s| s.git_in_sidebar())
+        {
             return None;
         }
 
@@ -12955,7 +13064,7 @@ impl PureTermApp {
         use iced::Length;
 
         let s = self.surface_search.as_ref()?;
-        if self.sidebar.search_in_sidebar() {
+        if self.active_sidebar().map_or(false, |s| s.search_in_sidebar()) {
             return None;
         }
 
@@ -13056,7 +13165,7 @@ impl PureTermApp {
         use iced::Length;
 
         let s = self.dir_search.as_ref()?;
-        if self.sidebar.search_in_sidebar() {
+        if self.active_sidebar().map_or(false, |s| s.search_in_sidebar()) {
             return None;
         }
 
@@ -13242,19 +13351,21 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-19: left sidebar (Workspace list + Git summary).
-    fn view_left_sidebar(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
-        if !self.sidebar.left_open {
+    /// GAP-19: left sidebar (Workspace list + Git summary) for window `id`.
+    /// Resolves state + workspace list from the window being rendered (not the
+    /// active window) so each window shows its own sidebar/workspaces.
+    fn view_left_sidebar(&self, id: window::Id) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        let win = self.window_for(id)?;
+        if !win.sidebar.left_open {
             return None;
         }
-        let width = crate::sidebar::clamp_width(self.sidebar_cfg.left_width);
+        let width = crate::sidebar::clamp_width(win.sidebar.left_width);
         let height = sidebar_content_height(
             self.viewport_size.height,
             self.status_bar_cfg.effective_height(),
         );
-        let active_ws = self.active_window()?.active_workspace;
-        let rows: Vec<crate::sidebar::left::WorkspaceRow> = self
-            .active_window()?
+        let active_ws = win.active_workspace;
+        let rows: Vec<crate::sidebar::left::WorkspaceRow> = win
             .workspaces
             .iter()
             .map(|ws| crate::sidebar::left::WorkspaceRow {
@@ -13281,21 +13392,48 @@ impl PureTermApp {
             .iter()
             .map(|i| (i.icon.clone(), i.text.clone()))
             .collect();
-        Some(crate::sidebar::left::view(
-            &rows,
-            git,
-            &dsl_items,
-            width,
-            height,
-        ))
+        let panel = crate::sidebar::left::view(&rows, git, &dsl_items, width, height);
+        Some(Self::sidebar_with_divider(crate::sidebar::SidebarSide::Left, panel, height))
     }
 
-    /// GAP-19: right sidebar (Find / Feed / Git tabs).
-    fn view_right_sidebar(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
-        if !self.sidebar.right_open {
+    /// GAP-19: attach a draggable divider handle to one edge of a sidebar panel
+    /// (Left → trailing edge, Right → leading edge). The 5 px `mouse_area`
+    /// handle starts a divider drag; live motion is driven by the existing
+    /// `GlobalCursorMoved`/`GlobalMouseRelease` flow (same as pane dividers).
+    fn sidebar_with_divider(
+        side: crate::sidebar::SidebarSide,
+        panel: Element<'_, Message, Theme, iced::Renderer>,
+        height: f32,
+    ) -> Element<'_, Message, Theme, iced::Renderer> {
+        let handle = mouse_area(
+            container(space())
+                .width(Length::Fixed(5.0))
+                .height(Length::Fixed(height))
+                .style(|_| container::Style {
+                    background: Some(Background::Color(Color::from_rgba(
+                        0.25, 0.25, 0.28, 1.0,
+                    ))),
+                    text_color: None,
+                    snap: false,
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                }),
+        )
+        .on_press(Message::SidebarDividerPress(side));
+        match side {
+            crate::sidebar::SidebarSide::Left => row![panel, handle].into(),
+            crate::sidebar::SidebarSide::Right => row![handle, panel].into(),
+        }
+    }
+
+    /// GAP-19: right sidebar (Find / Feed / Git tabs) for window `id`.
+    fn view_right_sidebar(&self, id: window::Id) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        let win = self.window_for(id)?;
+        if !win.sidebar.right_open {
             return None;
         }
-        let width = crate::sidebar::clamp_width(self.sidebar_cfg.right_width);
+        let right_mode = win.sidebar.right_mode;
+        let width = crate::sidebar::clamp_width(win.sidebar.right_width);
         let height = sidebar_content_height(
             self.viewport_size.height,
             self.status_bar_cfg.effective_height(),
@@ -13374,8 +13512,8 @@ impl PureTermApp {
             let feed_event = feed_req.map(|r| r.event.clone());
             let feed_tool = feed_req.and_then(|r| r.tool_name.clone());
             let feed_reason = feed_req.map(|r| r.reason.clone());
-            Some(crate::sidebar::right::view(
-                self.sidebar.right_mode,
+            let panel = crate::sidebar::right::view(
+                right_mode,
                 width,
                 height,
                 self.block_output_cfg.enabled,
@@ -13394,12 +13532,17 @@ impl PureTermApp {
                 self.feed_panel.focused_remaining_secs(),
                 self.feed_panel.pending_count(),
                 feed_req.map(|r| r.ipc_id),
+            );
+            Some(Self::sidebar_with_divider(
+                crate::sidebar::SidebarSide::Right,
+                panel,
+                height,
             ))
         }
         #[cfg(not(unix))]
         {
-            Some(crate::sidebar::right::view(
-                self.sidebar.right_mode,
+            let panel = crate::sidebar::right::view(
+                right_mode,
                 width,
                 height,
                 self.block_output_cfg.enabled,
@@ -13410,6 +13553,11 @@ impl PureTermApp {
                 files,
                 blocks,
                 toolbelt,
+            );
+            Some(Self::sidebar_with_divider(
+                crate::sidebar::SidebarSide::Right,
+                panel,
+                height,
             ))
         }
     }
@@ -13500,7 +13648,7 @@ impl PureTermApp {
 
         // GAP-19: left | terminal | right three-column middle row.
         let mut middle = row![].width(Length::Fill).height(Length::Fixed(terminal_h));
-        if let Some(left) = self.view_left_sidebar() {
+        if let Some(left) = self.view_left_sidebar(id) {
             middle = middle.push(left);
         }
         middle = middle.push(
@@ -13508,7 +13656,7 @@ impl PureTermApp {
                 .width(Length::Fill)
                 .height(Length::Fill),
         );
-        if let Some(right) = self.view_right_sidebar() {
+        if let Some(right) = self.view_right_sidebar(id) {
             middle = middle.push(right);
         }
 

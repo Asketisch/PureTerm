@@ -65,16 +65,19 @@
 - 单测:`status_bar::git::tests` 10 个(porcelain v2:clean/dirty/untracked/ahead-behind/detached/no-upstream/non-git + `parse_head` 3);dev check 干净;release + `dist/PureTerm.app` 打包通过(30M arm64)
 - **DoD 待人工**:GUI 真机 E2E(sparkline 动 / git dirty 标记 ~1s 出现 / 切 pane cwd/git 跟随 / 无电池优雅降级);MVP 范围 — 搜索框/snippet/composer/triggers/progress defer 后续
 
-### GAP-19 Dual Sidebar（双侧边栏 MVP）(2026-06-29)
+### GAP-19 Dual Sidebar（双侧边栏 MVP）(2026-06-29, Review ✅ 2026-07-01)
 - 主布局 **left | terminal | right** 三列;⌘B 左侧(Workspace 列表 + Git 分支摘要),⌘⇧B 右侧(Find / Feed / Git / **Ports** 四 tab)
 - **左侧**:点击 workspace → `ActivateWorkspaceById`;底部 Git 摘要复用 status-bar 异步状态
 - **右侧 Find**:内嵌 ⌘F surface search + ⌘⇧F ripgrep(打开搜索时自动展开右侧栏);overlay 版在侧栏 Find tab 激活时隐藏
 - **右侧 Feed**:审批面板从 pinned overlay 迁入 Feed tab;新请求自动打开右侧栏;`feed_panel_visible()` 与侧栏互斥
 - **右侧 Git**:原 ⌘⇧B Git overlay 迁入 Git tab;`ToggleGitPanel` 保留为 legacy 别名
 - **配置**:`[sidebar] left_width` / `right_width`(默认 240,120–480 clamp) / `left_default_open`
+- **每窗口独立(Review)**:`SidebarState`(含运行时宽度)挂在 `Window` 上,A 窗 toggle/拖拽不影响 B 窗;视图按 `view(id)` 取窗(修了「B 窗渲染 A 窗 workspace 列表」latent bug)
+- **拖拽调宽(Review)**:左/右分隔线 5px `mouse_area` → `SidebarDividerPress(Side)`;实时拖动复用 `GlobalCursorMoved`/`GlobalMouseRelease`(同 pane divider),clamp 120–480,逐帧 `resize_active_tab_panes`
+- **事件对称(Review)**:`right_sidebar_event(now_open)` 纯函数锁「每次 toggle 恒发」;修 BUG-1(开 Git tab 早 return 漏发 `sidebar.right_opened`)+ BUG-2(关 Git tab 漏发 `git.panel_closed`)
 - 终端列宽:`terminal_viewport_width()` 扣除 open 侧栏;PTY resize 全路径已接线
 - 实现:`crates/pureterm/src/sidebar/`(mod/left/right) + `iced_app.rs` + `keymap.rs` + `app_config.rs`
-- 单测:`sidebar::tests` 2 绿;全量 652 绿(3 个既有失败与本次无关)
+- 单测:`sidebar::tests` 4 绿 + `app_config::load_sidebar` 2 绿;全量 772 绿 0 回归
 
 ### GAP-11 Instant Replay MVP（2026-06-29）
 - **数据源**:从 `events.jsonl` 加载 shell/surface/session 时间线(非 DVR delta 压缩)
