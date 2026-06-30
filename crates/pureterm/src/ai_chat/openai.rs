@@ -174,10 +174,37 @@ mod tests {
 // OpenAiProvider — reqwest shim for any OpenAI-compatible endpoint.
 // ============================================================================
 
-use crate::ai_chat::provider::{drive_decode, ChatProvider, MpscReceiverStream, SecretKey};
+use crate::ai_chat::provider::{classify_reqwest_error, drive_decode, ChatProvider, MpscReceiverStream, SecretKey};
 use crate::ai_chat::types::ChatRequest;
 use iced::futures::Stream;
 use std::sync::Arc;
+
+/// Validate a configured OpenAI-compatible `base_url`. Allows `https://*` (any
+/// host) and `http://127.0.0.1` / `http://localhost` / `http://[::1]` for a
+/// local Ollama shim. Rejects everything else (plain HTTP to other hosts,
+/// `file://`, etc.) so a misconfigured or hostile config can't redirect the
+/// Bearer key + the full terminal context to an arbitrary endpoint. Pure +
+/// dependency-free (manual scheme/host split).
+pub fn validate_base_url(url: &str) -> Result<(), &'static str> {
+    let u = url.trim();
+    let (scheme, rest) = u.split_once("://").ok_or("base_url must be http(s)")?;
+    match scheme {
+        "https" => Ok(()),
+        "http" => {
+            // Host is the segment before the first '/'; strip the port, then any
+            // IPv6 brackets, so `[::1]:11434` → `::1`.
+            let host = rest.split('/').next().unwrap_or("");
+            let host = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host);
+            let host = host.trim_start_matches('[').trim_end_matches(']');
+            if matches!(host, "127.0.0.1" | "localhost" | "::1") {
+                Ok(())
+            } else {
+                Err("http base_url must point to localhost (use https for remote)")
+            }
+        }
+        _ => Err("base_url must be http(s)"),
+    }
+}
 
 /// Any OpenAI-compatible chat-completions endpoint (OpenAI, DeepSeek, OpenRouter,
 /// local Ollama's OpenAI shim). `base_url` is the API prefix (default
@@ -267,7 +294,10 @@ impl ChatProvider for OpenAiProvider {
                 }
                 Err(e) => {
                     let _ = tx
-                        .send(ChatEvent::Error(format!("request failed: {e}")))
+                        .send(ChatEvent::Error(format!(
+                            "request failed: {}",
+                            classify_reqwest_error(&e)
+                        )))
                         .await;
                     return;
                 }
@@ -353,5 +383,33 @@ mod provider_tests {
     #[test]
     fn id_is_openai() {
         assert_eq!(provider().id(), "openai");
+    }
+
+    #[test]
+    fn validate_base_url_accepts_https() {
+        assert!(validate_base_url("https://api.openai.com/v1").is_ok());
+        assert!(validate_base_url("https://api.deepseek.com").is_ok());
+    }
+
+    #[test]
+    fn validate_base_url_accepts_local_http_for_ollama() {
+        assert!(validate_base_url("http://127.0.0.1:11434/v1").is_ok());
+        assert!(validate_base_url("http://localhost:11434").is_ok());
+        assert!(validate_base_url("http://[::1]:11434").is_ok());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_non_local_http() {
+        // Link-local / metadata / internal hosts must be rejected.
+        assert!(validate_base_url("http://169.254.169.254").is_err());
+        assert!(validate_base_url("http://internal.corp.example/v1").is_err());
+        assert!(validate_base_url("http://8.8.8.8").is_err());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_non_http_schemes() {
+        assert!(validate_base_url("file:///etc/passwd").is_err());
+        assert!(validate_base_url("gopher://x").is_err());
+        assert!(validate_base_url("not-a-url").is_err());
     }
 }

@@ -283,6 +283,24 @@ pub fn resolve_key(
     lookup(default_env).map(SecretKey::new)
 }
 
+/// Classify a reqwest transport error into a stable, URL-free category label.
+/// reqwest's `Display` embeds the request URL — which for OpenAI-compatible
+/// providers is the user's configured (possibly internal) base URL — so we never
+/// surface the raw error in a `ChatEvent::Error`; we surface this label instead.
+pub fn classify_reqwest_error(e: &reqwest::Error) -> &'static str {
+    if e.is_timeout() {
+        "timeout"
+    } else if e.is_connect() {
+        "network"
+    } else if e.is_decode() {
+        "decode"
+    } else if e.is_body() {
+        "body"
+    } else {
+        "request"
+    }
+}
+
 // ============================================================================
 // ChatProvider trait + streaming read loop.
 // ============================================================================
@@ -504,5 +522,33 @@ data: {\"type\":\"message_stop\"}\n\n";
             assert!(done.is_ok(), "stream did not close after cancel (timed out)");
             assert!(done.unwrap().is_empty()); // no events, just closed
         });
+    }
+}
+
+#[cfg(test)]
+mod classify_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn classify_reqwest_error_returns_stable_label() {
+        // A malformed URL fails at request-build time locally (no network). The
+        // contract: classify returns one of a fixed label set, never the raw
+        // error (which embeds the configured base URL).
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let label: &str = rt.block_on(async {
+            let tried = tokio::time::timeout(
+                Duration::from_secs(3),
+                reqwest::get("ht!tp://%%invalid url"),
+            )
+            .await;
+            match tried {
+                Ok(Ok(_)) => "success",
+                Ok(Err(e)) => classify_reqwest_error(&e),
+                Err(_) => "timed-out",
+            }
+        });
+        const LABELS: &[&str] = &["timeout", "network", "decode", "body", "request"];
+        assert!(LABELS.contains(&label), "unexpected label: {label}");
     }
 }

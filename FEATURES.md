@@ -407,7 +407,8 @@ action = { Ssh = "ListProfiles" }
 - 发送时注入活跃 pane：`shell_context::build_for_pane` + `surface_snapshot::capture_visible_tail`（80 行）拼入 user turn（UI 历史仅存用户原文）
 - **核心**：`ai_chat/`（`panel`/`context`/`provider`/`anthropic`/`openai`/`sse`/`types`）；`spawn_ai_chat_stream`（`Task::stream` + `ChatProvider`，同 GAP-02 模式）
 - **配置**：`[ai_chat]`（`provider`/`model`/`max_tokens`/`api_key_env`/`openai_base_url`）；API key 仅 env
-- **未做（defer）**：Settings UI、session 持久化 GUI、流式 Markdown 富文本、MCP function calling
+- **Review（2026-06-30）✅**：修 9 类 bug + 安全加固 + Markdown 接线 —— 关闭面板 inflight 残留（`abort_inflight_chat` 统一三路径）/ prompt 注入加固（`<terminal_context>` 标签 + 不可信数据 system 条款）/ 提前 EOF 合成终止 / 共享 `reqwest::Client`（GAP-01/02/08 复用）/ 历史上限 20 + SOUL 32KiB cap / `validate_base_url` 仅 https+本地 / `classify_reqwest_error` 错误脱敏 / 未知 provider 拒绝 / Stop 部分文本标记；`markdown::parse` 接 `rich_text`/`span` 渲染代码块 + 行内样式 + 自动滚动。88 ai_chat + 3 soul 绿 0 回归。GUI E2E 待人工
+- **未做（defer）**：Settings UI、session 持久化 GUI、MCP function calling；Markdown 富文本进阶（语法高亮/列表/表格）
 
 ### GAP-02 Error Recovery（命令失败 LLM 修复建议）(2026-06-28)
 - Shell Integration 非零 exit 自动触发（可配 `[error_recovery].auto_analyze`）→ 捕获命令 + 输出 tail → 复用 `ai_chat` Anthropic/OpenAI `ChatProvider` 流式分析 → 底部 inline 卡片展示建议 + **Apply** 写入 PTY

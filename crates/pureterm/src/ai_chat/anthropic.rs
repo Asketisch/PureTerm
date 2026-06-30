@@ -190,7 +190,7 @@ mod tests {
 // AnthropicProvider — the reqwest HTTP shim around the mapper above.
 // ============================================================================
 
-use crate::ai_chat::provider::{drive_decode, ChatProvider, MpscReceiverStream, SecretKey};
+use crate::ai_chat::provider::{classify_reqwest_error, drive_decode, ChatProvider, MpscReceiverStream, SecretKey};
 use crate::ai_chat::types::ChatRequest;
 use iced::futures::Stream;
 use std::sync::Arc;
@@ -275,7 +275,10 @@ impl ChatProvider for AnthropicProvider {
                 }
                 Err(e) => {
                     let _ = tx
-                        .send(ChatEvent::Error(format!("request failed: {e}")))
+                        .send(ChatEvent::Error(format!(
+                            "request failed: {}",
+                            classify_reqwest_error(&e)
+                        )))
                         .await;
                     return;
                 }

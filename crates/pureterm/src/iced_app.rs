@@ -568,6 +568,11 @@ pub struct PureTermApp {
     ai_chat_cfg: crate::app_config::AiChatConfig,
     ai_chat_panel: crate::ai_chat::panel::ChatPanelState,
     ai_chat_cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
+    /// Shared HTTP client (connection pool + TLS session) reused across all
+    /// LLM turns (GAP-01 chat + GAP-02 error recovery + GAP-08 natural language)
+    /// instead of building a fresh `reqwest::Client` per message. Cloning is
+    /// cheap — the client is an `Arc` internally.
+    http_client: reqwest::Client,
     /// GAP-35: LSP client (rust-analyzer MVP).
     lsp_cfg: crate::app_config::LspConfig,
     lsp: crate::lsp::LspState,
@@ -1518,13 +1523,14 @@ fn spawn_hover_preview_fetch(
 fn spawn_natural_language_stream(
     ai_cfg: crate::app_config::AiChatConfig,
     nl_cfg: crate::app_config::NaturalLanguageConfig,
+    client: reqwest::Client,
     ctx: crate::natural_language::NlContext,
     gen: u64,
     cancel: std::sync::Arc<tokio::sync::Notify>,
 ) -> Task<Message> {
     use iced::futures::StreamExt;
 
-    let Some(provider) = crate::natural_language::make_provider(&ai_cfg) else {
+    let Some(provider) = crate::natural_language::make_provider(&ai_cfg, client) else {
         return Task::done(Message::NaturalLanguageChunk {
             gen,
             event: crate::ai_chat::types::ChatEvent::Error(
@@ -1559,13 +1565,14 @@ fn spawn_natural_language_stream(
 /// GAP-02: stream LLM fix suggestions into `ErrorRecoveryChunk` messages.
 fn spawn_error_recovery_stream(
     cfg: crate::app_config::ErrorRecoveryConfig,
+    client: reqwest::Client,
     failure: crate::error_recovery::FailureContext,
     gen: u64,
     cancel: std::sync::Arc<tokio::sync::Notify>,
 ) -> Task<Message> {
     use iced::futures::StreamExt;
 
-    let Some(provider) = crate::error_recovery::make_provider(&cfg) else {
+    let Some(provider) = crate::error_recovery::make_provider(&cfg, client) else {
         return Task::done(Message::ErrorRecoveryChunk {
             gen,
             event: crate::ai_chat::types::ChatEvent::Error(
@@ -1597,28 +1604,37 @@ fn spawn_error_recovery_stream(
     )
 }
 
+/// GAP-01: scrollable id for the chat message list. Auto-scroll to bottom on
+/// send + each streamed `TextDelta` so the newest content stays in view.
+const AI_CHAT_SCROLL: Id = Id::new("ai_chat_messages");
+
 /// GAP-01: stream assistant replies into `AiChatChunk` messages.
 fn spawn_ai_chat_stream(
     cfg: crate::app_config::AiChatConfig,
+    client: reqwest::Client,
     req: crate::ai_chat::types::ChatRequest,
     gen: u64,
     cancel: std::sync::Arc<tokio::sync::Notify>,
 ) -> Task<Message> {
     use iced::futures::StreamExt;
 
-    let Some(provider) = crate::ai_chat::context::make_provider(&cfg) else {
+    let Some(provider) = crate::ai_chat::context::make_provider_with_client(&cfg, client) else {
         return Task::done(Message::AiChatChunk {
             gen,
             event: crate::ai_chat::types::ChatEvent::Error(
-                "missing API key (set ANTHROPIC_API_KEY or OPENAI_API_KEY)".into(),
+                "AI chat provider not configured (check API key env / base URL / provider name)".into(),
             ),
         });
     };
     Task::stream(
         iced::stream::channel(64, move |mut output: iced::futures::channel::mpsc::Sender<Message>| async move {
             let mut stream = provider.stream(req, cancel);
+            let mut saw_terminal = false;
             while let Some(ev) = stream.next().await {
                 let terminal = ev.is_terminal();
+                if terminal {
+                    saw_terminal = true;
+                }
                 if output
                     .try_send(Message::AiChatChunk { gen, event: ev })
                     .is_err()
@@ -1628,6 +1644,19 @@ fn spawn_ai_chat_stream(
                 if terminal {
                     break;
                 }
+            }
+            // Early EOF: the provider stream ended without a terminal Done/Error
+            // (dropped connection, truncated response). Synthesize one so the
+            // panel doesn't sit in "streaming" forever with a spinner. On
+            // cancel/supersede the panel has already cleared `inflight_gen`, so
+            // this synthetic chunk is dropped by `apply_chunk`'s gen guard.
+            if !saw_terminal {
+                let _ = output.try_send(Message::AiChatChunk {
+                    gen,
+                    event: crate::ai_chat::types::ChatEvent::Error(
+                        "stream ended (provider sent no terminal event)".into(),
+                    ),
+                });
             }
             std::future::pending::<()>().await;
         }),
@@ -2045,6 +2074,7 @@ impl PureTermApp {
             ai_chat_cfg,
             ai_chat_panel: crate::ai_chat::panel::ChatPanelState::new(),
             ai_chat_cancel: None,
+            http_client: reqwest::Client::new(),
             lsp_cfg,
             lsp,
             lsp_workspace_root: lsp_workspace,
@@ -5836,11 +5866,7 @@ impl PureTermApp {
             }
             Message::ToggleAiChatPanel => {
                 if self.ai_chat_panel.open {
-                    if self.ai_chat_panel.is_streaming() {
-                        if let Some(c) = self.ai_chat_cancel.take() {
-                            c.notify_one();
-                        }
-                    }
+                    self.abort_inflight_chat();
                     self.ai_chat_panel.close();
                 } else {
                     self.ai_chat_panel.open();
@@ -5850,25 +5876,34 @@ impl PureTermApp {
                 self.ai_chat_panel.set_input(text);
             }
             Message::AiChatSend => {
-                return self.send_ai_chat_message();
+                let send = self.send_ai_chat_message();
+                // Auto-scroll the message list to the bottom on send.
+                return Task::batch([
+                    send,
+                    task_widget(scroll_snap_to(
+                        AI_CHAT_SCROLL,
+                        ScrollRelativeOffset { x: Some(0.0), y: Some(1.0) },
+                    )),
+                ]);
             }
             Message::AiChatStop => {
-                if let Some(c) = self.ai_chat_cancel.take() {
-                    c.notify_one();
-                }
                 if self.ai_chat_panel.is_streaming() {
-                    if let Some(last) = self.ai_chat_panel.messages.last_mut() {
-                        if last.role == crate::ai_chat::types::ChatRole::Assistant
-                            && last.content.is_empty()
-                        {
-                            last.content = "(stopped)".to_string();
-                        }
-                    }
-                    self.ai_chat_panel.stop_streaming();
+                    // mark_stopped writes "(stopped)" for an empty placeholder or
+                    // appends "\n[stopped]" after partial text, so the abort is
+                    // visible either way.
+                    self.ai_chat_panel.mark_stopped();
                 }
+                self.abort_inflight_chat();
             }
             Message::AiChatChunk { gen, event } => {
                 self.ai_chat_panel.apply_chunk(gen, &event);
+                // Follow the stream: keep the newest content in view as it arrives.
+                if matches!(event, crate::ai_chat::types::ChatEvent::TextDelta(_)) {
+                    return task_widget(scroll_snap_to(
+                        AI_CHAT_SCROLL,
+                        ScrollRelativeOffset { x: Some(0.0), y: Some(1.0) },
+                    ));
+                }
             }
             Message::TriggerSendText { pane_id, text } => {
                 // GAP-10: deferred cross-pane send_text — runs outside the Wakeup
@@ -8293,11 +8328,7 @@ impl PureTermApp {
                 }
                 // GAP-01: Escape closes the AI Chat panel.
                 if self.ai_chat_panel.open {
-                    if self.ai_chat_panel.is_streaming() {
-                        if let Some(c) = self.ai_chat_cancel.take() {
-                            c.notify_one();
-                        }
-                    }
+                    self.abort_inflight_chat();
                     self.ai_chat_panel.close();
                     return Task::none();
                 }
@@ -8701,6 +8732,7 @@ impl PureTermApp {
         );
         spawn_error_recovery_stream(
             self.error_recovery_cfg.clone(),
+            self.http_client.clone(),
             failure,
             gen,
             cancel,
@@ -8726,6 +8758,7 @@ impl PureTermApp {
         spawn_natural_language_stream(
             self.ai_chat_cfg.clone(),
             self.natural_language_cfg.clone(),
+            self.http_client.clone(),
             ctx,
             gen,
             cancel,
@@ -8818,6 +8851,18 @@ impl PureTermApp {
         )
     }
 
+    /// GAP-01: cancel any in-flight chat turn and clear the panel's streaming
+    /// flag. Shared by panel-close (toggle + Escape) and Stop, so (a) the three
+    /// call sites can't drift out of sync, and (b) a late `AiChatChunk` racing
+    /// in after the close is dropped by `apply_chunk`'s gen guard instead of
+    /// writing into the now-hidden assistant placeholder.
+    fn abort_inflight_chat(&mut self) {
+        if let Some(c) = self.ai_chat_cancel.take() {
+            c.notify_one();
+        }
+        self.ai_chat_panel.stop_streaming();
+    }
+
     /// GAP-01: send the chat input as a new turn with active-pane context.
     fn send_ai_chat_message(&mut self) -> Task<Message> {
         let user_text = self.ai_chat_panel.input.trim().to_string();
@@ -8863,7 +8908,7 @@ impl PureTermApp {
             &context_block,
             &self.soul_prompt,
         );
-        spawn_ai_chat_stream(self.ai_chat_cfg.clone(), req, gen, cancel)
+        spawn_ai_chat_stream(self.ai_chat_cfg.clone(), self.http_client.clone(), req, gen, cancel)
     }
 
     fn dispatch_action(&mut self, action: Action) -> Task<Message> {
@@ -12246,26 +12291,30 @@ impl PureTermApp {
                         Color::from_rgba(0.75, 0.9, 0.75, 1.0),
                     ),
                 };
-                let content = if msg.content.is_empty()
+                let is_streaming_placeholder = msg.content.is_empty()
                     && msg.role == ChatRole::Assistant
-                    && self.ai_chat_panel.is_streaming()
-                {
-                    "…".to_string()
+                    && self.ai_chat_panel.is_streaming();
+                let body: Element<'_, Message, Theme, iced::Renderer> = if is_streaming_placeholder {
+                    text("…").size(12).into()
+                } else if msg.role == ChatRole::Assistant {
+                    // Assistant replies render as markdown: fenced code blocks as
+                    // monospace boxes, inline bold/italic/code spans styled. This
+                    // wires the previously-inert markdown.rs into the panel so the
+                    // fenced ```bash blocks the system prompt requests render as
+                    // real code, not literal fence markers.
+                    self.view_markdown_body(&msg.content)
                 } else {
-                    msg.content.clone()
+                    text(msg.content.as_str()).size(12).into()
                 };
                 messages_col = messages_col.push(
-                    column![
-                        text(label).size(10).color(color),
-                        text(content).size(12),
-                    ]
-                    .spacing(2),
+                    column![text(label).size(10).color(color), body].spacing(2),
                 );
             }
         }
 
         body = body.push(
             scrollable(messages_col)
+                .id(AI_CHAT_SCROLL)
                 .height(Length::Fixed(self.viewport_size.height * 0.55)),
         );
 
@@ -12288,6 +12337,67 @@ impl PureTermApp {
             .style(container::bordered_box);
         let x = (self.viewport_size.width - PANEL_W).max(0.0);
         Some(iced::widget::pin(panel).x(x).y(48.0).into())
+    }
+
+    /// GAP-01: render an assistant message's markdown body. Fenced code blocks
+    /// become a monospace box (with the language tag); paragraphs render as
+    /// styled spans (bold/italic/inline-code). Falls back to plain text when
+    /// parsing yields no blocks so the panel never shows an empty reply.
+    fn view_markdown_body<'a>(
+        &'a self,
+        content: &'a str,
+    ) -> Element<'a, Message, Theme, iced::Renderer> {
+        use crate::ai_chat::markdown::{self, Block, SpanStyle};
+        use iced::widget::{container, rich_text, span, text};
+        use iced::{font, Font};
+
+        const MONO: Font = Font::MONOSPACE;
+        const CODE_COLOR: Color = Color::from_rgba(0.95, 0.85, 0.55, 1.0);
+
+        let blocks = markdown::parse(content);
+        let mut col = column![].spacing(4);
+        if blocks.is_empty() {
+            col = col.push(text(content.to_string()).size(12));
+        }
+        for block in blocks {
+            match block {
+                Block::Paragraph(spans) => {
+                    // Clone each span's text so the styled spans own their data
+                    // (the parsed blocks are loop-local; borrowing them would
+                    // not outlive the returned Element).
+                    let rich: Vec<iced::widget::text::Span<'static>> = spans
+                        .iter()
+                        .map(|s| {
+                            let sp = span(s.text.clone());
+                            match s.style {
+                                SpanStyle::Bold => sp
+                                    .font(Font { weight: font::Weight::Bold, ..Font::default() }),
+                                SpanStyle::Italic => sp
+                                    .font(Font { style: font::Style::Italic, ..Font::default() }),
+                                SpanStyle::BoldItalic => sp.font(Font {
+                                    weight: font::Weight::Bold,
+                                    style: font::Style::Italic,
+                                    ..Font::default()
+                                }),
+                                SpanStyle::Code => sp.font(MONO).color(CODE_COLOR),
+                                SpanStyle::Normal => sp,
+                            }
+                        })
+                        .collect();
+                    col = col.push(rich_text(rich).size(12));
+                }
+                Block::CodeBlock { lang, code } => {
+                    let mut inner = column![].spacing(2);
+                    if let Some(l) = lang.as_deref().filter(|l| !l.is_empty()) {
+                        inner = inner
+                            .push(text(l.to_string()).size(9).color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)));
+                    }
+                    inner = inner.push(text(code.trim_end().to_string()).font(MONO).size(11));
+                    col = col.push(container(inner).padding(6).style(container::bordered_box));
+                }
+            }
+        }
+        col.into()
     }
 
     /// GAP-4.2: hit-test the semantic hover-preview context menu.

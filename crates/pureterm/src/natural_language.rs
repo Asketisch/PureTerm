@@ -140,11 +140,14 @@ pub fn build_prompt(ctx: &NlContext, ai_cfg: &AiChatConfig, nl_cfg: &NaturalLang
     }
 }
 
-/// Resolve LLM provider from AI chat config (shared provider).
+/// Resolve LLM provider from AI chat config (shared provider). Reuses the
+/// caller-supplied `reqwest::Client` so connection pool / TLS sessions persist
+/// across turns.
 pub fn make_provider(
     cfg: &AiChatConfig,
+    client: reqwest::Client,
 ) -> Option<std::sync::Arc<dyn crate::ai_chat::provider::ChatProvider>> {
-    crate::ai_chat::context::make_provider(cfg)
+    crate::ai_chat::context::make_provider_with_client(cfg, client)
 }
 
 /// Bytes to clear the current shell line (readline: home + kill to end).

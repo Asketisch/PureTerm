@@ -61,6 +61,23 @@ impl ChatPanelState {
         self.inflight_gen = None;
     }
 
+    /// Mark the in-flight assistant turn as user-stopped. An empty placeholder
+    /// becomes "(stopped)"; a partially-streamed reply gets a trailing
+    /// "[stopped]" note so the abort is visible (mirrors the `Error` branch of
+    /// [`Self::apply_chunk`]). Does not touch `inflight_gen` — the caller clears
+    /// it via [`Self::stop_streaming`] / `abort_inflight_chat`.
+    pub fn mark_stopped(&mut self) {
+        if let Some(last) = self.messages.last_mut() {
+            if last.role == ChatRole::Assistant {
+                if last.content.is_empty() {
+                    last.content = "(stopped)".to_string();
+                } else {
+                    last.content.push_str("\n[stopped]");
+                }
+            }
+        }
+    }
+
     /// Begin a turn: push the user message + an empty assistant placeholder, and
     /// return a fresh generation id. The caller tags the provider stream's events
     /// with this id so stale chunks are discarded.
@@ -185,5 +202,38 @@ mod tests {
         p.apply_chunk(gen, &ChatEvent::Error("network down".into()));
         assert!(!p.is_streaming());
         assert!(p.messages.last().unwrap().content.contains("network down"));
+    }
+
+    #[test]
+    fn stop_after_partial_text_appends_marker() {
+        let mut p = ChatPanelState::new();
+        let gen = p.begin_turn("hi");
+        p.apply_chunk(gen, &ChatEvent::TextDelta("partial reply".into()));
+        p.mark_stopped();
+        let content = p.messages.last().unwrap().content.clone();
+        assert!(content.contains("partial reply"));
+        assert!(content.contains("[stopped]"));
+    }
+
+    #[test]
+    fn stop_with_empty_placeholder_shows_stopped() {
+        let mut p = ChatPanelState::new();
+        p.begin_turn("hi");
+        p.mark_stopped();
+        assert_eq!(p.messages.last().unwrap().content, "(stopped)");
+    }
+
+    #[test]
+    fn stale_chunk_after_stop_is_dropped() {
+        // stop_streaming() clears inflight_gen → a late chunk for the old gen
+        // must NOT write into the (hidden) assistant placeholder.
+        let mut p = ChatPanelState::new();
+        let gen = p.begin_turn("hi");
+        p.apply_chunk(gen, &ChatEvent::TextDelta("first".into()));
+        p.stop_streaming();
+        // Late chunk races in after the stop.
+        p.apply_chunk(gen, &ChatEvent::TextDelta(" ghost".into()));
+        let content = p.messages.last().unwrap().content.clone();
+        assert_eq!(content, "first"); // ghost not appended
     }
 }

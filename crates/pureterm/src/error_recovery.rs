@@ -188,12 +188,16 @@ pub fn extract_fix_command(markdown: &str) -> Option<String> {
 
 /// Resolve a streaming LLM provider from config + environment. Returns `None`
 /// when the API key env var is unset (caller should surface a card error).
-pub fn make_provider(cfg: &ErrorRecoveryConfig) -> Option<std::sync::Arc<dyn crate::ai_chat::provider::ChatProvider>> {
+/// Reuses the caller-supplied `reqwest::Client` so the connection pool / TLS
+/// session persists across turns.
+pub fn make_provider(
+    cfg: &ErrorRecoveryConfig,
+    client: reqwest::Client,
+) -> Option<std::sync::Arc<dyn crate::ai_chat::provider::ChatProvider>> {
     use crate::ai_chat::anthropic::AnthropicProvider;
     use crate::ai_chat::openai::OpenAiProvider;
     use crate::ai_chat::provider::{resolve_key, ChatProvider};
 
-    let client = reqwest::Client::new();
     let lookup = |name: &str| std::env::var(name).ok();
 
     match cfg.provider.as_str() {
