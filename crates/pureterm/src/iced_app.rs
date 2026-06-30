@@ -3725,7 +3725,17 @@ impl PureTermApp {
         );
 
         // Remove the failed tab and re-seat the active tab if it was active.
+        // GAP-1.3 review: tear down per-pane state for the failed tab's panes.
+        let doomed: Vec<PaneId> = self
+            .tabs()
+            .iter()
+            .find(|t| t.id == tab_id)
+            .map(|t| t.panes.keys().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
         self.tabs_mut().retain(|t| t.id != tab_id);
+        for id in doomed {
+            self.teardown_pane_state(id);
+        }
         if self.active_tab_id() == tab_id {
             self.set_active_tab(self.tabs().first().map(|t| t.id).unwrap_or(tab_id));
         }
@@ -4185,12 +4195,36 @@ impl PureTermApp {
     fn close_active_tab(&mut self) {
         let active = self.active_tab_id();
         if let Some(pos) = self.tabs().iter().position(|t| t.id == active) {
+            // GAP-1.3 review: tear down per-pane state for the closed tab's panes
+            // (ids are never reused → would leak for the session otherwise).
+            let doomed: Vec<PaneId> = self.tabs()[pos].panes.keys().copied().collect();
             self.tabs_mut().remove(pos);
+            for id in doomed {
+                self.teardown_pane_state(id);
+            }
             if !self.tabs().is_empty() {
                 let new_idx = pos.min(self.tabs().len() - 1);
                 self.set_active_tab(self.tabs()[new_idx].id);
             }
         }
+    }
+
+    /// Drop all per-pane runtime state for `pane_id` (cwd, OSC title, trigger /
+    /// shell / block state). Call at EVERY site that destroys a pane — tab close,
+    /// window close, tab-range context ops. The two single-pane close paths
+    /// (`PtyExitedPane`, `close_active_pane`) call `teardown_pane_state_maps`
+    /// directly via disjoint field refs instead, because they hold a `&mut Tab`
+    /// borrow that blocks a `&mut self` method. Pane ids are never reused, so a
+    /// site that skips this leaks the entries for the whole session.
+    fn teardown_pane_state(&mut self, pane_id: PaneId) {
+        teardown_pane_state_maps(
+            &mut self.pane_cwds,
+            &mut self.pane_osc_title,
+            &mut self.pane_trigger_state,
+            &mut self.pane_shell_state,
+            &mut self.pane_block_stores,
+            pane_id,
+        );
     }
 
     /// 获取活跃 tab 中活跃 pane 的可变引用。
@@ -6093,9 +6127,27 @@ impl PureTermApp {
                         serde_json::json!({}),
                     );
                 }
+                // GAP-1.3 review: collect every pane in the closed window (across
+                // all its workspaces) so per-pane state can be torn down — pane ids
+                // are never reused, so missing this leaks for the session.
+                let doomed: Vec<PaneId> = self
+                    .windows
+                    .iter()
+                    .find(|w| w.window_id == win_id)
+                    .map(|w| {
+                        w.workspaces
+                            .iter()
+                            .flat_map(|ws| ws.tabs.iter())
+                            .flat_map(|t| t.panes.keys().copied())
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 // 从统一 vec 移除已关窗口(main 或 detached)。
                 let removed_any = self.windows.iter().any(|w| w.window_id == win_id);
                 self.windows.retain(|w| w.window_id != win_id);
+                for id in doomed {
+                    self.teardown_pane_state(id);
+                }
                 // GAP-2.1 review (BUG-D): active_window_id 必须恒指向存活窗口。覆盖
                 // 「聚焦中的主窗被关、仍有 detached 存活」——此时 main_window 已置 None
                 // (上方),旧的主窗-only snap-back 会跳过,留下指向已移除窗口的悬空 id,
@@ -6283,8 +6335,19 @@ impl PureTermApp {
                         }
                     }
 
+                    // GAP-1.3 review: collect doomed panes before retain so their
+                    // per-pane state can be torn down (ids are never reused).
+                    let doomed: Vec<PaneId> = self
+                        .tabs()
+                        .iter()
+                        .find(|t| t.id == tab_id)
+                        .map(|t| t.panes.keys().copied().collect::<Vec<_>>())
+                        .unwrap_or_default();
                     let idx = self.tabs().iter().position(|t| t.id == tab_id).unwrap_or(0);
                     self.tabs_mut().retain(|t| t.id != tab_id);
+                    for id in doomed {
+                        self.teardown_pane_state(id);
+                    }
                     if self.active_tab_id() == tab_id {
                         let new_idx = idx.min(self.tabs().len() - 1);
                         self.set_active_tab(self.tabs()[new_idx].id);
@@ -7259,12 +7322,32 @@ impl PureTermApp {
                     }
                     ContextMenuItem::CloseOtherTabs => {
                         let keep_id = menu.tab_id;
+                        // GAP-1.3 review: tear down per-pane state for the dropped tabs.
+                        let doomed: Vec<PaneId> = self
+                            .tabs()
+                            .iter()
+                            .filter(|t| t.id != keep_id)
+                            .flat_map(|t| t.panes.keys().copied())
+                            .collect();
                         self.tabs_mut().retain(|t| t.id == keep_id);
+                        for id in doomed {
+                            self.teardown_pane_state(id);
+                        }
                         self.set_active_tab(keep_id);
                     }
                     ContextMenuItem::CloseTabsToLeft => {
                         if let Some(idx) = tab_idx {
+                            // GAP-1.3 review: tear down per-pane state for the dropped tabs.
+                            let doomed: Vec<PaneId> = self
+                                .tabs()
+                                .iter()
+                                .take(idx)
+                                .flat_map(|t| t.panes.keys().copied())
+                                .collect();
                             self.tabs_mut().drain(0..idx);
+                            for id in doomed {
+                                self.teardown_pane_state(id);
+                            }
                             if !self.tabs().iter().any(|t| t.id == self.active_tab_id()) {
                                 self.set_active_tab(menu.tab_id);
                             }
@@ -7272,7 +7355,17 @@ impl PureTermApp {
                     }
                     ContextMenuItem::CloseTabsToRight => {
                         if let Some(idx) = tab_idx {
+                            // GAP-1.3 review: tear down per-pane state for the dropped tabs.
+                            let doomed: Vec<PaneId> = self
+                                .tabs()
+                                .iter()
+                                .skip(idx + 1)
+                                .flat_map(|t| t.panes.keys().copied())
+                                .collect();
                             self.tabs_mut().drain(idx + 1..);
+                            for id in doomed {
+                                self.teardown_pane_state(id);
+                            }
                         }
                     }
                     ContextMenuItem::MoveToNewWindow => {
@@ -8255,16 +8348,19 @@ impl PureTermApp {
                         }
                     }
                     tab.panes.remove(&pane_id);
-                    // Drop per-pane state for the closed pane. Pane ids are never
-                    // reused, so any map missed here leaks for the whole session —
-                    // keep this list in sync with `close_active_pane` and add new
-                    // per-pane maps in both places. (GAP-15 review: the prior code
-                    // omitted pane_shell_state/pane_block_stores, leaking them.)
-                    self.pane_cwds.remove(&pane_id);
-                    self.pane_osc_title.remove(&pane_id);
-                    self.pane_trigger_state.remove(&pane_id);
-                    self.pane_shell_state.remove(&pane_id);   // GAP-15
-                    self.pane_block_stores.remove(&pane_id);  // GAP-51 (same leak)
+                    // Drop per-pane state for the closed pane via the shared
+                    // teardown (single source of truth — see teardown_pane_state_maps).
+                    // Passed as disjoint field refs because `tab` borrows self.windows,
+                    // blocking a `&mut self` call. Pane ids are never reused, so a
+                    // map missed here leaks for the whole session.
+                    teardown_pane_state_maps(
+                        &mut self.pane_cwds,
+                        &mut self.pane_osc_title,
+                        &mut self.pane_trigger_state,
+                        &mut self.pane_shell_state,
+                        &mut self.pane_block_stores,
+                        pane_id,
+                    );
                     // GAP-02 (global card): dismiss only if it points at this
                     // pane. Inlined rather than a &mut self method so it touches
                     // only disjoint fields while `tab` borrows self.windows.
@@ -10663,14 +10759,17 @@ impl PureTermApp {
                 }
             }
             tab.panes.remove(&active_pane_id);
-            // Drop per-pane state for the closed pane. Keep in sync with the
-            // SSH/exit pane-close path above (see its comment) — pane ids are
-            // never reused, so any map missed here leaks for the session.
-            self.pane_cwds.remove(&active_pane_id);
-            self.pane_osc_title.remove(&active_pane_id);
-            self.pane_trigger_state.remove(&active_pane_id);
-            self.pane_shell_state.remove(&active_pane_id);   // GAP-15
-            self.pane_block_stores.remove(&active_pane_id);  // GAP-51 (same leak)
+            // Drop per-pane state for the closed pane via the shared teardown
+            // (single source of truth — see teardown_pane_state_maps). Disjoint
+            // field refs because `tab` borrows self.windows, blocking `&mut self`.
+            teardown_pane_state_maps(
+                &mut self.pane_cwds,
+                &mut self.pane_osc_title,
+                &mut self.pane_trigger_state,
+                &mut self.pane_shell_state,
+                &mut self.pane_block_stores,
+                active_pane_id,
+            );
             // GAP-02 (global card): dismiss only if it points at this pane.
             if self.error_recovery.dismiss_for_pane(active_pane_id.0) {
                 if let Some(c) = self.error_recovery_cancel.take() {
@@ -14053,22 +14152,12 @@ pub fn run() -> iced::Result {
     .run()
 }
 
-/// GAP-1.3: choose the displayed window/tab title. A non-empty OSC title set
-/// by the program (OSC 0/2, or restored by a CSI 23t pop) takes precedence;
-/// an empty or absent title falls back to PureTerm's derived title (tab number
-/// / SSH profile). Mirrors iTerm2 / Ghostty / Alacritty semantics.
-fn resolve_display_title<'a>(osc: Option<&'a str>, derived: &'a str) -> &'a str {
-    match osc {
-        Some(s) if !s.is_empty() => s,
-        _ => derived,
-    }
-}
-
-/// GAP-32: append the git branch to a tab's *derived* title. A non-empty OSC
-/// title (set by the program, GAP-1.3) is returned unchanged — the shell's own
-/// title always wins, so we never clobber it. Otherwise, when `enabled` and a
-/// non-empty `branch` is known, append ` [<branch>]` to the derived title; if
-/// disabled or no branch, return the derived title verbatim. Pure + tested.
+/// The single window/tab title resolver used by `tab_display_title`. A non-empty
+/// OSC title (set by the program via OSC 0/2, GAP-1.3, or restored by a CSI 23t
+/// pop) wins outright — the shell's own title always takes precedence, so we
+/// never clobber it. Otherwise fall back to PureTerm's derived title (`tab.title`);
+/// GAP-32: when `enabled` and a non-empty `branch` is known, append ` [<branch>]`
+/// to the derived title; if disabled or no branch, return it verbatim. Pure + tested.
 fn tab_title_with_branch(
     osc: Option<&str>,
     derived: &str,
@@ -14089,6 +14178,29 @@ fn tab_title_with_branch(
         }
     }
     derived.to_string()
+}
+
+/// Remove `pane_id` from every per-pane runtime map. Single source of truth for
+/// the destroy-site cleanup list — every site that destroys a pane MUST route
+/// through here (directly, or via `PureTermApp::teardown_pane_state`). Pane ids
+/// are never reused, so a map missed here leaks for the whole session.
+///
+/// Free function (not `&mut self`) so the two single-pane close paths — which
+/// hold a `&mut Tab` borrow into `self.windows` and can't call a `&mut self`
+/// method — can still reach it via disjoint field borrows.
+fn teardown_pane_state_maps(
+    cwds: &mut HashMap<PaneId, String>,
+    osc_title: &mut HashMap<PaneId, String>,
+    trigger: &mut HashMap<PaneId, crate::triggers::TriggerPaneState>,
+    shell: &mut HashMap<PaneId, crate::shell_state::ShellState>,
+    blocks: &mut HashMap<PaneId, crate::output_blocks::PaneBlockStore>,
+    pane_id: PaneId,
+) {
+    cwds.remove(&pane_id);
+    osc_title.remove(&pane_id);
+    trigger.remove(&pane_id);
+    shell.remove(&pane_id);
+    blocks.remove(&pane_id);
 }
 
 #[cfg(test)]
@@ -14205,24 +14317,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_display_title_prefers_osc_when_set() {
-        // GAP-1.3: program-set title wins.
-        assert_eq!(super::resolve_display_title(Some("vim"), "#1"), "vim");
-    }
-
-    #[test]
-    fn resolve_display_title_falls_back_when_absent() {
-        // No OSC title → derived tab title.
-        assert_eq!(super::resolve_display_title(None, "#1"), "#1");
-    }
-
-    #[test]
-    fn resolve_display_title_treats_empty_as_reset() {
-        // Empty OSC title (e.g. `\e]0;\a`) is treated as reset → fall back.
-        assert_eq!(super::resolve_display_title(Some(""), "#1"), "#1");
-    }
-
-    #[test]
     fn tab_title_osc_wins_over_branch_suffix() {
         // GAP-32: a program-set OSC title is never clobbered by the branch.
         assert_eq!(
@@ -14258,6 +14352,44 @@ mod tests {
             super::tab_title_with_branch(None, "#1", Some(""), true),
             "#1"
         );
+    }
+
+    #[test]
+    fn gap13_teardown_pane_state_maps_removes_from_all_five_maps() {
+        // GAP-1.3 review: every destroy site (single-pane close, tab close,
+        // window close, tab-range context ops) must drop the doomed panes'
+        // entries from ALL five per-pane runtime maps — pane ids are never
+        // reused, so a map missed at any site leaks for the whole session.
+        // Locks the shared "complete teardown" contract.
+        use crate::split_tree::PaneId;
+        use std::collections::HashMap;
+        let gone = PaneId(7);
+        let keep = PaneId(99);
+        let mut cwds: HashMap<PaneId, String> =
+            [(gone, "/a".into()), (keep, "/b".into())].into_iter().collect();
+        let mut osc: HashMap<PaneId, String> =
+            [(gone, "g".into()), (keep, "k".into())].into_iter().collect();
+        let mut trigger: HashMap<PaneId, crate::triggers::TriggerPaneState> =
+            [(gone, Default::default()), (keep, Default::default())].into_iter().collect();
+        let mut shell: HashMap<PaneId, crate::shell_state::ShellState> =
+            [(gone, Default::default()), (keep, Default::default())].into_iter().collect();
+        let mut blocks: HashMap<PaneId, crate::output_blocks::PaneBlockStore> =
+            [(gone, Default::default()), (keep, Default::default())].into_iter().collect();
+
+        super::teardown_pane_state_maps(&mut cwds, &mut osc, &mut trigger, &mut shell, &mut blocks, gone);
+
+        // `gone` removed from every map…
+        assert!(cwds.get(&gone).is_none());
+        assert!(osc.get(&gone).is_none());
+        assert!(trigger.get(&gone).is_none());
+        assert!(shell.get(&gone).is_none());
+        assert!(blocks.get(&gone).is_none());
+        // …and `keep` survives in every map (teardown is keyed, not clear()).
+        assert_eq!(cwds.get(&keep).map(String::as_str), Some("/b"));
+        assert_eq!(osc.get(&keep).map(String::as_str), Some("k"));
+        assert!(trigger.contains_key(&keep));
+        assert!(shell.contains_key(&keep));
+        assert!(blocks.contains_key(&keep));
     }
 
     #[test]
