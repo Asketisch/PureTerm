@@ -5484,21 +5484,24 @@ impl PureTermApp {
                     self.error_recovery.suggested_command.clone(),
                     self.error_recovery.pane_id,
                 ) {
+                    // GAP-02 review: only audit + dismiss when the write actually
+                    // reached a live pane. A dead-pane Apply (the failing pane was
+                    // closed while the card was open) used to silently no-op the
+                    // PTY write yet still emit a false `error_recovery.applied`
+                    // audit, so the emit + dismiss now live inside this branch.
                     if let Some(ctx) = self.pane_terminal_ctx(PaneId(pane_id)) {
                         let mut bytes = cmd.into_bytes();
                         bytes.push(b'\n');
                         ctx.write_to_pty(&bytes);
+                        let session_id = ctx.session_id().map(|s| s.to_string());
+                        self.events.emit(
+                            crate::events::Category::ErrorRecovery,
+                            "error_recovery.applied",
+                            session_id,
+                            serde_json::json!({ "pane_id": pane_id }),
+                        );
+                        self.error_recovery.dismiss();
                     }
-                    let session_id = self
-                        .pane_terminal_ctx(PaneId(pane_id))
-                        .and_then(|c| c.session_id().map(|s| s.to_string()));
-                    self.events.emit(
-                        crate::events::Category::ErrorRecovery,
-                        "error_recovery.applied",
-                        session_id,
-                        serde_json::json!({ "pane_id": pane_id }),
-                    );
-                    self.error_recovery.dismiss();
                 }
             }
             Message::ErrorRecoveryToggle => {
@@ -8262,6 +8265,14 @@ impl PureTermApp {
                     self.pane_trigger_state.remove(&pane_id);
                     self.pane_shell_state.remove(&pane_id);   // GAP-15
                     self.pane_block_stores.remove(&pane_id);  // GAP-51 (same leak)
+                    // GAP-02 (global card): dismiss only if it points at this
+                    // pane. Inlined rather than a &mut self method so it touches
+                    // only disjoint fields while `tab` borrows self.windows.
+                    if self.error_recovery.dismiss_for_pane(pane_id.0) {
+                        if let Some(c) = self.error_recovery_cancel.take() {
+                            c.notify_one();
+                        }
+                    }
                     tab.active_pane = new_active;
                     // Resize remaining panes
                     let layout = tab.split_tree.compute_layout(
@@ -10660,6 +10671,12 @@ impl PureTermApp {
             self.pane_trigger_state.remove(&active_pane_id);
             self.pane_shell_state.remove(&active_pane_id);   // GAP-15
             self.pane_block_stores.remove(&active_pane_id);  // GAP-51 (same leak)
+            // GAP-02 (global card): dismiss only if it points at this pane.
+            if self.error_recovery.dismiss_for_pane(active_pane_id.0) {
+                if let Some(c) = self.error_recovery_cancel.take() {
+                    c.notify_one();
+                }
+            }
             tab.active_pane = new_active;
             // Resize remaining panes
             let layout = tab.split_tree.compute_layout(

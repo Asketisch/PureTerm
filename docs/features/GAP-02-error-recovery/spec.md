@@ -5,8 +5,8 @@ category: AI Agent
 plan_type: wrap-up
 priority: P0
 effort: M
-status: in-progress
-closed: null
+status: done
+closed: 2026-06-28
 e2e: manual-e2e/gap-02-error-recovery.md
 ---
 
@@ -26,7 +26,7 @@ e2e: manual-e2e/gap-02-error-recovery.md
 
 ## PureTerm 现状
 
-**🚧 代码闭环（~90% 端到端，待 GUI E2E + API key 真机验证）。** Shell Integration 非零 exit 自动触发 + inline 卡片 + Apply 写入 PTY + EventBus + ⌘⇧E 已接线。
+**✅ 代码闭环 + Review ✅（2026-06-30）。GUI E2E + 真实 API key 验证待人工（非阻塞）。** Shell Integration 非零 exit 自动触发 + inline 卡片 + Apply 写入 PTY + EventBus + ⌘⇧E 已接线。
 
 **v1 已交付（2026-06-28）：**
 - `error_recovery.rs` — `FailureContext` / `ErrorRecoveryState` / `build_prompt` / `extract_fix_command` / `should_auto_analyze`
@@ -40,7 +40,24 @@ e2e: manual-e2e/gap-02-error-recovery.md
 - pixel smoke：[`../../manual-e2e/gap-02-error-recovery.md`](../../manual-e2e/gap-02-error-recovery.md)（需真实 API key）
 - Settings UI 配置页（defer GAP-01 Phase 3）
 
-单测：error_recovery **7** + config **2** + events filter **1** 绿。
+单测：error_recovery **13** + config **2** + events filter **1** 绿。
+
+## Review（2026-06-30）✅
+
+修 4 类问题 + 记 2 项设计边界（核心 = 对照 GAP-01 补 prompt 注入加固；GAP-02 有 Apply，比 GAP-01 更敏感）：
+
+**修复：**
+- **[HIGH/安全] prompt 注入加固**：`build_prompt` 将不可信的 cwd/command/output 包进 `<terminal_context>` 标签、指令置于标签外，`SYSTEM_PROMPT` 加 SECURITY 不可信数据条款（移植自 GAP-01 `ai_chat/context.rs`）；并中和输出里伪造的开/闭标签防越界注入。
+- **[MED/正确性] 假审计**：`ErrorRecoveryApply` 原在 PTY 写入分支之外仍 emit `error_recovery.applied` + dismiss → pane 已关时静默 no-op 却谎报「已应用」；改为仅在实际写入活 pane 时 emit + dismiss。
+- **[MED/正确性] 关 pane 残留卡片**：error_recovery 为全局单一状态，关 pane 不清理 → 卡片指向死 pane；新增可测方法 `ErrorRecoveryState::dismiss_for_pane`，两处 pane 销毁点按 pane_id 匹配才 dismiss + cancel 在飞流（仿 GAP-15 disjoint-field 内联，避 `&mut self` 与 `tab` 借 `self.windows` 冲突）。
+- **[LOW/安全] 收紧 `extract_fix_command`**：去掉「任意 fenced block」回退（仅认 bash/sh/shell/zsh 标签）+ `MAX_FIX_COMMAND_CHARS=512` / `MAX_FIX_COMMAND_LINES=5` 上限，超限不显示 Apply。
+- **[LOW/安全] prompt 输出字节上限**：`cap_output` 截断到 `MAX_OUTPUT_CHARS=8KiB`（`capture_row_range` 只限行数不限行宽）。
+
+**设计边界（非 bug，已接受）：**
+- **可伪造触发**：退出码来自 shell OSC 133 标记，程序/远端可伪造非零 `OutputEnd` 强制触发一轮 LLM。固有待于 shell 集成；由 prompt 注入隔离 + Apply 需用户点击可见命令缓解。
+- **远程 Apply 允许**：Apply 写入失败的那个 pane（本地失败 → 本地，SSH 失败 → 远程）。远程攻击者本就持有该 shell，阻断收益小反而破坏合法 SSH Error Recovery；故不加 `allow_exec_on_remote` 式门控（与 GAP-10 不同）。
+
+单测：error_recovery **13**（+6：注入包裹/中和、输出截断、拒绝未标签块/超长、`dismiss_for_pane`）+ config 2 + events 1 绿，0 回归；release 构建过。
 
 ## 优先级
 
