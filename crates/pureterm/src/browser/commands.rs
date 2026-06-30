@@ -220,7 +220,10 @@ pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<Browser
             // (a spurious second fire — e.g. page navigating mid-op — is a no-op).
             let tx = std::sync::Mutex::new(Some(tx));
             ctx.evaluate_with_callback(&js, move |json_str| {
-                if let Some(s) = tx.lock().unwrap().take() {
+                // `.ok()` (not `.unwrap()`): this closure fires on the wry/main
+                // thread; a poisoned mutex must not panic the GUI. Mirrors the
+                // screenshot completion-handler path below.
+                if let Some(s) = tx.lock().ok().and_then(|mut g| g.take()) {
                     let _ = s.send(parse_js_reply(json_str));
                 }
             });

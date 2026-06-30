@@ -1360,6 +1360,41 @@ struct AddressBarState {
     target: Option<PaneId>,
 }
 
+/// GAP-3.5: what `Message::AddressBarConfirm` should do, derived purely from
+/// the captured target, whether that pane still exists, and the normalized url.
+///
+/// Extracted so the decision is unit-testable headlessly (no `PureTermApp`):
+/// a stale target (pane closed between ⌘L-open and Enter) falls back to
+/// `Spawn` so the typed URL still loads instead of being silently dropped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AddressBarAction {
+    /// Load the URL into the existing target Web pane.
+    Navigate(PaneId),
+    /// No usable target — spawn a fresh Web pane (mirrors ⌘⇧L `SplitWeb`).
+    Spawn,
+    /// Empty input — do nothing, emit no event.
+    Drop,
+}
+
+/// Pure decision for `AddressBarConfirm`. `target_alive` is resolved by the
+/// caller (via `pane_browser_ctx(target).is_some()`) before invoking this —
+/// keeping this fn free of `&self` so the harness can test it directly.
+pub(crate) fn address_bar_confirm_action(
+    target: Option<PaneId>,
+    target_alive: bool,
+    url: &str,
+) -> AddressBarAction {
+    if url.is_empty() {
+        return AddressBarAction::Drop;
+    }
+    match target {
+        Some(id) if target_alive => AddressBarAction::Navigate(id),
+        // target was Some but the pane is gone (closed mid-overlay), or no
+        // target was captured at open → spawn a new pane so the URL loads.
+        _ => AddressBarAction::Spawn,
+    }
+}
+
 /// GAP-3.5: Normalize a raw address-bar input into a loadable URL.
 ///
 /// - already has a scheme (`contains "://"`) → as-is;
@@ -1376,14 +1411,36 @@ pub(crate) fn normalize_url_input(input: &str) -> String {
     if s.contains("://") {
         return s.to_string();
     }
-    // Bare scheme like "about:blank" (no "://") — pass through.
+    // `rhs` is a port number → `host:port` with no scheme, not a bare scheme
+    // like `about:blank`. Used to keep `localhost:8080` out of the passthrough
+    // below (it'd otherwise be returned verbatim and WKWebView can't load a
+    // scheme-less `localhost:8080`).
+    let rhs_is_port = |rhs: &str| !rhs.is_empty() && rhs.chars().all(|c| c.is_ascii_digit());
+    // Bare scheme like "about:blank" (no "://") — pass through. Exclude the
+    // host:port shape (all-alpha host + numeric port), which is handled below.
     if let Some((lhs, rhs)) = s.split_once(':') {
         if !lhs.is_empty()
             && lhs.chars().all(|c| c.is_ascii_alphabetic())
             && !rhs.starts_with("//")
             && !lhs.contains('.')
+            && !rhs_is_port(rhs)
         {
             return s.to_string();
+        }
+    }
+    // Bare host:port with no scheme and a dot-less hostname (e.g.
+    // `localhost:8080`, `myhost:3000`) → prefix `http://` (dev servers). Dotted
+    // hosts (`127.0.0.1:3000`, `example.com:8443`) keep falling through to the
+    // domain branch's `https://` below.
+    if !s.chars().any(char::is_whitespace) {
+        if let Some((lhs, rhs)) = s.split_once(':') {
+            if !lhs.is_empty()
+                && lhs.chars().all(|c| c.is_ascii_alphabetic())
+                && !lhs.contains('.')
+                && rhs_is_port(rhs)
+            {
+                return format!("http://{s}");
+            }
         }
     }
     // Looks like a domain: has a dot, no whitespace.
@@ -6712,22 +6769,38 @@ impl PureTermApp {
                 // `take()` so the overlay closes regardless of outcome.
                 if let Some(state) = self.address_bar.take() {
                     let url = normalize_url_input(&state.query);
-                    let spawned = state.target.is_none();
-                    if !url.is_empty() {
-                        if let Some(target) = state.target {
-                            if let Some(ctx) = self.pane_browser_ctx(target) {
+                    // Resolve liveness here (the decision fn takes it as a bool
+                    // so it stays headless-testable). A stale target — pane
+                    // closed between ⌘L-open and Enter — falls back to Spawn so
+                    // the typed URL still loads (B2).
+                    let target_alive = state
+                        .target
+                        .map(|id| self.pane_browser_ctx(id).is_some())
+                        .unwrap_or(false);
+                    let action =
+                        address_bar_confirm_action(state.target, target_alive, &url);
+                    let spawned = matches!(action, AddressBarAction::Spawn);
+                    match action {
+                        AddressBarAction::Navigate(id) => {
+                            if let Some(ctx) = self.pane_browser_ctx(id) {
                                 ctx.load_url(&url);
                             }
-                        } else {
+                        }
+                        AddressBarAction::Spawn => {
                             self.spawn_web_pane(SplitDirection::Horizontal, url.clone());
                         }
+                        AddressBarAction::Drop => {}
                     }
-                    self.events.emit(
-                        crate::events::Category::Browser,
-                        "browser.address_bar",
-                        None,
-                        serde_json::json!({ "url": url, "spawned": spawned }),
-                    );
+                    // B3: only emit when something actually happened (empty
+                    // input → Drop, no noise event).
+                    if !matches!(action, AddressBarAction::Drop) {
+                        self.events.emit(
+                            crate::events::Category::Browser,
+                            "browser.address_bar",
+                            None,
+                            serde_json::json!({ "url": url, "spawned": spawned }),
+                        );
+                    }
                 }
             }
             Message::AddressBarClose => {
@@ -14455,6 +14528,87 @@ mod tests {
     fn normalize_url_empty_is_empty() {
         assert_eq!(super::normalize_url_input(""), "");
         assert_eq!(super::normalize_url_input("   "), "");
+    }
+
+    #[test]
+    fn normalize_url_bare_host_port_gets_http_prefix() {
+        // GAP-3.5 review B1: `localhost:8080` was matched by the bare-scheme
+        // passthrough (lhs "localhost" is all-alpha) and returned verbatim —
+        // WKWebView can't load a scheme-less `localhost:8080`. Now → http://.
+        assert_eq!(
+            super::normalize_url_input("localhost:8080"),
+            "http://localhost:8080"
+        );
+    }
+
+    #[test]
+    fn normalize_url_named_host_port() {
+        assert_eq!(
+            super::normalize_url_input("myhost:3000"),
+            "http://myhost:3000"
+        );
+    }
+
+    #[test]
+    fn normalize_url_about_blank_still_passthrough() {
+        // Regression guard: a real bare scheme whose rhs is non-numeric still
+        // passes through (the host:port branch only fires on all-digit rhs).
+        assert_eq!(super::normalize_url_input("about:blank"), "about:blank");
+        assert_eq!(super::normalize_url_input("mailto:x@y.io"), "mailto:x@y.io");
+    }
+
+    #[test]
+    fn normalize_url_dotted_host_port_still_https() {
+        // Surgical scope: only the *bare-hostname* (no dot) + port case is
+        // rewritten to http://. A dotted host:port keeps going through the
+        // domain branch (https://), unchanged.
+        assert_eq!(
+            super::normalize_url_input("127.0.0.1:3000"),
+            "https://127.0.0.1:3000"
+        );
+    }
+
+    #[test]
+    fn address_bar_action_target_alive_navigates() {
+        use crate::split_tree::PaneId;
+        let id = PaneId(7);
+        assert_eq!(
+            super::address_bar_confirm_action(Some(id), true, "https://x.io"),
+            super::AddressBarAction::Navigate(id)
+        );
+    }
+
+    #[test]
+    fn address_bar_action_stale_target_falls_back_to_spawn() {
+        // B2: target captured at ⌘L-open, but pane closed before Enter → spawn
+        // (don't silently drop the typed URL).
+        use crate::split_tree::PaneId;
+        assert_eq!(
+            super::address_bar_confirm_action(Some(PaneId(7)), false, "https://x.io"),
+            super::AddressBarAction::Spawn
+        );
+    }
+
+    #[test]
+    fn address_bar_action_no_target_spawns() {
+        assert_eq!(
+            super::address_bar_confirm_action(None, false, "https://x.io"),
+            super::AddressBarAction::Spawn
+        );
+    }
+
+    #[test]
+    fn address_bar_action_empty_url_drops() {
+        // B3: empty input → Drop (no load, no event), regardless of target.
+        use crate::split_tree::PaneId;
+        assert_eq!(
+            super::address_bar_confirm_action(Some(PaneId(7)), true, ""),
+            super::AddressBarAction::Drop
+        );
+        assert_eq!(
+            super::address_bar_confirm_action(None, false, ""),
+            super::AddressBarAction::Drop
+        );
     }
 
     #[test]

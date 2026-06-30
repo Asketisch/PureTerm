@@ -709,7 +709,7 @@ pub enum BrowserSub {
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// (Stub) native WKWebView snapshot — not exposed by wry yet.
+    /// Native WKWebView snapshot (PNG data URL); macOS-only.
     Screenshot {
         #[arg(long)]
         pane_id: Option<u64>,
