@@ -26,6 +26,12 @@ pub const MATCHED_TEXT_MAX: usize = 200;
 /// GAP-4.1 search-match amber (`[0.85, 0.65, 0.15, 0.35]`) and selection blue.
 pub const DEFAULT_HIGHLIGHT_COLOR: [f32; 4] = [0.45, 0.80, 0.45, 0.32];
 
+/// Hard cap on an `exec` trigger's subprocess wall-clock time. A hung command
+/// (e.g. `curl` against a dead host) would otherwise leak the process forever
+/// and its `Task` would never complete. On elapse the child is killed
+/// (see `kill_on_drop` in [`spawn_trigger_exec`]) and a toast is surfaced.
+pub const EXEC_TIMEOUT_SECS: u64 = 60;
+
 /// One configured trigger rule (post-load; regex compiled separately in
 /// [`CompiledTrigger`]).
 #[derive(Clone, Debug, PartialEq)]
@@ -80,6 +86,35 @@ impl TriggerAction {
             TriggerAction::Fold { .. } => "fold",
         }
     }
+}
+
+/// GAP-10 security: should a match fired from a remote (SSH) pane have its
+/// action blocked?
+///
+/// Remote output is attacker-influenced: a capture group (`$1`) can carry
+/// arbitrary text into a local command's argv (`exec`) or into another pane's
+/// PTY (cross-pane `send_text`), which is a local code-execution / keystroke-
+/// injection vector. argv-no-shell only defeats shell metacharacters, not this.
+/// Both are blocked by default unless the user opts in via the top-level config
+/// flag `allow_exec_on_remote = true`.
+///
+/// Same-pane `send_text` (`pane_id = None`) is intentionally NOT blocked: it is
+/// the spec's `reply-sudo` use case (auto-replying to the user's own remote
+/// session with the user's own configured text). `highlight` / `notify` /
+/// `set_variable` / `set_mark` / `fold` are side-effect-free w.r.t. the local
+/// machine and never blocked.
+pub fn should_block_remote_action(
+    action: &TriggerAction,
+    is_ssh: bool,
+    allow_exec_on_remote: bool,
+) -> bool {
+    if !is_ssh || allow_exec_on_remote {
+        return false;
+    }
+    matches!(
+        action,
+        TriggerAction::Exec { .. } | TriggerAction::SendText { pane_id: Some(_), .. }
+    )
 }
 
 /// Where an `exec` trigger's stdout goes.
@@ -271,7 +306,6 @@ pub struct TriggerPaneState {
     pub last_scanned_line: Option<i32>,
     pub highlights: Vec<HighlightRegion>,
     pub folds: Vec<FoldRegion>,
-    pub fire_counts: HashMap<String, u32>,
     pub variables: HashMap<String, String>,
     pub named_marks: HashMap<String, i32>,
 }
@@ -297,10 +331,6 @@ impl TriggerPaneState {
         self.highlights.retain(|r| r.line >= topmost_line);
         self.folds.retain(|r| r.bottom_line >= topmost_line);
         self.named_marks.retain(|_, line| *line >= topmost_line);
-    }
-
-    pub fn bump_fire_count(&mut self, name: &str) {
-        *self.fire_counts.entry(name.to_string()).or_insert(0) += 1;
     }
 }
 
@@ -398,26 +428,41 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     s.chars().take(max_chars).collect()
 }
 
-/// Spawn an `exec` trigger's command off the GUI thread.
+/// Spawn an `exec` trigger's command off the GUI thread. `pane_id` is the pane
+/// whose output matched (so `ExecRoute::Pane` can route stdout back to it, not
+/// to whatever pane happens to be focused when the subprocess finishes).
+///
+/// The subprocess is bounded by [`EXEC_TIMEOUT_SECS`]; on elapse the future is
+/// dropped and `kill_on_drop` SIGKILLs the child so it can't leak.
 pub fn spawn_trigger_exec(
     command: String,
     args: Vec<String>,
     route: ExecRoute,
+    pane_id: u64,
 ) -> iced::Task<crate::iced_app::Message> {
     use std::process::Stdio;
+    use std::time::Duration;
     use tokio::process::Command;
 
     iced::Task::perform(
         async move {
             let result: Result<String, String> = async {
-                let out = Command::new(&command)
-                    .args(&args)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .output()
-                    .await
-                    .map_err(|e| format!("spawn {command}: {e}"))?;
+                let out = match tokio::time::timeout(
+                    Duration::from_secs(EXEC_TIMEOUT_SECS),
+                    Command::new(&command)
+                        .args(&args)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .kill_on_drop(true)
+                        .output(),
+                )
+                .await
+                {
+                    Ok(Ok(o)) => o,
+                    Ok(Err(e)) => return Err(format!("spawn {command}: {e}")),
+                    Err(_) => return Err(format!("exec timed out after {EXEC_TIMEOUT_SECS}s")),
+                };
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 if !out.status.success() {
                     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
@@ -431,9 +476,9 @@ pub fn spawn_trigger_exec(
                 Ok(stdout)
             }
             .await;
-            (route, result)
+            (pane_id, route, result)
         },
-        |(route, result)| crate::iced_app::Message::TriggerExecResult { route, result },
+        |(pane_id, route, result)| crate::iced_app::Message::TriggerExecResult { pane_id, route, result },
     )
 }
 
@@ -609,5 +654,52 @@ mod tests {
             .discriminant(),
             "fold"
         );
+    }
+
+    #[test]
+    fn should_block_remote_action_guards_exec_and_cross_pane_send() {
+        let exec = TriggerAction::Exec {
+            command: "open".into(),
+            args: vec!["$1".into()],
+            route: ExecRoute::Toast,
+        };
+        let send_same = TriggerAction::SendText { text: "p\n".into(), pane_id: None };
+        let send_cross = TriggerAction::SendText { text: "p\n".into(), pane_id: Some(7) };
+
+        // Remote (SSH) + not opted in → block exec + cross-pane send_text.
+        assert!(should_block_remote_action(&exec, true, false));
+        assert!(should_block_remote_action(&send_cross, true, false));
+        // Same-pane send_text is the reply-sudo use case → never blocked.
+        assert!(!should_block_remote_action(&send_same, true, false));
+
+        // Opted in → never blocked.
+        assert!(!should_block_remote_action(&exec, true, true));
+        assert!(!should_block_remote_action(&send_cross, true, true));
+
+        // Local pane → never blocked.
+        assert!(!should_block_remote_action(&exec, false, false));
+        assert!(!should_block_remote_action(&send_cross, false, false));
+
+        // Side-effect-free actions → never blocked, even remote + not opted in.
+        assert!(!should_block_remote_action(
+            &TriggerAction::Highlight { color: None },
+            true,
+            false
+        ));
+        assert!(!should_block_remote_action(
+            &TriggerAction::Notify { title: None },
+            true,
+            false
+        ));
+        assert!(!should_block_remote_action(
+            &TriggerAction::SetVariable { name: "x".into(), value: "$1".into() },
+            true,
+            false
+        ));
+        assert!(!should_block_remote_action(
+            &TriggerAction::Fold { mark: None, lines_back: None },
+            true,
+            false
+        ));
     }
 }

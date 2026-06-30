@@ -505,6 +505,9 @@ pub struct PureTermApp {
     trigger_folds: std::sync::Arc<std::sync::Mutex<Vec<crate::triggers::FoldRegion>>>,
     /// GAP-10: global trigger hit counter (status-bar `trigger_count`).
     trigger_hit_total: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// GAP-10: opt-in flag allowing `exec` / cross-pane `send_text` to fire when
+    /// the match originated from an SSH/remote pane (default `false`).
+    allow_exec_on_remote: bool,
     // GAP-09: Notification System — `[notification]` config + in-memory store.
     notification_cfg: crate::app_config::NotificationConfig,
     /// GAP-48: `pureterm://` URL scheme handler config.
@@ -999,9 +1002,12 @@ pub enum Message {
     /// explicit target pane id (cross-pane `send_text` only).
     TriggerSendText { pane_id: u64, text: String },
     /// GAP-10: an `exec` trigger's subprocess finished; route stdout per `route`.
-    /// `Err` = spawn failure; `Ok` = stdout (or a `[trigger exec failed] …`
-    /// payload when the command exited non-zero — surfaced, not dropped).
+    /// `Err` = spawn failure / timeout; `Ok` = stdout (or a `[trigger exec failed]
+    /// …` payload when the command exited non-zero — surfaced, not dropped).
+    /// `pane_id` is the pane whose output matched, so `ExecRoute::Pane` routes
+    /// back to it rather than to whatever pane is focused when this lands.
     TriggerExecResult {
+        pane_id: u64,
         route: crate::triggers::ExecRoute,
         result: Result<String, String>,
     },
@@ -1794,6 +1800,9 @@ impl PureTermApp {
 
         // GAP-10: pattern-match triggers (`[[triggers]]`).
         let triggers_cfg = AppConfig::load_triggers(&config_path);
+        // GAP-10: opt-in `allow_exec_on_remote` (default false → remote-origin
+        // exec / cross-pane send_text blocked; see `should_block_remote_action`).
+        let allow_exec_on_remote = AppConfig::load_allow_exec_on_remote(&config_path);
 
         // GAP-09: Notification System config (desktop toasts, dock badge, ring, bell throttle).
         let notification_cfg = AppConfig::load_notification(&config_path);
@@ -2014,6 +2023,7 @@ impl PureTermApp {
             // GAP-15: Shell Integration.
             shell_integration_cfg,
             triggers_cfg,
+            allow_exec_on_remote,
             pane_trigger_state: HashMap::new(),
             trigger_highlights: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             trigger_folds: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
@@ -4380,6 +4390,7 @@ impl PureTermApp {
                                         };
 
                                         let session_id = ctx.session_id().map(|s| s.to_string());
+                                        let is_ssh = ctx.is_ssh();
                                         let pane_state =
                                             self.pane_trigger_state.entry(*pane_id).or_default();
 
@@ -4443,21 +4454,6 @@ impl PureTermApp {
                                                     captures: &m.captures,
                                                     variables: &variables_snapshot,
                                                 };
-                                                let captures_json: Vec<String> = m
-                                                    .captures
-                                                    .iter()
-                                                    .map(|c| {
-                                                        if c.chars().count()
-                                                            > crate::triggers::MATCHED_TEXT_MAX
-                                                        {
-                                                            c.chars()
-                                                                .take(crate::triggers::MATCHED_TEXT_MAX)
-                                                                .collect()
-                                                        } else {
-                                                            c.clone()
-                                                        }
-                                                    })
-                                                    .collect();
                                                 self.events.emit(
                                                     crate::events::Category::Trigger,
                                                     "trigger.matched",
@@ -4470,10 +4466,39 @@ impl PureTermApp {
                                                         "line": m.line,
                                                         "col_start": m.col_start,
                                                         "matched_text": m.matched_text,
-                                                        "captures": captures_json,
+                                                        // scan_lines already truncated each capture
+                                                        // to MATCHED_TEXT_MAX; emit directly.
+                                                        "captures": &m.captures,
                                                     }),
                                                 );
-                                                pane_state.bump_fire_count(&cfg.name);
+
+                                                // GAP-10 security: block exec / cross-pane
+                                                // send_text when the match originated from a
+                                                // remote (SSH) pane and the user hasn't opted in
+                                                // via `allow_exec_on_remote`. Same-pane
+                                                // send_text (reply-sudo) and read-only actions
+                                                // are never blocked. The match itself (and its
+                                                // trigger.matched event / hit counter) still
+                                                // stand — only the action is suppressed.
+                                                if crate::triggers::should_block_remote_action(
+                                                    &cfg.action,
+                                                    is_ssh,
+                                                    self.allow_exec_on_remote,
+                                                ) {
+                                                    self.events.emit(
+                                                        crate::events::Category::Trigger,
+                                                        "trigger.blocked",
+                                                        session_id.clone(),
+                                                        serde_json::json!({
+                                                            "pane_id": pane_id.0,
+                                                            "trigger": cfg.name,
+                                                            "pattern": cfg.pattern,
+                                                            "action": cfg.action.discriminant(),
+                                                            "reason": "remote_output_exec_blocked",
+                                                        }),
+                                                    );
+                                                    continue;
+                                                }
 
                                                 match &cfg.action {
                                                     TriggerAction::Highlight { color } => {
@@ -4527,6 +4552,7 @@ impl PureTermApp {
                                                             cmd,
                                                             expanded_args,
                                                             *route,
+                                                            pane_id.0,
                                                         ));
                                                     }
                                                     TriggerAction::SetVariable { name, value } => {
@@ -5779,7 +5805,7 @@ impl PureTermApp {
                     ctx.write_to_pty(text.as_bytes());
                 }
             }
-            Message::TriggerExecResult { route, result } => {
+            Message::TriggerExecResult { pane_id, route, result } => {
                 // GAP-10: route exec stdout. Reuse the Toast path for display
                 // (it owns the dismiss timer) via `Task::done(Message::Toast)`.
                 match result {
@@ -5797,8 +5823,10 @@ impl PureTermApp {
                             return Task::done(Message::Toast(line));
                         },
                         crate::triggers::ExecRoute::Pane => {
-                            // Write full stdout (+newline) to the active pane.
-                            if let Some(ctx) = self.active_terminal_ctx() {
+                            // Write full stdout (+newline) to the originating
+                            // pane (the one whose output matched), not whatever
+                            // pane happens to be focused when this lands.
+                            if let Some(ctx) = self.pane_terminal_ctx(PaneId(pane_id)) {
                                 let mut bytes = stdout.into_bytes();
                                 bytes.push(b'\n');
                                 ctx.write_to_pty(&bytes);
@@ -9160,6 +9188,7 @@ impl PureTermApp {
         self.shell_integration_cfg = AppConfig::load_shell_integration(&self.config_path);
         // GAP-10: reload `[[triggers]]` rules (regex recompiled on load).
         self.triggers_cfg = AppConfig::load_triggers(&self.config_path);
+        self.allow_exec_on_remote = AppConfig::load_allow_exec_on_remote(&self.config_path);
         // GAP-09: reload `[notification]` config; if desktop toasts were
         // (re)enabled, (re)request authorization (idempotent — system prompts
         // only once).

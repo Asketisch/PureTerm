@@ -1972,7 +1972,10 @@ impl AppConfig {
     /// GAP-10: Load the user's `[[triggers]]` array from the toml config.
     ///
     /// Each entry compiles a regex `pattern` matched against terminal output
-    /// and fires one `action` on match. v1 action set:
+    /// and fires one `action` on match. Supported actions: `highlight`,
+    /// `notify`, `send_text`, `exec`, `set_variable`, `set_mark`, `fold`.
+    /// `command`/`args`/`text`/`value`/`title` are template-expanded before
+    /// dispatch (`{match}`, `$1`..`$9`, `${var:NAME}`, `\n\r\t\xNN`):
     /// ```toml
     /// [[triggers]]
     /// name = "error-spot"
@@ -1992,10 +1995,10 @@ impl AppConfig {
     ///
     /// [[triggers]]
     /// name = "open-link"
-    /// pattern = "https://example\\.com/\\S+"
+    /// pattern = "https://example\\.com/(\\S+)"
     /// action = "exec"
     /// command = "open"
-    /// args = ["https://example.com/"]   # v1: literal, no {match} substitution
+    /// args = ["$1"]                 # templates expanded: $1 = capture group 1
     /// route = "toast"               # "toast" (default) | "pane"
     /// ```
     ///
@@ -2082,6 +2085,28 @@ impl AppConfig {
             log::info!("load_triggers: loaded {} triggers", result.len());
         }
         result
+    }
+
+    /// GAP-10: Load the top-level `allow_exec_on_remote` flag. When `false`
+    /// (the default), an `exec` trigger — or a cross-pane `send_text` — whose
+    /// match originated from an SSH/remote pane is blocked: attacker-influenced
+    /// remote text must not drive local code execution / keystroke injection.
+    /// Opt in with `allow_exec_on_remote = true` at the config top level.
+    ///
+    /// The flag lives at the top level (not under `[triggers]`) because
+    /// `[[triggers]]` makes `triggers` an array, so a scalar cannot share that
+    /// key. Missing file / unparseable config → `false` (safe-by-default).
+    pub fn load_allow_exec_on_remote(path: &Path) -> bool {
+        let Ok(contents) = std::fs::read_to_string(path) else {
+            return false;
+        };
+        let Ok(value) = toml::from_str::<toml::Value>(&contents) else {
+            return false;
+        };
+        value
+            .get("allow_exec_on_remote")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
     }
 
     /// GAP-7.1: Load the user's `[[agent.hook]]` array from the toml config.
@@ -2949,6 +2974,34 @@ color = "#ff0000"
         assert_eq!(triggers.len(), 2);
         assert_eq!(triggers[0].cfg.name, "err");
         assert_eq!(triggers[1].cfg.action.discriminant(), "highlight");
+    }
+
+    #[test]
+    fn test_load_allow_exec_on_remote_defaults_false() {
+        // Top-level flag missing → safe default false.
+        let toml = "[[triggers]]\nname = \"x\"\npattern = \"y\"\naction = \"notify\"\n";
+        let path = write_temp_toml("pureterm_test_allow_exec_default.toml", toml);
+        let v = AppConfig::load_allow_exec_on_remote(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!v);
+    }
+
+    #[test]
+    fn test_load_allow_exec_on_remote_opt_in() {
+        let toml = "allow_exec_on_remote = true\n[[triggers]]\nname = \"x\"\npattern = \"y\"\naction = \"exec\"\ncommand = \"echo\"\n";
+        let path = write_temp_toml("pureterm_test_allow_exec_on.toml", toml);
+        let v = AppConfig::load_allow_exec_on_remote(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(v);
+    }
+
+    #[test]
+    fn test_load_allow_exec_on_remote_explicit_false() {
+        let toml = "allow_exec_on_remote = false\n";
+        let path = write_temp_toml("pureterm_test_allow_exec_off.toml", toml);
+        let v = AppConfig::load_allow_exec_on_remote(&path);
+        let _ = std::fs::remove_file(&path);
+        assert!(!v);
     }
 
     #[test]

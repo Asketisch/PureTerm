@@ -74,6 +74,13 @@ bell_throttle_ms = 1000       # ≤1 bell-derived notif per pane per this window
 # set_variable / set_mark / fold. Templates: {match}, $1–$9, ${var:NAME}, \n\r\t\xNN.
 # Uncomment and customize (never commit real passwords in send_text):
 #
+# Security: when a match originates from an SSH/remote pane, `exec` and
+# cross-pane `send_text` are BLOCKED by default — remote-controlled text must
+# not drive local code execution / keystroke injection. Opt in (top-level,
+# NOT under [triggers] which is an array):
+#   allow_exec_on_remote = true
+# Same-pane `send_text` (e.g. sudo auto-reply) is never blocked.
+#
 # [[triggers]]
 # name = "error-spot"
 # pattern = "(?i)error:"
