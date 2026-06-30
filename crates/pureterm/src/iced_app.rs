@@ -364,10 +364,11 @@ pub struct PureTermApp {
     settings_state: Option<SettingsState>,
     settings_window: Option<window::Id>,
     /// Pending window resize: set by `WindowResized`, applied (grid resize
-    /// + PTY notify) on the next unconditional 16ms `TerminalWakeup` tick.
-    /// Coalesces a drag's burst of resize events into ≤60Hz grid resizes
-    /// while guaranteeing the *final* size is always applied (the old
-    /// time-based debounce dropped it entirely within 16ms).
+    /// + PTY notify) on the next `TerminalWakeup` tick (base 50ms safety
+    /// net as of Fix 1). Coalesces a drag's burst of resize events into
+    /// ≤20Hz grid resizes while guaranteeing the *final* size is always
+    /// applied (the old time-based debounce dropped it entirely within
+    /// the tick window).
     resize_pending: bool,
     /// GAP-5.6: layout snapshot has changed since the last flush to disk.
     layout_dirty: bool,
@@ -4430,8 +4431,8 @@ impl PureTermApp {
                 }
 
                 // 应用待处理的窗口 resize：把 grid cols/rows 调整到当前 viewport_size。
-                // 由 WindowResized 置位、在此 16ms tick 合并执行，保证拖拽的最终尺寸
-                // 一定会被应用（旧的时间防抖会在 16ms 内整体丢弃 resize）。
+                // 由 WindowResized 置位、在此 tick 合并执行（基线 50ms，见 Fix 1），
+                // 保证拖拽的最终尺寸一定会被应用（旧的时间防抖会在 tick 窗口内整体丢弃 resize）。
                 if self.resize_pending {
                     self.resize_pending = false;
                     self.apply_viewport_resize();
@@ -6000,8 +6001,8 @@ impl PureTermApp {
                 }
                 self.viewport_size = size;
                 self.mark_layout_dirty();
-                // 真正的 grid resize 交给无条件 16ms TerminalWakeup tick 合并执行，
-                // 避免旧的"16ms 内丢弃"防抖把拖拽的最终尺寸永久丢掉。
+                // 真正的 grid resize 交给 TerminalWakeup tick 合并执行（基线 50ms，
+                // 见 Fix 1），避免旧的时间防抖把拖拽的最终尺寸永久丢掉。
                 self.resize_pending = true;
             }
             Message::ScaleFactorChanged(win_id, scale) => {
@@ -6108,7 +6109,7 @@ impl PureTermApp {
                     self.mark_layout_dirty();
                 }
                 // PureTerm: 全部窗口（主终端 + 设置 + detached）都关闭时退出进程
-                // （Alacritty 上游规范行为）。这样 16ms TerminalWakeup 循环里
+                // （Alacritty 上游规范行为）。这样 TerminalWakeup 循环里
                 // 的 dock-reopen 消费逻辑再也跑不到——也就不会"关闭后又自动
                 // 开新窗口"了。下次点 dock 由 macOS 重新启动一个新进程。
                 if self.main_window.is_none()
@@ -10360,10 +10361,11 @@ impl PureTermApp {
     }
 
     /// Coalesced/trailing resize: apply `viewport_size` to every pane's grid
-    /// in every tab. Called from the 16ms `TerminalWakeup` tick when
+    /// in every tab. Called from the `TerminalWakeup` tick when
     /// `resize_pending` is set, so a drag's burst of `WindowResized` events
-    /// is throttled to ≤60Hz grid resizes while the *final* size is always
-    /// applied (fixing the "rendered area stuck at pre-resize size" bug).
+    /// is throttled while the *final* size is always applied (fixing the
+    /// "rendered area stuck at pre-resize size" bug). Base tick is now 50ms
+    /// (Fix 1).
     fn apply_viewport_resize(&mut self) {
         // 兜底：如果 GlyphState 还没按真实 scale 对齐（首帧 / 跨屏移动），
         // 先 reconfigure 再读 cell,避免 cell 物理尺寸与 glyph 物理尺寸失配
@@ -13819,7 +13821,18 @@ impl PureTermApp {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let keyboard_sub = iced::keyboard::listen().map(Message::Keyboard);
-        let wakeup_sub = time::every(Duration::from_millis(16)).map(|_| Message::TerminalWakeup);
+        // Wakeup timer is now a low-rate safety net (was 16ms/60Hz, the
+        // dominant idle CPU cost per the render-perf diagnosis 2026-06-30).
+        // Most wakeups are already fired explicitly via
+        // `Task::done(Message::TerminalWakeup)` from keyboard, resize, SSH,
+        // shell-integration, daemon and pane-event emitters — see the 15+
+        // `task.map(|_| Message::TerminalWakeup)` sites throughout this file.
+        // 50ms = 20Hz gives a 3x idle CPU reduction while keeping
+        // background work (PTY echo drain, trigger scan, notify dispatch,
+        // resize_pending apply) bounded to a 50ms worst-case delay.
+        // See plan: /Users/admin/.claude-mini/plans/resilient-waddling-hinton.md
+        // Fix 1.
+        let wakeup_sub = time::every(Duration::from_millis(50)).map(|_| Message::TerminalWakeup);
         // GAP-5.6: ~4 Hz tick that flushes the layout snapshot if it's been
         // dirty for ≥500 ms (debounced on-change persistence).
         let layout_save_sub =

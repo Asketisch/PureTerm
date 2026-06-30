@@ -16,7 +16,7 @@ use alacritty_terminal::index::{Column, Line, Point as TermPoint};
 use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use crossfont::{FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size, Style, Weight, Slant};
-use pureterm_alacritty_runtime::renderer::glyph_atlas::{AtlasKind, CachedGlyph, WgpuGlyphAtlas};
+use pureterm_alacritty_runtime::renderer::glyph_atlas::{AtlasDirty, AtlasKind, CachedGlyph, WgpuGlyphAtlas};
 
 // 1x1 placeholder pixel data used when an atlas has no dirty content yet.
 // Keeps the bind group valid even before the first glyph is rasterized.
@@ -344,8 +344,13 @@ pub struct TerminalPrimitive {
     bg_indices: Vec<u32>,
     text_vertices: Vec<TextVertex>,
     text_indices: Vec<u32>,
-    grayscale_atlas: Option<(Vec<u8>, u32, u32)>,
-    color_atlas: Option<(Vec<u8>, u32, u32)>,
+    // Partial-upload dirty atlas (Fix 2): holds the dirty rect list + an
+    // Arc-shared full atlas buffer. Render time loops the regions and emits
+    // a `queue.write_texture` per region, avoiding the previous
+    // `Vec::clone()` of the entire 4 MiB / 16 MiB atlas on every dirty frame.
+    // `Arc` lets the main thread and render thread share the allocation.
+    grayscale_atlas: Option<AtlasDirty>,
+    color_atlas: Option<AtlasDirty>,
     /// Per-frame GPU buffers – each Primitive instance owns its own,
     /// avoiding the shared-Pipeline overwrite bug in split-screen.
     gpu: Mutex<GpuResources>,
@@ -433,7 +438,8 @@ impl Primitive for TerminalPrimitive {
         // text invisible (Fix 3.5).
         let mut views_changed = false;
 
-        if let Some((ref data, w, h)) = self.grayscale_atlas {
+        if let Some(atlas) = &self.grayscale_atlas {
+            let (w, h) = (atlas.width, atlas.height);
             let need_recreate = pipeline.grayscale_atlas_texture.is_none()
                 || pipeline.grayscale_atlas_size != (w, h);
             if need_recreate {
@@ -445,32 +451,39 @@ impl Primitive for TerminalPrimitive {
                     format: wgpu::TextureFormat::R8Unorm,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
-                }, wgpu::util::TextureDataOrder::LayerMajor, data);
+                }, wgpu::util::TextureDataOrder::LayerMajor, &atlas.data);
                 pipeline.grayscale_atlas_texture = Some(tex);
                 pipeline.grayscale_atlas_size = (w, h);
                 pipeline.grayscale_atlas_view = Some(
                     pipeline.grayscale_atlas_texture.as_ref().unwrap().create_view(&Default::default())
                 );
                 views_changed = true;
-            } else {
-                // Same size, real data: partial upload into the existing texture.
-                // Wgpu requires bytes_per_row to be a multiple of COPY_BYTES_PER_ROW_ALIGNMENT (256);
-                // the atlas allocator emits power-of-two widths so this holds.
-                if let Some(tex) = pipeline.grayscale_atlas_texture.as_ref() {
+            } else if let Some(tex) = pipeline.grayscale_atlas_texture.as_ref() {
+                // Same size, partial upload (Fix 2): one `write_texture` per
+                // dirty rect, byte-offset into the Arc-shared atlas buffer.
+                // Wgpu requires bytes_per_row to be a multiple of
+                // COPY_BYTES_PER_ROW_ALIGNMENT (256); the atlas allocator
+                // emits power-of-two widths so this holds.
+                for region in &atlas.regions {
+                    let byte_offset = (region.y as usize * w as usize + region.x as usize);
                     queue.write_texture(
                         wgpu::TexelCopyTextureInfo {
                             texture: tex,
                             mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
+                            origin: wgpu::Origin3d { x: region.x, y: region.y, z: 0 },
                             aspect: wgpu::TextureAspect::All,
                         },
-                        data,
+                        &atlas.data[byte_offset..],
                         wgpu::TexelCopyBufferLayout {
                             offset: 0,
                             bytes_per_row: Some(w), // R8Unorm = 1 byte per pixel
-                            rows_per_image: Some(h),
+                            rows_per_image: Some(region.h),
                         },
-                        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                        wgpu::Extent3d {
+                            width: region.w,
+                            height: region.h,
+                            depth_or_array_layers: 1,
+                        },
                     );
                 }
             }
@@ -496,7 +509,8 @@ impl Primitive for TerminalPrimitive {
         }
         // Else: texture exists and no new data → preserve texture/view.
 
-        if let Some((ref data, w, h)) = self.color_atlas {
+        if let Some(atlas) = &self.color_atlas {
+            let (w, h) = (atlas.width, atlas.height);
             let need_recreate = pipeline.color_atlas_texture.is_none()
                 || pipeline.color_atlas_size != (w, h);
             if need_recreate {
@@ -508,29 +522,39 @@ impl Primitive for TerminalPrimitive {
                     format: wgpu::TextureFormat::Rgba8UnormSrgb,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
-                }, wgpu::util::TextureDataOrder::LayerMajor, data);
+                }, wgpu::util::TextureDataOrder::LayerMajor, &atlas.data);
                 pipeline.color_atlas_texture = Some(tex);
                 pipeline.color_atlas_size = (w, h);
                 pipeline.color_atlas_view = Some(
                     pipeline.color_atlas_texture.as_ref().unwrap().create_view(&Default::default())
                 );
                 views_changed = true;
-            } else {
-                if let Some(tex) = pipeline.color_atlas_texture.as_ref() {
+            } else if let Some(tex) = pipeline.color_atlas_texture.as_ref() {
+                // Same size, partial upload (Fix 2): one `write_texture` per
+                // dirty rect, byte-offset into the Arc-shared atlas buffer.
+                // RGBA = 4 bytes per pixel; bytes_per_row must be a multiple
+                // of 256 (atlas width is a power of two so this holds).
+                for region in &atlas.regions {
+                    let byte_offset =
+                        (region.y as usize * w as usize + region.x as usize) * 4;
                     queue.write_texture(
                         wgpu::TexelCopyTextureInfo {
                             texture: tex,
                             mip_level: 0,
-                            origin: wgpu::Origin3d::ZERO,
+                            origin: wgpu::Origin3d { x: region.x, y: region.y, z: 0 },
                             aspect: wgpu::TextureAspect::All,
                         },
-                        data,
+                        &atlas.data[byte_offset..],
                         wgpu::TexelCopyBufferLayout {
                             offset: 0,
                             bytes_per_row: Some(w * 4), // Rgba8UnormSrgb = 4 bytes per pixel
-                            rows_per_image: Some(h),
+                            rows_per_image: Some(region.h),
                         },
-                        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                        wgpu::Extent3d {
+                            width: region.w,
+                            height: region.h,
+                            depth_or_array_layers: 1,
+                        },
                     );
                 }
             }
@@ -1115,9 +1139,11 @@ impl<M> shader::Program<M> for TerminalProgram {
             push_bg_quad(&mut bg_vertices, &mut bg_indices, vx, vy, cell_w, cell_h, vi_color);
         }
 
-        // Take dirty atlas data
-        let grayscale_atlas = gs.atlas.take_dirty_data();
-        let color_atlas = gs.atlas.take_color_dirty_data();
+        // Take dirty atlas data (Fix 2: use per-region upload instead of full
+        // Vec clone). Returns Arc<Vec<u8>> + dirty rects; the GPU side loops
+        // regions and issues one `queue.write_texture` per rect.
+        let grayscale_atlas = gs.atlas.take_dirty_regions();
+        let color_atlas = gs.atlas.take_color_dirty_regions();
 
         drop(gs);
 
