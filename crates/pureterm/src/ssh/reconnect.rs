@@ -51,6 +51,17 @@ pub const BACKOFF: [Duration; 8] = [
     Duration::from_secs(60),
 ];
 
+/// 1-based attempt index after which the worker gives up (BUG-3). The worker
+/// breaks out of its backoff loop ON this attempt rather than sleeping out the
+/// final [`BACKOFF`] slot — a dead host would otherwise make the user stare at
+/// a misleading "retry in 60s" [`ReconnectUpdate::Progress`] for a full minute
+/// before the (already-decided) [`ReconnectUpdate::Failed`] lands. Must stay
+/// equal to `BACKOFF.len()` so editing the schedule can't resurrect the wasted
+/// final sleep.
+pub fn final_attempt() -> u8 {
+    BACKOFF.len() as u8
+}
+
 /// Anti-hammer rolling window (GAP-5.6 follow-up). A connect-then-die host
 /// evades the per-worker [`BACKOFF`] cap: each successful spawn ends the
 /// worker, so every drop calls [`ReconnectHub::spawn_reconnect`] again and
@@ -541,6 +552,19 @@ fn reconnect_worker(
                 }
                 Err(e) => {
                     let attempt = (i + 1) as u8;
+                    // BUG-3: on the final attempt give up immediately. `break`
+                    // skips the post-block backoff sleep AND the misleading
+                    // "retry in Ns" Progress — the (already-decided) Failed
+                    // message is sent after the loop instead.
+                    if attempt == final_attempt() {
+                        log::debug!(
+                            "ssh reconnect pane {:?} exhausted all {} attempts (last error: {})",
+                            pane_id,
+                            BACKOFF.len(),
+                            e
+                        );
+                        break;
+                    }
                     log::debug!(
                         "ssh reconnect pane {:?} attempt {}/{} failed: {}",
                         pane_id,
@@ -586,6 +610,21 @@ mod tests {
         }
         assert_eq!(*BACKOFF.last().unwrap(), Duration::from_secs(60));
         assert!(BACKOFF.len() >= 6, "should give a reasonable number of retries");
+    }
+
+    #[test]
+    fn final_attempt_is_last_backoff_index_and_gives_up_immediately() {
+        // BUG-3: a worker that has failed its final attempt must give up at
+        // once — neither sleep out the last backoff slot nor emit a misleading
+        // "retry in Ns" Progress. `final_attempt()` is the 1-based index the
+        // worker breaks on, so it must stay equal to `BACKOFF.len()` (a
+        // schedule edit can't silently resurrect the wasted final sleep).
+        assert_eq!(final_attempt(), BACKOFF.len() as u8);
+        assert_eq!(final_attempt(), 8);
+        // Every earlier attempt still retries; only the final one gives up.
+        for a in 1..final_attempt() {
+            assert_ne!(a, final_attempt(), "attempt {a} must not be the give-up boundary");
+        }
     }
 
     #[test]

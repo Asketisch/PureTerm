@@ -397,7 +397,7 @@ async fn run_tunnel(
     port: u16,
     identity_file: Option<String>,
     password: Option<String>,
-    _remote_dns: bool,
+    remote_dns: bool,
     forward_agent: bool,
     known_hosts: Option<Arc<KnownHosts>>,
 ) {
@@ -416,7 +416,7 @@ async fn run_tunnel(
     config.keepalive_interval = Some(std::time::Duration::from_secs(30));
     let config = Arc::new(config);
 
-    let addr = format!("{host}:{port}");
+    let addr = format_connect_addr(&host, port);
     // GAP-5.4: resolve the local agent socket up front (config override →
     // inherited $SSH_AUTH_SOCK → macOS launchctl) so the handler can bridge
     // server-opened agent channels, and so agent-key auth (below) can reach it.
@@ -496,7 +496,7 @@ async fn run_tunnel(
             Ok((tcp, peer)) => {
                 let session = session.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = serve_socks5(session, tcp, peer).await {
+                    if let Err(e) = serve_socks5(session, tcp, peer, remote_dns).await {
                         log::debug!("socks5 conn from {peer} ended: {e}");
                     }
                 });
@@ -607,6 +607,7 @@ async fn serve_socks5(
     session: Arc<AsyncMutex<Handle<ClientHandler>>>,
     mut tcp: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
+    remote_dns: bool,
 ) -> std::io::Result<()> {
     // ── Method negotiation: VER, NMETHODS, METHODS… ────────────────────────
     let mut hdr = [0u8; 2];
@@ -646,10 +647,30 @@ async fn serve_socks5(
     tcp.read_exact(&mut port_buf).await?;
     let port = u16::from_be_bytes(port_buf);
 
-    // ── Open the SSH direct-tcpip channel (DNS resolved remotely for domains).
+    // `--no-remote-dns`: resolve the destination locally (so the queried domain
+    // does not leak to the gateway) and hand the gateway a literal IP. With the
+    // default (remote_dns=true) the domain is forwarded verbatim for remote
+    // resolution (socks5h / `--socks5-hostname`). IP literals never need DNS.
+    let connect_host = if forward_verbatim(remote_dns, &host) {
+        host.clone()
+    } else {
+        match resolve_host_to_ip(&host, port).await {
+            Some(ip) => ip,
+            None => {
+                // Host unreachable → 0x04.
+                let _ = tcp.write_all(&[SOCKS5, 0x04, 0, 0x01, 0, 0, 0, 0, 0, 0]).await;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::AddrNotAvailable,
+                    format!("local DNS resolve failed for {host}"),
+                ));
+            }
+        }
+    };
+
+    // ── Open the SSH direct-tcpip channel.
     let channel = {
         let g = session.lock().await;
-        g.channel_open_direct_tcpip(host.clone(), port as u32, peer.ip().to_string(), peer.port() as u32)
+        g.channel_open_direct_tcpip(connect_host.clone(), port as u32, peer.ip().to_string(), peer.port() as u32)
             .await
     };
     let channel = match channel {
@@ -659,7 +680,7 @@ async fn serve_socks5(
             let _ = tcp.write_all(&[SOCKS5, 0x01, 0, 0x01, 0, 0, 0, 0, 0, 0]).await;
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
-                format!("channel_open_direct_tcpip({host}:{port}): {e}"),
+                format!("channel_open_direct_tcpip({connect_host}:{port}): {e}"),
             ));
         }
     };
@@ -706,6 +727,36 @@ async fn read_dst_addr(
             }
         }
         _ => Ok(None),
+    }
+}
+
+/// Whether `host` should be forwarded verbatim to the gateway (which then
+/// resolves it remotely — the socks5h / `--socks5-hostname` default) or
+/// resolved locally before the channel is opened (`--no-remote-dns`, so the
+/// queried domain does not leak to the gateway). IP literals never need DNS.
+fn forward_verbatim(remote_dns: bool, host: &str) -> bool {
+    remote_dns || host.parse::<std::net::IpAddr>().is_ok()
+}
+
+/// Resolve a hostname to its first A/AAAA address locally (for `--no-remote-dns`).
+/// Returns `None` on resolution failure. Callers gate on [`forward_verbatim`] and
+/// only reach this for real domains; IP literals would parse without a lookup.
+async fn resolve_host_to_ip(host: &str, port: u16) -> Option<String> {
+    tokio::net::lookup_host((host, port))
+        .await
+        .ok()?
+        .next()
+        .map(|sa| sa.ip().to_string())
+}
+
+/// Format a `host:port` connect address for russh's `client::connect`. An IPv6
+/// literal (which contains ':') must be bracketed — `[2001:db8::1]:22` — or the
+/// string is ambiguous and won't parse as a socket address (connect fails).
+fn format_connect_addr(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
     }
 }
 
@@ -763,6 +814,44 @@ mod tests {
         // Mirrors the port decode in serve_socks5.
         assert_eq!(u16::from_be_bytes([0x1F, 0x90]), 8080);
         assert_eq!(u16::from_be_bytes([0x00, 0x50]), 80);
+    }
+
+    // ── GAP-5.2 remote_dns resolution decision (--no-remote-dns) ──────────
+    #[test]
+    fn remote_dns_domain_is_forwarded_verbatim() {
+        // Default: the gateway resolves the domain (socks5h / --socks5-hostname).
+        assert!(forward_verbatim(true, "internal.corp"));
+    }
+
+    #[test]
+    fn no_remote_dns_domain_is_resolved_locally() {
+        // --no-remote-dns: resolve here so the domain never leaks to the gateway.
+        assert!(!forward_verbatim(false, "internal.corp"));
+    }
+
+    #[test]
+    fn ip_literal_is_forwarded_verbatim_regardless_of_remote_dns() {
+        // IP literals need no DNS — never spend a lookup, never change representation.
+        assert!(forward_verbatim(true, "10.0.0.1"));
+        assert!(forward_verbatim(false, "10.0.0.1"));
+        assert!(forward_verbatim(false, "::1"));
+    }
+
+    // ── GAP-5.2 SSH connect-addr formatting (IPv6 literal safety) ─────────
+    #[test]
+    fn connect_addr_hostname_is_host_colon_port() {
+        assert_eq!(format_connect_addr("gw.example", 22), "gw.example:22");
+    }
+
+    #[test]
+    fn connect_addr_ipv4_literal_is_unbracketed() {
+        assert_eq!(format_connect_addr("10.0.0.1", 2222), "10.0.0.1:2222");
+    }
+
+    #[test]
+    fn connect_addr_ipv6_literal_is_bracketed() {
+        // An IPv6 literal contains ':' → must bracket or "2001:db8::1:22" won't parse.
+        assert_eq!(format_connect_addr("2001:db8::1", 22), "[2001:db8::1]:22");
     }
 
     // ── GAP-5.2 TOFU host-key decision ────────────────────────────────────
