@@ -28,7 +28,7 @@ AI agent 在云端异步执行任务（代码审查、issue triage、PR review�
 
 ## 优先级
 
-**P2 — 终端增强**
+**P3 — 终端增强**
 
 Ambient Agents 是 Warp 的差异化功能，但需要云端基础设施。PureTerm 可作为长期目标。
 

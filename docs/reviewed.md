@@ -6,16 +6,16 @@
 
 ## 概览
 
-| 类别 | 数量 | P0 | P1 | P2 |
-|------|------|----|----|----|
-| 核心架构 | 1 | 1 | — | — |
-| AI Agent | 3 | 2 | 1 | — |
-| 终端交互 | 4 | 2 | 1 | 1 |
-| UI/外壳 | 2 | — | 2 | — |
-| 开发者工具 | 1 | — | 1 | — |
-| SSH/网络 | 2 | 1 | 1 | — |
-| 集成 | 1 | 1 | — | — |
-| **合计** | **14** | **7** | **6** | **1** |
+| 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
+|------|------|----|----|----|----|----|
+| 核心架构 | 1 | 1 | — | — | — | — |
+| AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
+| 终端交互 | 4 | 2 | 1 | 1 | — | — |
+| UI/外壳 | 2 | — | 2 | — | — | — |
+| 开发者工具 | 1 | — | 1 | — | — | — |
+| SSH/网络 | 2 | 1 | 1 | — | — | — |
+| 集成 | 1 | 1 | — | — | — | — |
+| **合计** | **19** | **7** | **6** | **4** | **1** | **1** |
 
 ---
 
@@ -25,13 +25,18 @@
 |-----|------|----------|-----------|--------|------|
 | GAP-2.1 | Surface/Pane/Workspace/Window 四层抽象 | arch | P0 | ✅ | [spec](reviewed/GAP-2.1-workspace/spec.md) · [plan](reviewed/GAP-2.1-workspace/plan.md) · [test-plan](reviewed/GAP-2.1-workspace/test-plan.md) |
 
-## AI Agent（3）
+## AI Agent（8）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
 | GAP-01 | AI Chat Panel（⌘⇧L 右侧面板 + 流式 LLM + 上下文注入） | feature | P0 | ✅ | [spec](reviewed/GAP-01-ai-chat-panel/spec.md) |
 | GAP-02 | Error Recovery（非零 exit → LLM 修复建议 + Apply） | wrap-up | P0 | ✅ | [spec](reviewed/GAP-02-error-recovery/spec.md) · [test-plan](reviewed/GAP-02-error-recovery/test-plan.md) |
 | GAP-03 | Codebase Indexing MVP（Tree-sitter + SQLite FTS + MCP 搜索工具） | feature | P1 | ✅ | [spec](reviewed/GAP-03-codebase-indexing/spec.md) |
+| GAP-04 | Computer Use（macOS 截图 + 输入 stub + MCP tools） | feature | P2 | ✅ | [spec](reviewed/GAP-04-computer-use/spec.md) |
+| GAP-07 | Soul System（SOUL.md 等注入 AI Chat system prompt） | feature | P2 | ✅ | [spec](reviewed/GAP-07-soul-system/spec.md) |
+| GAP-08 | Natural Language Commands（`# 描述` → shell 命令卡片） | feature | P2 | ✅ | [spec](reviewed/GAP-08-natural-language-commands/spec.md) |
+| GAP-06 | Ambient Agents 本地任务队列 MVP | feature | P3 | ✅ | [spec](reviewed/GAP-06-ambient-agents/spec.md) |
+| GAP-05 | 语音转文本输入 MVP | feature | P4 | ✅ | [spec](reviewed/GAP-05-voice-input/spec.md) |
 
 ## 终端交互（4）
 
