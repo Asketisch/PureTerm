@@ -8,19 +8,18 @@
 
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
-| SSH/网络 | 4 | — | — | — | 2 | 2 |
+| SSH/网络 | 3 | — | — | — | 1 | 2 |
 | 平台 | 4 | — | — | 2 | 1 | 1 |
 | 集成 | 5 | — | — | 1 | — | 4 |
 | 视觉 | 9 | — | — | — | — | 9 |
-| **合计** | **22** | **—** | **—** | **3** | **3** | **16** |
+| **合计** | **21** | **—** | **—** | **3** | **2** | **16** |
 
 ---
 
-## SSH/网络（4）
+## SSH/网络（3）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
 |-----|------|----------|-----------|------|
-| GAP-41 | SSH Jump Host（ProxyJump -J） | feature | P3 | [spec](done/GAP-41-jump-host/spec.md) |
 | GAP-42 | SSH Login Scripts（login_commands） | feature | P3 | [spec](done/GAP-42-login-scripts/spec.md) |
 | GAP-38 | SCP 文件传输 | feature | P4 | [spec](done/GAP-38-file-transfer/spec.md) |
 | GAP-44 | 共享会话 stub | feature | P4 | [spec](done/GAP-44-shared-sessions/spec.md) |
