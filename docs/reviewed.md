@@ -15,8 +15,8 @@
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
 | 平台 | 3 | — | — | 2 | — | 1 |
-| 集成 | 4 | 1 | — | 1 | — | 2 |
-| **合计** | **61** | **7** | **6** | **20** | **13** | **15** |
+| 集成 | 5 | 1 | — | 1 | — | 3 |
+| **合计** | **62** | **7** | **6** | **20** | **13** | **16** |
 
 ---
 
@@ -112,7 +112,7 @@
 | GAP-46 | i18n（主应用 + Settings en/zh） | feature | P3 | ✅ | [spec](reviewed/GAP-46-i18n/spec.md) |
 | GAP-45 | 自动更新检查 | platform | P4 | ✅ | [spec](reviewed/GAP-45-auto-update/spec.md) |
 
-## 集成（4）
+## 集成（5）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -120,6 +120,7 @@
 | GAP-51 | 块级输出（Blocks 侧栏 + sum-tree 索引 + grid 切片 + 搜索） | arch | P2 | ✅ | [spec](reviewed/GAP-51-block-based-output/spec.md) |
 | GAP-49 | 插件系统 stub | arch | P4 | ✅ | [spec](reviewed/GAP-49-plugin-system/spec.md) |
 | GAP-50 | 配置同步（本地 bundle） | integration | P4 | ✅ | [spec](reviewed/GAP-50-cloud-sync/spec.md) |
+| GAP-52 | Workflows（参数化命令序列） | feature | P4 | ✅ | [spec](reviewed/GAP-52-workflows/spec.md) |
 
 ## 手动 E2E Test Plans
 
