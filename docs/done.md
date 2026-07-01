@@ -10,16 +10,15 @@
 |------|------|----|----|----|----|----|
 | 平台 | 0 | — | — | — | — | — |
 | 集成 | 0 | — | — | — | — | — |
-| 视觉 | 7 | — | — | — | — | 7 |
-| **合计** | **7** | **—** | **—** | **1** | **1** | **14** |
+| 视觉 | 6 | — | — | — | — | 6 |
+| **合计** | **6** | **—** | **—** | **1** | **1** | **14** |
 
 ---
 
-## 视觉（7）
+## 视觉（6）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
 |-----|------|----------|-----------|------|
-| GAP-55 | 窗口透明度/模糊 | feature | P4 | [spec](done/GAP-55-transparency-blur/spec.md) |
 | GAP-56 | 焦点跟随鼠标 | feature | P4 | [spec](done/GAP-56-focus-follows-mouse/spec.md) |
 | GAP-57 | 触觉反馈 | platform | P4 | [spec](done/GAP-57-haptic-feedback/spec.md) |
 | GAP-58 | 扩展主题 | feature | P4 | [spec](done/GAP-58-custom-theme-css/spec.md) |
