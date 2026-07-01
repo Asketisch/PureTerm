@@ -5584,6 +5584,7 @@ dependencies = [
  "iced",
  "iced_wgpu",
  "ignore",
+ "image",
  "libc",
  "log",
  "notify",

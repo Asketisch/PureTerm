@@ -25,7 +25,7 @@ reviewed: 2026-07-01
 
 ## PureTerm 现状
 
-**Done（2026-06-29，配置 scaffold）。** `background_image.rs` 提供 `BackgroundMode`（`Center` / `Tile` / `Stretch`）和 `BackgroundImageConfig`（`enabled` / `image` / `opacity` 默认 `0.35` / `mode`），`resolved_path` 仅在 `enabled` 且路径存在时返回 `Some`。GPU 纹理通道按 spec 留待后续。
+**Done（2026-07-01）。** `background_image.rs` 扩展：`BackgroundMode` + `BackgroundImageConfig`（保留 `resolved_path`），新增 `DecodedBackground`（RGBA8 + w/h）+ `decode_rgba8` / `decode_rgba8_from_bytes`（走 `image` 0.25，仅 PNG/JPEG，default-features 关掉 webp/heif）+ `load_decoded`。`terminal_shader.rs` 新增 `BgImageVertex` + `ScreenUniforms` 增加 `bg_opacity` / `bg_mode` / `bg_img_width` / `bg_img_height`，新增 `bg_image_pipeline` + `bg_image_bgl` + `bg_image_sampler`（Linear + Repeat），`prepare()` 按 `mode` 在 CPU 端组子矩形（Center 居中按图像 native 尺寸，Stretch/Tile 全屏），`draw()` 先画背景再画 bg_color/text。`shaders/bg_image.wgsl` 做纹理采样 + opacity 乘法 + 圆角裁剪。`iced_app.rs` 启动时按 `p4.background_cfg` 解码一次并把 `DecodedBackground` + 签名（FNV-1a of RGBA bytes）共享给每个 `TerminalProgram`，GPU 侧只在 signature 变化时重传纹理。4 单测覆盖 disabled / 无效路径 / 无效字节 / mode 解析。
 
 ## 优先级
 

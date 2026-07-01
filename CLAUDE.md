@@ -69,3 +69,16 @@ todo/ → progressing/ → done/（待 review）→ reviewed/（已 review）
 - 如果 graphify-out/wiki/index.md 存在，用它做宽泛导航，而不是直接浏览源码。
 - 只有在架构概览或 query/path/explain 无法提供足够上下文时，才阅读 graphify-out/GRAPH_REPORT.md。
 - 修改代码后，运行 `graphify update .` 保持图谱最新（仅 AST，无需 API 消耗）。
+
+
+## Superpowers 使用策略
+
+先判断任务复杂度，再决定是否使用 Superpowers。
+
+- 简单任务：直接完成，不使用 Superpowers。
+- 中等任务：按需使用必要的 Skill。
+- 复杂任务：使用完整 Superpowers 工作流。
+
+始终选择最轻量的方案。
+
+不要为了使用 Skill 而使用 Skill，仅在其能明显提升质量、降低风险或改善可维护性时才启用。
