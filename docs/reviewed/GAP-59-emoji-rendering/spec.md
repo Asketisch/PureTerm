@@ -25,7 +25,7 @@ reviewed: 2026-07-01
 
 ## PureTerm 现状
 
-**Done（2026-06-29，配置 scaffold）。** `emoji_rendering.rs` 提供 `EmojiRenderingConfig`（`enabled` 默认 `true` / `dedicated_atlas` / `font_fallback` 默认 `Apple Color Emoji`），`use_dedicated_channel` 仅在两者同时为真时为 true，`is_complex_emoji` 通过 ZWJ (`\u{200d}`) 或多字符判断。专用 Emoji atlas 通道和 ZWJ 全覆盖按 spec 留待后续。
+**Done（2026-07-01，config + container）。** `emoji_rendering.rs` 扩展：`EmojiRenderingConfig` 增加 `font_fallback_secondary`（默认 `Noto Color Emoji`），`fallback_chain()` 按优先级产出字体名（自动跳过空字符串）。`EmojiGlyph { character, width, height, data }` 作为 emoji 光栅化结果容器，RGBA8 premultiplied 字节序（与 crossfont::BitmapBuffer::Rgba 一致），`has_visible_content()` 扫 alpha 通道判断是否全透明。`is_complex_emoji` 维持 ZWJ / 多字符判定。专用 GPU atlas 通道的纹理上传和着色器按后续任务接入。6 单测覆盖 ZWJ detect / fallback chain 顺序 / 跳过空 / dedicated_channel 双开关 / 容器可见性。
 
 ## 优先级
 
