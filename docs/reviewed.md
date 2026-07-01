@@ -15,8 +15,8 @@
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
 | 平台 | 2 | — | — | 2 | — | — |
-| 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **56** | **7** | **6** | **19** | **12** | **12** |
+| 集成 | 2 | 1 | — | — | — | 1 |
+| **合计** | **57** | **7** | **6** | **19** | **12** | **13** |
 
 ---
 
@@ -110,11 +110,12 @@
 | GAP-47 | macOS AppleScript 自动化 MVP（CLI + MCP） | platform | P2 | ✅ | [spec](reviewed/GAP-47-apple-script/spec.md) |
 | GAP-48 | `pureterm://` URL Scheme（macOS 注册 + tab/workspace/ssh） | platform | P2 | ✅ | [spec](reviewed/GAP-48-url-scheme/spec.md) |
 
-## 集成（1）
+## 集成（2）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
 | GAP-6.7 | Event Stream + 持久 JSONL 日志 | integration | P0 | ✅ | [spec](reviewed/GAP-6.7-event-stream/spec.md) · [test-plan](reviewed/GAP-6.7-event-stream/test-plan.md) |
+| GAP-51 | 块级输出（Blocks 侧栏 + sum-tree 索引 + grid 切片 + 搜索） | arch | P2 | ✅ | [spec](reviewed/GAP-51-block-based-output/spec.md) |
 
 ## 手动 E2E Test Plans
 
