@@ -24,7 +24,7 @@ reviewed: 2026-07-01
 
 ## PureTerm 现状
 
-**Done（2026-06-29，stub）。** `macos_haptic.rs` 提供 `HapticEvent`（`TabSwitch` / `Error` / `Notification`）和 `HapticConfig`（`enabled` / `on_tab_switch` / `on_error` / `on_notification`），`should_fire` 按 event 类型 + enabled 短路，`perform` 在 macOS 走 `log::debug!` stub。`NSHapticFeedbackManager` 实际调用按 spec 留待后续。
+**Done（2026-07-01，macOS）。** `macos_haptic.rs` 真实调用 `NSHapticFeedbackManager::defaultPerformer().performFeedbackPattern(_:performanceTime:)`（pattern: `Generic`，time: `Default`），整个 `perform` 体包在 `std::panic::catch_unwind` 边界内（misbehaving performer 不会把 UI 线程拖崩）。新增 `HapticOutcome`（`Skipped` / `Fired` / `Failed(String)`）让调用方 / 测试能区分。`perform_logged` 便利方法吃掉结果并按 debug 级别 log。4 单测覆盖 disabled / 按 kind 启停 / perform 短路 / logged 安全性。
 
 ## 优先级
 
