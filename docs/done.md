@@ -8,20 +8,19 @@
 
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
-| 开发者工具 | 3 | — | — | 1 | 1 | 1 |
+| 开发者工具 | 2 | — | — | — | 1 | 1 |
 | SSH/网络 | 9 | — | — | 4 | 3 | 2 |
 | 平台 | 4 | — | — | 2 | 1 | 1 |
 | 集成 | 5 | — | — | 1 | — | 4 |
 | 视觉 | 9 | — | — | — | — | 9 |
-| **合计** | **30** | **—** | **—** | **8** | **5** | **17** |
+| **合计** | **29** | **—** | **—** | **7** | **5** | **17** |
 
 ---
 
-## 开发者工具（3）
+## 开发者工具（2）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
 |-----|------|----------|-----------|------|
-| GAP-36 | Semantic History（⌘-click file:line → 编辑器） | feature | P2 | [spec](done/GAP-36-semantic-history/spec.md) |
 | GAP-37 | Password Manager（op/lpass/keychain） | integration | P3 | [spec](done/GAP-37-password-manager/spec.md) |
 | GAP-34 | 文件预览 | feature | P4 | [spec](done/GAP-34-file-preview/spec.md) |
 

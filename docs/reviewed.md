@@ -12,10 +12,10 @@
 | AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
-| 开发者工具 | 3 | — | 1 | 2 | — | — |
+| 开发者工具 | 4 | — | 1 | 3 | — | — |
 | SSH/网络 | 2 | 1 | 1 | — | — | — |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **42** | **7** | **6** | **12** | **8** | **9** |
+| **合计** | **43** | **7** | **6** | **13** | **8** | **9** |
 
 ---
 
@@ -75,10 +75,11 @@
 | GAP-28 | 自定义窗口边框 | feature | P4 | ✅ | [spec](reviewed/GAP-28-window-border/spec.md) |
 | GAP-29 | 环境标识徽章 | feature | P4 | ✅ | [spec](reviewed/GAP-29-badge-overlay/spec.md) |
 
-## 开发者工具（3）
+## 开发者工具（4）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
+| GAP-36 | Semantic History（⌘-click file:line → 编辑器） | feature | P2 | ✅ | [spec](reviewed/GAP-36-semantic-history/spec.md) |
 | GAP-33 | Port Scanner（右侧边栏 Ports 标签 + lsof 周期扫描） | feature | P2 | ✅ | [spec](reviewed/GAP-33-port-scanner/spec.md) |
 | GAP-32 | Git Integration（porcelain + gh PR + 面板） | integration | P2 | ✅ | [spec](reviewed/GAP-32-git-integration/spec.md) · [test-plan](reviewed/GAP-32-git-integration/test-plan.md) |
 | GAP-35 | LSP Client（多语言 server 配置 + hover/completion + 诊断） | integration | P1 | ✅ | [spec](reviewed/GAP-35-lsp-client/spec.md) |
