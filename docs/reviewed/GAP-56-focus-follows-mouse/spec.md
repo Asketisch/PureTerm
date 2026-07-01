@@ -24,7 +24,7 @@ X11 风格的焦点行为——鼠标移动到哪个 pane，哪个 pane 就自�
 
 ## PureTerm 现状
 
-**Done（2026-06-29）。** `focus_follows_mouse.rs` 提供 `FocusFollowsMouseConfig`（`enabled` / `delay_ms` 默认 `150`）和 `FocusFollowsMouseState`（`hover_pane` + `hover_since`），`on_pane_enter` 记录 hover，`pane_to_focus` 在 enabled 且经过 `delay_ms` 后返回 `Some(pane_id)`。Iced `MouseMoved` 事件挂钩按 spec 留待 UI 集成。
+**Done（2026-07-01）。** `focus_follows_mouse.rs` 提供 `FocusFollowsMouseConfig`（`enabled` / `delay_ms` 默认 `150`）和 `FocusFollowsMouseState`（`hover_pane` + `hover_since`），`on_pane_enter` 记录 hover，`pane_to_focus` 在 enabled 且经过 `delay_ms` 后返回 `Some(pane_id)`。`iced_app.rs` 新增 `PureTermApp::pane_under_point`（走 active_window → active_workspace → active_tab → split_tree，调 `SplitNode::pane_at_point`），`CursorMoved` 处理器在 enabled 时调 `on_pane_enter` 重置 hover 计时器，`TerminalWakeup` 处理器在 `delay_ms` 过后把 `tab.active_pane` 切到 hovered pane（带 same-tab guard + `panes.contains_key` 安全检查）。
 
 ## 优先级
 
