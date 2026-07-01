@@ -5,8 +5,8 @@ category: 视觉
 plan_type: platform
 priority: P4
 effort: S
-status: reviewed
-closed: 2026-06-29
+status: done
+closed: 2026-07-02
 reviewed: 2026-07-01
 ---
 

@@ -10,8 +10,24 @@
 |------|------|----|----|----|----|----|
 | 平台 | 0 | — | — | — | — | — |
 | 集成 | 0 | — | — | — | — | — |
-| 视觉 | 0 | — | — | — | — | — |
-| **合计** | **0** | **—** | **—** | **1** | **1** | **14** |
+| 视觉 | 9 | — | — | — | 1 | 8 |
+| **合计** | **9** | **—** | **—** | **—** | **1** | **8** |
+
+---
+
+## 视觉 / 平台（macOS）
+
+| GAP | 简述 | 详情 |
+|-----|------|------|
+| GAP-4.6 | VoiceOver 公告：`NSAccessibilityPostNotification` 真实接通 + 分类 helper（tab / 分屏 / 命令面板 / 状态栏 / 通知） | [spec](reviewed/GAP-4.6-accessibility/spec.md) |
+| GAP-54 | 终端背景图：image crate 解码 PNG/JPG + 专用 wgpu 管线 + Center/Tile/Stretch 模式 + opacity | [spec](reviewed/GAP-54-background-image/spec.md) |
+| GAP-55 | 玻璃材质：NSVisualEffectView 安装在 content view 下方 + blend mode | [spec](reviewed/GAP-55-transparency-blur/spec.md) |
+| GAP-56 | 焦点跟随鼠标：CursorMoved + TerminalWakeup tick 钩入 pane_under_point | [spec](reviewed/GAP-56-focus-follows-mouse/spec.md) |
+| GAP-57 | 触觉反馈：NSHapticFeedbackManager.defaultPerformer().performFeedbackPattern | [spec](reviewed/GAP-57-haptic-feedback/spec.md) |
+| GAP-58 | 系统外观自动跟随 + 社区主题安装路径 | [spec](reviewed/GAP-58-custom-theme-css/spec.md) |
+| GAP-59 | Emoji 独立 atlas 通道 + EmojiGlyph 容器 | [spec](reviewed/GAP-59-emoji-rendering/spec.md) |
+| GAP-60 | Pane 截图导出：image crate 编码 PNG + SVG stub + text snapshot | [spec](reviewed/GAP-60-screen-capture/spec.md) |
+| GAP-61 | 打印：NSPrintOperation 模态面板 + dataWithPDFInsideRect PDF 导出 + Linux lpr fallback | [spec](reviewed/GAP-61-print-support/spec.md) |
 
 ---
 
