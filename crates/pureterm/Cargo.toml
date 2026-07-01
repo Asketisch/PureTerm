@@ -130,6 +130,7 @@ objc2-foundation = { version = "0.3.1", default-features = false, features = [
 ] }
 objc2-app-kit = { version = "0.3.1", default-features = false, features = [
     "std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSMenu", "NSMenuItem",
+    "NSVisualEffectView",
     "objc2-quartz-core",
     # PureTerm: 屏幕吸管 NSColorSampler + sRGB 分量读取。
     "NSColorSampler", "NSColor", "NSColorSpace", "block2", "objc2-core-foundation",
