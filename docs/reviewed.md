@@ -14,8 +14,9 @@
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
+| 平台 | 1 | — | — | 1 | — | — |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **54** | **7** | **6** | **17** | **12** | **12** |
+| **合计** | **55** | **7** | **6** | **18** | **12** | **12** |
 
 ---
 
@@ -101,6 +102,12 @@
 | GAP-42 | SSH Login Scripts（login_commands） | feature | P3 | ✅ | [spec](reviewed/GAP-42-login-scripts/spec.md) |
 | GAP-38 | SCP 文件传输 | feature | P4 | ✅ | [spec](reviewed/GAP-38-file-transfer/spec.md) |
 | GAP-44 | 共享会话 stub（config + invite + serve stub） | feature | P4 | ✅ | [spec](reviewed/GAP-44-shared-sessions/spec.md) |
+
+## 平台（1）
+
+| GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
+|-----|------|----------|-----------|--------|------|
+| GAP-47 | macOS AppleScript 自动化 MVP（CLI + MCP） | platform | P2 | ✅ | [spec](reviewed/GAP-47-apple-script/spec.md) |
 
 ## 集成（1）
 
