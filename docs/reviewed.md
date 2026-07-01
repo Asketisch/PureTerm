@@ -13,9 +13,9 @@
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
-| SSH/网络 | 10 | 1 | 1 | 4 | 3 | 1 |
+| SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **53** | **7** | **6** | **17** | **12** | **11** |
+| **合计** | **54** | **7** | **6** | **17** | **12** | **12** |
 
 ---
 
@@ -100,6 +100,7 @@
 | GAP-41 | SSH Jump Host（ProxyJump -J） | feature | P3 | ✅ | [spec](reviewed/GAP-41-jump-host/spec.md) |
 | GAP-42 | SSH Login Scripts（login_commands） | feature | P3 | ✅ | [spec](reviewed/GAP-42-login-scripts/spec.md) |
 | GAP-38 | SCP 文件传输 | feature | P4 | ✅ | [spec](reviewed/GAP-38-file-transfer/spec.md) |
+| GAP-44 | 共享会话 stub（config + invite + serve stub） | feature | P4 | ✅ | [spec](reviewed/GAP-44-shared-sessions/spec.md) |
 
 ## 集成（1）
 
