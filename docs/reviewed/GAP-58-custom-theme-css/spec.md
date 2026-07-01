@@ -25,7 +25,7 @@ reviewed: 2026-07-01
 
 ## PureTerm 现状
 
-**Done（2026-06-29）。** `custom_theme.rs` 提供 `CustomThemeConfig`（`enabled` / `sidebar_bg` / `tab_bar_bg` / `status_bar_bg` / `follow_system`），`merge_into` 在 `enabled` 时把 `sidebar_bg` 等键写入 `HashMap` 主题表（空字符串跳过）。社区主题（`pureterm theme install`）/ 暗亮自动切换按 spec 留待后续。
+**Done（2026-07-01）。** `custom_theme.rs` 扩展：`CustomThemeConfig` 增加 `sidebar_bg_light` / `tab_bar_bg_light` / `status_bar_bg_light`，`merge_into(&mut HashMap, is_dark)` 在 `follow_system` 且 `!is_dark` 时回退到 light 字段。新增 `SystemAppearance` 枚举 + `current_system_appearance()`（macOS 走 `NSApplication.effectiveAppearance().bestMatchFromAppearancesWithNames:@[DarkAqua, Aqua]` 原始 msg_send + UTF8String 读字节判断；非 macOS 返回 `Unknown`）。新增 `install_community_theme` / `load_community_theme` / `list_community_themes` / `default_themes_dir()`（`~/.config/pureterm/themes/`）。6 单测覆盖合并 dark/light / disabled no-op / 名字校验 / 缺失目录 / install → list → load 往返。
 
 ## 优先级
 
