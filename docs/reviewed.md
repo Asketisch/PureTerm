@@ -16,7 +16,7 @@
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
 | 平台 | 2 | — | — | 2 | — | — |
 | 集成 | 2 | 1 | — | — | — | 1 |
-| **合计** | **57** | **7** | **6** | **19** | **12** | **13** |
+| **合计** | **58** | **7** | **6** | **19** | **13** | **13** |
 
 ---
 
@@ -109,6 +109,7 @@
 |-----|------|----------|-----------|--------|------|
 | GAP-47 | macOS AppleScript 自动化 MVP（CLI + MCP） | platform | P2 | ✅ | [spec](reviewed/GAP-47-apple-script/spec.md) |
 | GAP-48 | `pureterm://` URL Scheme（macOS 注册 + tab/workspace/ssh） | platform | P2 | ✅ | [spec](reviewed/GAP-48-url-scheme/spec.md) |
+| GAP-46 | i18n（主应用 + Settings en/zh） | feature | P3 | ✅ | [spec](reviewed/GAP-46-i18n/spec.md) |
 
 ## 集成（2）
 
