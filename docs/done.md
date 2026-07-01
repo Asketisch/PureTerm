@@ -8,31 +8,15 @@
 
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
-| 终端交互 | 10 | — | — | 4 | 4 | 2 |
 | UI/外壳 | 13 | — | — | 3 | 3 | 7 |
 | 开发者工具 | 5 | — | — | 3 | 1 | 1 |
 | SSH/网络 | 9 | — | — | 4 | 3 | 2 |
 | 平台 | 4 | — | — | 2 | 1 | 1 |
 | 集成 | 5 | — | — | 1 | — | 4 |
 | 视觉 | 9 | — | — | — | — | 9 |
-| **合计** | **55** | **—** | **—** | **17** | **12** | **26** |
+| **合计** | **45** | **—** | **—** | **13** | **8** | **24** |
 
 ---
-
-## 终端交互（10）
-
-| GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
-|-----|------|----------|-----------|------|
-| GAP-11 | Instant Replay MVP（events.jsonl 回放 + CLI export） | feature | P2 | [spec](done/GAP-11-instant-replay/spec.md) |
-| GAP-12 | Annotations & Marks MVP（OSC 133 marks + 行注释存储） | feature | P2 | [spec](done/GAP-12-annotations-marks/spec.md) |
-| GAP-4.2 | Smart Selection Hover Preview（tooltip + 语义右键 / ⌘⇧O） | enhance | P2 | [spec](done/GAP-4.2-hover-preview/spec.md) |
-| GAP-1.2 | DECSCL（VT100–VT400 级别跟踪） | feature | P3 | [spec](done/GAP-1.2-decscl/spec.md) |
-| GAP-13 | Broadcast Input（⌘⌃B 多 pane 广播） | feature | P3 | [spec](done/GAP-13-broadcast-input/spec.md) |
-| GAP-14 | Enhanced Vim（operators/registers MVP） | enhance | P3 | [spec](done/GAP-14-enhanced-vim-mode/spec.md) |
-| GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | [spec](done/GAP-18-bidi-support/spec.md) |
-| GAP-17 | Sixel/Kitty 图形协议 scaffold | feature | P4 | [spec](done/GAP-17-sixel-kitty-graphics/spec.md) |
-| GAP-59 | Emoji 渲染通道 | enhance | P4 | [spec](done/GAP-59-emoji-rendering/spec.md) |
-| GAP-61 | 打印支持 | feature | P4 | [spec](done/GAP-61-print-support/spec.md) |
 
 ## UI/外壳（13）
 
@@ -106,6 +90,8 @@
 | GAP-57 | 触觉反馈 | platform | P4 | [spec](done/GAP-57-haptic-feedback/spec.md) |
 | GAP-58 | 扩展主题 | feature | P4 | [spec](done/GAP-58-custom-theme-css/spec.md) |
 | GAP-60 | Pane 截图/导出 | feature | P4 | [spec](done/GAP-60-screen-capture/spec.md) |
+| GAP-59 | Emoji 渲染通道 | enhance | P4 | [spec](done/GAP-59-emoji-rendering/spec.md) |
+| GAP-61 | 打印支持 | feature | P4 | [spec](done/GAP-61-print-support/spec.md) |
 
 ## 性能优化
 

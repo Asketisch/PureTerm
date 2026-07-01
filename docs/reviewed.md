@@ -10,12 +10,12 @@
 |------|------|----|----|----|----|----|
 | 核心架构 | 1 | 1 | — | — | — | — |
 | AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
-| 终端交互 | 4 | 2 | 1 | 1 | — | — |
+| 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
 | UI/外壳 | 2 | — | 2 | — | — | — |
 | 开发者工具 | 1 | — | 1 | — | — | — |
 | SSH/网络 | 2 | 1 | 1 | — | — | — |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **19** | **7** | **6** | **4** | **1** | **1** |
+| **合计** | **27** | **7** | **6** | **7** | **5** | **2** |
 
 ---
 
@@ -38,7 +38,7 @@
 | GAP-06 | Ambient Agents 本地任务队列 MVP | feature | P3 | ✅ | [spec](reviewed/GAP-06-ambient-agents/spec.md) |
 | GAP-05 | 语音转文本输入 MVP | feature | P4 | ✅ | [spec](reviewed/GAP-05-voice-input/spec.md) |
 
-## 终端交互（4）
+## 终端交互（12）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -46,6 +46,14 @@
 | GAP-15 | Shell Integration（OSC 133 A/B/C/D + shell.context MCP） | wrap-up | P0 | ✅ | [spec](reviewed/GAP-15-shell-integration/spec.md) |
 | GAP-10 | Triggers（regex 匹配输出 → highlight/notify/send_text/exec） | feature | P1 | ✅ | [spec](reviewed/GAP-10-triggers/spec.md) |
 | GAP-1.3 | 标题栈 (CSI 22/23t + OSC 0/2) | feature | P2 | ✅ | [spec](reviewed/GAP-1.3-title-stack/spec.md) · [test-plan](reviewed/GAP-1.3-title-stack/test-plan.md) |
+| GAP-11 | Instant Replay MVP（events.jsonl 回放 + CLI export） | feature | P2 | ✅ | [spec](reviewed/GAP-11-instant-replay/spec.md) |
+| GAP-12 | Annotations & Marks MVP（OSC 133 marks + 行注释存储） | feature | P2 | ✅ | [spec](reviewed/GAP-12-annotations-marks/spec.md) |
+| GAP-4.2 | Smart Selection Hover Preview（tooltip + 语义右键 / ⌘⇧O） | enhance | P2 | ✅ | [spec](reviewed/GAP-4.2-hover-preview/spec.md) |
+| GAP-1.2 | DECSCL（VT100–VT400 级别跟踪） | feature | P3 | ✅ | [spec](reviewed/GAP-1.2-decscl/spec.md) |
+| GAP-13 | Broadcast Input（⌘⌃B 多 pane 广播） | feature | P3 | ✅ | [spec](reviewed/GAP-13-broadcast-input/spec.md) |
+| GAP-14 | Enhanced Vim（operators/registers MVP） | enhance | P3 | ✅ | [spec](reviewed/GAP-14-enhanced-vim-mode/spec.md) |
+| GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-18-bidi-support/spec.md) |
+| GAP-17 | Sixel/Kitty 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-kitty-graphics/spec.md) |
 
 ## UI/外壳（2）
 
