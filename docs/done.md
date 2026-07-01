@@ -9,17 +9,16 @@
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
 | 平台 | 0 | — | — | — | — | — |
-| 集成 | 4 | — | — | — | — | 4 |
+| 集成 | 3 | — | — | — | — | 3 |
 | 视觉 | 9 | — | — | — | — | 9 |
-| **合计** | **13** | **—** | **—** | **1** | **1** | **14** |
+| **合计** | **12** | **—** | **—** | **1** | **1** | **14** |
 
 ---
 
-## 集成（4）
+## 集成（3）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
 |-----|------|----------|-----------|------|
-| GAP-49 | 插件系统 stub | arch | P4 | [spec](done/GAP-49-plugin-system/spec.md) |
 | GAP-50 | 配置同步（本地 bundle） | integration | P4 | [spec](done/GAP-50-cloud-sync/spec.md) |
 | GAP-52 | Workflows | feature | P4 | [spec](done/GAP-52-workflows/spec.md) |
 | GAP-53 | Notebooks | feature | P4 | [spec](done/GAP-53-notebooks/spec.md) |
