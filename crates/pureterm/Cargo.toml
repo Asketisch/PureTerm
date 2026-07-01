@@ -146,6 +146,10 @@ objc2-app-kit = { version = "0.3.1", default-features = false, features = [
     # offscreen view that becomes the print job's contents.
     "NSPrintOperation", "NSPrintInfo", "NSPrintPanel",
     "NSGraphicsContext", "NSStringDrawing",
+    # GAP-4.6: VoiceOver announcements via NSAccessibilityPostNotification /
+    # NSAccessibilityPostNotificationWithUserInfo (used to send
+    # AnnouncementRequestedNotification with NSAccessibilityAnnouncementKey).
+    "NSAccessibilityConstants",
 ] }
 objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
     "std", "CALayer", "CAMetalLayer", "objc2-metal",
