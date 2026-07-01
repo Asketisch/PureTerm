@@ -14,9 +14,9 @@
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
-| 平台 | 2 | — | — | 2 | — | — |
+| 平台 | 3 | — | — | 2 | — | 1 |
 | 集成 | 2 | 1 | — | — | — | 1 |
-| **合计** | **58** | **7** | **6** | **19** | **13** | **13** |
+| **合计** | **59** | **7** | **6** | **19** | **13** | **14** |
 
 ---
 
@@ -103,13 +103,14 @@
 | GAP-38 | SCP 文件传输 | feature | P4 | ✅ | [spec](reviewed/GAP-38-file-transfer/spec.md) |
 | GAP-44 | 共享会话 stub（config + invite + serve stub） | feature | P4 | ✅ | [spec](reviewed/GAP-44-shared-sessions/spec.md) |
 
-## 平台（2）
+## 平台（3）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
 | GAP-47 | macOS AppleScript 自动化 MVP（CLI + MCP） | platform | P2 | ✅ | [spec](reviewed/GAP-47-apple-script/spec.md) |
 | GAP-48 | `pureterm://` URL Scheme（macOS 注册 + tab/workspace/ssh） | platform | P2 | ✅ | [spec](reviewed/GAP-48-url-scheme/spec.md) |
 | GAP-46 | i18n（主应用 + Settings en/zh） | feature | P3 | ✅ | [spec](reviewed/GAP-46-i18n/spec.md) |
+| GAP-45 | 自动更新检查 | platform | P4 | ✅ | [spec](reviewed/GAP-45-auto-update/spec.md) |
 
 ## 集成（2）
 
