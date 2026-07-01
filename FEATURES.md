@@ -36,7 +36,7 @@
 - **workspaces.json v2 持久化**:workspace/window 结构跨重启存活(PTY/session/scrollback 全保留);v1 `gui-sessions.json` 一次性迁移(`wrap_v1_into_v2`,旧文件重命名 `.bak` 永不 unlink);恢复时 detached 折叠进主窗(窗口拓扑不跨重启,会话全保留)
 - 实现:`crates/pureterm/src/iced_app.rs`(`Window`/`Workspace` 模型 + `build_layout_snapshot` + 焦点路由)+ `session_restore.rs`(v2 快照树 + `restore_one_tab` + 折叠恢复)+ `keymap.rs`(Action/键位)
 - 自动 E2E harness 全绿:430 pureterm 单测(`workspace_e2e` 切换不丢 Surface Arc 身份 + 多窗口模型 / `keyboard_routing_e2e` 焦点指针路由 / `session_restore` v2 round-trip + v1→v2 迁移 / `build_layout_snapshot` 捕获全窗口)
-- pixel smoke:`docs/manual-e2e/gap-2.1-workspace.md`(非 CI gate,detached 真实焦点 + 跨重启恢复待人工执行)
+- pixel smoke:`docs/reviewed/GAP-2.1-workspace/test-plan.md`(非 CI gate,detached 真实焦点 + 跨重启恢复待人工执行)
 - **未做(独立后续)**:CLI `workspace` 命令组(独立 phase);侧栏拖拽调宽(defer);close / rename workspace 操作(plan.md Phase 3 曾列但从未实现,DoD 不依赖,记 follow-up)
 - **Review（2026-06-29）**:修 5 bug —— ① v1→v2 迁移改「先写盘、成功后才把旧 v1 改名 `.bak`」(写失败不丢 v1,`save_atomic_to()->bool` + `migrate_v1_to_v2_in` 路径参数化);② 关闭 detached 窗口补 `mark_layout_dirty`(此前 retain 后不排期持久化 → 重启复现);③ `flush_layout_if_dirty` 抽 `dirty_should_clear` 纯函数,仅在 capture 前后时间戳一致时清 dirty(防 debounce 丢最终态;iced 单线程故当前非 live bug,纯防御硬化);④ `WindowClosed` 焦点回退由「仅弹回主窗」改为「回退到任意存活窗口」,修「聚焦主窗被关 + detached 存活」时 `main_window` 已 None → snap-back 跳过 → `active_window_id` 悬空 → 下条按键撞 `tabs().expect` panic;⑤ `NewWorkspace` 加无活跃窗口防御早退(避免下方无条件 `create_tab` → `.expect` latent panic)。+ 后台 PTY 持续产字进 grid 的 DoD 浴(`gap21_background_grid_accumulates_without_event_polling`,补既有「仅 Arc 身份」较弱断言)+ 迁移先写后改名 tempdir 单测 + debounce re-arm 单测;wakeup loop 注释订正(只扫活跃窗口·活跃 workspace,后台 grid 字节靠 alacritty IO 线程独立喂养)。745 pureterm 单测全绿。
 
@@ -107,14 +107,15 @@
 - 实现:`crates/pureterm/src/sidebar_dsl.rs` + `sidebar/left.rs` + `iced_app.rs`
 - **未做**:Rhai 沙箱 / 渲染回调动作 / 权限隔离
 
-### GAP-3.5 内置 Browser 面板 / WebView(2026-06-25)
+### GAP-3.5 内置 Browser 面板 / WebView(2026-06-25, Review ✅ 2026-07-01 含 GAP-7.8)
 - Pane 的第二种内容载体:自实现 wry 嵌入(macOS WKWebView 作 content NSView 子视图 `build_as_child`);几何真值=split_tree layout,reposition pass 按 `mark_layout_dirty` + tab 切换 + 拖拽 burst 触发;快照 `PaneSnapshot.kind="web"` + `#[serde(default)] url` 前向兼容
 - **快捷键**:`⌘⇧L` 分出新 Web pane 并聚焦地址栏;`⌘L` 地址栏 overlay(导航活跃 Web pane,无则新建)+ `normalize_url_input`(裸域名→`https://` / scheme 原样 / 含空格→Google 搜索)
 - Phase C per-view SOCKS5 proxy 绑定(wry `mac-proxy`,绑定 GAP-5.2 隧道);GAP-7.8 `browser.*` ops + MCP + screenshot 复用此 pane
 - CLI:`pureterm pane split-web --url <url>`;IPC `pane.split_web`
 - 自动 E2E harness 全绿:`browser_address_bar_e2e`(spawn 序列 Arc 身份 + load_url 未 realize 即更新)+ `normalize_url_input` + keymap `⌘L`/`⌘⇧L`(双形),共 442 单测
 - Linux 走 open-in-browser 兜底(webkit2gtk 原生嵌入未做);后退/前进导航 defer(`⌘[`/`⌘]` 与 pane 焦点冲突)
-- 实现:`crates/pureterm/src/browser/` + `iced_app.rs`(`spawn_web_pane` / 地址栏 overlay);pixel smoke 见 `docs/manual-e2e/gap-3.5-browser.md`
+- 实现:`crates/pureterm/src/browser/` + `iced_app.rs`(`spawn_web_pane` / 地址栏 overlay);pixel smoke 见 `docs/reviewed/GAP-3.5-browser-panel/test-plan.md`
+- **Review ✅（2026-07-01, GAP-7.8 Agent-Browser）**:执行核心稳健(per-op oneshot + Fn-Mutex 守护 + timeout backstop + 双层防双回复),缺陷集中在 GUI 粘合层与两个未归一化入口。修 3 处:① **[HIGH]** `bind_browser_tunnel` 收非 `connected` 隧道(stopped/failed/connecting/need_auth 仍报 `local_addr` 但无监听)→ 死代理重建 + `navigate` 假成功(同 GAP-02/3.5 fake-success 类);抽纯函数 `bind_tunnel_verdict(status)` 仅放行 `connected`,Reject 回错 + 发 `browser.bind_tunnel.rejected`。② **[MED-HIGH]** `browser navigate`/`pane.split_web` 绕过 `normalize_url_input`(裸 `localhost:8080` WKWebView 加载失败);抽 `browser::url::loadable_url()->Option` 共享核心,agent 路径**严格**(非 URL 报错,不静默搜索回退),地址栏行为不变。③ **[LOW]** 7 处 `reply_tx.lock().unwrap()`(泛 IPC + browser/surface resolver + 两 tunnel op)毒锁 panic 风险 → `ReplyTx` 别名 + `take_reply_sender`(`unwrap_or_else into_inner`)统一。+ screenshot stale doc 订正 + spec 计数订正(8 async+screenshot)。新增 7 单测(url 5 + navigate normalize + bind verdict);26 browser + 12 normalize + 55 ipc + 41 cli 全绿 0 回归,release + dist 重打包 37M。**Follow-up 未改**:多窗口父视图精确匹配(绑 GAP-25)/daemon 侧停隧道的逻辑代理泄漏(需状态监听)/IPC socket 级超时(跨切面)。
 
 ### GAP-3.7 完整快捷键自定义 + 模板(2026-06-12)
 - Action 30 变体 + Keymap HashMap + TOML 解析 + CLI `pureterm shortcuts`
@@ -148,7 +149,7 @@
 - **配置**:`[git]` 段(`panel_enabled` / `show_pr` / `pr_refresh_ticks` 默认 30 / `lazygit_cmd` / `tab_title_branch`);PR 刷新每 `pr_refresh_ticks` tick 一次防抖
 - 实现:`crates/pureterm/src/{status_bar/git.rs,gh_pr.rs,git_panel.rs,events.rs}` + `iced_app.rs`(面板 view + 动作执行 + emit 点)+ `app_config.rs`(`GitConfig`/`load_git`)+ `keymap.rs`(⌘⇧B)
 - 单测:574 pureterm 全绿(porcelain v2 解析 19 + `parse_head` 3 + `gh_pr` 3 + `git_bar_label` 4 + `git_quick_action_command`/`as_slug`/`git_branch_changed` 6 + `tab_title_with_branch` 3 + events `Category::Git`/`type_filter_git` 2)
-- pixel smoke:`docs/manual-e2e/gap-32-git-integration.md`(非 CI gate,6 场景:状态栏 / 面板 / Create-PR / lazygit / tab 分支 / events tail --type git)
+- pixel smoke:`docs/done/GAP-32-git-integration/test-plan.md`(非 CI gate,6 场景:状态栏 / 面板 / Create-PR / lazygit / tab 分支 / events tail --type git)
 - **未做(独立后续)**:`git2` crate/直接 GitHub API(有意弃用,shell-out 零依赖复用 `gh auth`)/ `Cmd+Shift+G` lazygit 热键(已绑 SearchPrev)/ `events.subscribe` 流式(被 GAP-6.7 阻塞)
 
 ---
@@ -196,7 +197,7 @@
 - **状态机**:`shell_state.rs` per-pane A/B/C/D → `FinishedCommand`(exit/duration/text,64 条历史);`iced_app.rs` `pane_shell_state` + `shell.{prompt_started,command_started,output_started,command_finished}` EventBus emit
 - **AI 上下文**:`shell_context.rs` + IPC `shell.context` + MCP `get_shell_context`(cwd / last_command / recent_commands;SSH pane → `integrated:false`)
 - **配置**:`[shell_integration]`(`enabled`/`inject_zsh`/`inject_bash`/`include_command_text`);门控仅 GUI 直接 PTY 回退路径 — daemon 路径始终 `ShellIntegrationOpts::all_on()`(与 OSC 7 always-on 一致)
-- 单测:shell_state/shell_context/events/app_config 21 绿 + daemon `shell_integration` 单测;pixel smoke 见 `docs/features/GAP-15-shell-integration/spec.md` runbook
+- 单测:shell_state/shell_context/events/app_config 21 绿 + daemon `shell_integration` 单测
 - **DoD 待人工**:GUI 真机 E2E(zsh/bash `events tail --type shell` + MCP `get_shell_context`);**未做(独立后续)**:视觉 grid marks、fish/nu、click-to-SCP
 - **Review ✅（2026-06-29）**:审计正确(scanner/事件桥/状态机/IPC/MCP 全对;IPC 每请求重建 live snapshot 无陈旧 bug)。修 4 处:① **[MED]** 两处 pane 关闭点漏清 `pane_shell_state`(GAP-15)+`pane_block_stores`(GAP-51) → pane id 单调不复用致无界内存泄漏,两处补齐(沿用既有 disjoint-field 借用,`tab` 借 `self.windows` 期间不能用 `&mut self` 方法);② **[LOW]** temp ZDOTDIR 默认 0755/0644 含真实 `$HOME` → dir `0700`/file `0600`(`DirBuilderExt`/`OpenOptionsExt`,0700 顺带堵 /tmp 可猜路径预填竞态;生命周期清理留后续);③ **[LOW/doc]** zsh 注释误称 `EPOCHREALTIME` 小数是纳秒(实为微秒 6 位),代码本对,订正注释;④ **[LOW/limit]** bash 集成覆写用户 `PROMPT_COMMAND`(OSC 7 旧实现会保留)→ 记为已知局限不改。+ 新增 `temp_zdotdir_is_owner_only` 单测;745 pureterm + daemon `shell_integration` 6 绿(排 instance_lock + 真机 PTY 环境性失败)。
 
@@ -231,7 +232,7 @@
 - 单测:`dock_badge_total` 3 + `touch_recent_workspace_mru_order` 1
 - **桌面 toast 门控**:`should_toast(occasion, pane_visible, app_focused)` 纯函数 — `Always`/`Invisible`/Bell 仅在 pane 不可见时弹;`Unfocused` 仅在 app 失焦时弹;`WindowFocused`/`WindowUnfocused` 翻 `app_focused`
 - **CLI/IPC**:`pureterm notify "msg" [-t title] [--pane-id N]` → `notification.post` RPC → `IpcSideEffect::ShowNotification`(source `Cli`)→ store + 角标 + 门控 toast
-- 单测:scanner 17 + notification_store 9 + app_config 3 + bridge 2 + `should_toast` 2;GUI E2E 见 `docs/manual-e2e/gap-09-notification.md`(非阻塞,待人工)
+- 单测:scanner 17 + notification_store 9 + app_config 3 + bridge 2 + `should_toast` 2;GUI E2E 见 `docs/reviewed/GAP-09-notification/test-plan.md`(非阻塞,待人工)
 - **已知局限**:Linux dbus 通知未做(用户决定 macOS-only);`FocusNotificationPane` v1 仅清 unread,跨 tab 聚焦待补
 
 ### GAP-10 Triggers（模式匹配自动化 v1+v2）(2026-06-28)
@@ -294,6 +295,7 @@
   - 初始连接走 `Connecting`(此前直跳 `Connected`):`push_ssh_tab` emit `→ connecting`,Wakeup handler 经纯函数 `on_first_remote_byte(prior)→(flip,inject_separator)` 决策——`Authenticating`(重连)盖分隔线、`Connecting`(初始连接)不盖(变体本身区分,无需新字段)
   - 455 harness 绿(+4 新单测:`on_first_remote_byte`×3 + `ssh_disconnect_with_pane_id`)
 - 实现:`crates/pureterm/src/ssh/reconnect.rs` + `session_restore.rs` + `terminal_context.rs` + `iced_app.rs`
+- **Review ✅（2026-06-30）**:状态机本身正确(六态转移 + `on_first_remote_byte` 纯函数决策 + flap 检测器逐行核实无误;既 flag 的「per-spawn backoff 不升级 → hammer host」已在 5d319b4 用窗口式 flap 检测器修掉)。审计出 **3 个重连 worker 生命周期 bug**(都是「worker 该停没停/停晚了」):① **[MED-HIGH]** `Fx::SshDisconnect` 不 cancel 在飞 worker → 重连中用户断开会被 worker 成功后 reattach「复活」,或 worker 跑完发 `Failed` 覆盖 `Disconnected`(语义错);worker 只认 `cancel`、不读 `user_initiated_close`/状态 → 补 `reconnect_hub.cancel(pid)`。② **[MED]** `close_active_pane`(⌘W 非末 pane)缺 `mark_user_initiated_close`+`cancel` → 关掉重连中的 pane 后 worker 残留最长 ~225s 反复 spawn/abort ssh + 泄漏 slot/flap_history;补齐(对齐 `PtyExitedPane` 8104-8117 路径)。`detach_active_pane` 经核实是 **move** 非 destroy(pane 续活新 tab/window,doc 明示不 release pool)→ 正确地不 cancel。③ **[MED-LOW]** worker 末次失败仍睡满 60s 才报 `Failed`,且 `Progress` 谎报「将在 60s 后重试」→ 抽 `final_attempt()` 纯缝 + `Err` 分支末次 `break`(跳过 sleep + 误导性 Progress)。+ 新增 `final_attempt_is_last_backoff_index_and_gives_up_immediately` 单测(TDD red→green);746 pureterm 单测全绿 0 回归,release 编译过。**更广 follow-up(未改)**:`CloseOtherTabs`/`CloseTabsToLeft` 整段绕过 SSH 清理(无 cancel/release/kill),建议后续抽 `teardown_tab_ssh_panes(tab_id)` helper 统一所有销毁路径。
 
 ### GAP-5.4 SSH Agent Forwarding(2026-06-25)
 - `ssh-add` 后远程免密:`SshProfile.forward_agent = true` / CLI `-A` → daemon `ssh -tt … -o ForwardAgent=yes` 子进程 + 显式注入 `SSH_AUTH_SOCK`
@@ -322,7 +324,7 @@
 - **TOFU host-key**（`known_hosts.rs`）：隔离文件 `data_dir()/known_hosts`（**不**动用户 `~/.ssh/known_hosts`），首连记录 / 复连 Match / 换 key 严格拒绝。`ClientHandler::check_server_key` 经纯函数 `decide_host_key` 决策；Mismatch 经既有 `Failed` 状态 + `tunnel.list` 浮现（无需新 RPC）。OpenSSH 行格式 `[host]:port algo blob`，仅字面 host 匹配（wildcard/hashed 非 MVP）
 - **持久化**（`persist.rs`）：daemon 自有 `data_dir()/tunnels.json`（不进 GUI 的 `workspaces.json` 全量覆写、不进 `pureterm.toml` 配置）。`TunnelConfig` **不存密码**（对齐 SSH-profile）；`start`/`stop` 写入点 + 启动**仅恢复配置**（注册为 `stopped`，用户手动重连；不自动重连以避免 hammering + 不泄漏密码）。原子写 `NamedTempFile::persist`
 - agent 转发复用 GAP-5.4 Track B（隧道路径本身），无需新增
-- flip 标准：代码闭环 + `cargo test -p pureterm-daemon` 单测绿（known_hosts 7 + persist 6 + tunnel host_key 4 + 既有，共 69 绿；`instance_lock_is_exclusive` 在 puretermd 运行时环境性失败、2 PTY 集成测试需真机）；真实网关 E2E 见 `docs/manual-e2e/gap-5.2-socks5-tunnel.md`，**非阻塞**人工 follow-up（GAP-5.6/5.4 先例）
+- flip 标准：代码闭环 + `cargo test -p pureterm-daemon` 单测绿（known_hosts 7 + persist 6 + tunnel host_key 4 + 既有，共 69 绿；`instance_lock_is_exclusive` 在 puretermd 运行时环境性失败、2 PTY 集成测试需真机）；真实网关 E2E 见 `docs/reviewed/GAP-5.2-socks5-tunnel/test-plan.md`，**非阻塞**人工 follow-up（GAP-5.6/5.4 先例）
 - 实现:`crates/pureterm-daemon/src/{tunnel,known_hosts,persist,control,runtime,discovery}.rs` + `crates/pureterm/src/tunnel_cli.rs`
 
 ### SSH Profile 配置示例(alacritty.toml)
@@ -388,7 +390,7 @@ action = { Ssh = "ListProfiles" }
 - **阶段 4(daemon)**:pipe-pane(`pipe_pane.rs` pump→mpsc→tokio 子进程 `kill_on_drop`;GUI `surface.pipe` 转 daemon)/ wait-for(`wait_for.rs` channel/lock store;CLI 直连 daemon socket 绕 5s 超时)
 - 实现:`tmux_cli.rs` + `split_tree.rs`(`resize_ratio`/`find_adjacent`/`swap_by_ids`/`detach_leaf`)+ `surface_snapshot.rs`(`capture`)+ `crates/pureterm-daemon/src/{pipe_pane,wait_for}.rs` + `ipc/methods.rs`(`pane.*` / `surface.*` RPC + `IpcSideEffect`)
 - 自动 E2E harness 全绿:419 pureterm 单测 + 54 daemon 单测(含本次补的 join-pane Arc-follows 不变量[`join_pane_e2e`]/ capture() 真实栅格读 / `resize_ratio`+`find_adjacent` / pipe-pane pump→子进程字节落地 / CLI↔`SocketRouter` round-trip 三条)
-- pixel smoke:`docs/manual-e2e/tmux-features-smoke.md`(非 CI gate,12 命令逐条)
+- pixel smoke:`docs/reviewed/test-plan/tmux-features-smoke.md`(非 CI gate,12 命令逐条)
 - 已知 phase-2 stub:`kill-pane -t` 定向、`select-pane -L/-R/-U/-D`/`-l`
 
 ### GAP-6.7 Event Stream(事件流 + 持久 JSONL 日志)(2026-06-26)
@@ -397,7 +399,7 @@ action = { Ssh = "ListProfiles" }
 - 收尾(本次 flip):① 修 workspace producer 误分类(`workspace.created`/`workspace.switched` 从 `Surface` 修正为 `Workspace`);② `tail_follow` 读路径抽出可单测的 `drain_once` + 轮询 75ms→150ms(≈ 空闲唤醒减半);③ `events.rs` doc 注释更新(Workspace/Browser 已由 GAP-2.1/3.5 产出)
 - 实现:`crates/pureterm/src/{events.rs,events_bus.rs,events_log.rs}` + `iced_app.rs`(emit 点)+ `cli.rs`(`EventsSub`)
 - 单测:495 pureterm 全绿(events 模块 11 个:EventBus 双写 / AppEvent JSONL round-trip / TypeFilter / read_recent / drain_once 完整行+半行+rotation / tail_follow 端到端送达 + rotation 存活)
-- pixel smoke:`docs/manual-e2e/gap-6.7-event-stream.md`(非 CI gate,实时跟随 + workspace 过滤 + list 回读 + tail 延迟)
+- pixel smoke:`docs/reviewed/GAP-6.7-event-stream/test-plan.md`(非 CI gate,实时跟随 + workspace 过滤 + list 回读 + tail 延迟)
 - **未做(独立后续)**:`events.subscribe` 流式 MCP 工具(需独立流式传输设计)/ sidebar producer(被 GAP-6.8 阻塞);`notify`(kqueue/inotify)替轮询经实测评估弃用 —— macOS `RecommendedWatcher` 走 FSEvents,事件 ~1s 才到(比 150ms 轮询还慢)且其 runloop 会拖住同进程其它线程的 sleep,主平台无收益反有害(详见 `events_log.rs::TAIL_FALLBACK_MS` 注释)
 - **GAP-09 集成(2026-06-28)**: `Category::Notification` producer 已落地 — `notification.posted` / `panel_opened` / `panel_closed` / `all_dismissed`;desktop toast / `pureterm notify` CLI defer 至 GAP-09 收尾
 
@@ -420,7 +422,7 @@ action = { Ssh = "ListProfiles" }
 - **配置**:`[error_recovery]`(`enabled`/`auto_analyze`/`provider`/`model`/`max_output_lines`/`max_tokens`/`api_key_env`/`openai_base_url`);API key 仅 env（`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`）
 - **EventBus**:`Category::ErrorRecovery` — `error_recovery.triggered` / `suggested` / `applied`
 - 单测:error_recovery 7 + app_config 2 + events filter 1;637 pureterm 绿（`triggers::scan_multi_trigger_independent` 预存失败 unrelated）
-- pixel smoke:`docs/manual-e2e/gap-02-error-recovery.md`（非 CI gate,需真实 API key）
+- pixel smoke:`docs/reviewed/GAP-02-error-recovery/test-plan.md`（非 CI gate,需真实 API key）
 - **DoD 待人工**:GUI E2E + Apply 验证;**未做(独立后续)**:Settings UI、SSH pane 自动分析
 
 ### GAP-04 Computer Use MVP（桌面截图 + 输入 stub）(2026-06-29, Review ✅ 2026-07-01)

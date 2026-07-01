@@ -1,0 +1,82 @@
+# 已 Review 任务
+
+> 已通过 review 的特性 spec 放在 [`reviewed/`](reviewed/) 目录。按任务类型分组，含项目优先级。
+
+---
+
+## 概览
+
+| 类别 | 数量 | P0 | P1 | P2 |
+|------|------|----|----|----|
+| 核心架构 | 1 | 1 | — | — |
+| AI Agent | 3 | 2 | 1 | — |
+| 终端交互 | 4 | 2 | 1 | 1 |
+| UI/外壳 | 2 | — | 2 | — |
+| 开发者工具 | 1 | — | 1 | — |
+| SSH/网络 | 2 | 1 | 1 | — |
+| 集成 | 1 | 1 | — | — |
+| **合计** | **14** | **7** | **6** | **1** |
+
+---
+
+## 核心架构（1）
+
+| GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
+|-----|------|----------|-----------|--------|------|
+| GAP-2.1 | Surface/Pane/Workspace/Window 四层抽象 | arch | P0 | ✅ | [spec](reviewed/GAP-2.1-workspace/spec.md) · [plan](reviewed/GAP-2.1-workspace/plan.md) · [test-plan](reviewed/GAP-2.1-workspace/test-plan.md) |
+
+## AI Agent（3）
+
+| GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
+|-----|------|----------|-----------|--------|------|
+| GAP-01 | AI Chat Panel（⌘⇧L 右侧面板 + 流式 LLM + 上下文注入） | feature | P0 | ✅ | [spec](reviewed/GAP-01-ai-chat-panel/spec.md) |
+| GAP-02 | Error Recovery（非零 exit → LLM 修复建议 + Apply） | wrap-up | P0 | ✅ | [spec](reviewed/GAP-02-error-recovery/spec.md) · [test-plan](reviewed/GAP-02-error-recovery/test-plan.md) |
+| GAP-03 | Codebase Indexing MVP（Tree-sitter + SQLite FTS + MCP 搜索工具） | feature | P1 | ✅ | [spec](reviewed/GAP-03-codebase-indexing/spec.md) |
+
+## 终端交互（4）
+
+| GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
+|-----|------|----------|-----------|--------|------|
+| GAP-09 | Notification System（OSC 9/99/777 + Bell → ring/面板/Dock/toast/CLI） | wrap-up | P0 | ✅ | [spec](reviewed/GAP-09-notification/spec.md) · [test-plan](reviewed/GAP-09-notification/test-plan.md) |
+| GAP-15 | Shell Integration（OSC 133 A/B/C/D + shell.context MCP） | wrap-up | P0 | ✅ | [spec](reviewed/GAP-15-shell-integration/spec.md) |
+| GAP-10 | Triggers（regex 匹配输出 → highlight/notify/send_text/exec） | feature | P1 | ✅ | [spec](reviewed/GAP-10-triggers/spec.md) |
+| GAP-1.3 | 标题栈 (CSI 22/23t + OSC 0/2) | feature | P2 | ✅ | [spec](reviewed/GAP-1.3-title-stack/spec.md) · [test-plan](reviewed/GAP-1.3-title-stack/test-plan.md) |
+
+## UI/外壳（2）
+
+| GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
+|-----|------|----------|-----------|--------|------|
+| GAP-19 | Dual Sidebar（⌘B 左 / ⌘⇧B 右 — Workspace + Find/Feed/Git） | feature | P1 | ✅ | [spec](reviewed/GAP-19-dual-sidebar/spec.md) |
+| GAP-3.5 | 内置 Browser 面板 / WebView | feature | P1 | ✅ | [spec](reviewed/GAP-3.5-browser-panel/spec.md) · [test-plan](reviewed/GAP-3.5-browser-panel/test-plan.md) |
+
+## 开发者工具（1）
+
+| GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
+|-----|------|----------|-----------|--------|------|
+| GAP-35 | LSP Client（多语言 server 配置 + hover/completion + 诊断） | integration | P1 | ✅ | [spec](reviewed/GAP-35-lsp-client/spec.md) |
+
+## SSH/网络（2）
+
+| GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
+|-----|------|----------|-----------|--------|------|
+| GAP-5.6 | SSH Reconnect 状态机 | integration | P0 | ✅ | [spec](reviewed/GAP-5.6-ssh-reconnect/spec.md) · [test-plan](reviewed/GAP-5.6-ssh-reconnect/test-plan.md) |
+| GAP-5.2 | SOCKS5/HTTP CONNECT 隧道 | integration | P1 | ✅ | [spec](reviewed/GAP-5.2-socks5-tunnel/spec.md) · [test-plan](reviewed/GAP-5.2-socks5-tunnel/test-plan.md) |
+
+## 集成（1）
+
+| GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
+|-----|------|----------|-----------|--------|------|
+| GAP-6.7 | Event Stream + 持久 JSONL 日志 | integration | P0 | ✅ | [spec](reviewed/GAP-6.7-event-stream/spec.md) · [test-plan](reviewed/GAP-6.7-event-stream/test-plan.md) |
+
+## 手动 E2E Test Plans
+
+> 跨多个 GAP 的共享 E2E runbook。
+
+| 文件 | 覆盖范围 | 详情 |
+|------|----------|------|
+| Agent Features Smoke | GAP-7.3–7.7 AI Agent 特性 | [runbook](reviewed/test-plan/agent-features-smoke.md) |
+| Tmux Features Smoke | GAP-6.6 tmux 兼容子集（12 命令） | [runbook](reviewed/test-plan/tmux-features-smoke.md) |
+
+---
+
+**更新约定**：Review 通过 → 从 [`done.md`](done.md) 移入对应类别分表 → `git mv` feature 目录到 `reviewed/` → 更新 `reviewed/GAP-XX/spec.md` frontmatter。
