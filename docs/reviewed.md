@@ -13,9 +13,9 @@
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
-| SSH/网络 | 4 | 1 | 1 | 2 | — | — |
+| SSH/网络 | 5 | 1 | 1 | 3 | — | — |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **47** | **7** | **6** | **15** | **9** | **10** |
+| **合计** | **48** | **7** | **6** | **16** | **9** | **10** |
 
 ---
 
@@ -86,7 +86,7 @@
 | GAP-35 | LSP Client（多语言 server 配置 + hover/completion + 诊断） | integration | P1 | ✅ | [spec](reviewed/GAP-35-lsp-client/spec.md) |
 | GAP-34 | 文件预览 | feature | P4 | ✅ | [spec](reviewed/GAP-34-file-preview/spec.md) |
 
-## SSH/网络（4）
+## SSH/网络（5）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -94,6 +94,7 @@
 | GAP-5.2 | SOCKS5/HTTP CONNECT 隧道 | integration | P1 | ✅ | [spec](reviewed/GAP-5.2-socks5-tunnel/spec.md) · [test-plan](reviewed/GAP-5.2-socks5-tunnel/test-plan.md) |
 | GAP-40 | SSH 端口转发 -L/-R/-X UI（MVP） | integration | P2 | ✅ | [spec](reviewed/GAP-40-ssh-forwarding/spec.md) |
 | GAP-5.4 | SSH Agent Forwarding | integration | P2 | ✅ | [spec](reviewed/GAP-40-ssh-forwarding/spec.md) |
+| GAP-43 | 远程文件浏览（`remote.listdir/read/write/find` + Files 侧栏） | feature | P2 | ✅ | [spec](reviewed/GAP-43-remote-server/spec.md) |
 
 ## 集成（1）
 

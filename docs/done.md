@@ -8,19 +8,18 @@
 
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
-| SSH/网络 | 7 | — | — | 2 | 3 | 2 |
+| SSH/网络 | 6 | — | — | 1 | 3 | 2 |
 | 平台 | 4 | — | — | 2 | 1 | 1 |
 | 集成 | 5 | — | — | 1 | — | 4 |
 | 视觉 | 9 | — | — | — | — | 9 |
-| **合计** | **25** | **—** | **—** | **5** | **4** | **16** |
+| **合计** | **24** | **—** | **—** | **4** | **4** | **16** |
 
 ---
 
-## SSH/网络（7）
+## SSH/网络（6）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
 |-----|------|----------|-----------|------|
-| GAP-43 | 远程文件浏览（`remote.listdir/read/write/find` + Files 侧栏） | feature | P2 | [spec](done/GAP-43-remote-server/spec.md) |
 | GAP-5.3 | smallest-screen-wins PTY resize | feature | P2 | [spec](done/GAP-5.3-pty-resize/spec.md) |
 | GAP-39 | Serial & Telnet（CLI 探测 + profile 字段） | feature | P3 | [spec](done/GAP-39-serial-telnet/spec.md) |
 | GAP-41 | SSH Jump Host（ProxyJump -J） | feature | P3 | [spec](done/GAP-41-jump-host/spec.md) |
