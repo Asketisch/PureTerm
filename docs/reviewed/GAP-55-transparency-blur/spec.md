@@ -25,7 +25,7 @@ reviewed: 2026-07-01
 
 ## PureTerm 现状
 
-**Done（2026-06-29，配置 scaffold）。** `window_effects.rs` 提供 `WindowEffectsConfig`（`enabled` / `opacity` 默认 `1.0` / `blur`），`effective_opacity` 在 `enabled` 时把 base 乘上 opacity 并 clamp 到 `[0.05, 1.0]`；`apply_blur` 在 macOS 走 `log::info!` stub，其它平台 `log::debug!`。`NSVisualEffectView` 实际挂钩和 DwmEnableBlurBehindWindow 按 spec 留待后续。
+**Done（2026-07-01，macOS）。** `window_effects.rs` 扩展 `WindowEffectsConfig`（新增 `blending_mode` = `within_window` | `behind_window`）和 `effective_opacity`（base × opacity，clamp `[0.05, 1.0]`），新增 `BlurApplyOutcome` 和 `apply_blur_macos` 走 `objc2 0.6 + objc2-app-kit 0.3.2`：取 `NSApplication::windows()`，对每个 `NSWindow` 分配一个 `NSVisualEffectView`（UnderWindowBackground + FollowsWindowActiveState + NSViewWidthSizable|NSViewHeightSizable），把原 content view 作为子视图塞进 effect view，最后 `setContentView`。Windows 路径返回 `UnsupportedPlatform`（DWM blur-behind 需后续 winit HWND 集成）。6 单测覆盖 disabled / 关闭 blur / 越界 opacity / TOML 缺失路径 / mode 解析 / passthrough。
 
 ## 优先级
 
