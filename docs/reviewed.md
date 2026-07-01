@@ -11,12 +11,12 @@
 | 核心架构 | 1 | 1 | — | — | — | — |
 | AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
-| UI/外壳 | 22 | — | 2 | 3 | 3 | 14 |
+| UI/外壳 | 23 | — | 2 | 3 | 3 | 15 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
 | 平台 | 3 | — | — | 2 | — | 1 |
 | 集成 | 6 | 1 | — | 1 | — | 4 |
-| **合计** | **70** | **7** | **6** | **20** | **13** | **24** |
+| **合计** | **71** | **7** | **6** | **20** | **13** | **25** |
 
 ---
 
@@ -56,7 +56,7 @@
 | GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-18-bidi-support/spec.md) |
 | GAP-17 | Sixel/Kitty 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-kitty-graphics/spec.md) |
 
-## UI/外壳（22）
+## UI/外壳（23）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -82,6 +82,7 @@
 | GAP-57 | 触觉反馈 | platform | P4 | ✅ | [spec](reviewed/GAP-57-haptic-feedback/spec.md) |
 | GAP-58 | 扩展主题 | feature | P4 | ✅ | [spec](reviewed/GAP-58-custom-theme-css/spec.md) |
 | GAP-60 | Pane 截图/导出（文本快照 MVP） | feature | P4 | ✅ | [spec](reviewed/GAP-60-screen-capture/spec.md) |
+| GAP-59 | Emoji 渲染通道 | enhance | P4 | ✅ | [spec](reviewed/GAP-59-emoji-rendering/spec.md) |
 
 ## 开发者工具（6）
 
