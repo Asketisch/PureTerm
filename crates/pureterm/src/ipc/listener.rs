@@ -19,18 +19,32 @@ use super::protocol::{JsonRpcRequest, JsonRpcResponse};
 /// Environment variable name for the IPC socket path.
 const PURETERM_SOCKET_ENV: &str = "PURETERM_SOCKET";
 
+/// The deferred-reply handle carried by every [`IpcRequest`]: a oneshot sender
+/// behind an `Arc<Mutex<Option<_>>>`. `oneshot::Sender` is not `Clone`, but
+/// iced's `Message` needs `Clone`, so the sender is taken (consumed) exactly
+/// once — via [`take_reply_sender`] — when the main loop dispatches the reply.
+pub type ReplyTx = std::sync::Arc<
+    std::sync::Mutex<Option<tokio::sync::oneshot::Sender<JsonRpcResponse>>>,
+>;
+
+/// Take the reply sender from a [`ReplyTx`], recovering from a poisoned mutex
+/// instead of panicking. The browser op resolver and tunnel ops run on the GUI
+/// main loop; a poisoned mutex must not take the whole UI down (mirrors the
+/// `.lock().ok()` discipline in `browser::commands::execute`). First-wins: a
+/// late taker finds `None` and no-ops, so a timeout can't double-reply.
+pub fn take_reply_sender(
+    tx: &ReplyTx,
+) -> Option<tokio::sync::oneshot::Sender<JsonRpcResponse>> {
+    tx.lock().unwrap_or_else(|e| e.into_inner()).take()
+}
+
 /// A pending IPC request forwarded to the main loop.
-///
-/// The reply channel is wrapped in `Arc<Mutex<Option<...>>>` because
-/// `oneshot::Sender` is not `Clone`, but `Message` needs `Clone` for
-/// iced's architecture. The sender is taken (consumed) exactly once in
-/// `update()` via `lock().unwrap().take()`.
 #[derive(Debug, Clone)]
 pub struct IpcRequest {
     pub id: u64,
     pub method: String,
     pub params: Option<serde_json::Value>,
-    pub reply_tx: std::sync::Arc<std::sync::Mutex<Option<tokio::sync::oneshot::Sender<JsonRpcResponse>>>>,
+    pub reply_tx: ReplyTx,
 }
 
 /// Handle returned after spawning the IPC listener. Carries the socket path.

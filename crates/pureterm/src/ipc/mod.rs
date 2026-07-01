@@ -14,7 +14,7 @@ pub mod listener;
 pub mod methods;
 pub mod protocol;
 
-pub use listener::{IpcHandle, IpcRequest};
+pub use listener::{IpcHandle, IpcRequest, ReplyTx, take_reply_sender};
 pub use methods::{IpcSideEffect, SocketRouter};
 // GAP-7.8: re-exported so the browser op layer can name the deferred-reply
 // type as `crate::ipc::JsonRpcResponse` (the oneshot payload carried by

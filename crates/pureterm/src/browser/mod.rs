@@ -17,6 +17,8 @@ pub mod commands;
 pub mod context;
 /// GAP-3.5: 取 iced 窗口的原生视图句柄(macOS objc2 walk;R1)。
 pub mod platform;
+/// GAP-3.5 / GAP-7.8: shared URL-normalization core (`loadable_url`).
+pub mod url;
 
 pub use commands::{BrowserOp, BrowserReply, BrowserResolved};
 pub use context::{BrowserContext, BrowserContextId};

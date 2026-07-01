@@ -460,11 +460,26 @@ impl SocketRouter {
             let url = params
                 .as_ref()
                 .and_then(|p| p.get("url"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("https://example.com");
-            // Reject obviously empty / non-string urls with a sane default rather
-            // than spawning a blank webview.
-            let url = if url.trim().is_empty() { "https://example.com".to_string() } else { url.to_string() };
+                .and_then(|v| v.as_str());
+            // GAP-7.8: normalize via the shared `loadable_url` core so a bare
+            // `localhost:8080` actually loads. Missing/blank url → sane default;
+            // non-URL input → reject rather than spawn a webview that can't load.
+            let url = match url.map(str::trim).filter(|s| !s.is_empty()) {
+                None => "https://example.com".to_string(),
+                Some(u) => match crate::browser::url::loadable_url(u) {
+                    Some(loadable) => loadable,
+                    None => {
+                        return (
+                            Err(JsonRpcError {
+                                code: ERROR_INVALID_PARAMS,
+                                message: format!("not a loadable URL: {u:?}"),
+                                data: None,
+                            }),
+                            None,
+                        );
+                    }
+                },
+            };
             let dir = match direction {
                 "horizontal" | "h" => crate::split_tree::SplitDirection::Horizontal,
                 _ => crate::split_tree::SplitDirection::Vertical,

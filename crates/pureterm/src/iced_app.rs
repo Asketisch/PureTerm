@@ -1397,59 +1397,25 @@ pub(crate) fn address_bar_confirm_action(
 
 /// GAP-3.5: Normalize a raw address-bar input into a loadable URL.
 ///
-/// - already has a scheme (`contains "://"`) → as-is;
-/// - looks like a bare domain (no spaces, contains a `.`) → prefix `https://`;
-/// - otherwise treat as a search query → Google search URL (percent-encoded).
-///
-/// Dependency-free (no `url`/`reqwest`); the heuristic covers the common
-/// cases. Pure function so the harness can unit-test it directly.
+/// Delegates the URL-detection branches to [`crate::browser::url::loadable_url`]
+/// (shared with the GAP-7.8 agent `browser.navigate` / `pane.split_web` paths).
+/// The address-bar-only policy layered on top: input that isn't a URL falls
+/// back to a Google search (a human UX convenience the agent paths deliberately
+/// do NOT inherit — they error instead). Empty input stays empty.
 pub(crate) fn normalize_url_input(input: &str) -> String {
-    let s = input.trim();
-    if s.is_empty() {
-        return String::new();
-    }
-    if s.contains("://") {
-        return s.to_string();
-    }
-    // `rhs` is a port number → `host:port` with no scheme, not a bare scheme
-    // like `about:blank`. Used to keep `localhost:8080` out of the passthrough
-    // below (it'd otherwise be returned verbatim and WKWebView can't load a
-    // scheme-less `localhost:8080`).
-    let rhs_is_port = |rhs: &str| !rhs.is_empty() && rhs.chars().all(|c| c.is_ascii_digit());
-    // Bare scheme like "about:blank" (no "://") — pass through. Exclude the
-    // host:port shape (all-alpha host + numeric port), which is handled below.
-    if let Some((lhs, rhs)) = s.split_once(':') {
-        if !lhs.is_empty()
-            && lhs.chars().all(|c| c.is_ascii_alphabetic())
-            && !rhs.starts_with("//")
-            && !lhs.contains('.')
-            && !rhs_is_port(rhs)
-        {
-            return s.to_string();
-        }
-    }
-    // Bare host:port with no scheme and a dot-less hostname (e.g.
-    // `localhost:8080`, `myhost:3000`) → prefix `http://` (dev servers). Dotted
-    // hosts (`127.0.0.1:3000`, `example.com:8443`) keep falling through to the
-    // domain branch's `https://` below.
-    if !s.chars().any(char::is_whitespace) {
-        if let Some((lhs, rhs)) = s.split_once(':') {
-            if !lhs.is_empty()
-                && lhs.chars().all(|c| c.is_ascii_alphabetic())
-                && !lhs.contains('.')
-                && rhs_is_port(rhs)
-            {
-                return format!("http://{s}");
+    match crate::browser::url::loadable_url(input) {
+        Some(url) => url,
+        None => {
+            let s = input.trim();
+            if s.is_empty() {
+                String::new()
+            } else {
+                // Fall back to a web search.
+                let encoded = percent_encode_query(s);
+                format!("https://www.google.com/search?q={encoded}")
             }
         }
     }
-    // Looks like a domain: has a dot, no whitespace.
-    if !s.chars().any(char::is_whitespace) && s.contains('.') {
-        return format!("https://{s}");
-    }
-    // Fall back to a web search.
-    let encoded = percent_encode_query(s);
-    format!("https://www.google.com/search?q={encoded}")
 }
 
 /// Minimal percent-encoding for the search-query fallback (unreserved chars
@@ -7073,7 +7039,7 @@ impl PureTermApp {
                 );
 
                 // Send response back through the oneshot channel.
-                if let Some(reply_tx) = ipc_req.reply_tx.lock().unwrap().take() {
+                if let Some(reply_tx) = crate::ipc::take_reply_sender(&ipc_req.reply_tx) {
                     let _ = reply_tx.send(resp);
                 }
 
@@ -7313,7 +7279,7 @@ impl PureTermApp {
                         ),
                     };
                 // Mutex-take: a late timeout can't double-reply.
-                if let Some(s) = reply_tx.lock().unwrap().take() {
+                if let Some(s) = crate::ipc::take_reply_sender(&reply_tx) {
                     let _ = s.send(resp);
                 }
                 // Tag the op payload with the outcome, then emit.
@@ -7337,7 +7303,7 @@ impl PureTermApp {
                     reply_tx,
                     resp,
                 } = resolved;
-                if let Some(s) = reply_tx.lock().unwrap().take() {
+                if let Some(s) = crate::ipc::take_reply_sender(&reply_tx) {
                     let _ = s.send(resp);
                 }
                 self.events.emit(
@@ -10187,13 +10153,11 @@ impl PureTermApp {
     /// each re-taking the Mutex + constructing the response).
     fn reply_browser_err(
         ipc_id: u64,
-        reply_tx: &std::sync::Arc<
-            std::sync::Mutex<Option<tokio::sync::oneshot::Sender<crate::ipc::JsonRpcResponse>>>,
-        >,
+        reply_tx: &crate::ipc::ReplyTx,
         code: i64,
         msg: impl Into<String>,
     ) {
-        if let Some(s) = reply_tx.lock().unwrap().take() {
+        if let Some(s) = crate::ipc::take_reply_sender(&reply_tx) {
             let _ = s.send(crate::ipc::JsonRpcResponse::err(ipc_id, code, msg));
         }
     }
@@ -10262,7 +10226,7 @@ impl PureTermApp {
             return match ctx {
                 Some(c) => {
                     c.clear_tunnel();
-                    if let Some(s) = reply_tx.lock().unwrap().take() {
+                    if let Some(s) = crate::ipc::take_reply_sender(&reply_tx) {
                         let _ = s.send(crate::ipc::JsonRpcResponse::ok(
                             ipc_id,
                             serde_json::json!({ "cleared": true, "pane_id": pane_id.map(|p| p.0) }),
@@ -10374,7 +10338,7 @@ impl PureTermApp {
         .map(|ctx| ctx.terminal().clone());
 
         let Some(term_arc) = term_arc else {
-            if let Some(s) = reply_tx.lock().unwrap().take() {
+            if let Some(s) = crate::ipc::take_reply_sender(&reply_tx) {
                 let _ = s.send(crate::ipc::JsonRpcResponse::err(
                     ipc_id,
                     -32000,
@@ -10426,9 +10390,7 @@ impl PureTermApp {
     fn bind_browser_tunnel(
         &mut self,
         ipc_id: u64,
-        reply_tx: std::sync::Arc<
-            std::sync::Mutex<Option<tokio::sync::oneshot::Sender<crate::ipc::JsonRpcResponse>>>,
-        >,
+        reply_tx: crate::ipc::ReplyTx,
         ctx: Arc<crate::browser::BrowserContext>,
         tunnel_id: String,
     ) -> Task<Message> {
@@ -10470,8 +10432,31 @@ impl PureTermApp {
             .and_then(|v| v.as_str())
             .unwrap_or("?")
             .to_string();
+        // GAP-7.8 review: only bind when the tunnel is `connected`. A
+        // stopped/failed/connecting/need_auth tunnel still reports a
+        // `local_addr` (parsed above) but has no live SOCKS5 listener — binding
+        // would rebuild the webview onto a dead port and `navigate` would
+        // fake-success while the page never loads. Status comes from the
+        // daemon's live tunnel list, so a tunnel that drops is caught on the
+        // next bind attempt.
+        use crate::browser::commands::BindTunnelVerdict as Verdict;
+        if let Verdict::Reject(reason) = crate::browser::commands::bind_tunnel_verdict(&status) {
+            Self::reply_browser_err(
+                ipc_id,
+                &reply_tx,
+                -32000,
+                format!("cannot bind tunnel {tunnel_id}: {reason}"),
+            );
+            self.events.emit(
+                crate::events::Category::Browser,
+                "browser.bind_tunnel.rejected",
+                None,
+                serde_json::json!({ "tunnel_id": tunnel_id, "status": status, "reason": reason }),
+            );
+            return Task::none();
+        }
         ctx.set_tunnel(&tunnel_id, host, port);
-        if let Some(s) = reply_tx.lock().unwrap().take() {
+        if let Some(s) = crate::ipc::take_reply_sender(&reply_tx) {
             let _ = s.send(crate::ipc::JsonRpcResponse::ok(
                 ipc_id,
                 serde_json::json!({

@@ -43,7 +43,7 @@ pub enum BrowserReply {
 #[derive(Clone)]
 pub struct BrowserResolved {
     pub ipc_id: u64,
-    pub reply_tx: std::sync::Arc<std::sync::Mutex<Option<oneshot::Sender<crate::ipc::JsonRpcResponse>>>>,
+    pub reply_tx: crate::ipc::ReplyTx,
     pub reply: BrowserReply,
     /// EventBus kind, e.g. `"browser.click"`.
     pub ev_kind: String,
@@ -174,7 +174,8 @@ impl BrowserOp {
 
 /// Kick off `op` against `ctx`. Resolves `tx` exactly once:
 /// - `navigate` → `ctx.load_url` + immediate ack (load is fire-and-forget).
-/// - `screenshot` → structured "not wired" error.
+/// - `screenshot` → real WKWebView snapshot (`takeSnapshotWithConfiguration`,
+///   macOS-only); non-macOS resolves with a structured "macOS-only" error.
 /// - everything else → JS via `evaluate_script_with_callback`; the callback
 ///   owns `tx`. If the webview isn't realized yet, resolve immediately with an
 ///   error (the agent should `navigate` first / the pane is mid-attach).
@@ -361,7 +362,13 @@ pub fn parse_op(method: &str, params: Option<&Value>) -> Result<BrowserOp, Strin
     let u = |k: &str| p(k).and_then(|v| v.as_u64());
     match verb {
         "navigate" => {
-            let url = s("url").ok_or_else(|| "missing 'url'".to_string())?.to_string();
+            let raw = s("url").ok_or_else(|| "missing 'url'".to_string())?;
+            // GAP-7.8: normalize via the shared `loadable_url` core so a bare
+            // `localhost:8080` actually loads (WKWebView can't take it raw).
+            // Strict — non-URL input errors instead of a silent search fallback
+            // (an agent should hear about garbage, not land on a search page).
+            let url = super::url::loadable_url(raw)
+                .ok_or_else(|| format!("not a loadable URL: {raw:?}"))?;
             Ok(BrowserOp::Navigate { url })
         }
         "click" => Ok(BrowserOp::Click {
@@ -388,6 +395,36 @@ pub fn parse_op(method: &str, params: Option<&Value>) -> Result<BrowserOp, Strin
         "get_title" => Ok(BrowserOp::GetTitle),
         "screenshot" => Ok(BrowserOp::Screenshot),
         other => Err(format!("unknown browser op '{other}'")),
+    }
+}
+
+/// GAP-7.8 Phase C verdict: is a tunnel's reported `status` safe to bind a
+/// webview's SOCKS5 proxy to?
+///
+/// `bind_browser_tunnel` reads `local_addr` from the daemon's tunnel list, but
+/// `local_addr` is recorded even for `stopped` / `failed` / `need_auth` /
+/// `connecting` tunnels (`pureterm-daemon::tunnel` keeps the would-be address
+/// with no live listener). Binding one of those rebuilds the webview pointing
+/// at a dead port and `navigate` then acks `{navigated:true}` while the page
+/// never loads — a silent fake-success. Filtering on `status` (not just the
+/// presence of `local_addr`) is what prevents it. Status strings are contracted
+/// (`tunnel.rs::status_strings_match_cli_contract`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BindTunnelVerdict {
+    Bind,
+    Reject(&'static str),
+}
+
+pub(crate) fn bind_tunnel_verdict(status: &str) -> BindTunnelVerdict {
+    match status {
+        "connected" => BindTunnelVerdict::Bind,
+        "connecting" => BindTunnelVerdict::Reject("tunnel is still connecting"),
+        "stopped" => BindTunnelVerdict::Reject("tunnel is stopped"),
+        "failed" => BindTunnelVerdict::Reject("tunnel failed to connect"),
+        "need_auth" => BindTunnelVerdict::Reject("tunnel is waiting for authentication"),
+        // Unknown status string (e.g. a future daemon variant) — refuse rather
+        // than risk binding to a non-live listener.
+        _ => BindTunnelVerdict::Reject("tunnel is not connected"),
     }
 }
 
@@ -470,6 +507,19 @@ mod tests {
         assert!(parse_op("browser.navigate", None).is_err());
         let op = parse_op("browser.navigate", Some(&json!({"url":"https://x.io"}))).unwrap();
         assert!(matches!(op, BrowserOp::Navigate { url } if url == "https://x.io"));
+    }
+
+    #[test]
+    fn parse_navigate_normalizes_loadable_url() {
+        // GAP-7.8: bare host:port is made loadable (the motivating dev-server
+        // case — `browser navigate localhost:8080` must reach WKWebView with a
+        // scheme). Already-schemed input passes through unchanged.
+        let op = parse_op("browser.navigate", Some(&json!({"url":"localhost:8080"}))).unwrap();
+        assert!(matches!(op, BrowserOp::Navigate { url } if url == "http://localhost:8080"));
+        let op = parse_op("browser.navigate", Some(&json!({"url":"example.com"}))).unwrap();
+        assert!(matches!(op, BrowserOp::Navigate { url } if url == "https://example.com"));
+        // Non-URL input is rejected — no silent search fallback on the agent path.
+        assert!(parse_op("browser.navigate", Some(&json!({"url":"hello world"}))).is_err());
     }
 
     #[test]
@@ -557,5 +607,29 @@ mod tests {
         // The raw quote/backslash must NOT leak unescaped into the IIFE arg list
         // (it's inside a JSON-quoted JS string). Sanity: balanced parens.
         assert_eq!(js.matches('(').count(), js.matches(')').count());
+    }
+
+    #[test]
+    fn bind_verdict_only_allows_connected() {
+        // GAP-7.8: only a `connected` tunnel has a live SOCKS5 listener; every
+        // other recorded status still carries a (dead) `local_addr` and must be
+        // refused so `navigate` can't fake-success onto a dead proxy.
+        assert_eq!(bind_tunnel_verdict("connected"), BindTunnelVerdict::Bind);
+
+        for (status, want_contains) in [
+            ("connecting", "connecting"),
+            ("stopped", "stopped"),
+            ("failed", "failed"),
+            ("need_auth", "authentication"),
+            ("bogus", "not connected"),
+        ] {
+            match bind_tunnel_verdict(status) {
+                BindTunnelVerdict::Reject(msg) => assert!(
+                    msg.contains(want_contains),
+                    "status {status:?}: expected message containing {want_contains:?}, got {msg:?}"
+                ),
+                BindTunnelVerdict::Bind => panic!("status {status:?} must not bind"),
+            }
+        }
     }
 }
