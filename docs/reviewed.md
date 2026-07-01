@@ -14,9 +14,9 @@
 | UI/外壳 | 24 | — | 2 | 3 | 3 | 16 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
-| 平台 | 3 | — | — | 2 | — | 1 |
-| 集成 | 6 | 1 | — | 1 | — | 4 |
-| **合计** | **72** | **7** | **6** | **20** | **13** | **26** |
+| 平台 | 2 | — | — | 2 | — | — |
+| 集成 | 2 | 1 | — | 1 | — | — |
+| **合计** | **67** | **7** | **6** | **20** | **13** | **21** |
 
 ---
 
@@ -112,25 +112,20 @@
 | GAP-38 | SCP 文件传输 | feature | P4 | ✅ | [spec](reviewed/GAP-38-file-transfer/spec.md) |
 | GAP-44 | 共享会话 stub（config + invite + serve stub） | feature | P4 | ✅ | [spec](reviewed/GAP-44-shared-sessions/spec.md) |
 
-## 平台（3）
+## 平台（2）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
 | GAP-47 | macOS AppleScript 自动化 MVP（CLI + MCP） | platform | P2 | ✅ | [spec](reviewed/GAP-47-apple-script/spec.md) |
 | GAP-48 | `pureterm://` URL Scheme（macOS 注册 + tab/workspace/ssh） | platform | P2 | ✅ | [spec](reviewed/GAP-48-url-scheme/spec.md) |
 | GAP-46 | i18n（主应用 + Settings en/zh） | feature | P3 | ✅ | [spec](reviewed/GAP-46-i18n/spec.md) |
-| GAP-45 | 自动更新检查 | platform | P4 | ✅ | [spec](reviewed/GAP-45-auto-update/spec.md) |
 
-## 集成（6）
+## 集成（2）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
 | GAP-6.7 | Event Stream + 持久 JSONL 日志 | integration | P0 | ✅ | [spec](reviewed/GAP-6.7-event-stream/spec.md) · [test-plan](reviewed/GAP-6.7-event-stream/test-plan.md) |
 | GAP-51 | 块级输出（Blocks 侧栏 + sum-tree 索引 + grid 切片 + 搜索） | arch | P2 | ✅ | [spec](reviewed/GAP-51-block-based-output/spec.md) |
-| GAP-49 | 插件系统 stub | arch | P4 | ✅ | [spec](reviewed/GAP-49-plugin-system/spec.md) |
-| GAP-50 | 配置同步（本地 bundle） | integration | P4 | ✅ | [spec](reviewed/GAP-50-cloud-sync/spec.md) |
-| GAP-52 | Workflows（参数化命令序列） | feature | P4 | ✅ | [spec](reviewed/GAP-52-workflows/spec.md) |
-| GAP-53 | Notebooks（交互式文档数据模型 MVP） | feature | P4 | ✅ | [spec](reviewed/GAP-53-notebooks/spec.md) |
 
 ## 手动 E2E Test Plans
 

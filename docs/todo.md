@@ -28,13 +28,20 @@ _（无）_
 
 _（无）_
 
-## 平台（0）
+## 平台（1）
 
-_（无）_
+| GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
+|-----|------|----------|-----------|------|
+| GAP-45 | 自动更新检查（GitHub Releases API） | platform | P4 | [spec](todo/GAP-45-auto-update/spec.md) |
 
-## 集成（0）
+## 集成（4）
 
-_（无）_
+| GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
+|-----|------|----------|-----------|------|
+| GAP-49 | 插件系统 stub（WASM/dylib 运行时） | arch | P4 | [spec](todo/GAP-49-plugin-system/spec.md) |
+| GAP-50 | 配置同步（GitHub Gist push/pull） | integration | P4 | [spec](todo/GAP-50-cloud-sync/spec.md) |
+| GAP-52 | Workflows（参数化命令序列 + UI + 别名） | feature | P4 | [spec](todo/GAP-52-workflows/spec.md) |
+| GAP-53 | Notebooks（cell 执行引擎 + UI） | feature | P4 | [spec](todo/GAP-53-notebooks/spec.md) |
 
 ## 视觉（0）
 
