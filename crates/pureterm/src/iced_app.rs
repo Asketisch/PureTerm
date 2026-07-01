@@ -3443,16 +3443,16 @@ impl PureTermApp {
                 self.ssh_dialog = None;
                 self.set_active_tab(id);
                 if !login_cmds.is_empty() {
-                    if let Some(login_ctx) = self.active_terminal_ctx() {
-                        crate::login_scripts::run_login_commands(
-                            login_ctx,
-                            login_cmds,
-                            login_delay,
-                            login_on_error,
-                        );
-                    }
-                }
-                // GAP-6.7: SSH tab + daemon session created.
+                   if let Some(login_ctx) = self.active_terminal_ctx() {
+                       crate::login_scripts::run_login_commands(
+                            &login_ctx,
+                           login_cmds,
+                           login_delay,
+                           login_on_error,
+                       );
+                   }
+               }
+               // GAP-6.7: SSH tab + daemon session created.
                 self.events.emit(
                     crate::events::Category::Surface,
                     "tab.created",
@@ -3506,13 +3506,13 @@ impl PureTermApp {
                         self.ssh_dialog = None;
                         self.set_active_tab(id);
                         if !login_cmds.is_empty() {
-                            if let Some(login_ctx) = self.active_terminal_ctx() {
-                                crate::login_scripts::run_login_commands(
-                                    login_ctx,
-                                    login_cmds,
-                                    login_delay,
-                                    login_on_error,
-                                );
+                           if let Some(login_ctx) = self.active_terminal_ctx() {
+                               crate::login_scripts::run_login_commands(
+                                    &login_ctx,
+                                   login_cmds,
+                                   login_delay,
+                                   login_on_error,
+                               );
                             }
                         }
                     },

@@ -605,6 +605,17 @@ impl TerminalContext {
         }
     }
 
+    /// GAP-42: return a clone of the PTY notifier so login commands can be
+    /// sent from a background thread without holding a non-`Send`
+    /// `Arc<TerminalContext>`.
+    pub fn pty_notifier(&self) -> Option<Notifier> {
+        match self {
+            TerminalContext::Local(ctx) => Some(ctx.notifier.clone()),
+            #[cfg(unix)]
+            TerminalContext::Ssh(ctx) => Some(ctx.runtime.borrow().notifier.clone()),
+        }
+    }
+
     /// GAP-5.6: stamp a "reconnected" separator line into this SSH pane's grid
     /// on a successful reconnect. No-op for local panes. See
     /// [`inject_reconnect_marker_into`].

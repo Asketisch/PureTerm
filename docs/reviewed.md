@@ -13,9 +13,9 @@
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
-| SSH/网络 | 8 | 1 | 1 | 4 | 2 | — |
+| SSH/网络 | 9 | 1 | 1 | 4 | 3 | — |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **51** | **7** | **6** | **17** | **11** | **10** |
+| **合计** | **52** | **7** | **6** | **17** | **12** | **10** |
 
 ---
 
@@ -86,7 +86,7 @@
 | GAP-35 | LSP Client（多语言 server 配置 + hover/completion + 诊断） | integration | P1 | ✅ | [spec](reviewed/GAP-35-lsp-client/spec.md) |
 | GAP-34 | 文件预览 | feature | P4 | ✅ | [spec](reviewed/GAP-34-file-preview/spec.md) |
 
-## SSH/网络（8）
+## SSH/网络（9）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -98,6 +98,7 @@
 | GAP-5.3 | smallest-screen-wins PTY resize | feature | P2 | ✅ | [spec](reviewed/GAP-5.3-pty-resize/spec.md) |
 | GAP-39 | Serial & Telnet（CLI 探测 + profile 字段） | feature | P3 | ✅ | [spec](reviewed/GAP-39-serial-telnet/spec.md) |
 | GAP-41 | SSH Jump Host（ProxyJump -J） | feature | P3 | ✅ | [spec](reviewed/GAP-41-jump-host/spec.md) |
+| GAP-42 | SSH Login Scripts（login_commands） | feature | P3 | ✅ | [spec](reviewed/GAP-42-login-scripts/spec.md) |
 
 ## 集成（1）
 

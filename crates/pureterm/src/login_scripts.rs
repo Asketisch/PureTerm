@@ -3,11 +3,15 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use alacritty_terminal::event::Notify;
+use alacritty_terminal::event_loop::Notifier;
 use crate::terminal_context::TerminalContext;
 
-/// Schedule login commands on a background thread with delay between lines.
+/// Run login commands sequentially on a background thread. Each command is
+/// sent as if typed followed by Enter; a configurable delay separates them
+/// so the remote shell has time to process each line.
 pub fn run_login_commands(
-    ctx: Arc<TerminalContext>,
+    ctx: &Arc<TerminalContext>,
     commands: Vec<String>,
     delay_ms: u64,
     on_error: LoginErrorPolicy,
@@ -15,13 +19,32 @@ pub fn run_login_commands(
     if commands.is_empty() {
         return;
     }
-    // MVP: write the first command immediately on the main thread. Multi-line
-    // scripts with delays are deferred (background scheduling needs a Send-safe
-    // PTY notifier path).
-    let mut bytes = commands[0].clone().into_bytes();
-    bytes.push(b'\n');
-    ctx.write_to_pty(&bytes);
-    let _ = (delay_ms, on_error, commands.len());
+    // Extract a Send-safe notifier clone so the background thread can write
+    // without holding the non-Send Arc<TerminalContext>.
+    let Some(notifier) = ctx.pty_notifier() else {
+        return;
+    };
+
+    std::thread::Builder::new()
+        .name("pureterm-login-script".into())
+        .spawn(move || {
+            let delay = Duration::from_millis(delay_ms.max(1));
+            // Brief pause so the remote shell prompt is ready.
+            std::thread::sleep(Duration::from_millis(300));
+            for (i, cmd) in commands.iter().enumerate() {
+                if i > 0 {
+                    std::thread::sleep(delay);
+                }
+                let mut line = cmd.clone().into_bytes();
+                line.push(b'\n');
+                // Send the command; ignore errors (PTY may have closed).
+                notifier.notify(line);
+                // With `Stop` policy we cannot detect exit status without
+                // parsing output, so the policy is advisory only at MVP level.
+                let _ = on_error;
+            }
+        })
+        .ok();
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

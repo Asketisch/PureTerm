@@ -376,6 +376,7 @@ struct Writing {
     written: usize,
 }
 
+#[derive(Clone)]
 pub struct Notifier(pub EventLoopSender);
 
 impl event::Notify for Notifier {
