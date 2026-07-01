@@ -4,6 +4,8 @@
 >
 > 起点：用户报告输入英文有明显卡顿感（2026-06-30）。
 > 主分支：`iced-cover`（commit `921a407` 起步）。
+>
+> **2026-07-01 review**：Batch 1 改动已落地（`9aaafae`），764 + 10 单测绿；Batch 2-3 仍待执行，**整体计划未闭环** → 暂留 `docs/done/`，不升 `reviewed/`。Review 节点 = Batch 2-3 全部闭环后。
 
 ## Context（为什么做）
 
