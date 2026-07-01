@@ -11,12 +11,12 @@
 | 核心架构 | 1 | 1 | — | — | — | — |
 | AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
-| UI/外壳 | 16 | — | 2 | 3 | 3 | 8 |
+| UI/外壳 | 17 | — | 2 | 3 | 3 | 9 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
 | 平台 | 3 | — | — | 2 | — | 1 |
 | 集成 | 6 | 1 | — | 1 | — | 4 |
-| **合计** | **64** | **7** | **6** | **20** | **13** | **18** |
+| **合计** | **65** | **7** | **6** | **20** | **13** | **19** |
 
 ---
 
@@ -56,7 +56,7 @@
 | GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-18-bidi-support/spec.md) |
 | GAP-17 | Sixel/Kitty 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-kitty-graphics/spec.md) |
 
-## UI/外壳（16）
+## UI/外壳（17）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -76,6 +76,7 @@
 | GAP-28 | 自定义窗口边框 | feature | P4 | ✅ | [spec](reviewed/GAP-28-window-border/spec.md) |
 | GAP-29 | 环境标识徽章 | feature | P4 | ✅ | [spec](reviewed/GAP-29-badge-overlay/spec.md) |
 | GAP-4.6 | VoiceOver 无障碍 | platform | P4 | ✅ | [spec](reviewed/GAP-4.6-accessibility/spec.md) |
+| GAP-54 | 背景图片配置 | feature | P4 | ✅ | [spec](reviewed/GAP-54-background-image/spec.md) |
 
 ## 开发者工具（6）
 
