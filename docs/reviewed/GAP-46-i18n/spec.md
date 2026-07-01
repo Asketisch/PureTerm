@@ -5,8 +5,8 @@ category: 平台
 plan_type: feature
 priority: P3
 effort: L
-status: reviewed
-closed: 2026-06-29
+status: done
+closed: 2026-07-02
 reviewed: 2026-07-01
 ---
 

@@ -11,7 +11,8 @@
 | 平台 | 0 | — | — | — | — | — |
 | 集成 | 0 | — | — | — | — | — |
 | 视觉 | 9 | — | — | — | 1 | 8 |
-| **合计** | **9** | **—** | **—** | **—** | **1** | **8** |
+| 平台 | 1 | — | — | — | 1 | — |
+| **合计** | **10** | **—** | **—** | **—** | **2** | **8** |
 
 ---
 
@@ -28,6 +29,7 @@
 | GAP-59 | Emoji 独立 atlas 通道 + EmojiGlyph 容器 | [spec](reviewed/GAP-59-emoji-rendering/spec.md) |
 | GAP-60 | Pane 截图导出：image crate 编码 PNG + SVG stub + text snapshot | [spec](reviewed/GAP-60-screen-capture/spec.md) |
 | GAP-61 | 打印：NSPrintOperation 模态面板 + dataWithPDFInsideRect PDF 导出 + Linux lpr fallback | [spec](reviewed/GAP-61-print-support/spec.md) |
+| GAP-46 | 国际化：`pureterm-settings/src/i18n` 翻译表（en/zh）+ 59+9 处 `t`/`t_fmt` 覆盖 SSH / context menu / tab / palette / feed + 8 项单测 | [spec](reviewed/GAP-46-i18n/spec.md) |
 
 ---
 

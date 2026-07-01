@@ -5,9 +5,11 @@ category: 集成
 plan_type: arch
 priority: P2
 effort: XXL
-status: reviewed
-closed: 2026-06-29
-reviewed: 2026-07-01
+status: todo
+priority: P2
+arch: true
+moved_to_todo: 2026-07-02
+moved_reason: "Block-based output 跟后端 shell integration / OSC 133 / grid 切片耦合（arch 类），scaffold 已 done 但完整重构 (XXL 4+ 周) 暂不在视觉/平台冲刺范围内，按用户指示后端相关移到 todo"
 ---
 
 # Block-based Output（块级输出）

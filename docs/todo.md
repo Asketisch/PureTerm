@@ -40,6 +40,7 @@ _（无）_
 |-----|------|----------|-----------|------|
 | GAP-49 | 插件系统 stub（WASM/dylib 运行时） | arch | P4 | [spec](todo/GAP-49-plugin-system/spec.md) |
 | GAP-50 | 配置同步（GitHub Gist push/pull） | integration | P4 | [spec](todo/GAP-50-cloud-sync/spec.md) |
+| GAP-51 | 块级输出（block-based output，Warp 风格；arch 类，scaffold done，完整重构待后端冲刺） | arch | P2 | [spec](todo/GAP-51-block-based-output/spec.md) |
 | GAP-52 | Workflows（参数化命令序列 + UI + 别名） | feature | P4 | [spec](todo/GAP-52-workflows/spec.md) |
 | GAP-53 | Notebooks（cell 执行引擎 + UI） | feature | P4 | [spec](todo/GAP-53-notebooks/spec.md) |
 
