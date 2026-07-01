@@ -10,16 +10,15 @@
 |------|------|----|----|----|----|----|
 | 平台 | 0 | — | — | — | — | — |
 | 集成 | 0 | — | — | — | — | — |
-| 视觉 | 4 | — | — | — | — | 4 |
-| **合计** | **4** | **—** | **—** | **1** | **1** | **14** |
+| 视觉 | 3 | — | — | — | — | 3 |
+| **合计** | **3** | **—** | **—** | **1** | **1** | **14** |
 
 ---
 
-## 视觉（4）
+## 视觉（3）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
 |-----|------|----------|-----------|------|
-| GAP-58 | 扩展主题 | feature | P4 | [spec](done/GAP-58-custom-theme-css/spec.md) |
 | GAP-60 | Pane 截图/导出 | feature | P4 | [spec](done/GAP-60-screen-capture/spec.md) |
 | GAP-59 | Emoji 渲染通道 | enhance | P4 | [spec](done/GAP-59-emoji-rendering/spec.md) |
 | GAP-61 | 打印支持 | feature | P4 | [spec](done/GAP-61-print-support/spec.md) |

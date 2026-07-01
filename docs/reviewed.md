@@ -11,12 +11,12 @@
 | 核心架构 | 1 | 1 | — | — | — | — |
 | AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
-| UI/外壳 | 20 | — | 2 | 3 | 3 | 12 |
+| UI/外壳 | 21 | — | 2 | 3 | 3 | 13 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
 | 平台 | 3 | — | — | 2 | — | 1 |
 | 集成 | 6 | 1 | — | 1 | — | 4 |
-| **合计** | **68** | **7** | **6** | **20** | **13** | **22** |
+| **合计** | **69** | **7** | **6** | **20** | **13** | **23** |
 
 ---
 
@@ -56,7 +56,7 @@
 | GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-18-bidi-support/spec.md) |
 | GAP-17 | Sixel/Kitty 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-kitty-graphics/spec.md) |
 
-## UI/外壳（20）
+## UI/外壳（21）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -80,6 +80,7 @@
 | GAP-55 | 窗口透明度/模糊 | feature | P4 | ✅ | [spec](reviewed/GAP-55-transparency-blur/spec.md) |
 | GAP-56 | 焦点跟随鼠标 | feature | P4 | ✅ | [spec](reviewed/GAP-56-focus-follows-mouse/spec.md) |
 | GAP-57 | 触觉反馈 | platform | P4 | ✅ | [spec](reviewed/GAP-57-haptic-feedback/spec.md) |
+| GAP-58 | 扩展主题 | feature | P4 | ✅ | [spec](reviewed/GAP-58-custom-theme-css/spec.md) |
 
 ## 开发者工具（6）
 
