@@ -4426,22 +4426,51 @@ impl PureTermApp {
                 }
                 #[cfg(unix)]
                 {
-                    let saved_layout = crate::session_restore::load();
-                    let restored = self.try_restore_layout(saved_layout);
-                    if !restored {
-                        let first_id = self
-                            .create_tab(self.terminal_viewport_width(), self.viewport_size.height);
-                        self.set_active_tab(first_id);
-                    }
-                    // GAP-7.6: startup scan for external agent processes
-                    // (`ps` ~10-30ms, unix-only); periodic re-scan is separate.
-                    if self.detect_cfg.enabled
-                        && self.detect_cfg.scan_on_startup
-                        && !self.vault_agents.is_empty()
-                    {
-                        let detected = crate::agent_detect::scan(&self.vault_agents);
-                        self.detect_panel
-                            .refresh(crate::agent_detect::with_sessions(detected));
+                    // Wrap the restore/create path in `catch_unwind`: iced 0.14
+                    // freezes the last frame on an `update()` panic, so a panic
+                    // anywhere below (e.g. `create_tab`'s workspace `expect`, or
+                    // attaching to a stale/wedged daemon during restore) would
+                    // otherwise leave the window on "Starting PureTerm…"
+                    // forever. On panic we fall back to a best-effort direct-PTY
+                    // tab. `booted` is set unconditionally afterward (after both
+                    // cfg blocks) so the placeholder always clears.
+                    let boot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let saved_layout = crate::session_restore::load();
+                        let restored = self.try_restore_layout(saved_layout);
+                        if !restored {
+                            let first_id = self
+                                .create_tab(self.terminal_viewport_width(), self.viewport_size.height);
+                            self.set_active_tab(first_id);
+                        }
+                        // GAP-7.6: startup scan for external agent processes
+                        // (`ps` ~10-30ms, unix-only); periodic re-scan is separate.
+                        if self.detect_cfg.enabled
+                            && self.detect_cfg.scan_on_startup
+                            && !self.vault_agents.is_empty()
+                        {
+                            let detected = crate::agent_detect::scan(&self.vault_agents);
+                            self.detect_panel
+                                .refresh(crate::agent_detect::with_sessions(detected));
+                        }
+                    }));
+                    if let Err(payload) = boot {
+                        let msg = payload
+                            .downcast_ref::<&'static str>()
+                            .copied()
+                            .or_else(|| payload.downcast_ref::<String>().map(|s| s.as_str()))
+                            .unwrap_or("<non-string panic payload>");
+                        log::error!(
+                            "boot: restore/create_tab panicked ({msg}); falling back to a \
+                             direct-PTY tab so the window isn't stuck on the placeholder"
+                        );
+                        // Best-effort fallback: ensure at least one tab exists.
+                        // Wrapped again in case the workspace state that caused
+                        // the first panic also breaks `create_tab`.
+                        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            let first_id = self
+                                .create_tab(self.terminal_viewport_width(), self.viewport_size.height);
+                            self.set_active_tab(first_id);
+                        }));
                     }
                 }
                 #[cfg(not(unix))]
@@ -4450,6 +4479,8 @@ impl PureTermApp {
                         self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                     self.set_active_tab(first_id);
                 }
+                // ALWAYS flip the boot gate — even if the restore path panicked
+                // above — so "Starting PureTerm…" can never get stuck on screen.
                 self.booted = true;
                 return Task::none();
             }
