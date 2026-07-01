@@ -140,6 +140,12 @@ objc2-app-kit = { version = "0.3.1", default-features = false, features = [
     "NSImage", "NSBitmapImageRep", "NSImageRep",
     # GAP-09: Dock badge — NSApplication::dockTile() → NSDockTile::setBadgeLabel.
     "NSDockTile",
+    # GAP-61: print - NSPrintOperation.pdfOperationWithView + runOperation modal
+    # dialog; NSPrintInfo drives the page rect; NSGraphicsContext needed for
+    # view lockFocus(). NSStringDrawing lets us draw monospace lines into the
+    # offscreen view that becomes the print job's contents.
+    "NSPrintOperation", "NSPrintInfo", "NSPrintPanel",
+    "NSGraphicsContext", "NSStringDrawing",
 ] }
 objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
     "std", "CALayer", "CAMetalLayer", "objc2-metal",
