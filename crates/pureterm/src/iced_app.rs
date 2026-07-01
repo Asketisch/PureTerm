@@ -526,6 +526,11 @@ pub struct PureTermApp {
     background_image_mode: crate::background_image::BackgroundMode,
     background_image_opacity: f32,
     background_image_signature: u64,
+    /// GAP-56: focus-follows-mouse state (X11-style hover focus).
+    focus_follows_mouse_cfg: crate::focus_follows_mouse::FocusFollowsMouseConfig,
+    focus_follows_mouse_state: crate::focus_follows_mouse::FocusFollowsMouseState,
+    /// GAP-56: pane id currently under the cursor (set on CursorMoved).
+    last_hovered_pane: Option<PaneId>,
     /// GAP-10: opt-in flag allowing `exec` / cross-pane `send_text` to fire when
     /// the match originated from an SSH/remote pane (default `false`).
     allow_exec_on_remote: bool,
@@ -1940,6 +1945,8 @@ impl PureTermApp {
         // GAP-54: snapshot the background config *before* `apply_platform_effects`
         // (which moves `p4`), so we can decode the image below.
         let bg_cfg_snapshot = p4.background_cfg.clone();
+        // GAP-56: snapshot focus-follows-mouse config too.
+        let ffm_cfg_snapshot = p4.focus_follows_cfg.clone();
         p4.apply_platform_effects();
 
         // GAP-54: load + decode the configured background image. Failures
@@ -2176,6 +2183,9 @@ impl PureTermApp {
             background_image_mode: bg_cfg_snapshot.mode,
             background_image_opacity: bg_cfg_snapshot.opacity,
             background_image_signature: bg_signature,
+            focus_follows_mouse_cfg: ffm_cfg_snapshot,
+            focus_follows_mouse_state: crate::focus_follows_mouse::FocusFollowsMouseState::default(),
+            last_hovered_pane: None,
             trigger_hit_total,
             toast: None,
             pane_cwds: HashMap::new(),
@@ -3308,6 +3318,25 @@ impl PureTermApp {
     /// mutate the context through interior mutability without holding a
     /// borrow of `self`.
     #[cfg(unix)]
+    /// GAP-56: find the pane id under a cursor point. Returns `None` when
+    /// the cursor is over a non-pane region, when focus-follows-mouse is
+    /// disabled, or when the active window has no split tree.
+    /// Coordinates are passed as window-content logical pixels; the
+    /// viewport is treated as a single large rect (0, 0, +inf, +inf) so a
+    /// point inside it always hits. Multi-window split resolution is left
+    /// for the dedicated layout work tracked separately.
+    fn pane_under_point(&self, pos: Point) -> Option<PaneId> {
+        if !self.focus_follows_mouse_cfg.enabled {
+            return None;
+        }
+        let win_idx = self.windows.iter().position(|w| w.window_id == self.active_window_id)?;
+        let win = &self.windows[win_idx];
+        let workspace = win.workspaces.iter().find(|ws| ws.id == win.active_workspace)?;
+        let tab = workspace.active_tab_ref()?;
+        let split = Some(&tab.split_tree);
+        split.unwrap().pane_at_point(pos.x, pos.y, 0.0, 0.0, 1.0e6, 1.0e6)
+    }
+
     fn pane_terminal_ctx(&self, pane_id: PaneId) -> Option<Arc<TerminalContext>> {
         self.tabs()
             .iter()
@@ -4532,6 +4561,21 @@ impl PureTermApp {
                 return Task::none();
             }
             Message::TerminalWakeup => {
+                // GAP-56: focus-follows-mouse tick — if the hover timer
+                // has elapsed, switch focus to the hovered pane.
+                if self.focus_follows_mouse_cfg.enabled {
+                    if let Some(pane_id_raw) = self.focus_follows_mouse_state.pane_to_focus(&self.focus_follows_mouse_cfg) {
+                        let new_pane = PaneId(pane_id_raw);
+                        let current = self.active_tab_ref().map(|t| t.active_pane);
+                        if Some(new_pane) != current {
+                            if let Some(tab) = self.active_tab_mut() {
+                                if tab.panes.contains_key(&new_pane) {
+                                    tab.active_pane = new_pane;
+                                }
+                            }
+                        }
+                    }
+                }
                 #[cfg(target_os = "macos")]
                 {
                     if !self.delegate_installed {
@@ -7488,6 +7532,17 @@ impl PureTermApp {
             }
             Message::CursorMoved(pos) => {
                 self.last_cursor_pos = pos;
+                // GAP-56: focus-follows-mouse — record the pane under the
+                // cursor and reset the hover timer. The actual focus switch
+                // happens after `delay_ms` elapses (see TerminalWakeup).
+                if self.focus_follows_mouse_cfg.enabled {
+                    if let Some(pane_id) = self.pane_under_point(pos) {
+                        if self.last_hovered_pane != Some(pane_id) {
+                            self.focus_follows_mouse_state.on_pane_enter(pane_id.0);
+                            self.last_hovered_pane = Some(pane_id);
+                        }
+                    }
+                }
             }
             Message::MouseScroll(delta) => {
                 self.handle_scroll(delta);
