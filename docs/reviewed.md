@@ -12,10 +12,10 @@
 | AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
-| 开发者工具 | 1 | — | 1 | — | — | — |
+| 开发者工具 | 2 | — | 1 | 1 | — | — |
 | SSH/网络 | 2 | 1 | 1 | — | — | — |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **40** | **7** | **6** | **10** | **8** | **9** |
+| **合计** | **41** | **7** | **6** | **11** | **8** | **9** |
 
 ---
 
@@ -75,10 +75,11 @@
 | GAP-28 | 自定义窗口边框 | feature | P4 | ✅ | [spec](reviewed/GAP-28-window-border/spec.md) |
 | GAP-29 | 环境标识徽章 | feature | P4 | ✅ | [spec](reviewed/GAP-29-badge-overlay/spec.md) |
 
-## 开发者工具（1）
+## 开发者工具（2）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
+| GAP-32 | Git Integration（porcelain + gh PR + 面板） | integration | P2 | ✅ | [spec](reviewed/GAP-32-git-integration/spec.md) · [test-plan](reviewed/GAP-32-git-integration/test-plan.md) |
 | GAP-35 | LSP Client（多语言 server 配置 + hover/completion + 诊断） | integration | P1 | ✅ | [spec](reviewed/GAP-35-lsp-client/spec.md) |
 
 ## SSH/网络（2）
