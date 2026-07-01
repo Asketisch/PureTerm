@@ -13,9 +13,9 @@
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
-| SSH/网络 | 6 | 1 | 1 | 4 | — | — |
+| SSH/网络 | 7 | 1 | 1 | 4 | 1 | — |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **49** | **7** | **6** | **17** | **9** | **10** |
+| **合计** | **50** | **7** | **6** | **17** | **10** | **10** |
 
 ---
 
@@ -86,7 +86,7 @@
 | GAP-35 | LSP Client（多语言 server 配置 + hover/completion + 诊断） | integration | P1 | ✅ | [spec](reviewed/GAP-35-lsp-client/spec.md) |
 | GAP-34 | 文件预览 | feature | P4 | ✅ | [spec](reviewed/GAP-34-file-preview/spec.md) |
 
-## SSH/网络（6）
+## SSH/网络（7）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -96,6 +96,7 @@
 | GAP-5.4 | SSH Agent Forwarding | integration | P2 | ✅ | [spec](reviewed/GAP-40-ssh-forwarding/spec.md) |
 | GAP-43 | 远程文件浏览（`remote.listdir/read/write/find` + Files 侧栏） | feature | P2 | ✅ | [spec](reviewed/GAP-43-remote-server/spec.md) |
 | GAP-5.3 | smallest-screen-wins PTY resize | feature | P2 | ✅ | [spec](reviewed/GAP-5.3-pty-resize/spec.md) |
+| GAP-39 | Serial & Telnet（CLI 探测 + profile 字段） | feature | P3 | ✅ | [spec](reviewed/GAP-39-serial-telnet/spec.md) |
 
 ## 集成（1）
 
