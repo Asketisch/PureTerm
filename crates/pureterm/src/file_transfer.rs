@@ -51,12 +51,49 @@ pub fn scp_upload(
     }
 }
 
+/// Download a remote file via `scp` when enabled. MVP: shell out to system scp.
+#[cfg(unix)]
+pub fn scp_download(
+    cfg: &FileTransferConfig,
+    user_host: &str,
+    remote_path: &str,
+    local: &Path,
+) -> Result<(), String> {
+    if !cfg.enabled {
+        return Err("file_transfer disabled".into());
+    }
+    if let Some(parent) = local.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
+    let src = format!("{user_host}:{remote_path}");
+    let status = std::process::Command::new("scp")
+        .arg(&src)
+        .arg(local)
+        .status()
+        .map_err(|e| format!("scp spawn failed: {e}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("scp exited with {status}"))
+    }
+}
+
 #[cfg(not(unix))]
 pub fn scp_upload(
     _cfg: &FileTransferConfig,
     _local: &Path,
     _user_host: &str,
     _remote_path: &str,
+) -> Result<(), String> {
+    Err("file transfer requires Unix".into())
+}
+
+#[cfg(not(unix))]
+pub fn scp_download(
+    _cfg: &FileTransferConfig,
+    _user_host: &str,
+    _remote_path: &str,
+    _local: &Path,
 ) -> Result<(), String> {
     Err("file transfer requires Unix".into())
 }
@@ -69,5 +106,11 @@ mod tests {
     fn disabled_returns_error() {
         let cfg = FileTransferConfig::default();
         assert!(scp_upload(&cfg, Path::new("/tmp/x"), "u@h", "/tmp/x").is_err());
+    }
+
+    #[test]
+    fn disabled_download_returns_error() {
+        let cfg = FileTransferConfig::default();
+        assert!(scp_download(&cfg, "u@h", "/tmp/x", Path::new("/tmp/x")).is_err());
     }
 }
