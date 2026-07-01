@@ -10,16 +10,15 @@
 |------|------|----|----|----|----|----|
 | 平台 | 0 | — | — | — | — | — |
 | 集成 | 0 | — | — | — | — | — |
-| 视觉 | 9 | — | — | — | — | 9 |
-| **合计** | **9** | **—** | **—** | **1** | **1** | **14** |
+| 视觉 | 8 | — | — | — | — | 8 |
+| **合计** | **8** | **—** | **—** | **1** | **1** | **14** |
 
 ---
 
-## 视觉（9）
+## 视觉（8）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
 |-----|------|----------|-----------|------|
-| GAP-4.6 | VoiceOver 无障碍 | platform | P4 | [spec](done/GAP-4.6-accessibility/spec.md) |
 | GAP-54 | 背景图片配置 | feature | P4 | [spec](done/GAP-54-background-image/spec.md) |
 | GAP-55 | 窗口透明度/模糊 | feature | P4 | [spec](done/GAP-55-transparency-blur/spec.md) |
 | GAP-56 | 焦点跟随鼠标 | feature | P4 | [spec](done/GAP-56-focus-follows-mouse/spec.md) |
