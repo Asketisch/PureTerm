@@ -5,8 +5,7 @@ category: 集成
 plan_type: feature
 priority: P4
 effort: L
-status: done
-closed: 2026-06-29
+status: todo
 ---
 
 # Notebooks（交互式文档）

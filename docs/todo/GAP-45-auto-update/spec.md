@@ -5,9 +5,7 @@ category: 平台
 plan_type: platform
 priority: P4
 effort: M
-status: reviewed
-closed: 2026-06-29
-reviewed: 2026-07-01
+status: todo
 ---
 
 # Auto Update（自动更新）
@@ -25,7 +23,7 @@ reviewed: 2026-07-01
 
 ## PureTerm 现状
 
-**Done（2026-06-29）。** `auto_update.rs` 提供 `AutoUpdateConfig`（`enabled` / `auto_check` / `channel` / `feed_url`，默认 `enabled = false`）和 `check_for_updates`，由 `AppConfig::load_auto_update` 从 `[update]` 读取，启动时通过 `p4_runtime::PureTermRuntime::auto_update_cfg` 装载；CLI 子命令 `pureterm update check`（`p4_cli.rs`）调用 `check_for_updates` 输出 `current_version` / `latest_available` / `message`，以 `PURETERM_LATEST_VERSION` 环境变量作为注入的 latest（Sparkle / GitHub Releases 实际抓取待后续）。
+**未实现。**
 
 ## 优先级
 

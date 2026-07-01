@@ -5,8 +5,7 @@ category: 集成
 plan_type: integration
 priority: P4
 effort: M
-status: done
-closed: 2026-06-29
+status: todo
 ---
 
 # Cloud Sync（云端同步）

@@ -5,9 +5,7 @@ category: 集成
 plan_type: arch
 priority: P4
 effort: XL
-status: reviewed
-closed: 2026-06-29
-reviewed: 2026-07-01
+status: todo
 ---
 
 # Plugin System（插件系统）
@@ -24,7 +22,7 @@ reviewed: 2026-07-01
 
 ## PureTerm 现状
 
-**Done（2026-06-29，stub）。** `plugin_system.rs` 提供 `PluginSystemConfig`（`enabled` / `directory`，默认 `~/.config/pureterm/plugins`）、`list_plugins`（扫目录返回 `PluginEntry`）和 `install_stub`（创建 plugin 目录 + `plugin.toml` 模板）。`AppConfig::load_plugins` 从 `[plugins]` 装载；CLI `pureterm plugin install <name>` 走 `install_stub` 落盘。运行时加载（WASM / dylib）按 spec 中量/重量方案留待后续。
+**未实现。** PureTerm 的扩展方式是通过配置（SSH profiles, Commands, Agent hooks），没有运行时插件系统。
 
 ## 优先级
 
