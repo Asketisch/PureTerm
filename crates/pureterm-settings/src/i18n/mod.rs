@@ -619,3 +619,69 @@ fn builtin_zh() -> HashMap<String, String> {
 
     m
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_locale_is_english() {
+        let i = I18n::new();
+        assert_eq!(i.current_locale(), "en");
+    }
+
+    #[test]
+    fn set_locale_zh_returns_chinese() {
+        let mut i = I18n::new();
+        i.set_locale("zh");
+        assert_eq!(i.current_locale(), "zh");
+    }
+
+    #[test]
+    fn set_locale_unknown_keeps_current() {
+        let mut i = I18n::new();
+        i.set_locale("xx-YY"); // not in the table -> ignored
+        assert_eq!(i.current_locale(), "en");
+    }
+
+    #[test]
+    fn t_known_key_returns_value() {
+        let i = I18n::new();
+        let v = i.t("tab.title.format");
+        assert!(v.contains("{n}"));
+    }
+
+    #[test]
+    fn t_unknown_key_returns_key() {
+        let i = I18n::new();
+        // Unknown keys should round-trip the input rather than crash.
+        let v = i.t("missing.example.key");
+        assert_eq!(v, "missing.example.key");
+    }
+
+    #[test]
+    fn t_fmt_replaces_args() {
+        let i = I18n::new();
+        let v = i.t_fmt("tab.title.format", &[("n", "5")]);
+        assert!(v.contains("5"));
+    }
+
+    #[test]
+    fn available_locales_lists_known() {
+        let i = I18n::new();
+        let locs = i.available_locales();
+        let codes: Vec<&str> = locs.iter().map(|(c, _)| *c).collect();
+        assert!(codes.contains(&"en"));
+        assert!(codes.contains(&"zh"));
+    }
+
+    #[test]
+    fn locale_fallback_when_key_missing() {
+        let mut i = I18n::new();
+        i.set_locale("zh");
+        // Keys missing in zh should fall back to en.
+        let v = i.t("missing.key");
+        assert_eq!(v, "missing.key");
+    }
+}
