@@ -11,12 +11,12 @@
 | 核心架构 | 1 | 1 | — | — | — | — |
 | AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
-| UI/外壳 | 18 | — | 2 | 3 | 3 | 10 |
+| UI/外壳 | 19 | — | 2 | 3 | 3 | 11 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
 | SSH/网络 | 11 | 1 | 1 | 4 | 3 | 2 |
 | 平台 | 3 | — | — | 2 | — | 1 |
 | 集成 | 6 | 1 | — | 1 | — | 4 |
-| **合计** | **66** | **7** | **6** | **20** | **13** | **20** |
+| **合计** | **67** | **7** | **6** | **20** | **13** | **21** |
 
 ---
 
@@ -56,7 +56,7 @@
 | GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-18-bidi-support/spec.md) |
 | GAP-17 | Sixel/Kitty 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-kitty-graphics/spec.md) |
 
-## UI/外壳（18）
+## UI/外壳（19）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -78,6 +78,7 @@
 | GAP-4.6 | VoiceOver 无障碍 | platform | P4 | ✅ | [spec](reviewed/GAP-4.6-accessibility/spec.md) |
 | GAP-54 | 背景图片配置 | feature | P4 | ✅ | [spec](reviewed/GAP-54-background-image/spec.md) |
 | GAP-55 | 窗口透明度/模糊 | feature | P4 | ✅ | [spec](reviewed/GAP-55-transparency-blur/spec.md) |
+| GAP-56 | 焦点跟随鼠标 | feature | P4 | ✅ | [spec](reviewed/GAP-56-focus-follows-mouse/spec.md) |
 
 ## 开发者工具（6）
 
