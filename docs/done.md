@@ -8,33 +8,14 @@
 
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
-| UI/外壳 | 13 | — | — | 3 | 3 | 7 |
 | 开发者工具 | 5 | — | — | 3 | 1 | 1 |
 | SSH/网络 | 9 | — | — | 4 | 3 | 2 |
 | 平台 | 4 | — | — | 2 | 1 | 1 |
 | 集成 | 5 | — | — | 1 | — | 4 |
 | 视觉 | 9 | — | — | — | — | 9 |
-| **合计** | **45** | **—** | **—** | **13** | **8** | **24** |
+| **合计** | **32** | **—** | **—** | **10** | **5** | **17** |
 
 ---
-
-## UI/外壳（13）
-
-| GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
-|-----|------|----------|-----------|------|
-| GAP-24 | Enhanced Status Bar（40+ 组件） | enhance | P2 | [spec](done/GAP-24-status-bar/spec.md) |
-| GAP-25 | Multi-Window MVP（⌘⇧N 新窗 + 跨实例 workspace.switch） | feature | P2 | [spec](done/GAP-25-multi-window/spec.md) |
-| GAP-3.2 | 可编程 Sidebar DSL MVP（TOML + EventBus） | feature | P2 | [spec](done/GAP-3.2-programmable-sidebar/spec.md) |
-| GAP-26 | Workspace Groups（左侧栏分组） | feature | P3 | [spec](done/GAP-26-workspace-groups/spec.md) |
-| GAP-30 | Toolbelt（右侧栏 Tools 标签） | feature | P3 | [spec](done/GAP-30-toolbelt/spec.md) |
-| GAP-31 | Quake-style Dock（F12 下拉窗口 MVP） | feature | P3 | [spec](done/GAP-31-quake-dock/spec.md) |
-| GAP-20 | macOS 毛玻璃效果 MVP | platform | P4 | [spec](done/GAP-20-glass-effect/spec.md) |
-| GAP-21 | Dock Badge（通知 + Feed 角标 + Dock 最近 Workspace 菜单） | wrap-up | P4 | [spec](done/GAP-21-dock-badge/spec.md) |
-| GAP-22 | Touch Bar scaffold | platform | P4 | [spec](done/GAP-22-touch-bar/spec.md) |
-| GAP-23 | 可视化 Tab Bar 配置 | feature | P4 | [spec](done/GAP-23-tab-bar/spec.md) |
-| GAP-27 | Settings Panel（独立 Iced 进程） | feature | P4 | [spec](done/GAP-27-settings-panel/spec.md) |
-| GAP-28 | 自定义窗口边框 | feature | P4 | [spec](done/GAP-28-window-border/spec.md) |
-| GAP-29 | 环境标识徽章 | feature | P4 | [spec](done/GAP-29-badge-overlay/spec.md) |
 
 ## 开发者工具（5）
 

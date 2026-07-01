@@ -11,11 +11,11 @@
 | 核心架构 | 1 | 1 | — | — | — | — |
 | AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
-| UI/外壳 | 2 | — | 2 | — | — | — |
+| UI/外壳 | 15 | — | 2 | 3 | 3 | 7 |
 | 开发者工具 | 1 | — | 1 | — | — | — |
 | SSH/网络 | 2 | 1 | 1 | — | — | — |
 | 集成 | 1 | 1 | — | — | — | — |
-| **合计** | **27** | **7** | **6** | **7** | **5** | **2** |
+| **合计** | **40** | **7** | **6** | **10** | **8** | **9** |
 
 ---
 
@@ -55,12 +55,25 @@
 | GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-18-bidi-support/spec.md) |
 | GAP-17 | Sixel/Kitty 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-kitty-graphics/spec.md) |
 
-## UI/外壳（2）
+## UI/外壳（15）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
 | GAP-19 | Dual Sidebar（⌘B 左 / ⌘⇧B 右 — Workspace + Find/Feed/Git） | feature | P1 | ✅ | [spec](reviewed/GAP-19-dual-sidebar/spec.md) |
 | GAP-3.5 | 内置 Browser 面板 / WebView | feature | P1 | ✅ | [spec](reviewed/GAP-3.5-browser-panel/spec.md) · [test-plan](reviewed/GAP-3.5-browser-panel/test-plan.md) |
+| GAP-24 | Enhanced Status Bar（40+ 组件） | enhance | P2 | ✅ | [spec](reviewed/GAP-24-status-bar/spec.md) |
+| GAP-25 | Multi-Window MVP（⌘⇧N 新窗 + 跨实例 workspace.switch） | feature | P2 | ✅ | [spec](reviewed/GAP-25-multi-window/spec.md) |
+| GAP-3.2 | 可编程 Sidebar DSL MVP（TOML + EventBus） | feature | P2 | ✅ | [spec](reviewed/GAP-3.2-programmable-sidebar/spec.md) |
+| GAP-26 | Workspace Groups（左侧栏分组） | feature | P3 | ✅ | [spec](reviewed/GAP-26-workspace-groups/spec.md) |
+| GAP-30 | Toolbelt（右侧栏 Tools 标签） | feature | P3 | ✅ | [spec](reviewed/GAP-30-toolbelt/spec.md) |
+| GAP-31 | Quake-style Dock（F12 下拉窗口 MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-31-quake-dock/spec.md) |
+| GAP-20 | macOS 毛玻璃效果 MVP | platform | P4 | ✅ | [spec](reviewed/GAP-20-glass-effect/spec.md) |
+| GAP-21 | Dock Badge（通知 + Feed 角标 + Dock 最近 Workspace 菜单） | wrap-up | P4 | ✅ | [spec](reviewed/GAP-21-dock-badge/spec.md) |
+| GAP-22 | Touch Bar scaffold | platform | P4 | ✅ | [spec](reviewed/GAP-22-touch-bar/spec.md) |
+| GAP-23 | 可视化 Tab Bar 配置 | feature | P4 | ✅ | [spec](reviewed/GAP-23-tab-bar/spec.md) |
+| GAP-27 | Settings Panel（独立 Iced 进程） | feature | P4 | ✅ | [spec](reviewed/GAP-27-settings-panel/spec.md) |
+| GAP-28 | 自定义窗口边框 | feature | P4 | ✅ | [spec](reviewed/GAP-28-window-border/spec.md) |
+| GAP-29 | 环境标识徽章 | feature | P4 | ✅ | [spec](reviewed/GAP-29-badge-overlay/spec.md) |
 
 ## 开发者工具（1）
 
