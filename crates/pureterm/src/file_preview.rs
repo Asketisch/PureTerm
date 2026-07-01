@@ -1,4 +1,9 @@
 //! GAP-34: File preview — image/PDF/text path detection + open helper.
+//!
+//! Detects the preview kind (image/PDF/text) from a file extension and opens it
+//! via the platform handler. On macOS QuickLook (`qlmanage -p`) is preferred for
+//! images/PDFs; text/unknown fall back to the default `open` handler.
+//! Wired into the app via `Cmd+Y` (`Message::PreviewFile`).
 
 use std::path::Path;
 
@@ -32,12 +37,17 @@ pub fn detect_kind(path: &Path) -> PreviewKind {
     match ext.as_str() {
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => PreviewKind::Image,
         "pdf" => PreviewKind::Pdf,
-        "txt" | "md" | "rs" | "toml" | "json" | "yaml" | "yml" | "log" => PreviewKind::Text,
+        "txt" | "md" | "rs" | "toml" | "json" | "yaml" | "yml" | "log" | "ts" | "js" | "py"
+        | "go" | "c" | "h" | "cpp" | "hpp" | "java" | "rb" | "sh" | "css" | "html" | "xml"
+        | "sql" | "kt" | "swift" | "lua" | "vim" | "dart" => PreviewKind::Text,
         _ => PreviewKind::Unknown,
     }
 }
 
-/// Open preview via platform handler. MVP: `open` / `xdg-open`.
+/// Open a file preview via the platform handler.
+///
+/// macOS: QuickLook (`qlmanage -p`) for images/PDFs; `open` for text/unknown.
+/// Linux: `xdg-open`. Other platforms: unsupported.
 pub fn open_preview(path: &Path, cfg: &FilePreviewConfig) -> Result<(), String> {
     if !cfg.enabled {
         return Err("file_preview disabled".into());
@@ -45,12 +55,21 @@ pub fn open_preview(path: &Path, cfg: &FilePreviewConfig) -> Result<(), String> 
     if !path.exists() {
         return Err(format!("path not found: {}", path.display()));
     }
+    let kind = detect_kind(path);
     #[cfg(target_os = "macos")]
     {
-        std::process::Command::new("open")
-            .arg(path)
-            .status()
-            .map_err(|e| e.to_string())?;
+        if matches!(kind, PreviewKind::Image | PreviewKind::Pdf) {
+            std::process::Command::new("qlmanage")
+                .args(["-p"])
+                .arg(path)
+                .status()
+                .map_err(|e| e.to_string())?;
+        } else {
+            std::process::Command::new("open")
+                .arg(path)
+                .status()
+                .map_err(|e| e.to_string())?;
+        }
     }
     #[cfg(target_os = "linux")]
     {
@@ -61,6 +80,7 @@ pub fn open_preview(path: &Path, cfg: &FilePreviewConfig) -> Result<(), String> 
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
+        let _ = kind;
         return Err("file preview not supported on this platform".into());
     }
     Ok(())
@@ -76,5 +96,24 @@ mod tests {
         assert_eq!(detect_kind(&PathBuf::from("a.png")), PreviewKind::Image);
         assert_eq!(detect_kind(&PathBuf::from("b.pdf")), PreviewKind::Pdf);
         assert_eq!(detect_kind(&PathBuf::from("c.rs")), PreviewKind::Text);
+    }
+
+    #[test]
+    fn detects_more_text_extensions() {
+        assert_eq!(detect_kind(&PathBuf::from("a.ts")), PreviewKind::Text);
+        assert_eq!(detect_kind(&PathBuf::from("b.py")), PreviewKind::Text);
+        assert_eq!(detect_kind(&PathBuf::from("c.go")), PreviewKind::Text);
+    }
+
+    #[test]
+    fn unknown_extension() {
+        assert_eq!(detect_kind(&PathBuf::from("a.bin")), PreviewKind::Unknown);
+    }
+
+    #[test]
+    fn disabled_returns_error() {
+        let cfg = FilePreviewConfig { enabled: false };
+        let res = open_preview(std::path::Path::new("/dev/null"), &cfg);
+        assert!(res.is_err());
     }
 }

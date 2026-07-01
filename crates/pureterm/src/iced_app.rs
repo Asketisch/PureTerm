@@ -541,6 +541,8 @@ pub struct PureTermApp {
     hover_preview: crate::hover_preview::HoverPreviewState,
     /// GAP-36: Cmd-click file:line → editor.
     semantic_history_cfg: crate::app_config::SemanticHistoryConfig,
+    /// GAP-34: Cmd+Y file preview config.
+    file_preview_cfg: crate::file_preview::FilePreviewConfig,
     /// GAP-51: block-based output scaffold — records block boundaries on
     /// `shell.command_finished` when enabled.
     block_output_cfg: crate::app_config::BlockOutputConfig,
@@ -973,6 +975,8 @@ pub enum Message {
     OpenHoverTarget,
     /// GAP-36: open semantic file location in editor (⌘-click or action).
     OpenSemanticInEditor,
+    /// GAP-34: preview the file under the cursor / selection (Cmd+Y).
+    PreviewFile,
     /// GAP-33: port scanner poll result.
     PortScannerUpdated(Vec<crate::port_scanner::ListeningPort>),
     PortScannerCopy(u16),
@@ -1915,6 +1919,7 @@ impl PureTermApp {
         );
         let lsp = crate::lsp::LspState::try_spawn(&lsp_cfg, lsp_workspace.clone());
         let semantic_history_cfg = AppConfig::load_semantic_history(&config_path);
+        let file_preview_cfg = AppConfig::load_file_preview(&config_path);
         let block_output_cfg = AppConfig::load_block_output(&config_path);
         let port_scanner_cfg = AppConfig::load_port_scanner(&config_path);
         let ambient_agents_cfg = AppConfig::load_ambient_agents(&config_path);
@@ -2091,6 +2096,7 @@ impl PureTermApp {
             soul_prompt,
             hover_preview: crate::hover_preview::HoverPreviewState::new(),
             semantic_history_cfg,
+            file_preview_cfg,
             block_output_cfg,
             pane_block_stores: HashMap::new(),
             block_output_filter: crate::output_blocks::BlockExitFilter::default(),
@@ -5875,6 +5881,49 @@ impl PureTermApp {
                     }
                 }
             }
+            Message::PreviewFile => {
+                // GAP-34: Cmd+Y — preview the file under the cursor or in the
+                // active selection, resolving via the same path as semantic
+                // history so both share the hover/selection fallback chain.
+                let pane_id = self.active_tab_ref().map(|t| t.active_pane);
+                let target = self
+                    .hover_preview
+                    .active_target()
+                    .cloned()
+                    .or_else(|| {
+                        let pane_id = pane_id?;
+                        self.semantic_target_at_pane(pane_id)
+                    })
+                    .or_else(|| {
+                        let pane_id = pane_id?;
+                        let ctx = self.pane_terminal_ctx(pane_id)?;
+                        let text = ctx.terminal().lock().selection_to_string()?;
+                        Some(crate::hover_preview::HoverTarget {
+                            pane_id: pane_id.0,
+                            line: 0,
+                            column: 0,
+                            rule_id: "semantic-path".to_string(),
+                            text,
+                        })
+                    });
+                if let Some(target) = target {
+                    let cwd = self
+                        .pane_cwds
+                        .get(&PaneId(target.pane_id))
+                        .map(|s| std::path::Path::new(s.as_str()));
+                    if let Some(path) =
+                        crate::hover_preview::resolved_path_for_target(&target, cwd)
+                    {
+                        let cfg = &self.file_preview_cfg;
+                        match crate::file_preview::open_preview(&path, cfg) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                return Task::done(Message::Toast(e));
+                            }
+                        }
+                    }
+                }
+            }
             Message::PortScannerUpdated(rows) => {
                 self.port_scanner_entries = rows;
             }
@@ -9302,6 +9351,7 @@ impl PureTermApp {
             | Action::ToggleToolbelt => Task::none(),
             Action::OpenHoverTarget => Task::done(Message::OpenHoverTarget),
             Action::OpenSemanticInEditor => Task::done(Message::OpenSemanticInEditor),
+            Action::PreviewFile => Task::done(Message::PreviewFile),
             Action::ToggleAiChatPanel => Task::done(Message::ToggleAiChatPanel),
             Action::OpenLazygit => {
                 Task::done(Message::GitQuickAction(crate::git_panel::GitQuickAction::Lazygit))
@@ -9599,6 +9649,7 @@ impl PureTermApp {
         self.soul_prompt = crate::soul::load_system_prompt_extension(&self.soul_cfg);
         self.natural_language_cfg = AppConfig::load_natural_language(&self.config_path);
         self.semantic_history_cfg = AppConfig::load_semantic_history(&self.config_path);
+        self.file_preview_cfg = AppConfig::load_file_preview(&self.config_path);
         self.port_scanner_cfg = AppConfig::load_port_scanner(&self.config_path);
         self.p4.reload_configs(&self.config_path);
         self.p4.apply_platform_effects();

@@ -378,6 +378,7 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::NextMark => "Next Mark".into(),
         keymap::Action::OpenHoverTarget => "Open URL/Path".into(),
         keymap::Action::OpenSemanticInEditor => "Open in Editor".into(),
+        keymap::Action::PreviewFile => "Preview File".into(),
         keymap::Action::OpenLazygit => "Open Lazygit".into(),
         keymap::Action::IncreaseFontSize => "Font +".into(),
         keymap::Action::DecreaseFontSize => "Font −".into(),

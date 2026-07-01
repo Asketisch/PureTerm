@@ -94,6 +94,8 @@ pub enum Action {
     OpenHoverTarget,
     /// GAP-36: open hovered / selected file path in editor (semantic history).
     OpenSemanticInEditor,
+    /// GAP-34: preview hovered / selected file (Cmd+Y QuickLook).
+    PreviewFile,
 
     /// GAP-11: toggle instant replay overlay (⌘⇧R).
     ToggleInstantReplay,
@@ -536,6 +538,13 @@ impl Keymap {
             Action::OpenHoverTarget,
         );
 
+        // ── File Preview (GAP-34) ────────────────────────────────────
+        // ⌘Y → QuickLook preview of hovered/selected file.
+        bindings.insert(
+            (cmd, BindingKey::Character("y".into())),
+            Action::PreviewFile,
+        );
+
         // ── Cmd+Option+Arrow → PaneFocusAdjacent ────────────────────
         // Ctrl+Shift+Space → ToggleViMode (copy mode)
         let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
@@ -949,6 +958,7 @@ fn parse_action(s: &str) -> Result<Action, String> {
         "ToggleAiChatPanel" | "AiChatPanel" | "ai_chat.toggle" => Ok(Action::ToggleAiChatPanel),
         "OpenHoverTarget" | "hover_preview.open" => Ok(Action::OpenHoverTarget),
         "OpenSemanticTarget" | "semantic_history.open" => Ok(Action::OpenSemanticInEditor),
+        "PreviewFile" | "file_preview.preview" => Ok(Action::PreviewFile),
         "ToggleInstantReplay" | "instant_replay.toggle" => Ok(Action::ToggleInstantReplay),
         "ToggleBroadcastInput" | "broadcast.toggle" => Ok(Action::ToggleBroadcastInput),
         "ToggleQuakeDock" | "quake.toggle" => Ok(Action::ToggleQuakeDock),
