@@ -25,7 +25,9 @@ pub use server::run_server;
 pub mod adapter;
 
 /// One MCP tool this server exposes. `rpc_method` is the GUI Socket API method
-/// the tool forwards to; `description` is what the agent sees in its tool list.
+/// the tool forwards to — or `"(in-process)"` for the few tools (GAP-04 desktop
+/// ops) that run locally in the MCP server with no Socket hop; `description`
+/// is what the agent sees in its tool list.
 #[derive(Clone, Copy, Debug)]
 pub struct ToolSpec {
     pub name: &'static str,
@@ -35,7 +37,8 @@ pub struct ToolSpec {
 
 /// The full roster of MCP tools PureTerm can expose. v1 covers pane read/write
 /// + layout driving + the embedded browser. Add entries here; the `#[tool]`
-/// bodies in `server` forward each via its `rpc_method`.
+/// bodies in `server` forward each via its `rpc_method`, except entries marked
+/// `"(in-process)"` which run locally in the server (GAP-04 desktop ops).
 pub const TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "capture_pane",
@@ -144,22 +147,22 @@ pub const TOOLS: &[ToolSpec] = &[
     },
     ToolSpec {
         name: "desktop_screenshot",
-        rpc_method: "computer_use.screenshot",
-        description: "GAP-04: capture the desktop as a PNG data URL (macOS screencapture MVP).",
+        rpc_method: "(in-process)",
+        description: "GAP-04: capture the desktop as a PNG data URL (macOS screencapture MVP). Requires user approval (Feed panel) before capture.",
     },
     ToolSpec {
         name: "desktop_click",
-        rpc_method: "computer_use.click",
+        rpc_method: "(in-process)",
         description: "GAP-04 MVP stub: click at screen coordinates (not yet implemented).",
     },
     ToolSpec {
         name: "desktop_type",
-        rpc_method: "computer_use.type",
+        rpc_method: "(in-process)",
         description: "GAP-04 MVP stub: type text into the focused app (not yet implemented).",
     },
     ToolSpec {
         name: "desktop_key",
-        rpc_method: "computer_use.key",
+        rpc_method: "(in-process)",
         description: "GAP-04 MVP stub: press a key by name (not yet implemented).",
     },
     ToolSpec {
@@ -236,6 +239,23 @@ mod tests {
         assert_eq!(tool_spec("browser_get_url").unwrap().rpc_method, "browser.get_url");
         assert_eq!(tool_spec("browser_get_title").unwrap().rpc_method, "browser.get_title");
         assert_eq!(tool_spec("browser_screenshot").unwrap().rpc_method, "browser.screenshot");
+    }
+
+    #[test]
+    fn desktop_tools_use_in_process_sentinel() {
+        // GAP-04 desktop tools run inside the MCP server process (no Socket
+        // hop), so `rpc_method` is the in-process sentinel — NOT a fictional
+        // `computer_use.*` Socket method, for which no GUI dispatcher exists.
+        // Advertising a non-existent method would mislead agents / `mcp
+        // list-tools` output; this locks the truthful value.
+        for name in ["desktop_screenshot", "desktop_click", "desktop_type", "desktop_key"] {
+            let spec = tool_spec(name).unwrap_or_else(|| panic!("{name} must be in roster"));
+            assert_eq!(
+                spec.rpc_method,
+                "(in-process)",
+                "{name}: rpc_method must be the in-process sentinel"
+            );
+        }
     }
 
     #[test]

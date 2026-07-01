@@ -423,12 +423,13 @@ action = { Ssh = "ListProfiles" }
 - pixel smoke:`docs/manual-e2e/gap-02-error-recovery.md`（非 CI gate,需真实 API key）
 - **DoD 待人工**:GUI E2E + Apply 验证;**未做(独立后续)**:Settings UI、SSH pane 自动分析
 
-### GAP-04 Computer Use MVP（桌面截图 + 输入 stub）(2026-06-29)
+### GAP-04 Computer Use MVP（桌面截图 + 输入 stub）(2026-06-29, Review ✅ 2026-07-01)
 - **MCP tools**：`desktop_screenshot` / `desktop_click` / `desktop_type` / `desktop_key`（`spawn_blocking` 直调 crate，不经 Socket API）
 - **截图**：macOS `screencapture -x -t png` → PNG `data:image/png;base64,...`；非 macOS 返回错误
 - **输入**：`click`/`type_text`/`key_press` MVP stub（返回 not-implemented 错误，占位后续 CGEvent）
 - **核心**：`crates/pureterm-computer-use/` + `computer_use.rs`（base64 data URL 封装）
-- **未做（defer）**：Linux/Windows 截图、真实鼠标/键盘注入、用户确认门控
+- **未做（defer）**：Linux/Windows 截图、真实鼠标/键盘注入（落地后须接审批门）
+- **Review ✅（2026-07-01）**：审计干净 MVP，修 1 安全缺口 + 3 小 bug。① **[HIGH 安全]** 截图缺审批门（spec §安全）→ 复用 `feed_client::request_approval`，capture 前弹 Feed 面板，抽纯函数 `approval_allows_screenshot(&FeedOutcome)->bool` fail-closed（NoGui/Timeout/Error 拒绝）。② **[MED]** 临时文件泄漏（`read` 失败跳过 cleanup）→ 抽 `read_and_cleanup(path)` 全路径无条件清理。③ **[LOW-MED]** `temp_png_path` PID-only 可预测 + 非 UTF8 回退共享路径 → 报错不回退 + `PID-nanos-counter` 后缀。④ **[LOW]** `rpc_method` 误导（标 `computer_use.*` 但进程内直调无派发器）→ sentinel `"(in-process)"` + roster 测试。⑤ **[LOW doc]** 优先级 P1→P2。+ `png_bytes_to_data_url` 编码测试。**设计边界**：输入 stub / macOS-only / 无图像脱敏（门控为 MVP 缓解，follow-up）。792 pureterm + 5 computer-use 绿 0 回归。
 
 ### GAP-07 Soul System（AI 人格配置）(2026-06-29)
 - **`[soul]`** 配置（`enabled`/`directory`）；默认目录 `~/.config/pureterm/ai/`

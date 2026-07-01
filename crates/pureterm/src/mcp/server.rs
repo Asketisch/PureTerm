@@ -7,6 +7,7 @@
 //! Logging goes to **stderr only** — stdout is the MCP transport.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{Implementation, ServerCapabilities, ServerInfo};
@@ -15,6 +16,7 @@ use rmcp::{tool, tool_handler, tool_router, ServerHandler, ServiceExt};
 use serde_json::{json, Value};
 
 use crate::app_config::McpConfig;
+use crate::feed_client::{request_approval, FeedApprovalRequest};
 use crate::ipc::client::send_rpc;
 
 use super::enabled_tool_names;
@@ -45,6 +47,11 @@ async fn rpc(method: &str, params: Option<Value>, socket: Option<PathBuf>) -> Re
 fn to_text(res: Option<Value>) -> String {
     serde_json::to_string(&res).unwrap_or_else(|_| "null".into())
 }
+
+/// How long `desktop_screenshot`'s Feed approval prompt waits for a human
+/// choice before failing closed. Matches the GUI Feed panel's 120s auto-Deny
+/// soft timeout (`feed_panel.rs`) so both sides time out together.
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub struct PureTermServer {
     cfg: McpConfig,
@@ -538,9 +545,31 @@ impl PureTermServer {
         .map_err(|e| format!("open_url task failed: {e}"))?
     }
 
-    #[tool(description = "GAP-04: capture the full desktop screen as a PNG data URL. macOS uses `screencapture`; other platforms return an error in MVP.")]
+    #[tool(description = "GAP-04: capture the full desktop screen as a PNG data URL. macOS uses `screencapture`; other platforms return an error in MVP. Requires user approval — a Feed panel prompt is raised before any capture; deny/no-GUI/timeout all fail closed.")]
     async fn desktop_screenshot(&self) -> Result<String, String> {
-        tokio::task::spawn_blocking(|| {
+        let socket = self.socket.clone();
+        tokio::task::spawn_blocking(move || {
+            // SECURITY (spec §安全): a full-desktop screenshot can exfiltrate
+            // passwords / 2FA / DMs to the agent. Require affirmative human
+            // consent via the Feed approval panel before capturing, and fail
+            // closed on deny / no-GUI / timeout. The allow/deny decision lives
+            // in `computer_use::approval_allows_screenshot` (pure, unit-tested).
+            let req = FeedApprovalRequest {
+                session_id: "computer-use",
+                event: "computer_use.screenshot",
+                tool_name: Some("desktop_screenshot"),
+                tool_input: None,
+                prompt: None,
+                message: None,
+                reason: "Computer Use: capture full desktop screenshot",
+                cwd: "",
+            };
+            let outcome = request_approval(&req, APPROVAL_TIMEOUT, socket);
+            if !crate::computer_use::approval_allows_screenshot(&outcome) {
+                return Err(
+                    "desktop_screenshot: not approved (denied / no GUI / timed out)".to_string(),
+                );
+            }
             let screenshot = crate::computer_use::screenshot_data_url()?;
             serde_json::to_string(&json!({ "ok": true, "screenshot": screenshot }))
                 .map_err(|e| e.to_string())
@@ -553,6 +582,8 @@ impl PureTermServer {
     async fn desktop_click(&self, params: Parameters<DesktopClickParams>) -> Result<String, String> {
         let p = params.0;
         tokio::task::spawn_blocking(move || {
+            // SECURITY: when input injection is implemented, gate it behind
+            // request_approval (as desktop_screenshot does) before invoking.
             crate::computer_use::click(p.x, p.y)?;
             serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
         })
@@ -564,6 +595,8 @@ impl PureTermServer {
     async fn desktop_type(&self, params: Parameters<DesktopTypeParams>) -> Result<String, String> {
         let text = params.0.text;
         tokio::task::spawn_blocking(move || {
+            // SECURITY: when input injection is implemented, gate it behind
+            // request_approval (as desktop_screenshot does) before invoking.
             crate::computer_use::type_text(&text)?;
             serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
         })
@@ -575,6 +608,8 @@ impl PureTermServer {
     async fn desktop_key(&self, params: Parameters<DesktopKeyParams>) -> Result<String, String> {
         let key = params.0.key;
         tokio::task::spawn_blocking(move || {
+            // SECURITY: when input injection is implemented, gate it behind
+            // request_approval (as desktop_screenshot does) before invoking.
             crate::computer_use::key_press(&key)?;
             serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
         })

@@ -7,7 +7,7 @@
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 | Review ✅ | 进度 |
 |------|------|----|----|----|----|----|-----------|------|
 | 核心架构 | 1 | 1 | — | — | — | — | 1 | 1/1 |
-| AI Agent | 9 | 2 | 2 | 3 | 1 | 1 | 4 | 4/9 |
+| AI Agent | 9 | 2 | 2 | 3 | 1 | 1 | 5 | 5/9 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 | 4 | 4/12 |
 | UI/外壳 | 15 | — | 2 | 3 | 3 | 7 | 2 | 2/15 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 | 1 | 1/6 |
@@ -15,9 +15,9 @@
 | 平台 | 4 | — | — | 2 | 1 | 1 | — | 0/4 |
 | 集成 | 6 | 1 | — | 1 | — | 4 | 1 | 1/6 |
 | 视觉 | 9 | — | — | — | — | 9 | — | 0/9 |
-| **合计** | **73** | **7** | **7** | **20** | **13** | **26** | **15** | **15/73** |
+| **合计** | **73** | **7** | **7** | **20** | **13** | **26** | **16** | **16/73** |
 
-**合计**：73 项 · Review ✅ 15 · 未完成 58
+**合计**：73 项 · Review ✅ 16 · 未完成 57
 
 ---
 
@@ -35,7 +35,7 @@
 | GAP-02 | 1 | Error Recovery（非零 exit → LLM 修复建议 + Apply） | wrap-up | P0 | 2026-06-28 | ✅ | [spec](features/GAP-02-error-recovery/spec.md) |
 | GAP-03 | — | Codebase Indexing MVP（Tree-sitter + SQLite FTS + MCP 搜索工具） | feature | P1 | 2026-06-28 | ✅ | [spec](features/GAP-03-codebase-indexing/spec.md) |
 | GAP-7.8 | 5 | Agent-Browser 兼容（9 browser MCP tool + CLI） | wrap-up | P1 | 2026-06-28 | ✅ | [spec](features/GAP-3.5-browser-panel/spec.md) |
-| GAP-04 | 10 | Computer Use MVP（macOS 截图 + 输入 stub + MCP tools） | feature | P2 | 2026-06-29 | 未完成 | [spec](features/GAP-04-computer-use/spec.md) |
+| GAP-04 | 10 | Computer Use MVP（macOS 截图 + 输入 stub + MCP tools） | feature | P2 | 2026-06-29 | ✅ | [spec](features/GAP-04-computer-use/spec.md) |
 | GAP-07 | 11 | Soul System（SOUL.md 等注入 AI Chat system prompt） | feature | P2 | 2026-06-29 | 未完成 | [spec](features/GAP-07-soul-system/spec.md) |
 | GAP-08 | 12 | Natural Language Commands（`# 描述` → shell 命令卡片） | feature | P2 | 2026-06-29 | 未完成 | [spec](features/GAP-08-natural-language-commands/spec.md) |
 | GAP-06 | 25 | Ambient Agents 本地任务队列 MVP | feature | P3 | 2026-06-29 | 未完成 | [spec](features/GAP-06-ambient-agents/spec.md) |
