@@ -71,6 +71,9 @@ toml = "0.9"
 toml_edit = "0.22"
 unicode-bidi = "0.3"
 nucleo-matcher = "0.3"
+# GAP-54: terminal background image decode (PNG/JPG) -> RGBA bytes for the GPU texture.
+# Only the default features (no webp/heif) — keep the dep surface small.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 # GAP-01 AI Chat: Markdown → text spans for streamed assistant replies. Core
 # parser only (no HTML rendering feature) — the panel maps spans to iced rich
 # text; syntax highlighting (syntect) is deferred.

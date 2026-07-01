@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use std::fmt;
 use std::sync::Arc;
 
+use crate::background_image::{BackgroundMode, DecodedBackground};
 use crate::terminal_context::TerminalContext;
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Line, Point as TermPoint};
@@ -71,6 +72,29 @@ pub struct TextVertex {
     pub y_offset: f32,
 }
 
+// GAP-54: vertex for the background image pass (position + UV).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct BgImageVertex {
+    pub position: [f32; 2],
+    pub uv: [f32; 2],
+}
+
+impl BgImageVertex {
+    const ATTRIBS: [wgpu::VertexAttribute; 2] = [
+        wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
+        wgpu::VertexAttribute { offset: 8, shader_location: 1, format: wgpu::VertexFormat::Float32x2 },
+    ];
+
+    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as wgpu::BufferAddress,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
+    }
+}
+
 impl TextVertex {
     const ATTRIBS: [wgpu::VertexAttribute; 6] = [
         wgpu::VertexAttribute { offset: 0, shader_location: 0, format: wgpu::VertexFormat::Float32x2 },
@@ -96,7 +120,13 @@ pub struct ScreenUniforms {
     pub corner_radius: f32,
     pub screen_width: f32,
     pub screen_height: f32,
-    pub _padding: f32,
+    /// GAP-54: background image opacity in [0,1]; 0 = no image.
+    pub bg_opacity: f32,
+    /// GAP-54: 0 = Center, 1 = Tile, 2 = Stretch. u32 to keep 4-byte alignment.
+    pub bg_mode: u32,
+    /// GAP-54: image native dimensions in pixels (used for centering math).
+    pub bg_img_width: f32,
+    pub bg_img_height: f32,
 }
 
 // --- TerminalPipeline ---
@@ -128,6 +158,11 @@ pub struct TerminalPipeline {
     grayscale_atlas_view: Option<wgpu::TextureView>,
     color_atlas_view: Option<wgpu::TextureView>,
     text_atlas_bind_group: Option<wgpu::BindGroup>,
+
+    // GAP-54: background image pipeline + bind group layout.
+    bg_image_pipeline: wgpu::RenderPipeline,
+    bg_image_bgl: wgpu::BindGroupLayout,
+    bg_image_sampler: wgpu::Sampler,
 }
 
 /// Per-frame GPU resources owned by each `TerminalPrimitive` instance.
@@ -142,6 +177,18 @@ struct GpuResources {
     text_index_buffer: Option<wgpu::Buffer>,
     text_uniform_bind_group: Option<wgpu::BindGroup>,
     text_index_count: u32,
+
+    // GAP-54: per-pane background image state.
+    bg_image_vertex_buffer: Option<wgpu::Buffer>,
+    bg_image_index_buffer: Option<wgpu::Buffer>,
+    bg_image_index_count: u32,
+    bg_image_bind_group: Option<wgpu::BindGroup>,
+    bg_image_uniform_bind_group: Option<wgpu::BindGroup>,
+    bg_image_texture: Option<wgpu::Texture>,
+    bg_image_view: Option<wgpu::TextureView>,
+    /// Hash of the loaded image bytes — used to skip GPU re-upload when
+    /// the image hasn't changed across frames.
+    bg_image_signature: u64,
 }
 
 impl fmt::Debug for GpuResources {
@@ -164,6 +211,14 @@ impl Default for GpuResources {
             text_index_buffer: None,
             text_uniform_bind_group: None,
             text_index_count: 0,
+            bg_image_vertex_buffer: None,
+            bg_image_index_buffer: None,
+            bg_image_index_count: 0,
+            bg_image_bind_group: None,
+            bg_image_uniform_bind_group: None,
+            bg_image_texture: None,
+            bg_image_view: None,
+            bg_image_signature: 0,
         }
     }
 }
@@ -271,6 +326,57 @@ impl Pipeline for TerminalPipeline {
         });
         let text_pipeline = create_pipeline(device, "CellText", &text_shader, &text_layout, TextVertex::desc(), format);
 
+        // --- GAP-54: background image pipeline ---
+        let bg_image_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("BgImage BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let bg_image_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("BgImage Sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            ..Default::default()
+        });
+        let bg_image_shader_src = include_str!(
+            "../../pureterm-alacritty-runtime/src/alacritty/renderer/shaders/bg_image.wgsl"
+        );
+        let bg_image_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("BgImage Shader"),
+            source: wgpu::ShaderSource::Wgsl(bg_image_shader_src.into()),
+        });
+        let bg_image_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("BgImage Layout"),
+            bind_group_layouts: &[&uniform_bgl, &bg_image_bgl],
+            push_constant_ranges: &[],
+        });
+        let bg_image_pipeline = create_pipeline(
+            device,
+            "BgImage",
+            &bg_image_shader,
+            &bg_image_layout,
+            BgImageVertex::desc(),
+            format,
+        );
+
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Text Sampler"),
             mag_filter: wgpu::FilterMode::Nearest,
@@ -294,6 +400,9 @@ impl Pipeline for TerminalPipeline {
             grayscale_atlas_view: None,
             color_atlas_view: None,
             text_atlas_bind_group: None,
+            bg_image_pipeline,
+            bg_image_bgl,
+            bg_image_sampler,
         }
     }
 }
@@ -357,6 +466,12 @@ pub struct TerminalPrimitive {
     /// Shared scale factor: updated by `prepare()` with the actual viewport
     /// scale factor each frame; read by `draw()` to detect changes.
     viewport_scale_factor: Arc<AtomicU32>,
+    /// GAP-54: cached background image, mode, opacity, and signature
+    /// (FNV-1a of the loaded bytes). `None` when disabled or no file.
+    background_image: Option<DecodedBackground>,
+    background_mode: BackgroundMode,
+    background_opacity: f32,
+    background_signature: u64,
 }
 
 impl fmt::Debug for TerminalPrimitive {
@@ -366,6 +481,26 @@ impl fmt::Debug for TerminalPrimitive {
             .field("text_verts", &self.text_vertices.len())
             .field("gpu", &*self.gpu.lock().unwrap())
             .finish()
+    }
+}
+
+impl TerminalPrimitive {
+    /// GAP-54: install a new background image (decoded RGBA8). Pass
+    /// `None` to clear. The signature is a caller-supplied hash of the
+    /// source bytes — used to avoid re-uploading identical content
+    /// across frames. Mode and opacity are applied to the texture at
+    /// draw time; pass them every call.
+    pub fn set_background_image(
+        &mut self,
+        image: Option<DecodedBackground>,
+        mode: BackgroundMode,
+        opacity: f32,
+        signature: u64,
+    ) {
+        self.background_image = image;
+        self.background_mode = mode;
+        self.background_opacity = opacity.clamp(0.0, 1.0);
+        self.background_signature = signature;
     }
 }
 
@@ -395,7 +530,10 @@ impl Primitive for TerminalPrimitive {
             corner_radius: 0.0,
             screen_width: bounds.width,
             screen_height: bounds.height,
-            _padding: 0.0,
+            bg_opacity: 0.0,
+            bg_mode: 0,
+            bg_img_width: 0.0,
+            bg_img_height: 0.0,
         };
 
         let mut gpu = self.gpu.lock().unwrap();
@@ -421,6 +559,113 @@ impl Primitive for TerminalPrimitive {
             gpu.bg_index_count = self.bg_indices.len() as u32;
         } else {
             gpu.bg_index_count = 0;
+        }
+
+        // --- GAP-54: background image pass ---
+        // Build vertices + indices + uniform + texture bind group. Skip
+        // when no image is installed or opacity is 0.
+        let bg_image = self.background_image.as_ref();
+        if let (Some(img), true) = (bg_image, self.background_opacity > 0.0) {
+            let mode = self.background_mode;
+            let opacity = self.background_opacity;
+            // Build the screen-space quad for the image. Modes:
+            //   Center  → sub-rect of the viewport at image native size
+            //   Tile    → repeat the viewport (uv wraps via Repeat sampler)
+            //   Stretch → full-viewport quad with uv 0..1
+            let (vp_w, vp_h) = (bounds.width, bounds.height);
+            let (iw, ih) = (img.width as f32, img.height as f32);
+            let (qx, qy, qw, qh) = match mode {
+                BackgroundMode::Center => {
+                    // Clamp to viewport.
+                    let w = iw.min(vp_w);
+                    let h = ih.min(vp_h);
+                    let x = ((vp_w - w) * 0.5).max(0.0);
+                    let y = ((vp_h - h) * 0.5).max(0.0);
+                    (x, y, w, h)
+                }
+                BackgroundMode::Stretch | BackgroundMode::Tile => (0.0, 0.0, vp_w, vp_h),
+            };
+            let verts = [
+                BgImageVertex { position: [qx,        qy       ], uv: [0.0, 0.0] },
+                BgImageVertex { position: [qx + qw,   qy       ], uv: [1.0, 0.0] },
+                BgImageVertex { position: [qx + qw,   qy + qh  ], uv: [1.0, 1.0] },
+                BgImageVertex { position: [qx,        qy + qh  ], uv: [0.0, 1.0] },
+            ];
+            let idx = [0u32, 1, 2, 0, 2, 3];
+
+            let vb = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("BgImage VB"),
+                contents: bytemuck::cast_slice(&verts),
+                usage: wgpu::BufferUsages::VERTEX,
+            });
+            let ib = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("BgImage IB"),
+                contents: bytemuck::cast_slice(&idx),
+                usage: wgpu::BufferUsages::INDEX,
+            });
+
+            // Uniform buffer (per-pane; uses screen dimensions + bg fields).
+            let bg_uniforms = ScreenUniforms {
+                corner_radius: 0.0,
+                screen_width: vp_w,
+                screen_height: vp_h,
+                bg_opacity: opacity,
+                bg_mode: match mode {
+                    BackgroundMode::Center => 0,
+                    BackgroundMode::Tile => 1,
+                    BackgroundMode::Stretch => 2,
+                },
+                bg_img_width: iw,
+                bg_img_height: ih,
+            };
+            let ub = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("BgImage UB"),
+                contents: bytemuck::cast_slice(&[bg_uniforms]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+            let ubg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("BgImage Uniform BG"),
+                layout: &pipeline.uniform_bgl,
+                entries: &[wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() }],
+            });
+
+            // Texture: upload (or skip) based on signature.
+            if gpu.bg_image_signature != self.background_signature {
+                let tex = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
+                    label: Some("BgImage Tex"),
+                    size: wgpu::Extent3d { width: img.width, height: img.height, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                }, wgpu::util::TextureDataOrder::LayerMajor, &img.data);
+                let view = tex.create_view(&Default::default());
+                let ibg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("BgImage Tex BG"),
+                    layout: &pipeline.bg_image_bgl,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&view) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&pipeline.bg_image_sampler) },
+                    ],
+                });
+                gpu.bg_image_texture = Some(tex);
+                gpu.bg_image_view = Some(view);
+                gpu.bg_image_bind_group = Some(ibg);
+                gpu.bg_image_signature = self.background_signature;
+            }
+
+            gpu.bg_image_vertex_buffer = Some(vb);
+            gpu.bg_image_index_buffer = Some(ib);
+            gpu.bg_image_uniform_bind_group = Some(ubg);
+            gpu.bg_image_index_count = idx.len() as u32;
+        } else {
+            gpu.bg_image_index_count = 0;
+            // Drop per-frame buffers but keep the texture (signature still valid).
+            gpu.bg_image_vertex_buffer = None;
+            gpu.bg_image_index_buffer = None;
+            gpu.bg_image_uniform_bind_group = None;
         }
 
         // --- Atlas textures (persistent) ---
@@ -626,6 +871,24 @@ impl Primitive for TerminalPrimitive {
     ) -> bool {
         let gpu = self.gpu.lock().unwrap();
 
+        // GAP-54: draw background image first (under everything). Reuses the
+        // same ScreenUniforms (slot 0) and binds the per-pane image+sample (slot 1).
+        if gpu.bg_image_index_count > 0 {
+            if let (Some(vb), Some(ib), Some(img_bg), Some(uniform_bg)) = (
+                &gpu.bg_image_vertex_buffer,
+                &gpu.bg_image_index_buffer,
+                &gpu.bg_image_bind_group,
+                &gpu.bg_image_uniform_bind_group,
+            ) {
+                render_pass.set_pipeline(&pipeline.bg_image_pipeline);
+                render_pass.set_bind_group(0, uniform_bg, &[]);
+                render_pass.set_bind_group(1, img_bg, &[]);
+                render_pass.set_vertex_buffer(0, vb.slice(..));
+                render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..gpu.bg_image_index_count, 0, 0..1);
+            }
+        }
+
         // Draw bg_color pass
         if gpu.bg_index_count > 0 {
             if let (Some(vb), Some(ib), Some(bg)) = (&gpu.bg_vertex_buffer, &gpu.bg_index_buffer, &gpu.bg_bind_group) {
@@ -815,6 +1078,14 @@ pub struct TerminalProgram {
         Arc<std::sync::Mutex<Vec<crate::triggers::HighlightRegion>>>,
     /// GAP-10: collapsed fold regions for the active pane.
     pub trigger_folds: Arc<std::sync::Mutex<Vec<crate::triggers::FoldRegion>>>,
+
+    // GAP-54: shared background image (loaded once, cloned into each per-frame
+    // primitive). The signature lets the primitive skip re-uploading the GPU
+    // texture when nothing changed.
+    pub background_image: Arc<std::sync::Mutex<Option<DecodedBackground>>>,
+    pub background_mode: BackgroundMode,
+    pub background_opacity: f32,
+    pub background_signature: u64,
 }
 
 #[derive(Default)]
@@ -1156,6 +1427,10 @@ impl<M> shader::Program<M> for TerminalProgram {
             color_atlas,
             gpu: Mutex::new(GpuResources::default()),
             viewport_scale_factor: self.viewport_scale_factor.clone(),
+            background_image: self.background_image.lock().unwrap().clone(),
+            background_mode: self.background_mode,
+            background_opacity: self.background_opacity,
+            background_signature: self.background_signature,
         }
     }
 }

@@ -518,6 +518,14 @@ pub struct PureTermApp {
     trigger_folds: std::sync::Arc<std::sync::Mutex<Vec<crate::triggers::FoldRegion>>>,
     /// GAP-10: global trigger hit counter (status-bar `trigger_count`).
     trigger_hit_total: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// GAP-54: shared, decoded background image (RGBA8) for the terminal
+    /// shader. The `signature` is a caller-side content hash; the renderer
+    /// re-uploads the GPU texture only when it changes. `mode` and `opacity`
+    /// are applied at draw time, so toggling them is a constant-time update.
+    background_image: std::sync::Arc<std::sync::Mutex<Option<crate::background_image::DecodedBackground>>>,
+    background_image_mode: crate::background_image::BackgroundMode,
+    background_image_opacity: f32,
+    background_image_signature: u64,
     /// GAP-10: opt-in flag allowing `exec` / cross-pane `send_text` to fire when
     /// the match originated from an SSH/remote pane (default `false`).
     allow_exec_on_remote: bool,
@@ -1929,7 +1937,28 @@ impl PureTermApp {
         let toolbelt_cfg = AppConfig::load_toolbelt(&config_path);
         let quake_cfg = AppConfig::load_quake(&config_path);
         let p4 = crate::p4_runtime::P4Features::load(&config_path);
+        // GAP-54: snapshot the background config *before* `apply_platform_effects`
+        // (which moves `p4`), so we can decode the image below.
+        let bg_cfg_snapshot = p4.background_cfg.clone();
         p4.apply_platform_effects();
+
+        // GAP-54: load + decode the configured background image. Failures
+        // are logged but never fatal — an invalid path just leaves the
+        // background disabled (consistent with the resolved_path() contract).
+        let bg_signature = if let Some(decoded) = crate::background_image::load_decoded(&bg_cfg_snapshot).unwrap_or_else(|e| {
+            log::warn!("background image load failed: {e}");
+            None
+        }) {
+            // FNV-1a over the RGBA bytes (cheap content hash).
+            let mut h: u64 = 0xcbf29ce484222325;
+            for &b in &decoded.data {
+                h ^= b as u64;
+                h = h.wrapping_mul(0x100000001b3);
+            }
+            h
+        } else {
+            0
+        };
         let sidebar_dsl = crate::sidebar_dsl::SidebarDslState::load_from_dir(
             &crate::sidebar_dsl::sidebars_config_dir(),
         );
@@ -2135,6 +2164,18 @@ impl PureTermApp {
             pane_trigger_state: HashMap::new(),
             trigger_highlights: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             trigger_folds: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            background_image: {
+                // Decode once at startup; failures stay None and the
+                // background is simply not drawn.
+                let arc = std::sync::Arc::new(std::sync::Mutex::new(None));
+                if let Ok(Some(decoded)) = crate::background_image::load_decoded(&bg_cfg_snapshot) {
+                    *arc.lock().unwrap() = Some(decoded);
+                }
+                arc
+            },
+            background_image_mode: bg_cfg_snapshot.mode,
+            background_image_opacity: bg_cfg_snapshot.opacity,
+            background_image_signature: bg_signature,
             trigger_hit_total,
             toast: None,
             pane_cwds: HashMap::new(),
@@ -13743,6 +13784,10 @@ impl PureTermApp {
                             cached_search: self.cached_search.clone(),
                             trigger_highlights: self.trigger_highlights.clone(),
                             trigger_folds: self.trigger_folds.clone(),
+                            background_image: self.background_image.clone(),
+                            background_mode: self.background_image_mode,
+                            background_opacity: self.background_image_opacity,
+                            background_signature: self.background_image_signature,
                         })
                         .width(Length::Fill)
                         .height(Length::Fill);
@@ -14098,6 +14143,10 @@ impl PureTermApp {
             cached_search: self.cached_search.clone(),
             trigger_highlights: self.trigger_highlights.clone(),
             trigger_folds: self.trigger_folds.clone(),
+            background_image: self.background_image.clone(),
+            background_mode: self.background_image_mode,
+            background_opacity: self.background_image_opacity,
+            background_signature: self.background_image_signature,
         })
         .width(Length::Fill)
         .height(Length::Fill);
