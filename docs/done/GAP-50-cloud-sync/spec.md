@@ -5,7 +5,8 @@ category: 集成
 plan_type: integration
 priority: P4
 effort: M
-status: todo
+status: done
+closed: 2026-07-02
 ---
 
 # Cloud Sync（云端同步）
@@ -22,7 +23,7 @@ status: todo
 
 ## PureTerm 现状
 
-**未实现。**
+**Done（2026-07-02）。** cloud_sync.rs 本地 bundle + GitHub Gist push/pull（reqwest + bearer auth） + schema 版本控制 + 8 单测。
 
 ## 优先级
 

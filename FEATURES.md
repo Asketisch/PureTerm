@@ -664,25 +664,41 @@ action = { Ssh = "ListProfiles" }
 - `[shared_session]` + `pureterm share invite|serve`
 - 实现：`shared_sessions.rs`（WebSocket/WebRTC 未接）
 
-### GAP-45 Auto-Update MVP
-- `[update]` + `pureterm update check`
-- 实现：`auto_update.rs`（Sparkle 未接）
+### GAP-45 Auto-Update
+- `[update]` 配置（`enabled` / `auto_check` / `channel` / `feed_url`）
+- 同步 fast-path：`pureterm update check` — 比对 `CARGO_PKG_VERSION` 与 `PURETERM_LATEST_VERSION` env var，自带 semver 比较
+- 异步 remote check：`pureterm update check --remote` — reqwest 拉取 GitHub Releases API（默认 `https://api.github.com/repos/CNB/PureTerm/releases/latest`），`stable` channel 跳过 prerelease，UA 标 `pureterm/<ver>`
+- 实现：`crates/pureterm/src/auto_update.rs`（6 单测：disabled / semver 基础 / `v` 前缀 / 不齐段 / 默认 feed / 空版本）
+- macOS Sparkle 仍延后（`feed_url` 字段已就位可指向 AppCast）
 
-### GAP-49 Plugin System **stub**
-- `[plugins]` + `pureterm plugin list|install`
-- 实现：`plugin_system.rs`（运行时未接）
+### GAP-49 Plugin System
+- `[plugins]` 配置 + 默认目录 `~/.config/pureterm/plugins/<name>/`
+- `plugin.toml` 清单解析：`name` / `version` / `description` / `author`，folder name 必须与 `name` 一致
+- CLI：`pureterm plugin list|install <name>|uninstall <name>` — `list` 报告 manifest 错误而不是静默跳过；`uninstall` 拒绝非 plugin 文件夹（防御性）
+- 实现：`crates/pureterm/src/plugin_system.rs`（9 单测：disabled / 缺目录 / install 创建 / 拒绝空名 / disabled install / 混合目录下的错误报告 / name mismatch / uninstall 成功 / 拒绝非 plugin 文件夹）
+- WASM / dylib 运行时延后到 Phase D
 
-### GAP-50 Cloud Sync MVP
-- `[cloud_sync]` + `pureterm sync push|pull` 本地 JSON bundle
-- 实现：`cloud_sync.rs`
+### GAP-50 Cloud Sync
+- `[cloud_sync]` 配置（`enabled` / `gist_id` / `token_env`，默认 `PURETERM_GIST_TOKEN`）
+- 本地：`pureterm sync push|pull` → `~/.config/pureterm/sync/latest.json`（带 `schema = 1` 版本字段，schema 不匹配时 pull 拒绝）
+- 远程：`pureterm sync push|pull --remote` — reqwest 调用 GitHub Gist API（`POST` 创建新 Gist 或 `PATCH` 更新现有 Gist），token 走 `token_env` 读取
+- 实现：`crates/pureterm/src/cloud_sync.rs`（8 单测：disabled / local round trip / token 拒绝 disabled / token 拒绝缺 env / token 拒绝空 / schema mismatch / schema match / disabled 无 IO）
 
-### GAP-52 Workflows MVP
-- `[workflows]` + `[[workflows]]` + `pureterm workflow list|run`
-- 实现：`workflows.rs`
+### GAP-52 Workflows
+- `[[workflows]]` 段：每个 entry 含 `name` / `description` / `steps` / `params` / `category`（palette 分组）/ `alias`（短命令）
+- `{{key}}` 占位符展开；`missing_params` 检查（声明顺序）
+- `find` 解析时 name 优先于 alias（避免 name=`d` 被 `alias: d` 的 workflow 误吞）
+- `group_by_category` 给 palette 提供按类别分组
+- CLI：`pureterm workflow list`（按 category 分组打印，显示 alias） / `pureterm workflow run <name|alias> --param k=v`（缺参则报错退出）
+- 实现：`crates/pureterm/src/workflows.rs`（7 单测：参数展开 / 缺失参数 / name+alias 匹配 / name 优先 / category 分组 / 畸形 TOML 跳过 / alias 双向 round trip）
 
-### GAP-53 Notebooks MVP
-- `[notebooks]` + `.pureterm` JSON cells + `pureterm notebook show`
-- 实现：`notebooks.rs`
+### GAP-53 Notebooks
+- `[notebooks]` 配置 + `.pureterm` JSON 格式
+- 三种 cell：`markdown` / `code`（`language` + `source`）/ `output`（执行后追加）
+- Cell 执行引擎：`Notebook::execute_cell(idx)` 调起 `$SHELL -c <source>`（缺省 `/bin/sh`），捕获 stdout + stderr（`-- stderr --` 分隔），写入 `output` cell
+- CLI：`pureterm notebook show|new|run <path> <idx>` — `new` 写空 notebook；`show` 打印 cell 类型 + 摘要；`run` 执行单个 cell 并打印输出
+- 实现：`crates/pureterm/src/notebooks.rs`（9 单测：round trip / cell kind / append 索引 / 执行 echo / 捕获 stderr / 拒绝非 code / 越界拒绝 / 畸形 JSON 拒绝 / 磁盘 round trip）
+- Markdown 渲染、cell 编辑器、AI 集成留待后续
 
 ### GAP-54 Background Image MVP
 - `[background].image/mode/opacity` + path resolve

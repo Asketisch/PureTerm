@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 pub struct I18n {
     locale: String,
-    translations: HashMap<String, HashMap<String, String>>,
+    pub(crate) translations: HashMap<String, HashMap<String, String>>,
 }
 
 impl I18n {
@@ -677,11 +677,44 @@ mod tests {
     }
 
     #[test]
-    fn locale_fallback_when_key_missing() {
+    fn missing_in_both_locales_returns_key() {
+        // Renamed from `locale_fallback_when_key_missing` — the previous name
+        // implied it tested the zh -> en fallback path, but the key is missing
+        // in BOTH locales, so it actually exercises `unwrap_or_else` (unknown
+        // key round-trip), not the `or_else` fallback branch. The real
+        // fallback is covered by `locale_fallback_zh_missing_uses_en` below.
         let mut i = I18n::new();
         i.set_locale("zh");
-        // Keys missing in zh should fall back to en.
         let v = i.t("missing.key");
         assert_eq!(v, "missing.key");
+    }
+
+    #[test]
+    fn locale_fallback_zh_missing_uses_en() {
+        // Construct a divergent table: en has "only_en_test" but zh does not.
+        // In zh locale, `t("only_en_test")` should fall back to the en value
+        // via the `.or_else` branch — this is the only test that actually
+        // exercises the locale-fallback code path.
+        let mut en = HashMap::new();
+        en.insert("only_en_test".to_string(), "OnlyInEnglish".to_string());
+        let mut zh = HashMap::new();
+        // intentionally omit "only_en_test" from zh
+        let mut translations = HashMap::new();
+        translations.insert("en".to_string(), en);
+        translations.insert("zh".to_string(), zh);
+        let i = I18n {
+            locale: "zh".to_string(),
+            translations,
+        };
+        assert_eq!(i.t("only_en_test"), "OnlyInEnglish");
+    }
+
+    #[test]
+    fn t_known_key_returns_specific_value() {
+        // Strengthened: previously only checked `v.contains("{n}")`, which
+        // is true for BOTH en ("Tab {n}") and zh ("标签页 {n}"). Pin the
+        // exact en value to actually verify the lookup hits the en map.
+        let i = I18n::new();
+        assert_eq!(i.t("tab.title.format"), "Tab {n}");
     }
 }

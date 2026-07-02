@@ -1,6 +1,7 @@
 # 已完成任务
 
 > 已实现但未经 review 的特性 spec 放在 [`done/`](done/) 目录。按任务类型分组，含项目优先级。
+> 最近一次批量闭环（2026-07-02）把视觉 / 平台（macOS）9 个 spec 与 GAP-46 i18n 推入 [`reviewed/`](reviewed/)，本目录只保留当前活跃的 done 项。
 
 ---
 
@@ -8,28 +9,26 @@
 
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
-| 平台 | 0 | — | — | — | — | — |
-| 集成 | 0 | — | — | — | — | — |
-| 视觉 | 9 | — | — | — | 1 | 8 |
-| 平台 | 1 | — | — | — | 1 | — |
-| **合计** | **10** | **—** | **—** | **—** | **2** | **8** |
+| 平台 | 1 | — | — | — | — | 1 |
+| 集成 | 4 | — | — | — | — | 4 |
+| **合计** | **5** | **—** | **—** | **—** | **—** | **5** |
 
 ---
 
-## 视觉 / 平台（macOS）
+## 平台
 
 | GAP | 简述 | 详情 |
 |-----|------|------|
-| GAP-4.6 | VoiceOver 公告：`NSAccessibilityPostNotification` 真实接通 + 分类 helper（tab / 分屏 / 命令面板 / 状态栏 / 通知） | [spec](reviewed/GAP-4.6-accessibility/spec.md) |
-| GAP-54 | 终端背景图：image crate 解码 PNG/JPG + 专用 wgpu 管线 + Center/Tile/Stretch 模式 + opacity | [spec](reviewed/GAP-54-background-image/spec.md) |
-| GAP-55 | 玻璃材质：NSVisualEffectView 安装在 content view 下方 + blend mode | [spec](reviewed/GAP-55-transparency-blur/spec.md) |
-| GAP-56 | 焦点跟随鼠标：CursorMoved + TerminalWakeup tick 钩入 pane_under_point | [spec](reviewed/GAP-56-focus-follows-mouse/spec.md) |
-| GAP-57 | 触觉反馈：NSHapticFeedbackManager.defaultPerformer().performFeedbackPattern | [spec](reviewed/GAP-57-haptic-feedback/spec.md) |
-| GAP-58 | 系统外观自动跟随 + 社区主题安装路径 | [spec](reviewed/GAP-58-custom-theme-css/spec.md) |
-| GAP-59 | Emoji 独立 atlas 通道 + EmojiGlyph 容器 | [spec](reviewed/GAP-59-emoji-rendering/spec.md) |
-| GAP-60 | Pane 截图导出：image crate 编码 PNG + SVG stub + text snapshot | [spec](reviewed/GAP-60-screen-capture/spec.md) |
-| GAP-61 | 打印：NSPrintOperation 模态面板 + dataWithPDFInsideRect PDF 导出 + Linux lpr fallback | [spec](reviewed/GAP-61-print-support/spec.md) |
-| GAP-46 | 国际化：`pureterm-settings/src/i18n` 翻译表（en/zh）+ 59+9 处 `t`/`t_fmt` 覆盖 SSH / context menu / tab / palette / feed + 8 项单测 | [spec](reviewed/GAP-46-i18n/spec.md) |
+| GAP-45 | 自动更新：`auto_update.rs` 真实 GitHub Releases HTTP（reqwest）+ 简易 semver 比较 + `pureterm update check --remote` CLI + 6 项单测 | [spec](done/GAP-45-auto-update/spec.md) |
+
+## 集成
+
+| GAP | 简述 | 详情 |
+|-----|------|------|
+| GAP-49 | 插件系统：目录扫描 + `plugin.toml` 清单解析/校验 + `install` / `uninstall` + `list` 报告 manifest 错误 + 9 项单测（运行时仍延后到 Phase D） | [spec](done/GAP-49-plugin-system/spec.md) |
+| GAP-50 | 云同步：本地 bundle（`~/.config/pureterm/sync/latest.json`）+ GitHub Gist push/pull（reqwest + bearer auth）+ schema 版本控制 + `pureterm sync push/pull --remote` CLI + 8 项单测 | [spec](done/GAP-50-cloud-sync/spec.md) |
+| GAP-52 | Workflows：参数化 `{{key}}` 展开 + 缺失参数检查 + 类别（palette 分组）+ 别名（name 优先）+ `pureterm workflow run` CLI + 7 项单测 | [spec](done/GAP-52-workflows/spec.md) |
+| GAP-53 | Notebooks：`.pureterm` JSON cell 格式 + cell 执行引擎（`$SHELL -c`，捕获 stdout/stderr）+ `pureterm notebook show/new/run` CLI + 9 项单测 | [spec](done/GAP-53-notebooks/spec.md) |
 
 ---
 

@@ -5,7 +5,8 @@ category: 集成
 plan_type: arch
 priority: P4
 effort: XL
-status: todo
+status: done
+closed: 2026-07-02
 ---
 
 # Plugin System（插件系统）
@@ -22,7 +23,7 @@ status: todo
 
 ## PureTerm 现状
 
-**未实现。** PureTerm 的扩展方式是通过配置（SSH profiles, Commands, Agent hooks），没有运行时插件系统。
+**Done（2026-07-02）。** plugin_system.rs 目录扫描 + plugin.toml 清单解析/校验 + install/uninstall + CLI 表面 + 9 单测。 PureTerm 的扩展方式是通过配置（SSH profiles, Commands, Agent hooks），没有运行时插件系统。
 
 ## 优先级
 

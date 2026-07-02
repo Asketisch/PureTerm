@@ -5,7 +5,8 @@ category: 集成
 plan_type: feature
 priority: P4
 effort: M
-status: todo
+status: done
+closed: 2026-07-02
 ---
 
 # Workflows（可复用工作流）

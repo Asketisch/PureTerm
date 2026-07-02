@@ -14,14 +14,29 @@ pub enum PluginSub {
     Install {
         name: String,
     },
+    /// Remove a plugin directory (refuses non-plugin folders).
+    Uninstall {
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Clone)]
 pub enum SyncSub {
-    /// Export config to local sync bundle.
-    Push,
-    /// Restore config from local sync bundle.
-    Pull,
+    /// Export config to local sync bundle. With `--remote`, also pushes
+    /// the bundle to GitHub Gist (creates a new private Gist if
+    /// `[cloud_sync].gist_id` is empty, and prints the new ID).
+    Push {
+        /// Also push to GitHub Gist (requires PURETERM_GIST_TOKEN).
+        #[arg(long)]
+        remote: bool,
+    },
+    /// Restore config from local sync bundle. With `--remote`, pulls
+    /// from the configured Gist instead of the local file.
+    Pull {
+        /// Pull from GitHub Gist instead of the local bundle.
+        #[arg(long)]
+        remote: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -37,8 +52,13 @@ pub enum ShareSub {
 
 #[derive(Subcommand, Clone)]
 pub enum UpdateSub {
-    /// Check for updates (Sparkle / feed deferred).
-    Check,
+    /// Check for updates. With `--remote`, hits the configured feed URL
+    /// (default: GitHub Releases) over HTTPS via reqwest.
+    Check {
+        /// Query the remote feed instead of the env-var fast path.
+        #[arg(long)]
+        remote: bool,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -58,6 +78,18 @@ pub enum NotebookSub {
     /// Print notebook JSON cells.
     Show {
         path: PathBuf,
+    },
+    /// Create a new empty notebook file at the given path.
+    New {
+        path: PathBuf,
+        #[arg(long, default_value = "Untitled")]
+        title: String,
+    },
+    /// Execute the code cell at INDEX (0-based) and print the captured
+    /// stdout/stderr. The notebook is not modified.
+    Run {
+        path: PathBuf,
+        index: usize,
     },
 }
 
@@ -85,17 +117,32 @@ pub fn dispatch_plugin(cmd: PluginSub) {
     let cfg = AppConfig::load_plugins(&AppConfig::config_path());
     match cmd {
         PluginSub::List => {
-            let entries = crate::plugin_system::list_plugins(&cfg);
-            if entries.is_empty() {
+            let (entries, errors) = crate::plugin_system::list_plugins_with_errors(&cfg);
+            if entries.is_empty() && errors.is_empty() {
                 println!("no plugins (enable [plugins].enabled or install one)");
             } else {
                 for e in entries {
-                    println!("{}  {}", e.name, e.path.display());
+                    let version = e
+                        .manifest
+                        .as_ref()
+                        .map(|m| m.version.as_str())
+                        .unwrap_or("?");
+                    println!("{}  v{}  {}", e.name, version, e.path.display());
+                }
+                for err in errors {
+                    eprintln!("warn: {} ({})", err.plugin, err.reason);
                 }
             }
         }
         PluginSub::Install { name } => match crate::plugin_system::install_stub(&cfg, &name) {
             Ok(p) => println!("installed stub plugin at {}", p.display()),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+        PluginSub::Uninstall { name } => match crate::plugin_system::uninstall(&cfg, &name) {
+            Ok(()) => println!("uninstalled plugin: {name}"),
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(1);
@@ -107,21 +154,49 @@ pub fn dispatch_plugin(cmd: PluginSub) {
 pub fn dispatch_sync(cmd: SyncSub) {
     let path = AppConfig::config_path();
     let cfg = AppConfig::load_cloud_sync(&path);
+    let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
     match cmd {
-        SyncSub::Push => match crate::cloud_sync::sync_push(&cfg, &path) {
-            Ok(p) => println!("pushed → {}", p.display()),
-            Err(e) => {
-                eprintln!("{e}");
-                std::process::exit(1);
+        SyncSub::Push { remote } => {
+            if remote {
+                match rt.block_on(crate::cloud_sync::sync_push_remote(&cfg, &path)) {
+                    Ok(r) => {
+                        println!("pushed (local) → {}", r.bundle_path.display());
+                        println!("pushed (gist)  → {}", r.gist_id);
+                    }
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                match crate::cloud_sync::sync_push(&cfg, &path) {
+                    Ok(p) => println!("pushed → {}", p.display()),
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(1);
+                    }
+                }
             }
-        },
-        SyncSub::Pull => match crate::cloud_sync::sync_pull(&cfg, &path) {
-            Ok(()) => println!("pulled config into {}", path.display()),
-            Err(e) => {
-                eprintln!("{e}");
-                std::process::exit(1);
+        }
+        SyncSub::Pull { remote } => {
+            if remote {
+                match rt.block_on(crate::cloud_sync::sync_pull_remote(&cfg, &path)) {
+                    Ok(()) => println!("pulled (gist) into {}", path.display()),
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(1);
+                    }
+                }
+            } else {
+                match crate::cloud_sync::sync_pull(&cfg, &path) {
+                    Ok(()) => println!("pulled config into {}", path.display()),
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(1);
+                    }
+                }
             }
-        },
+        }
     }
 }
 
@@ -151,14 +226,49 @@ pub fn dispatch_share(cmd: ShareSub) {
 pub fn dispatch_update(cmd: UpdateSub) {
     let cfg = AppConfig::load_auto_update(&AppConfig::config_path());
     match cmd {
-        UpdateSub::Check => {
-            let r = crate::auto_update::check_for_updates(&cfg);
-            println!("{}", r.message);
-            if let Some(v) = r.latest_available {
-                println!("latest: {v}");
+        UpdateSub::Check { remote } => {
+            if remote {
+                let rt = tokio::runtime::Runtime::new().expect("tokio runtime");
+                let r = rt.block_on(crate::auto_update::check_remote_async(&cfg));
+                match r.latest_version {
+                    Some(v) => {
+                        println!("current: {}", r.current_version);
+                        println!("latest:  {v}");
+                        println!(
+                            "source:  {}",
+                            r.source_url
+                        );
+                        if r.update_available {
+                            println!("status:  update available");
+                        } else {
+                            println!("status:  up to date");
+                        }
+                    }
+                    None => {
+                        println!(
+                            "remote check failed (current {}); see {}",
+                            r.current_version, r.source_url
+                        );
+                    }
+                }
+            } else {
+                let r = crate::auto_update::check_for_updates(&cfg);
+                println!("{}", r.message);
+                if let Some(v) = r.latest_available {
+                    println!("latest: {v}");
+                }
             }
         }
     }
+}
+
+fn print_workflow_line(w: &crate::workflows::Workflow) {
+    let alias = if w.has_alias() {
+        format!(" (alias: {})", w.alias)
+    } else {
+        String::new()
+    };
+    println!("  {} — {}{}", w.name, w.description, alias);
 }
 
 pub fn dispatch_workflow(cmd: WorkflowSub) {
@@ -175,16 +285,36 @@ pub fn dispatch_workflow(cmd: WorkflowSub) {
             if workflows.is_empty() {
                 println!("no [[workflows]] in config");
             } else {
-                for w in &workflows {
-                    println!("{} — {}", w.name, w.description);
+                let grouped = crate::workflows::group_by_category(&workflows);
+                for (cat, items) in &grouped {
+                    if cat.is_empty() {
+                        for w in items {
+                            print_workflow_line(w);
+                        }
+                    } else {
+                        println!("[{}]", cat);
+                        for w in items {
+                            print_workflow_line(w);
+                        }
+                    }
                 }
             }
         }
         WorkflowSub::Run { name, params } => {
-            let Some(wf) = workflows.iter().find(|w| w.name == name) else {
+            let Some(wf) = crate::workflows::find(&workflows, &name) else {
                 eprintln!("workflow not found: {name}");
                 std::process::exit(1);
             };
+            // Refuse to run when declared params are missing.
+            let missing = wf.missing_params(&params);
+            if !missing.is_empty() {
+                eprintln!(
+                    "workflow {} requires params: {} (use --param key=value)",
+                    wf.name,
+                    missing.join(", ")
+                );
+                std::process::exit(1);
+            }
             for step in wf.render_steps(&params) {
                 println!("{step}");
             }
@@ -203,7 +333,7 @@ pub fn dispatch_notebook(cmd: NotebookSub) {
             Ok(nb) => {
                 println!("{}", nb.title);
                 for (i, cell) in nb.cells.iter().enumerate() {
-                    println!("  [{i}] {cell:?}");
+                    println!("  [{i}] {} {}", cell.kind(), short_cell_repr(cell));
                 }
             }
             Err(e) => {
@@ -211,6 +341,49 @@ pub fn dispatch_notebook(cmd: NotebookSub) {
                 std::process::exit(1);
             }
         },
+        NotebookSub::New { path, title } => {
+            let nb = crate::notebooks::Notebook::new(title);
+            match nb.save(&path) {
+                Ok(()) => println!("wrote {}", path.display()),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        NotebookSub::Run { path, index } => match crate::notebooks::Notebook::load(&path) {
+            Ok(nb) => match nb.execute_cell(index) {
+                Ok(exec) => print!("{}", exec.text()),
+                Err(e) => {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                }
+            },
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+    }
+}
+
+fn short_cell_repr(cell: &crate::notebooks::NotebookCell) -> String {
+    let one_line = |s: &str| {
+        let trimmed = s.trim();
+        if trimmed.chars().count() > 60 {
+            let mut out: String = trimmed.chars().take(57).collect();
+            out.push('…');
+            out
+        } else {
+            trimmed.to_string()
+        }
+    };
+    match cell {
+        crate::notebooks::NotebookCell::Markdown { text } => one_line(text),
+        crate::notebooks::NotebookCell::Code { language, source } => {
+            format!("({language}) {}", one_line(source))
+        }
+        crate::notebooks::NotebookCell::Output { text } => one_line(text),
     }
 }
 

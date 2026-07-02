@@ -5,7 +5,8 @@ category: 平台
 plan_type: platform
 priority: P4
 effort: M
-status: todo
+status: done
+closed: 2026-07-02
 ---
 
 # Auto Update（自动更新）
@@ -23,7 +24,7 @@ status: todo
 
 ## PureTerm 现状
 
-**未实现。**
+**Done（2026-07-02）。** auto_update.rs 真实 GitHub Releases HTTP（reqwest） + 简易 semver 比较 + --remote CLI。
 
 ## 优先级
 

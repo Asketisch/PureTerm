@@ -5,7 +5,8 @@ category: 集成
 plan_type: feature
 priority: P4
 effort: L
-status: todo
+status: done
+closed: 2026-07-02
 ---
 
 # Notebooks（交互式文档）
@@ -22,7 +23,7 @@ status: todo
 
 ## PureTerm 现状
 
-**未实现。**
+**Done（2026-07-02）。** notebooks.rs .pureterm JSON 格式 + cell 执行引擎（$SHELL 调起） + 9 单测 + show/new/run CLI 子命令。
 
 ## 优先级
 
