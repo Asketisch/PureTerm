@@ -23,6 +23,15 @@ pureterm-codeindex = { path = "crates/pureterm-codeindex" }
 pureterm-lsp = { path = "crates/pureterm-lsp" }
 pureterm-computer-use = { path = "crates/pureterm-computer-use" }
 
+# ── Dev profile: optimised for fast incremental compilation ───────────────────
+# Test profile intentionally uses Cargo defaults (opt-level=0, high codegen-units,
+# no incremental) — Cargo disables incremental for test binaries on purpose.
+[profile.dev]
+incremental = true
+split-debuginfo = "unpacked"   # macOS: avoid repacking DWARF on every incremental build
+debug = 1                       # line-number info only — ~20-30% less debug-info generation time
+codegen-units = 256             # higher parallelism during compilation
+
 [profile.release]
 opt-level = 3
 lto = true

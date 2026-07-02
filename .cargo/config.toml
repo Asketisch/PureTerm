@@ -1,0 +1,23 @@
+# PureTerm Cargo Configuration
+# Optimized for macOS ARM64 (Apple Silicon) + Linux CI builds.
+#
+# Note on linkers:
+#   - macOS 15+/Xcode 16+ ship a new default linker (ld-prime) that is already
+#     very fast. The old `zld` is unmaintained and incompatible with current
+#     toolchains, so we intentionally do NOT override the linker on macOS.
+#   - On Linux we keep mold/lld, which give large link-time wins in CI.
+#     If the linker is absent, Rust falls back to the system `ld`.
+
+[build]
+incremental = true
+# sccache is opt-in via the RUSTC_WRAPPER env var (e.g. `export RUSTC_WRAPPER=sccache`
+# in your shell). It is intentionally NOT set here so that environments without
+# sccache (e.g. CI, fresh checkouts) keep working without error.
+
+# ── Linux x86_64 CI: mold is fastest, lld is a good fallback ────────────────
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# ── Linux ARM64: lld ────────────────────────────────────────────────────────
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "link-arg=-fuse-ld=lld"]

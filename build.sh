@@ -60,6 +60,7 @@ ${BOLD}模式${RESET}:
 ${BOLD}选项${RESET}:
   --clean             构建前清除增量编译缓存（推荐字体/资源变更后使用）
   --target <triple>   指定交叉编译目标（如 aarch64-apple-darwin）
+  --timings           生成编译时序报告（HTML，位于 target/cargo-timings/）
   -h, --help          显示此帮助信息
 
 ${BOLD}示例${RESET}:
@@ -71,6 +72,45 @@ ${BOLD}示例${RESET}:
   ./build.sh --target aarch64-apple-darwin release
 
 EOF
+}
+
+# =============================================================================
+# 工具链检测（sccache / zld / mold / lld）
+# =============================================================================
+
+TOOLCHAIN_INFO=""
+
+detect_toolchain() {
+    local tools=()
+
+    # sccache
+    if command -v sccache &>/dev/null; then
+        TOOLS_SCCACHE="yes"
+        export RUSTC_WRAPPER=sccache
+        tools+=("sccache")
+    else
+        TOOLS_SCCACHE=""
+    fi
+
+    # Fast linker detection (Linux only).
+    # macOS 15+/Xcode 16+ use a fast default linker (ld-prime); zld is unmaintained
+    # and incompatible, so we deliberately do not look for it on Darwin.
+    local uname_s
+    uname_s="$(uname -s)"
+
+    if [ "$uname_s" = "Linux" ]; then
+        if command -v mold &>/dev/null; then
+            tools+=("mold")
+        elif command -v lld &>/dev/null; then
+            tools+=("lld")
+        fi
+    fi
+
+    if [ ${#tools[@]} -gt 0 ]; then
+        TOOLCHAIN_INFO=" (using: $(IFS=', '; echo "${tools[*]}"))"
+    else
+        TOOLCHAIN_INFO=""
+    fi
 }
 
 # =============================================================================
@@ -144,6 +184,9 @@ build_debug() {
     if [ -n "${TARGET_TRIPLE:-}" ]; then
         cmd="${cmd} --target ${TARGET_TRIPLE}"
     fi
+    if [ "$TIMINGS_ENABLED" = "true" ]; then
+        cmd="${cmd} --timings"
+    fi
 
     if $cmd; then
         local bin
@@ -167,6 +210,9 @@ build_release() {
     local cmd="cargo build --release --bin ${BINARY_NAME}"
     if [ -n "${TARGET_TRIPLE:-}" ]; then
         cmd="${cmd} --target ${TARGET_TRIPLE}"
+    fi
+    if [ "$TIMINGS_ENABLED" = "true" ]; then
+        cmd="${cmd} --timings"
     fi
 
     if $cmd; then
@@ -194,6 +240,9 @@ build_app() {
     local settings_cmd="cargo build --release --bin pureterm-settings"
     if [ -n "${TARGET_TRIPLE:-}" ]; then
         settings_cmd="${settings_cmd} --target ${TARGET_TRIPLE}"
+    fi
+    if [ "$TIMINGS_ENABLED" = "true" ]; then
+        settings_cmd="${settings_cmd} --timings"
     fi
     if ! $settings_cmd; then
         warn "pureterm-settings 构建失败，Settings UI 将不可用"
@@ -383,6 +432,7 @@ EOF
 TARGET_TRIPLE=""
 MODE=""
 CLEAN_BEFORE_BUILD="false"
+TIMINGS_ENABLED="false"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -397,6 +447,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --clean)
             CLEAN_BEFORE_BUILD="true"
+            shift
+            ;;
+        --timings)
+            TIMINGS_ENABLED="true"
             shift
             ;;
         --target)
@@ -434,8 +488,9 @@ if [ -n "$TARGET_TRIPLE" ]; then
     step "目标平台: ${TARGET_TRIPLE}"
 fi
 
+detect_toolchain
 local_platform="$(detect_platform)"
-step "当前平台: ${local_platform}"
+step "当前平台: ${local_platform}${TOOLCHAIN_INFO}"
 info "${PROJECT_NAME} v${VERSION}"
 
 case "$MODE" in

@@ -11,15 +11,35 @@ cargo build --release
 
 配置文件：`~/.config/pureterm/alacritty.toml`（兼容回退 `~/.config/alacritty/alacritty.toml`）
 
+## 构建加速（AI 编译必读）
+
+sccache 与 cargo-nextest 已配置，直接用以下命令即可提速，无需了解原理。
+
+```bash
+cargo build -p <crate>            # 构建（优先定向构建单 crate）
+cargo check --workspace           # 类型检查（秒级，比 build 快）
+cargo nextest run -p <crate>      # 测试（用 nextest，不要用 cargo test）
+./build.sh clean                  # 清理 target/（膨胀时用）
+```
+
+- 改了某 crate 就只测该 crate，提交前再 `cargo nextest run --workspace` 全量测
+- 想用 sccache 加速：`export RUSTC_WRAPPER=sccache`（需先 `cargo install sccache`，未装时裸 cargo 也正常）
+
 ## 架构
 
-6 个 crate 的工作区：
+12 个 crate 的工作区：
 - `pureterm` — 二进制入口（薄封装，基于 Iced 0.14 daemon）
 - `pureterm-alacritty-runtime` — Alacritty 内核 + GPU 字体图集（精简版，2026-06-08 起仅含 `renderer::glyph_atlas`）
 - `pureterm-settings` — Iced 0.14 设置 UI（独立进程，Cmd+, 打开）
 - `alacritty_terminal` — 终端内核、PTY、Grid（vendored 上游源码）
 - `alacritty_config` — 配置反序列化抽象（vendored 上游源码）
 - `alacritty_config_derive` — 配置 derive 宏（vendored 上游源码）
+- `pureterm-jsonrpc` — 传输无关的 JSON-RPC 2.0 类型（GUI IPC 与 daemon 共享）
+- `pureterm-daemon` — 持久化 PTY 守护进程（puretermd，终端/SSH 会话跨 GUI 重启存活）
+- `pureterm-ssh` — 进程无关的 SSH PTY spawn（GUI 直连与 daemon 共用）
+- `pureterm-codeindex` — Tree-sitter 代码切块 + SQLite 关键词搜索（MCP）
+- `pureterm-lsp` — JSON-RPC stdio LSP 客户端（rust-analyzer MVP）
+- `pureterm-computer-use` — 桌面截图 + 输入桩（AI Computer Use）
 
 ## Agent 指南
 
