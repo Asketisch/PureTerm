@@ -140,6 +140,11 @@ mod tunnel_cli;
 mod resume_bindings;
 /// GAP-6.6: `pureterm tmux …` — tmux-compatible command subset.
 mod tmux_cli;
+/// T-core-tmux-cc: tmux control mode (-CC) backend — envelope parser +
+/// PTY skeleton + Surface variant + mirror.
+mod tmux_cc;
+/// T-core-windows-conpty: cross-platform local-socket abstraction.
+mod local_socket;
 /// GAP-32: Git overlay panel state + quick-action enum (view lives in iced_app).
 mod git_panel;
 /// GAP-09: in-memory notification store (history + unread + attention + bell throttle).

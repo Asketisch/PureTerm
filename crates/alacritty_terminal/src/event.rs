@@ -73,6 +73,66 @@ pub enum NotifySource {
     Cli,
 }
 
+/// T-core-graphics: protocol used to transfer a graphics payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphicsProtocol {
+    /// DEC Sixel (`\x1bPq ... \x1b\\`) — pixel-based, 6-bit palette.
+    Sixel,
+    /// Kitty graphics protocol (`\x1b_G ... \x1b\\`) — chunked, base64.
+    Kitty,
+    /// iTerm2 inline image (`\x1b]1337;File=...`) — legacy.
+    ITerm2,
+}
+
+/// T-core-graphics: encoded payload format for a graphics image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GraphicsFormat {
+    /// 32-bit RGBA pixels (already decoded).
+    Rgba,
+    /// PNG (still encoded; will be decoded by the renderer).
+    Png,
+    /// Raw RGB (24-bit).
+    Rgb,
+}
+
+/// T-core-graphics: a placement (anchor) of an image onto the grid.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphicsPlacement {
+    /// Unique id of the image.
+    pub id: u32,
+    /// Top-left grid column.
+    pub col: u16,
+    /// Top-left grid row (grid-relative, not screen-relative).
+    pub row: u16,
+    /// Width in cells.
+    pub cols: u16,
+    /// Height in cells.
+    pub rows: u16,
+    /// Z-order (newer overlays older). Monotonically increasing.
+    pub z: u32,
+}
+
+/// T-core-graphics: a fully-decoded graphics image ready for the renderer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphicsImage {
+    /// Protocol that produced the image.
+    pub protocol: GraphicsProtocol,
+    /// Payload encoding.
+    pub format: GraphicsFormat,
+    /// Placement onto the grid.
+    pub placement: GraphicsPlacement,
+    /// Pixel width (or image width when format = Rgba/Rgb).
+    pub width: u32,
+    /// Pixel height.
+    pub height: u32,
+    /// Decoded RGBA bytes (length = width * height * 4). `None` if the
+    /// renderer should decode from `encoded` itself (e.g. PNG).
+    pub pixels: Option<Vec<u8>>,
+    /// Still-encoded bytes (e.g. PNG when format = Png). Empty when `pixels`
+    /// is `Some`.
+    pub encoded: Vec<u8>,
+}
+
 /// GAP-09: a desktop notification surfaced from the PTY (OSC 9/99/777),
 /// synthesized from a bell, or posted via the CLI.
 //
@@ -161,6 +221,11 @@ pub enum Event {
 
     /// GAP-09: desktop notification (OSC 9/99/777 or bell-derived).
     Notification(Notification),
+
+    /// T-core-graphics: decoded graphics image (Sixel / Kitty / iTerm2).
+    /// Carries either decoded RGBA pixels or a still-encoded payload plus
+    /// the grid placement; the renderer decides when to blit.
+    GraphicsImage(GraphicsImage),
 }
 
 impl Debug for Event {
@@ -182,6 +247,12 @@ impl Debug for Event {
             Event::ShellMark(mark) => write!(f, "ShellMark({:?}, row={})", mark.kind, mark.row),
             Event::CwdChanged(path) => write!(f, "CwdChanged({path})"),
             Event::Notification(n) => write!(f, "Notification({:?})", n),
+            Event::GraphicsImage(img) => write!(
+                f,
+                "GraphicsImage({:?} {}x{} @{},{} {}x{} cells)",
+                img.protocol, img.width, img.height, img.placement.col, img.placement.row,
+                img.placement.cols, img.placement.rows,
+            ),
         }
     }
 }

@@ -7,6 +7,14 @@ pub struct P4Features {
     pub voice_input: crate::voice_input::VoiceInputState,
     pub terminal_graphics_cfg: crate::terminal_graphics::TerminalGraphicsConfig,
     pub graphics_cache: crate::terminal_graphics::GraphicsCache,
+    /// T-core-closure: live image store. The renderer pulls decoded RGBA
+    /// (or encoded PNG) payloads from here; the chunked Kitty reassembler
+    /// feeds it. Replaces the previous dead-code `GraphicsCache` field
+    /// (kept for backward compatibility — `GraphicsCache` is still used by
+    /// legacy callers; new code should use `image_store`).
+    pub image_store: crate::terminal_graphics::ImageStore,
+    /// T-core-closure: cross-read Kitty graphics chunk reassembler.
+    pub kitty_assembler: crate::terminal_graphics::KittyAssembler,
     pub glass_cfg: crate::macos_glass_effect::GlassEffectConfig,
     pub touch_bar_cfg: crate::macos_touch_bar::TouchBarConfig,
     pub tab_bar_cfg: crate::visual_tab_bar::VisualTabBarConfig,
@@ -44,6 +52,15 @@ impl P4Features {
             graphics_cache: crate::terminal_graphics::GraphicsCache::new(
                 terminal_graphics_cfg.max_images,
             ),
+            // T-core-closure: the live image store replaces the dead-code
+            // `GraphicsCache` when the GUI's render path starts pulling
+            // from it. The legacy cache stays for callers that still want
+            // metadata-only placements.
+            image_store: crate::terminal_graphics::ImageStore::new(
+                terminal_graphics_cfg.max_images,
+                terminal_graphics_cfg.max_image_bytes,
+            ),
+            kitty_assembler: crate::terminal_graphics::KittyAssembler::new(),
             glass_cfg: crate::app_config::AppConfig::load_glass_effect(path),
             touch_bar_cfg: crate::app_config::AppConfig::load_touch_bar(path),
             tab_bar_cfg: crate::app_config::AppConfig::load_visual_tab_bar(path),

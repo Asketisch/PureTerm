@@ -175,6 +175,19 @@ pub enum Command {
         #[command(subcommand)]
         cmd: crate::tmux_cli::TmuxSub,
     },
+    /// T-core-tmux-cc: attach to a tmux session via `tmux -CC`. Unlike the
+    /// cold-CLI `tmux` subcommand (which forks per invocation), this is a
+    /// long-running backend: the GUI spawns a `tmux -CC new-session` /
+    /// `attach -t` child and parses its envelope stream. v1 surfaces the
+    /// CLI; the GUI is the actual consumer.
+    TmuxAttach {
+        /// Session name to attach to (omit to create a new one).
+        #[arg(short = 't', long = "target")]
+        session: Option<String>,
+        /// Open a new detached window after attach.
+        #[arg(long = "new-window")]
+        new_window: bool,
+    },
     /// GAP-47: AppleScript-friendly automation (`osascript` → `pureterm script …`).
     Script {
         #[command(subcommand)]
@@ -1225,6 +1238,40 @@ pub fn run(cli: Cli) {
         // GAP-6.6: hybrid — tmux commands dispatch in `tmux_cli` (some need
         // multi-step RPC + local formatting, e.g. capture-pane / list-panes).
         Command::Tmux { cmd } => crate::tmux_cli::dispatch(cmd, &socket, json),
+        // T-core-tmux-cc: `pureterm tmux-attach` — print the `tmux -CC`
+        // command line the GUI uses to attach to / create the session.
+        // v1: the GUI runs the actual child; the CLI is a thin probe so
+        // ops can verify the spawn wiring.
+        Command::TmuxAttach { session, new_window } => {
+            let tag = std::process::id();
+            let mut argv: Vec<String> = vec!["tmux".to_string(), "-CC".to_string()];
+            match (&session, new_window) {
+                (Some(name), false) => {
+                    argv.extend(["attach-session".to_string(), "-t".to_string(), name.clone()]);
+                },
+                (Some(name), true) => {
+                    argv.extend([
+                        "new-window".to_string(),
+                        "-a".to_string(),
+                        "-t".to_string(),
+                        name.clone(),
+                    ]);
+                },
+                (None, _) => {
+                    argv.extend([
+                        "new-session".to_string(),
+                        "-A".to_string(),
+                        "-s".to_string(),
+                        format!("pureterm-{tag}"),
+                        "-x".to_string(),
+                        "200".to_string(),
+                        "-y".to_string(),
+                        "50".to_string(),
+                    ]);
+                },
+            }
+            println!("{}", argv.join(" "));
+        },
         Command::Script { cmd } => crate::script_cli::dispatch_script(cmd, &socket, json),
         Command::Url { cmd } => crate::script_cli::dispatch_url(cmd, &socket, json),
         Command::Plugin { cmd } => crate::p4_cli::dispatch_plugin(cmd),

@@ -227,6 +227,10 @@ enabled = false
 [terminal_graphics]
 enabled = false
 max_images = 64
+# T-core-closure: per-image byte cap. 32 MiB matches the default in
+# `TerminalGraphicsConfig`; raise to 256 MiB for high-res screenshots, lower
+# to 4 MiB to keep memory tight on shared hosts.
+max_image_bytes = 33554432
 #
 # GAP-20 / GAP-55: Window glass + opacity/blur (`[window]` nested tables).
 [window]

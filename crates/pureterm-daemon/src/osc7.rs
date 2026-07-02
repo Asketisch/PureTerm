@@ -48,8 +48,10 @@ pub(crate) fn write_private(path: &str, content: &str) -> std::io::Result<()> {
 /// - bash: sets `PROMPT_COMMAND` to define and run `_pt_osc7`, preserving any
 ///   pre-existing `PROMPT_COMMAND`.
 ///
-/// Only zsh and bash are covered; other shells (fish, nu, …) will not report
-/// cwd. Inspired by cmux's shell integration.
+/// zsh + bash are covered; fish / nu / elvish / PowerShell are also handled
+/// by [`crate::shell_integration`] (the OSC 7 + OSC 133 combined path);
+/// this module is the OSC-7-only fallback for callers that haven't opted
+/// into the wider set. Inspired by cmux's shell integration.
 pub fn prepare_osc7_env(tag: &str) -> HashMap<String, String> {
     let mut env = HashMap::new();
 
@@ -59,7 +61,12 @@ pub fn prepare_osc7_env(tag: &str) -> HashMap<String, String> {
         .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
 
     // -- zsh: ZDOTDIR bootstrap --
-    let zdot_dir = format!("/tmp/.pureterm-zdotdir-{}", tag);
+    // t-core-windows-conpty: route through `std::env::temp_dir()` instead
+    // of hard-coding `/tmp` (Windows has no such path; the path is also
+    // the same one `shell_integration::temp_zdotdir` uses so v1 OSC 7
+    // alone and v1 OSC 7 + OSC 133 are consistent).
+    let zdot_dir = crate::shell_integration::temp_zdotdir(tag);
+    let zdot_str = zdot_dir.to_string_lossy().to_string();
     // Owner-only (0700): the `.zshenv` written inside embeds the user's real
     // ZDOTDIR/HOME path and is sourced by the shell, so neither the dir nor the
     // file may be world-accessible. The 0700 dir also blocks a pre-population
@@ -76,8 +83,8 @@ _pt_osc7
         real_zdotdir = real_zdotdir.replace('"', "\\\""),
         osc7_func = OSC7_FUNC,
     );
-    let _ = write_private(&format!("{}/.zshenv", zdot_dir), &zshenv_content);
-    env.insert("ZDOTDIR".to_string(), zdot_dir);
+    let _ = write_private(&format!("{zdot_str}/.zshenv"), &zshenv_content);
+    env.insert("ZDOTDIR".to_string(), zdot_str);
 
     // -- bash: PROMPT_COMMAND env var --
     // The function def + initial call must be in PROMPT_COMMAND because bash

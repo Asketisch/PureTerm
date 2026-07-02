@@ -3143,15 +3143,36 @@ impl PureTermApp {
     }
 
     /// GAP-15: resolve the `[shell_integration]` config into the injector opts
-    /// for the direct (non-daemon) PTY path. `enabled=false` collapses to both
-    /// off (pure OSC 7). Honored only on the fallback path; the daemon path is
-    /// always full integration (no config access there).
+    /// for the direct (non-daemon) PTY path. `enabled=false` collapses to all
+    /// off (pure OSC 7). Honored only on the fallback path; the daemon path
+    /// is always full integration (no config access there). T-core-shell-integ
+    /// adds the per-shell opt-in map: absent keys default to true (matches
+    /// pre-t-core-closure "everything on"), the legacy `inject_zsh` /
+    /// `inject_bash` keys still short-circuit those two.
     fn shell_integration_opts(&self) -> pureterm_daemon::shell_integration::ShellIntegrationOpts {
+        use pureterm_daemon::shell_integration::Shell;
         let c = &self.shell_integration_cfg;
-        pureterm_daemon::shell_integration::ShellIntegrationOpts {
-            zsh: c.enabled && c.inject_zsh,
-            bash: c.enabled && c.inject_bash,
+        let mut shells = pureterm_daemon::shell_integration::ShellIntegrationOpts::all_on().shells;
+        if !c.enabled {
+            shells.clear();
+            return pureterm_daemon::shell_integration::ShellIntegrationOpts { shells };
         }
+        // Legacy `inject_zsh`/`inject_bash` keys — false ⇒ drop.
+        if !c.inject_zsh {
+            shells.remove(&Shell::Zsh);
+        }
+        if !c.inject_bash {
+            shells.remove(&Shell::Bash);
+        }
+        // Per-shell opt-in. Absent keys stay on (the `all_on()` default).
+        for (name, &on) in &c.per_shell {
+            if let Ok(s) = name.parse::<Shell>() {
+                if !on {
+                    shells.remove(&s);
+                }
+            }
+        }
+        pureterm_daemon::shell_integration::ShellIntegrationOpts { shells }
     }
 
     /// Re-derive the status-bar cwd (and git branch) from the now-active
@@ -5271,6 +5292,17 @@ impl PureTermApp {
                                                 }),
                                             );
                                         }
+                                    }
+                                }
+                                // T-core-graphics: route decoded images into
+                                // the live image store. v1 only logs at debug
+                                // (the GPU blit path is wired in v2); the
+                                // store is the source of truth for the
+                                // chunked Kitty reassembler and the
+                                // scrollback-prune pass.
+                                TerminalEvent::GraphicsImage(img) => {
+                                    if self.p4.terminal_graphics_cfg.enabled {
+                                        let _ = self.p4.image_store.insert(img.clone());
                                     }
                                 }
                             }

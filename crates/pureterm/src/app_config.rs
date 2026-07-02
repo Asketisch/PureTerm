@@ -330,15 +330,22 @@ impl Default for SidebarConfig {
 ///
 /// `enabled` is the master switch: false short-circuits the injector to OSC 7
 /// only (cwd reporting still works, no OSC 133 marks). `inject_zsh`/`inject_bash`
-/// gate per-shell hook injection. `include_command_text` controls whether the
-/// recovered command text is sliced from the grid and included in
-/// `shell.command_finished` events / `get_shell_context` (privacy knob).
+/// gate per-shell hook injection. `per_shell` (t-core-shell-integ) is the
+/// per-shell opt-in map; an absent key defaults to true for backward-compat.
+/// `include_command_text` controls whether the recovered command text is
+/// sliced from the grid and included in `shell.command_finished` events /
+/// `get_shell_context` (privacy knob).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellIntegrationConfig {
     pub enabled: bool,
     pub inject_zsh: bool,
     pub inject_bash: bool,
     pub include_command_text: bool,
+    /// t-core-shell-integ: per-shell opt-in. Keys are `Shell::as_str()`
+    /// values (`zsh`/`bash`/`fish`/`nu`/`elvish`/`pwsh`). Absent keys
+    /// default to true (matches the pre-t-core-closure behavior of every
+    /// supported shell on by default).
+    pub per_shell: std::collections::HashMap<String, bool>,
 }
 
 impl Default for ShellIntegrationConfig {
@@ -348,6 +355,7 @@ impl Default for ShellIntegrationConfig {
             inject_zsh: true,
             inject_bash: true,
             include_command_text: true,
+            per_shell: std::collections::HashMap::new(),
         }
     }
 }
@@ -1039,6 +1047,17 @@ impl AppConfig {
         if let Some(b) = table.get("include_command_text").and_then(|v| v.as_bool()) {
             cfg.include_command_text = b;
         }
+        // t-core-shell-integ: per-shell opt-in map. Keys are
+        // `[shell_integration.per_shell.<shell_name>] = true|false`; the
+        // exact recognized names are the lowercase enum variants
+        // (`zsh`/`bash`/`fish`/`nu`/`elvish`/`pwsh`).
+        if let Some(per_shell) = table.get("per_shell").and_then(|t| t.as_table()) {
+            for (k, v) in per_shell {
+                if let Some(b) = v.as_bool() {
+                    cfg.per_shell.insert(k.clone(), b);
+                }
+            }
+        }
         cfg
     }
 
@@ -1326,7 +1345,10 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-17: `[terminal_graphics]`
+    /// GAP-17: `[terminal_graphics]`. T-core-closure adds `max_image_bytes`
+    /// and `max_concurrent_images` so pathological Kitty PNG payloads
+    /// (multi-MB) are rejected at the config level before they pin the
+    /// store.
     pub fn load_terminal_graphics(path: &Path) -> crate::terminal_graphics::TerminalGraphicsConfig {
         let mut cfg = crate::terminal_graphics::TerminalGraphicsConfig::default();
         let Some(table) = Self::load_table(path, "terminal_graphics") else {
@@ -1337,6 +1359,9 @@ impl AppConfig {
         }
         if let Some(n) = table.get("max_images").and_then(|v| v.as_integer()) {
             cfg.max_images = (n.max(1)) as usize;
+        }
+        if let Some(n) = table.get("max_image_bytes").and_then(|v| v.as_integer()) {
+            cfg.max_image_bytes = (n.max(1024)) as usize;
         }
         cfg
     }

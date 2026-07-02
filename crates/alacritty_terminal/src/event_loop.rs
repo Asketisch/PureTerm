@@ -16,8 +16,8 @@ use polling::{Event as PollingEvent, Events, PollMode, Poller};
 use smallvec::SmallVec;
 
 use crate::event::{
-    self, Event, EventListener, Notification, NotifyOccasion, NotifySource, ShellMark,
-    ShellMarkKind, WindowSize,
+    self, Event, EventListener, GraphicsFormat, GraphicsImage, GraphicsPlacement, GraphicsProtocol,
+    Notification, NotifyOccasion, NotifySource, ShellMark, ShellMarkKind, WindowSize,
 };
 use crate::sync::FairMutex;
 use crate::term::Term;
@@ -196,6 +196,37 @@ where
                     id: raw.id,
                     occasion: raw.occasion.unwrap_or(NotifyOccasion::Always),
                     source: raw.source,
+                }));
+            }
+
+            // T-core-graphics: scan Sixel / Kitty graphics / iTerm2 inline
+            // image sequences. The scanner forwards complete single-chunk
+            // images; the GUI-side ImageStore reassembles chunked Kitty
+            // sequences that span a read boundary.
+            let cursor_row = terminal.grid().cursor.point.line.0 as usize;
+            let cursor_col = terminal.grid().cursor.point.column.0 as u16;
+            for raw in scan_graphics(&buf[..unprocessed]) {
+                // Default the placement to "below the cursor, sized to the
+                // image" when the protocol did not specify cell coordinates.
+                let mut placement = raw.placement.clone();
+                if placement.cols == 0 && raw.width > 0 {
+                    placement.cols = raw.width.min(u16::MAX as u32) as u16;
+                }
+                if placement.rows == 0 && raw.height > 0 {
+                    placement.rows = raw.height.min(u16::MAX as u32) as u16;
+                }
+                if placement.col == 0 && placement.row == 0 {
+                    placement.col = cursor_col;
+                    placement.row = cursor_row as u16;
+                }
+                self.event_proxy.send_event(Event::GraphicsImage(GraphicsImage {
+                    protocol: raw.protocol,
+                    format: raw.format,
+                    width: raw.width,
+                    height: raw.height,
+                    pixels: raw.pixels,
+                    encoded: raw.encoded,
+                    placement,
                 }));
             }
 
@@ -1094,6 +1125,352 @@ fn hex_val(b: u8) -> Option<u8> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// T-core-graphics: Sixel / Kitty graphics / iTerm2 inline image scanner
+// ---------------------------------------------------------------------------
+
+/// T-core-graphics: one fully-reassembled graphics image extracted from a PTY
+/// read. The scanner hands complete images to the event loop; partial chunked
+/// sequences that span the read boundary are dropped (the read loop resets
+/// `unprocessed`, so a multi-chunk Kitty image split across two reads is
+/// emitted as one image with a `more` flag — see the E2E note below). The
+/// renderer is responsible for re-decoding / re-blitting on re-emit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawGraphics {
+    protocol: GraphicsProtocol,
+    format: GraphicsFormat,
+    width: u32,
+    height: u32,
+    /// Decoded RGBA pixel buffer, or `None` to mean "still encoded" (PNG).
+    pixels: Option<Vec<u8>>,
+    /// Still-encoded payload (e.g. raw PNG bytes for `format = Png`).
+    encoded: Vec<u8>,
+    /// Grid placement (col/row/cells). For an explicit placement use
+    /// `(col, row, cols, rows) = (0, 0, w_in_cells, h_in_cells)` if the
+    /// protocol did not specify one.
+    placement: GraphicsPlacement,
+}
+
+/// T-core-graphics: detect and reassemble graphics images in a PTY buffer.
+///
+/// Supported:
+/// - **Sixel** (`\x1bPq ... \x1b\\`) — DEC sixel pixel stream, single image
+///   per DCS. v1 only forwards the raw pixel bytes (decoded RGBA stays in
+///   the renderer).
+/// - **Kitty graphics** (`\x1b_G ... \x1b\\`) — `;`-separated `key=value`
+///   params, base64 payload. v1 recognizes `a=T` (transmit-and-use), `a=A`
+///   (transmit-and-use, chunked), `q=1` (quiet), `f=32` (RGBA), `f=100` (PNG),
+///   `c=`/`r=` (cols/rows in cells), `i=` (image id), and the chunk markers
+///   `m=0` (more chunks follow) / `m=1` (final).
+/// - **iTerm2 inline** (`\x1b]1337;File=...`) — `;`-separated `key=value`
+///   params, base64 payload. v1 only recognizes `inline=1`.
+///
+/// The scanner is intentionally **stateless across PTY reads** in v1
+/// (matches `scan_osc7`/`scan_osc133`): a chunked Kitty image whose chunks
+/// straddle the read boundary is dropped. Single-chunk images always pass
+/// because a `kitty +kitten icat` write is small enough to land in one
+/// `read(2)` call in practice. The GUI-side [`ImageStore`] (in the
+/// `pureterm` crate) is the cross-read reassembly point for full Kitty
+/// chunking.
+fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
+    let mut out: SmallVec<[RawGraphics; 2]> = SmallVec::new();
+    let mut i = 0usize;
+
+    while i < buf.len() {
+        // Find the next ESC.
+        let Some(pos) = memchr::memchr(0x1b, &buf[i..]) else { break };
+        let start = i + pos;
+        let after = &buf[start..];
+
+        if let Some(rest) = after.strip_prefix(b"\x1bPq") {
+            // Sixel DCS — start at the byte after "Pq" (could be raster
+            // attributes "Pan;Pad;Ph;Pv" or just pixel data; the renderer
+            // is the source of truth on raster attrs). Forward raw bytes
+            // up to the next ST (`\x1b\\`).
+            let payload_start = start + 3;
+            if let Some(end_offset) = find_st(payload_start, buf) {
+                let raw = &buf[payload_start..end_offset];
+                let placement = GraphicsPlacement {
+                    id: 0,
+                    col: 0,
+                    row: 0,
+                    cols: 0,
+                    rows: 0,
+                    z: 0,
+                };
+                out.push(RawGraphics {
+                    protocol: GraphicsProtocol::Sixel,
+                    format: GraphicsFormat::Rgb,
+                    width: 0,
+                    height: 0,
+                    pixels: None,
+                    encoded: raw.to_vec(),
+                    placement,
+                });
+                i = end_offset + 2;
+                continue;
+            }
+            let _ = rest; // keep variable used for clarity
+            break;
+        }
+
+        if let Some(_rest) = after.strip_prefix(b"\x1b_G") {
+            // Kitty graphics APC — format:
+            //   ESC _ <key>=<val>;...;<key>=<val>;BASE64PAYLOAD ESC \\
+            // v1: only `a=T` (transmit-and-use, single chunk) and `a=A`
+            // (transmit-and-use, chunked; v1 emits when m=1).
+            let payload_start = start + 3;
+            if let Some(end_offset) = find_st(payload_start, buf) {
+                let raw = &buf[payload_start..end_offset];
+                if let Some(img) = parse_kitty_graphics(raw) {
+                    out.push(img);
+                }
+                i = end_offset + 2;
+                continue;
+            }
+            break;
+        }
+
+        if let Some(_rest) = after.strip_prefix(b"\x1b]1337;File=") {
+            // iTerm2 inline image: `]1337;File=key=val;...;base64`
+            let payload_start = start + b"\x1b]1337;File=".len();
+            if let Some(end_offset) = find_st_or_bel(payload_start, buf) {
+                let raw = &buf[payload_start..end_offset];
+                if let Some(img) = parse_iterm2_inline(raw) {
+                    out.push(img);
+                }
+                i = end_offset + 1;
+                if buf[end_offset] == 0x1b {
+                    i += 1;
+                }
+                continue;
+            }
+            break;
+        }
+
+        i = start + 1;
+    }
+
+    out
+}
+
+/// Find the next ST (`\x1b\\`) at or after `start`. Returns the offset of the
+/// `\x1b`, or `None` if the buffer ends before a terminator.
+fn find_st(start: usize, buf: &[u8]) -> Option<usize> {
+    let mut p = start;
+    while p + 1 < buf.len() {
+        if buf[p] == 0x1b && buf[p + 1] == b'\\' {
+            return Some(p);
+        }
+        p += 1;
+    }
+    None
+}
+
+/// Find the next BEL (`\x07`) or ST (`\x1b\\`) at or after `start`. Returns
+/// the offset of the terminator byte (the BEL or the `\x1b`).
+fn find_st_or_bel(start: usize, buf: &[u8]) -> Option<usize> {
+    let mut p = start;
+    while p < buf.len() {
+        match buf[p] {
+            0x07 => return Some(p),
+            0x1b if p + 1 < buf.len() && buf[p + 1] == b'\\' => return Some(p),
+            _ => p += 1,
+        }
+    }
+    None
+}
+
+/// Split a Kitty graphics body into `;`-separated params, base64-decode the
+/// trailing payload, and return a [`RawGraphics`] for `a=T` / final-`m=1`
+/// chunk. Returns `None` for `a=q` (query), `m=0` (more chunks), or
+/// malformed input.
+fn parse_kitty_graphics(body: &[u8]) -> Option<RawGraphics> {
+    let s = std::str::from_utf8(body).ok()?;
+    let mut parts = s.split(';');
+    // First segment is the param string (e.g. "a=T,f=100,i=42,c=80,r=24").
+    // Trailing segment is the base64 payload.
+    let params_str = parts.next()?;
+    let mut a = '?';
+    let mut format = GraphicsFormat::Rgba;
+    let mut image_id: u32 = 0;
+    let mut cols: u16 = 0;
+    let mut rows: u16 = 0;
+    let mut more: u8 = 1;
+    for kv in params_str.split(',') {
+        let (k, v) = kv.split_once('=')?;
+        match k {
+            "a" => a = v.chars().next()?,
+            "f" => {
+                format = match v {
+                    "32" => GraphicsFormat::Rgba,
+                    "24" => GraphicsFormat::Rgb,
+                    "100" => GraphicsFormat::Png,
+                    _ => return None,
+                };
+            },
+            "i" => image_id = v.parse().ok()?,
+            "c" => cols = v.parse().ok()?,
+            "r" => rows = v.parse().ok()?,
+            "m" => more = v.parse().ok()?,
+            _ => {},
+        }
+    }
+    if a != 'T' && a != 'A' {
+        return None;
+    }
+    if more == 0 {
+        // more chunks follow; defer to the GUI-side reassembler.
+        return None;
+    }
+    let payload_b64 = parts.next()?;
+    let decoded = base64_decode(payload_b64.as_bytes())?;
+    let (w, h) = match format {
+        GraphicsFormat::Rgba => (cols as u32, rows as u32),
+        GraphicsFormat::Rgb => (cols as u32, rows as u32),
+        GraphicsFormat::Png => png_dimensions(&decoded).unwrap_or((0, 0)),
+    };
+    // The spec: `encoded` is empty when `pixels` is `Some` (RGBA / RGB
+    // decoded inline); only `format = Png` keeps the encoded payload.
+    let (pixels, encoded) = match format {
+        GraphicsFormat::Rgba => (Some(decoded), Vec::new()),
+        GraphicsFormat::Rgb => (None, decoded), // v1: RGB stays encoded
+        GraphicsFormat::Png => (None, decoded),
+    };
+    Some(RawGraphics {
+        protocol: GraphicsProtocol::Kitty,
+        format,
+        width: w,
+        height: h,
+        pixels,
+        encoded,
+        placement: GraphicsPlacement {
+            id: image_id,
+            col: 0,
+            row: 0,
+            cols,
+            rows,
+            z: 0,
+        },
+    })
+}
+
+/// Parse an iTerm2 `File=...` body. Recognized subset: `inline=1`,
+/// `width=N`, `height=N` (cell sizes).
+///
+/// iTerm2 separates params with `;` and the payload with `:` (the spec
+/// uses both — Kaku and iTerm2 source confirm the colon is the params /
+/// payload boundary; the spec document says the same).
+fn parse_iterm2_inline(body: &[u8]) -> Option<RawGraphics> {
+    let s = std::str::from_utf8(body).ok()?;
+    // Split on the FIRST `:` to separate params from the base64 payload.
+    let (params_str, payload_b64) = s.split_once(':')?;
+    let mut inline = false;
+    let mut cols: u16 = 0;
+    let mut rows: u16 = 0;
+    let mut preserve_aspect = true;
+    for kv in params_str.split(';') {
+        if kv.is_empty() {
+            continue;
+        }
+        let (k, v) = match kv.split_once('=') {
+            Some(kv) => kv,
+            None => continue,
+        };
+        match k {
+            "inline" => inline = v == "1",
+            "width" => cols = v.parse().ok()?,
+            "height" => rows = v.parse().ok()?,
+            "preserveAspectRatio" => preserve_aspect = v != "0",
+            _ => {},
+        }
+    }
+    if !inline {
+        return None;
+    }
+    let _ = preserve_aspect;
+    let decoded = base64_decode(payload_b64.as_bytes())?;
+    let (w, h) = png_dimensions(&decoded).unwrap_or((0, 0));
+    Some(RawGraphics {
+        protocol: GraphicsProtocol::ITerm2,
+        format: GraphicsFormat::Png,
+        width: w,
+        height: h,
+        pixels: None,
+        encoded: decoded,
+        placement: GraphicsPlacement {
+            id: 0,
+            col: 0,
+            row: 0,
+            cols,
+            rows,
+            z: 0,
+        },
+    })
+}
+
+/// Minimal RFC 4648 base64 decoder (alphabet `A-Za-z0-9+/`, `=` padding).
+/// Returns `None` on invalid input length, padding position, or non-alphabet
+/// bytes. Whitespace is rejected — the scanner feeds this from raw PTY bytes
+/// and any whitespace in a base64 payload is a protocol bug, not a feature.
+fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
+    fn val(b: u8) -> Option<u8> {
+        match b {
+            b'A'..=b'Z' => Some(b - b'A'),
+            b'a'..=b'z' => Some(b - b'a' + 26),
+            b'0'..=b'9' => Some(b - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    if input.len() % 4 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(input.len() / 4 * 3);
+    let mut chunk = [0u8; 4];
+    for (i, &b) in input.iter().enumerate() {
+        let idx = i % 4;
+        if b == b'=' {
+            if idx < 2 {
+                return None;
+            }
+            chunk[idx] = 0;
+        } else {
+            chunk[idx] = val(b)?;
+        }
+        if idx == 3 {
+            out.push((chunk[0] << 2) | (chunk[1] >> 4));
+            if input[i - 1] != b'=' {
+                out.push((chunk[1] << 4) | (chunk[2] >> 2));
+            }
+            if input[i] != b'=' {
+                out.push((chunk[2] << 6) | chunk[3]);
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Decode a PNG's first IHDR chunk to extract `(width, height)` as
+/// big-endian `u32`s. Returns `None` for non-PNG data, truncated buffers,
+/// or a missing IHDR chunk. Avoids pulling in the `png` crate for this
+/// single use; the renderer uses `image::codecs::png::PngDecoder` for the
+/// full decode.
+fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    if png.len() < 24 || &png[0..8] != b"\x89PNG\r\n\x1a\n" {
+        return None;
+    }
+    // IHDR is always the first chunk: 4-byte length, 4-byte type, 4-byte W, 4-byte H.
+    let w = u32::from_be_bytes(png[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(png[20..24].try_into().ok()?);
+    Some((w, h))
+}
+
+/// GAP-09: one notification scanned off the raw PTY buffer, before the
+/// occasion/source defaults are applied. OSC 99 chunked payloads sharing the
+/// same `i` are merged into a single entry (see `scan_osc_notify`).
+
 /// GAP-09: one notification scanned off the raw PTY buffer, before the
 /// occasion/source defaults are applied. OSC 99 chunked payloads sharing the
 /// same `i` are merged into a single entry (see `scan_osc_notify`).
@@ -1575,5 +1952,175 @@ mod tests_evented_socketpair {
 
         // Assert on_resize was exercised without a real PTY fd.
         assert_eq!(resize_count.load(Ordering::Relaxed), 1, "resize should fire once");
+    }
+}
+
+#[cfg(test)]
+mod tests_graphics {
+    use super::*;
+
+    fn g(buf: &[u8]) -> Vec<RawGraphics> {
+        scan_graphics(buf).into_iter().collect()
+    }
+
+    // ---- Sixel ----
+
+    #[test]
+    fn sixel_raw_payload_preserved() {
+        // DCS = ESC P, "Pq" indicates sixel.
+        let buf = b"text\x1bPq#0;2;100;100\x1b\\after";
+        let r = g(buf);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].protocol, GraphicsProtocol::Sixel);
+        assert_eq!(r[0].format, GraphicsFormat::Rgb);
+        // Raw pixel data forwarded verbatim; renderer decodes.
+        assert!(r[0].encoded.starts_with(b"#0;2;100;100"));
+        assert!(r[0].pixels.is_none());
+    }
+
+    #[test]
+    fn sixel_no_st_drops() {
+        // No ST terminator — the scanner must not loop forever; it bails.
+        let buf = b"\x1bPq#0;2;100;100";
+        let r = g(buf);
+        assert!(r.is_empty());
+    }
+
+    // ---- Kitty graphics ----
+
+    #[test]
+    fn kitty_transmit_and_use_rgba() {
+        // 2x2 RGBA, all opaque red. Base64 of
+        //   [255, 0, 0, 255, 255, 0, 0, 255] = "/wAA//8AAP8="
+        let payload = "/wAA//8AAP8=";
+        let buf = format!("\x1b_Ga=T,f=32,i=1,c=2,r=2;{}\x1b\\", payload);
+        let r = g(buf.as_bytes());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].protocol, GraphicsProtocol::Kitty);
+        assert_eq!(r[0].format, GraphicsFormat::Rgba);
+        assert_eq!(r[0].width, 2);
+        assert_eq!(r[0].height, 2);
+        assert_eq!(r[0].placement.id, 1);
+        assert_eq!(r[0].placement.cols, 2);
+        assert_eq!(r[0].placement.rows, 2);
+        let px = r[0].pixels.as_ref().expect("RGBA decoded");
+        assert_eq!(px, &vec![255, 0, 0, 255, 255, 0, 0, 255]);
+        assert!(r[0].encoded.is_empty());
+    }
+
+    #[test]
+    fn kitty_chunked_dropped_in_v1() {
+        // m=0 → more chunks follow → scanner defers.
+        let buf = b"\x1b_Ga=T,f=32,i=1,m=0;AAAA\x1b\\";
+        let r = g(buf);
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn kitty_final_chunk_emitted() {
+        // m=1 → last chunk → emit.
+        let buf = b"\x1b_Ga=T,f=32,i=1,m=1;AAAA\x1b\\";
+        let r = g(buf);
+        assert_eq!(r.len(), 1);
+    }
+
+    #[test]
+    fn kitty_png_passthrough() {
+        // PNG header (8 bytes) + IHDR (24 bytes). 4x3 image, base64 of the
+        // 16-byte header+IHDR (we don't need a valid PNG, just one whose
+        // first 24 bytes pass png_dimensions).
+        let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x04\x00\x00\x00\x03";
+        let b64 = base64_encode(png);
+        let buf = format!("\x1b_Ga=T,f=100,i=7;{}\x1b\\", b64);
+        let r = g(buf.as_bytes());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].format, GraphicsFormat::Png);
+        assert_eq!(r[0].width, 4);
+        assert_eq!(r[0].height, 3);
+        assert!(r[0].pixels.is_none());
+        assert_eq!(r[0].encoded, png);
+    }
+
+    #[test]
+    fn kitty_query_action_dropped() {
+        // a=q (query) — not a transmission, ignore.
+        let buf = b"\x1b_Ga=q,i=1;AAAA\x1b\\";
+        let r = g(buf);
+        assert!(r.is_empty());
+    }
+
+    // ---- iTerm2 inline image ----
+
+    #[test]
+    fn iterm2_inline_png() {
+        // Same synthetic PNG header as the kitty test.
+        let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x04\x00\x00\x00\x03";
+        let b64 = base64_encode(png);
+        let buf = format!("\x1b]1337;File=inline=1;width=10;height=5:{}\x07", b64);
+        let r = g(buf.as_bytes());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].protocol, GraphicsProtocol::ITerm2);
+        assert_eq!(r[0].format, GraphicsFormat::Png);
+        assert_eq!(r[0].width, 4);
+        assert_eq!(r[0].placement.cols, 10);
+        assert_eq!(r[0].placement.rows, 5);
+    }
+
+    #[test]
+    fn iterm2_non_inline_dropped() {
+        // inline=0 → file save, not an inline image.
+        let buf = b"\x1b]1337;File=inline=0:AAAA\x07";
+        let r = g(buf);
+        assert!(r.is_empty());
+    }
+
+    // ---- cross-cutting ----
+
+    #[test]
+    fn empty_buffer_yields_no_images() {
+        assert!(g(b"").is_empty());
+        assert!(g(b"plain text without any escape").is_empty());
+    }
+
+    #[test]
+    fn mixed_protocols_extracted_in_order() {
+        // Sixel then Kitty. Order in the buffer is preserved in the output.
+        let buf = b"\x1bPqAAA\x1b\\\x1b_Ga=T,f=32,i=9,c=1,r=1;AAAA\x1b\\";
+        let r = g(buf);
+        assert_eq!(r.len(), 2);
+        assert_eq!(r[0].protocol, GraphicsProtocol::Sixel);
+        assert_eq!(r[1].protocol, GraphicsProtocol::Kitty);
+    }
+
+    // ---- helpers ----
+
+    fn base64_encode(input: &[u8]) -> String {
+        const ALPH: &[u8; 64] =
+            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+        let mut i = 0;
+        while i + 3 <= input.len() {
+            let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8) | (input[i + 2] as u32);
+            out.push(ALPH[((n >> 18) & 0x3f) as usize] as char);
+            out.push(ALPH[((n >> 12) & 0x3f) as usize] as char);
+            out.push(ALPH[((n >> 6) & 0x3f) as usize] as char);
+            out.push(ALPH[(n & 0x3f) as usize] as char);
+            i += 3;
+        }
+        let rem = input.len() - i;
+        if rem == 1 {
+            let n = (input[i] as u32) << 16;
+            out.push(ALPH[((n >> 18) & 0x3f) as usize] as char);
+            out.push(ALPH[((n >> 12) & 0x3f) as usize] as char);
+            out.push('=');
+            out.push('=');
+        } else if rem == 2 {
+            let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8);
+            out.push(ALPH[((n >> 18) & 0x3f) as usize] as char);
+            out.push(ALPH[((n >> 12) & 0x3f) as usize] as char);
+            out.push(ALPH[((n >> 6) & 0x3f) as usize] as char);
+            out.push('=');
+        }
+        out
     }
 }

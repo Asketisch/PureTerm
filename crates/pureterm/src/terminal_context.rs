@@ -52,6 +52,10 @@ pub enum TerminalEvent {
     /// GAP-09: terminal bell (0x07) — surfaced as an additional "needs
     /// attention" signal (was previously dropped by the `_ => return` below).
     Bell,
+    /// T-core-graphics: a decoded graphics image (Sixel / Kitty / iTerm2
+    /// inline). Surfaced so the GUI's `ImageStore` can pick it up and the
+    /// renderer can blit it onto the grid.
+    GraphicsImage(alacritty_terminal::event::GraphicsImage),
 }
 
 /// Bridge: implements `EventListener` by sending through a crossbeam channel.
@@ -87,6 +91,10 @@ impl EventListener for ChannelEventListener {
             // silently dropped — the same trap that bit ShellMark pre-GAP-15.
             TEvent::Notification(n) => TerminalEvent::Notification(n),
             TEvent::Bell => TerminalEvent::Bell,
+            // T-core-graphics: forward decoded graphics images to the GUI.
+            // The GUI's `ImageStore` decides whether to blit (it owns the
+            // eviction + scrollback-prune policies).
+            TEvent::GraphicsImage(img) => TerminalEvent::GraphicsImage(img),
             _ => return,
         };
         let _ = self.tx.send(mapped);

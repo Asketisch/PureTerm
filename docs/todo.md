@@ -12,9 +12,11 @@ _（无）_
 
 _（无）_
 
-## 终端交互（0）
+## 终端交互（1）
 
-_（无）_
+| GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
+|-----|------|----------|-----------|------|
+| t-core-gap-closure | 终端模拟核心层差距补齐（graphics / shaper / tmux-CC / 多 shell / ConPTY / plugin runtime），包含 6 个 P0/P1/P2 子组件 | arch | P0 | [spec](todo/t-core-gap-closure/spec.md) · [checklist](todo/t-core-gap-closure/checklist.md) |
 
 ## UI/外壳（0）
 
