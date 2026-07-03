@@ -53,14 +53,18 @@ ${BOLD}用法${RESET}: $(basename "$0") [OPTIONS] <MODE>
 
 ${BOLD}模式${RESET}:
   debug     开发构建（dev profile）
-  release   发布构建（LTO + strip 优化）
+  release   发布构建（thin LTO + strip 优化）
   app       发布构建 + 打包为平台应用包
+  test      运行测试套件（自动检测 cargo-nextest，否则回退 cargo test）
   clean     清除所有构建缓存
 
 ${BOLD}选项${RESET}:
   --clean             构建前清除增量编译缓存（推荐字体/资源变更后使用）
   --target <triple>   指定交叉编译目标（如 aarch64-apple-darwin）
   --timings           生成编译时序报告（HTML，位于 target/cargo-timings/）
+  --profile <name>    test 模式下选择 cargo profile（默认 dev；可选 test / release-fast）
+  --all-features      test 模式下启用全部 features
+  --no-run            test 模式下只编译，不运行
   -h, --help          显示此帮助信息
 
 ${BOLD}示例${RESET}:
@@ -68,6 +72,9 @@ ${BOLD}示例${RESET}:
   ./build.sh --clean debug        # 清除缓存后构建（解决增量编译问题）
   ./build.sh release
   ./build.sh app
+  ./build.sh test                 # 跑测试（自动用 nextest，没有则 cargo test）
+  ./build.sh test --profile test  # 显式使用 [profile.test] 加速测试编译
+  ./build.sh test --no-run        # 只编译测试二进制，不跑
   ./build.sh clean                # 仅清除缓存
   ./build.sh --target aarch64-apple-darwin release
 
@@ -90,6 +97,15 @@ detect_toolchain() {
         tools+=("sccache")
     else
         TOOLS_SCCACHE=""
+    fi
+
+    # cargo-nextest（并行测试运行器，test 模式自动选用；缺失时 fallback 到 cargo test）
+    # 双重探测：command -v 找到 + `cargo nextest --help` 真正能跑（避免 PATH 上有同名的损坏 wrapper）
+    if command -v cargo-nextest &>/dev/null && cargo nextest --help &>/dev/null; then
+        TOOLS_NEXTEST="yes"
+        tools+=("nextest")
+    else
+        TOOLS_NEXTEST=""
     fi
 
     # Fast linker detection (Linux only).
@@ -206,7 +222,7 @@ build_release() {
         do_clean incremental
     fi
 
-    step "构建 release 版本 (LTO + strip 优化)..."
+    step "构建 release 版本 (thin LTO + strip 优化)..."
     local cmd="cargo build --release --bin ${BINARY_NAME}"
     if [ -n "${TARGET_TRIPLE:-}" ]; then
         cmd="${cmd} --target ${TARGET_TRIPLE}"
@@ -226,6 +242,40 @@ build_release() {
         error "release 构建失败"
         return 1
     fi
+}
+
+# =============================================================================
+# Test 运行
+# =============================================================================
+
+build_test() {
+    step "运行测试套件 (cargo profile: ${TEST_PROFILE})..."
+
+    local cmd
+    if [ -n "${TOOLS_NEXTEST}" ]; then
+        info "使用 cargo-nextest（并行执行）"
+        # nextest 内部会调用 cargo —— 用 --cargo-profile 透传，让 [profile.test] 等
+        # cargo profile 段在测试构建阶段生效。
+        cmd="cargo nextest run --workspace --cargo-profile ${TEST_PROFILE}"
+        if [ "$NO_RUN" = "true" ]; then
+            cmd="${cmd} --no-run"
+        fi
+    else
+        info "使用 cargo test（未安装 cargo-nextest，建议 `cargo install cargo-nextest --locked`）"
+        cmd="cargo test --workspace --profile ${TEST_PROFILE}"
+        if [ "$NO_RUN" = "true" ]; then
+            cmd="${cmd} --no-run"
+        fi
+    fi
+
+    if [ "$ALL_FEATURES" = "true" ]; then
+        cmd="${cmd} --all-features"
+    fi
+    if [ -n "${TARGET_TRIPLE:-}" ]; then
+        cmd="${cmd} --target ${TARGET_TRIPLE}"
+    fi
+
+    $cmd
 }
 
 # =============================================================================
@@ -433,10 +483,13 @@ TARGET_TRIPLE=""
 MODE=""
 CLEAN_BEFORE_BUILD="false"
 TIMINGS_ENABLED="false"
+TEST_PROFILE="dev"
+ALL_FEATURES="false"
+NO_RUN="false"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        debug|release|app|clean)
+        debug|release|app|test|clean)
             if [ -n "$MODE" ]; then
                 error "只能指定一个模式"
                 usage
@@ -460,6 +513,22 @@ while [[ $# -gt 0 ]]; do
             fi
             TARGET_TRIPLE="$2"
             shift 2
+            ;;
+        --profile)
+            if [ -z "${2:-}" ]; then
+                error "--profile 需要指定 profile 名（dev / test / release-fast 等）"
+                exit 1
+            fi
+            TEST_PROFILE="$2"
+            shift 2
+            ;;
+        --all-features)
+            ALL_FEATURES="true"
+            shift
+            ;;
+        --no-run)
+            NO_RUN="true"
+            shift
             ;;
         -h|--help)
             usage
@@ -497,5 +566,6 @@ case "$MODE" in
     debug)   build_debug   ;;
     release) build_release ;;
     app)     build_app     ;;
+    test)    build_test    ;;
     clean)   do_clean all  ;;
 esac

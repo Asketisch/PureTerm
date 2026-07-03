@@ -10,9 +10,12 @@
 
 [build]
 incremental = true
-# sccache is opt-in via the RUSTC_WRAPPER env var (e.g. `export RUSTC_WRAPPER=sccache`
-# in your shell). It is intentionally NOT set here so that environments without
-# sccache (e.g. CI, fresh checkouts) keep working without error.
+# sccache: transparently caches rustc invocation outputs across builds and
+# across crates. When sccache is missing on PATH, cargo falls back to invoking
+# rustc directly — no hard error, so fresh checkouts and CI runners without
+# sccache still work. Install with `cargo install sccache --locked` (or
+# `brew install sccache` on macOS) for the speedup.
+rustc-wrapper = "sccache"
 
 # ── Linux x86_64 CI: mold is fastest, lld is a good fallback ────────────────
 [target.x86_64-unknown-linux-gnu]

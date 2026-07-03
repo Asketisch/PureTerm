@@ -20,9 +20,18 @@ clippy:
 fmt:
     cargo fmt --all -- --check
 
-# Run tests
+# Run tests (auto-detect cargo-nextest for parallel execution)
+# Install with: cargo install cargo-nextest --locked
 test:
-    cargo test --workspace
+    #!/usr/bin/env bash
+    set -e
+    if command -v cargo-nextest >/dev/null 2>&1; then
+        echo "→ using cargo-nextest"
+        cargo nextest run --workspace
+    else
+        echo "→ using cargo test (install cargo-nextest --locked for faster parallel runs)"
+        cargo test --workspace
+    fi
 
 # Clean build artifacts
 clean:

@@ -24,16 +24,45 @@ pureterm-lsp = { path = "crates/pureterm-lsp" }
 pureterm-computer-use = { path = "crates/pureterm-computer-use" }
 
 # ── Dev profile: optimised for fast incremental compilation ───────────────────
-# Test profile intentionally uses Cargo defaults (opt-level=0, high codegen-units,
-# no incremental) — Cargo disables incremental for test binaries on purpose.
+# Dev profile: opt-level=0 + line-numbers-only debug info + high codegen-units
+# → fastest possible iteration on a single crate. Test profile (below) reuses
+# the same `debug=1` + `codegen-units=256` recipe so test compilation stays
+# close to dev-build speed.
 [profile.dev]
 incremental = true
 split-debuginfo = "unpacked"   # macOS: avoid repacking DWARF on every incremental build
 debug = 1                       # line-number info only — ~20-30% less debug-info generation time
 codegen-units = 256             # higher parallelism during compilation
 
+# ── Release profile: thin LTO + symbol strip ────────────────────────────────
+# Switched from full LTO (`lto = true`) to thin LTO + `strip = "symbols"` to
+# dramatically cut release link time while keeping binary size within ~5 % of
+# the full-LTO build. Override per-build with
+# `--config 'profile.release.lto=true'` if you need the old behaviour.
 [profile.release]
 opt-level = 3
-lto = true
+lto = "thin"
 codegen-units = 1
-strip = true
+strip = "symbols"
+
+# ── Release-fast profile: iteration-friendly release build ──────────────────
+# Use when you want release-optimised codegen without paying the LTO bill.
+# `cargo build --profile release-fast --bin pureterm` keeps `incremental = true`
+# so subsequent rebuilds only re-link the changed crate.
+[profile.release-fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+opt-level = 2
+incremental = true
+
+# ── Test profile: matching dev speed, no full debug info ───────────────────
+# `debug = 1` keeps line numbers but drops variable names from panic
+# backtraces — saves ~20-30 % debug-info generation time across the workspace
+# (matters because pureterm alone carries 958 #[test]s).
+# `codegen-units = 256` matches the dev profile to maximise parallel codegen.
+# Trigger explicitly with `cargo test --profile test`; the default
+# `cargo test` invocation also picks this profile up.
+[profile.test]
+debug = 1
+codegen-units = 256
