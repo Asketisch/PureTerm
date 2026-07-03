@@ -6,6 +6,87 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## Unreleased
 
+### Fixed (build / bundling)
+- **`build.sh` rewritten to support Win/Linux/macOS multi-arch builds.**
+  v0.2 rewrites the macOS bundling so it now correctly:
+  - **Default arch follows the host on macOS** (Apple Silicon → arm64 by default;
+    the previous version would happily ship x86_64 binaries that triggered
+    macOS's "Apple 即将结束对 Intel 芯片 App 的支持" Rosetta warning).
+  - **`--universal` flag** builds both `aarch64-apple-darwin` and
+    `x86_64-apple-darwin` then runs `lipo -create` to produce a single
+    universal2 Mach-O inside `Contents/MacOS/pureterm`. The resulting
+    `PureTerm.app` runs natively on both Apple Silicon and Intel Macs without
+    any Rosetta warning.
+  - **`CFBundleIconFile = PureTerm` is now actually written** into the
+    generated `Info.plist` even when the bundle copies from `extra/osx/Info.plist`
+    (which previously omitted it, so Finder fell back to a generic icon).
+  - **`Contents/Resources/` no longer carries a stray `icon.png`** — only
+    `PureTerm.icns` is shipped, so Finder's icon cache and the document-deficon
+    slot both read from the right file.
+  - **PlistBuddy is invoked via `/usr/libexec/PlistBuddy`** (absolute path);
+    on many fresh shells the bare `PlistBuddy` is not on PATH and the previous
+    code silently dropped every PlistBuddy call. A `plutil` fallback handles
+    CI runners that lack PlistBuddy entirely.
+  - **`sccache` no longer hard-errors** when it's not installed on PATH:
+    the script now detects its absence and overrides the repo's
+    `.cargo/config.toml [build] rustc-wrapper` with a per-invocation
+    `--config 'build.rustc-wrapper=""'`. Previously, a fresh checkout on a
+    container without sccache would exit 127 on `cargo -vV`.
+  - **Cross-platform source cfg gates** added to `crates/pureterm/src/main.rs`
+    (modules `macos_url_scheme`, `macos_glass_effect`, `macos_touch_bar`,
+    `macos_haptic`) and gated the macOS-only `use objc2::*` imports inside
+    `macos_url_scheme.rs`. Without these, the build leaked
+    objc2/objc2_foundation symbols into Linux/Windows compilation.
+- **`embed-resource` is now declared as an optional
+  `[target.'cfg(windows)'.build-dependencies]`** in
+  `crates/pureterm-alacritty-runtime/Cargo.toml`. The `build.rs` was already
+  referencing `embed_resource::compile(...)` behind a `#[cfg(windows)]` gate;
+  declaring the dep means the gate stays green the moment a real
+  `windows/alacritty.rc` is dropped in.
+- **`crates/pureterm/build.rs` now stamps `VERSION` and `BUILD_TARGET`** into
+  the binary on every platform via `cargo:rustc-env`, so packaging-time
+  version overrides flow through to `--version` / about boxes. Also records a
+  `cargo:rerun-if-changed` hook for a future `windows/pureterm.rc`.
+
+### Added
+- **Cross-platform build & bundle pipeline** (`./build.sh` rewritten).
+- **Cross-platform build & bundle pipeline** (`./build.sh` rewritten).
+  - New `app` / `app-all` / `matrix` / `info` modes. `app` builds +
+    bundles for the host OS in the host triple; `app-all` iterates over
+    every installed target; `matrix` iterates the full 8-target
+    macOS/Linux/Windows matrix and skips targets whose toolchain isn't
+    installed (no hard errors).
+  - macOS: produces `.app`, `.app.zip`, and (when `hdiutil` is on PATH)
+    a UDZO-compressed `.dmg`. Optional `--sign` (`CODESIGN_IDENTITY`) and
+    `--notarize` (`APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID`).
+  - Linux: produces a Freedesktop-compliant staged tree (bin/, share/applications,
+    share/metainfo, share/icons, share/doc, INSTALL.md) and packages it
+    as `.tar.gz` (always) and `.tar.zst` (when `zstd` is on PATH).
+    `--install` copies the tree to `/opt/pureterm-<v>/` and symlinks
+    `/usr/local/bin/pureterm`.
+  - Windows: produces a portable staged tree and zips it. Optional
+    `--sign` (`WINDOWS_CERT_FILE` / `WINDOWS_CERT_PASSWORD` with
+    `signtool`). Falls back to PowerShell `Compress-Archive` when `zip`
+    isn't on PATH.
+  - Pre-flight checks (`cargo metadata`, binary existence, icon
+    presence) catch silent build failures.
+  - Tool detection is **informational and non-fatal** — the script
+    degrades gracefully when hdiutil, codesign, zstd, signtool, etc.
+    are missing.
+  - See `./build.sh --help` and `./build.sh info` for the full surface.
+- **Justfile**: new recipes `app-all`, `matrix`, `info`; `app` and
+  `clean` now route through `./build.sh`.
+- **`crates/pureterm-alacritty-runtime/Cargo.toml`**: declared
+  `embed-resource` as an *optional* `[target.'cfg(windows)'.build-dependencies]`
+  entry. The runtime's `build.rs` already gates `embed_resource::compile`
+  on a missing `.rc` file; declaring the dep now means the build stays
+  green the moment a real `.rc` is dropped in.
+- **`crates/pureterm/build.rs`**: now stamps `VERSION` (and optionally
+  `BUILD_TARGET`) into the binary on every platform via
+  `cargo:rustc-env`, so packaging-time version overrides flow through
+  to `--version` / about boxes. Also records a `cargo:rerun-if-changed`
+  hook for a future `windows/pureterm.rc`.
+
 ### Changed
 - **Build pipeline aligned with the Reflect-Agent workspace recipe for
   faster test/dev iteration.**

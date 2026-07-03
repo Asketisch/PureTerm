@@ -1,5 +1,10 @@
 mod automation;
 mod script_cli;
+// `macos_url_scheme` ships with built-in `#[cfg(not(target_os = "macos"))]`
+// stubs (no-op `register_default_handler` / `consume_pending_url` /
+// `add_open_urls_method`), so the module is unconditionally included. The
+// macOS-only `use objc2::*` import is wrapped in `#[cfg(target_os = "macos")]`
+// inside the file itself.
 mod macos_url_scheme;
 mod agent_adapters;
 mod agent_detect;
@@ -175,8 +180,10 @@ mod voice_input;
 /// GAP-17: Sixel / Kitty graphics protocol scaffold.
 mod terminal_graphics;
 /// GAP-20: macOS glass / vibrancy effect.
+// Body is already platform-portable: `apply_glass_effect` no-ops on non-macOS.
 mod macos_glass_effect;
 /// GAP-22: MacBook Touch Bar scaffold.
+// Body is already platform-portable: `refresh_touch_bar` no-ops on non-macOS.
 mod macos_touch_bar;
 /// GAP-23: Visual tab bar config.
 mod visual_tab_bar;
@@ -207,6 +214,7 @@ mod window_effects;
 /// GAP-56: Focus-follows-mouse.
 mod focus_follows_mouse;
 /// GAP-57: MacBook haptic feedback.
+// Body is already platform-portable: `perform` returns `Skipped` on non-macOS.
 mod macos_haptic;
 /// GAP-58: Extended theme overrides.
 mod custom_theme;

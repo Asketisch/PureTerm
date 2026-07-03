@@ -13,3 +13,12 @@ indexmap = { version = "2", features = ["std"] }
 rustybuzz = "0.20"
 unicode-bidi = "0.3"
 unicode-script = "0.5"
+
+# PureTerm v0.2: `build.rs` only references `embed_resource` inside a
+# `#[cfg(windows)]` block gated on a missing `.rc` file, so it never
+# actually fires today. Declaring the dep here (gated to Windows) keeps
+# the build green the moment a real `.rc` is dropped in — otherwise the
+# unconditional reference would fail to resolve and break `cargo build`
+# for the workspace.
+[target.'cfg(windows)'.build-dependencies]
+embed-resource = "3"

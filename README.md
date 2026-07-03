@@ -250,6 +250,109 @@ PureTerm 由 6 个 crate 组成的工作区:
 ### 跨平台
 - macOS / Linux / Windows
 - 持续 CI 验证三平台
+- 统一 `./build.sh` 跨平台打包(.app + .dmg / .tar.gz / .zip)— 见 [构建与打包](#构建与打包)
+
+---
+
+## 构建与打包
+
+所有跨平台 / 跨目标工作统一通过 `./build.sh` 完成。
+它取代了过去只能打包 macOS 的旧脚本,现在同一脚本可以产出
+macOS `.app` + `.dmg`、Linux `.tar.gz`、Windows `.zip`。
+
+### 快速命令
+
+```bash
+./build.sh --help          # 全部选项
+./build.sh info            # 检测到的主机、已安装 rustup 目标、可用工具
+./build.sh release         # 仅构建 release 二进制
+./build.sh app             # 为主机 OS + 主机 triple 打包
+./build.sh app-all         # 为主机 OS 的所有已安装 triple 打包
+./build.sh matrix          # 跨平台矩阵打包 (跳过未安装的目标)
+./build.sh test            # 运行测试 (nextest → cargo test)
+./build.sh clean           # 清除 target/ 与 dist/
+```
+
+### 按平台产出的工件
+
+| 主机 OS | 模式 | 产物 (位于 dist/) |
+|---|---|---|
+| macOS | `app` | `PureTerm.app/` · `PureTerm-<v>-arm64.app.zip` · `PureTerm-<v>-arm64.dmg` |
+| macOS | `app --universal` | `PureTerm.app/` (含 universal2 二进制) · `PureTerm-<v>-universal.app.zip` · `PureTerm-<v>-universal.dmg` |
+| Linux | `app` | `pureterm-<v>-<arch>-<env>/` (staged tree) · `pureterm-<v>-<arch>-<env>.tar.gz` |
+| Windows | `app` | `pureterm-<v>-<arch>/` · `pureterm-<v>-<arch>.zip` |
+
+### macOS universal2 二进制 (`--universal`)
+
+```bash
+./build.sh --universal app
+# 或
+./build.sh app --bundle all --universal
+```
+
+- 同时构建 `aarch64-apple-darwin` + `x86_64-apple-darwin` 两个目标。
+- 用 `lipo -create -arch arm64 ... -arch x86_64 ...` 合并成单个 universal2 Mach-O,
+  在 Apple Silicon 和 Intel Mac 上都原生运行 — **不会弹出"即将结束对 Intel 芯片 App 的支持"** 的 Rosetta 警告。
+- 缺一不可:必须同时安装两个 rustup 目标 (`rustup target add aarch64-apple-darwin x86_64-apple-darwin`),且主机必须是 macOS — 跨主机 lipo 没有意义。
+- 工件名带 `-universal` 后缀以与单架构产物区分;`.dmg` 同时也是 universal 的。
+
+### 目标选择
+
+```bash
+# 单一目标
+./build.sh --target aarch64-apple-darwin app
+./build.sh --target x86_64-pc-windows-msvc app
+
+# 多个目标 (逗号分隔)
+./build.sh --targets aarch64-apple-darwin,x86_64-apple-darwin app
+
+# 按架构筛选 (会展开为所有匹配的 triple)
+./build.sh --arch x86_64 app-all
+./build.sh --arch aarch64 matrix
+```
+
+### 工具可用性 (`./build.sh info`)
+
+打包脚本在每个目标工具缺失时会优雅降级 — 不会因为缺 `hdiutil`
+就拒绝构建。常用工具检测表:
+
+| 工具 | 用途 | 缺失时的行为 |
+|---|---|---|
+| `sccache` | 编译缓存 | 静默降级,直接调用 rustc |
+| `cargo-nextest` | 并行测试 | 回退到 `cargo test` |
+| `mold` / `lld` | Linux 链接加速 | rust 自动用系统 ld |
+| `hdiutil` | macOS .dmg | 跳过 .dmg,仍产出 .app.zip |
+| `codesign` + `CODESIGN_IDENTITY` | macOS 代码签名 | 跳过签名 |
+| `xcrun notarytool` + `APPLE_ID` / `APPLE_PASSWORD` / `APPLE_TEAM_ID` | macOS 公证 | 跳过公证 |
+| `zstd` | Linux .tar.zst | 跳过 zst 格式 |
+| `zip` / `powershell` | Windows .zip | 二者皆无时报错 |
+| `signtool` + `WINDOWS_CERT_FILE` / `WINDOWS_CERT_PASSWORD` | Windows 代码签名 | 跳过签名 |
+
+### v1 未实现的打包格式
+
+| 格式 | 平台 | 状态 |
+|---|---|---|
+| `.deb` | Linux | 待 `dpkg-deb` 支持 |
+| `.rpm` | Linux | 待 `rpmbuild` 支持 |
+| `.AppImage` | Linux | 待 `appimagetool` 支持 |
+| `.msi` (wixl) | Windows | v1 仅便携 .zip |
+| NSIS installer | Windows | v1 不提供 |
+
+如果你的分发渠道需要以上任一格式,在仓库开 ticket。
+
+### 跨平台构建矩阵 (v0.2 引入)
+
+`./build.sh matrix` 会遍历以下 8 个目标,跳过主机上没有的 rustup 目标
+与无法交叉编译的目标(例如在 macOS 上构建 Windows .exe 缺 sysroot):
+
+| 主机 | x86_64 | aarch64 |
+|---|---|---|
+| macOS | `x86_64-apple-darwin` | `aarch64-apple-darwin` |
+| Linux (gnu) | `x86_64-unknown-linux-gnu` | `aarch64-unknown-linux-gnu` |
+| Linux (musl, 完全静态) | `x86_64-unknown-linux-musl` | `aarch64-unknown-linux-musl` |
+| Windows (MSVC) | `x86_64-pc-windows-msvc` | `aarch64-pc-windows-msvc` |
+
+`--auto-install-targets` 允许脚本在目标缺失时自动 `rustup target add`。
 
 ---
 

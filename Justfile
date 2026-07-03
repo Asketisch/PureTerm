@@ -1,4 +1,10 @@
 # PureTerm build commands
+#
+# All cross-platform / cross-target work goes through ./build.sh.
+# Run `./build.sh --help` for the full option list, or `./build.sh info`
+# to see which tools are available on the current host.
+
+# --- Core build -------------------------------------------------------------
 
 # Build debug
 build:
@@ -8,9 +14,30 @@ build:
 release:
     cargo build --release --bin pureterm
 
-# Build and bundle macOS app
-app: release
+# Build & bundle for the host OS in the host triple.
+#   macOS  -> dist/PureTerm.app, .app.zip, .dmg
+#   Linux  -> dist/pureterm-*/  + .tar.gz
+#   Win    -> dist/pureterm-*/  + .zip
+app:
     bash build.sh app
+
+# Bundle for the host OS in every installed target triple.
+app-all:
+    bash build.sh app-all
+
+# Cross-platform build matrix. Skips targets whose toolchain isn't
+# installed (no hard error). Cross-OS builds (e.g. .dmg on Linux) are
+# skipped by the script — only host-OS bundling runs.
+matrix:
+    bash build.sh matrix
+
+# Print the detected environment: host OS, installed rustup targets,
+# and which bundler tools (hdiutil, codesign, zstd, zip, signtool, …) are
+# available. Useful in CI to debug a failing build step.
+info:
+    bash build.sh info
+
+# --- Test / lint ------------------------------------------------------------
 
 # Run clippy
 clippy:
@@ -33,9 +60,11 @@ test:
         cargo test --workspace
     fi
 
-# Clean build artifacts
+# --- Utilities --------------------------------------------------------------
+
+# Clean build artifacts (and the dist/ directory).
 clean:
-    cargo clean
+    bash build.sh clean
 
 # Show current config
 show-config:

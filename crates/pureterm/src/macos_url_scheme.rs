@@ -1,17 +1,25 @@
 //! GAP-48: macOS `pureterm://` URL handler — hooks `application:openURLs:` on
 //! winit's delegate and queues URLs for the iced `TerminalWakeup` tick.
 
+#[cfg(target_os = "macos")]
 use std::mem::transmute;
+#[cfg(target_os = "macos")]
 use std::sync::Mutex;
 
+#[cfg(target_os = "macos")]
 use objc2::rc::Retained;
+#[cfg(target_os = "macos")]
 use objc2::runtime::{AnyClass, AnyObject, Imp};
+#[cfg(target_os = "macos")]
 use objc2::{ffi, MainThreadMarker};
+#[cfg(target_os = "macos")]
 use objc2_foundation::{NSArray, NSURL};
 
+#[cfg(target_os = "macos")]
 static PENDING_URLS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 /// Take the next queued `pureterm://` URL, if any.
+#[cfg(target_os = "macos")]
 pub fn consume_pending_url() -> Option<String> {
     let mut guard = PENDING_URLS.lock().unwrap();
     if guard.is_empty() {
@@ -21,6 +29,7 @@ pub fn consume_pending_url() -> Option<String> {
     }
 }
 
+#[cfg(target_os = "macos")]
 unsafe extern "C" fn handle_open_urls(
     _obj: *mut AnyObject,
     _sel: objc2::runtime::Sel,
@@ -44,6 +53,7 @@ unsafe extern "C" fn handle_open_urls(
 }
 
 /// Add `application:openURLs:` to winit's delegate class.
+#[cfg(target_os = "macos")]
 pub fn add_open_urls_method() {
     let Some(_mtm) = MainThreadMarker::new() else {
         return;
