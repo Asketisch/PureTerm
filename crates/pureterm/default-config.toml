@@ -22,20 +22,38 @@ save_to_clipboard = false
 [mouse]
 hide_when_typing = false
 
-# GAP-24: Enhanced Status Bar. `components` is the ordered list of segments
-# (cwd, git, ssh, …). Optional GAP-03 segment: add "codeindex" to show indexing
-# progress when an in-process index run is active (MVP stub; usually hidden).
-# rendered left-to-right (with a flexible spacer before any `align_right`
-# segment). Recognized ids: cwd, git, ssh, vimode, process, agent, cpu,
-# memory, network, clock, battery, cursor. Unknown ids are skipped (warn).
-# `refresh_interval_secs` bounds system-stat sampling + git subprocess cadence.
-# `show_sparklines` toggles the canvas mini-graphs (cpu/memory/network); when
-# on, the bar auto-grows to ≥28px for legibility (`bar_height` is the floor).
+# GAP-24: Enhanced Status Bar. `components` is the ordered list of segments;
+# chips are grouped visually into 4 clusters (Context / Runtime / System /
+# Meta). The Context / Runtime / System groups render left-to-right in the
+# order they appear in `components`; Meta (cursor + clock) and the ⌘K
+# entry point sit on the right edge separated by a flexible spacer. Hidden
+# when a segment is absent (e.g. battery on a desktop). Unknown ids are
+# skipped with a one-time warning.
+#
+# Recognized ids: cwd, git, ssh, vimode, process, agent, cpu, memory,
+# network, clock, battery, cursor, notifications, trigger_count, codeindex,
+# lsp. `notifications` is on by default; the others need to be added to
+# `components` to show up.
+#
+# `refresh_interval_secs` bounds system-stat sampling + git subprocess
+# cadence. `show_sparklines` toggles the canvas mini-graphs (cpu/memory/
+# network); when on, the bar auto-grows to ≥28px for legibility
+# (`bar_height` is the floor). `clock_format` is a chrono format string
+# passed straight to `chrono::Local::now().format(...)`; the default
+# `%H:%M:%S` shows hours/minutes/seconds. `clock_show_seconds = false`
+# strips any `%S` / `%s` token from the format on the fly, so the same
+# format string reads cleanly whether seconds are on or off.
+#
+# Misc: the git segment no longer uses Nerd Font Private-Use-Area glyphs
+# (the old `\u{e0a0}` branch icon replaced with `[br] <name>`), so the bar
+# stays readable on systems without Nerd Fonts installed.
 [statusbar]
 components = ["cwd", "git", "ssh", "vimode", "process", "agent", "cpu", "memory", "network", "clock", "battery", "cursor", "notifications"]
 refresh_interval_secs = 1
 show_sparklines = true
 bar_height = 24
+clock_format = "%H:%M:%S"
+clock_show_seconds = true
 
 # GAP-19: Dual Sidebar — ⌘B left (Workspaces + Git summary), ⌘⇧B right
 # (Find / Feed / Git tabs). Widths in px, clamped to 120–480.
@@ -174,7 +192,7 @@ password_manager = "auto"   # auto | keychain | 1password | lastpass
 # remote_forwards = ["9000:127.0.0.1:22"]
 # forward_x11 = false
 #
-# Status bar: add "trigger_count" to [status_bar] components for ⚡ N hit counter.
+# Status bar: add "trigger_count" to [statusbar] components for ⚡ N hit counter.
 #
 # GAP-51: Block-based output scaffold (off by default). When enabled, each OSC
 # 133 D mark appends OutputBlock + `block.finished`; open right sidebar Blocks

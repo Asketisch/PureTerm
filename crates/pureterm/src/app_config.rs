@@ -270,13 +270,18 @@ impl LspConfig {
 /// so a bad config never breaks startup. `components` is the ordered list of
 /// segment ids; `refresh_interval_secs` bounds stat sampling + git subprocess
 /// cadence; `show_sparklines` toggles canvas mini-graphs; `bar_height` is the
-/// pixel floor (auto-grows to 28 when sparklines are on, for legibility).
+/// pixel floor (auto-grows to 28 when sparklines are on, for legibility);
+/// `clock_format` is a `chrono` format string; `clock_show_seconds` is true →
+/// render seconds (when the format contains `%S` / `%s`, the renderer
+/// strips those tokens before formatting if it's false).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StatusBarConfig {
     pub components: Vec<String>,
     pub refresh_interval_secs: u64,
     pub show_sparklines: bool,
     pub bar_height: u16,
+    pub clock_format: String,
+    pub clock_show_seconds: bool,
 }
 
 impl Default for StatusBarConfig {
@@ -292,6 +297,8 @@ impl Default for StatusBarConfig {
             refresh_interval_secs: 1,
             show_sparklines: true,
             bar_height: 24,
+            clock_format: "%H:%M:%S".to_string(),
+            clock_show_seconds: true,
         }
     }
 }
@@ -979,6 +986,12 @@ impl AppConfig {
         if let Some(h) = table.get("bar_height").and_then(|v| v.as_integer()) {
             // Clamp to a sane readable range (18px minimum, 48px maximum).
             cfg.bar_height = h.clamp(18, 48) as u16;
+        }
+        if let Some(s) = table.get("clock_format").and_then(|v| v.as_str()) {
+            cfg.clock_format = s.to_string();
+        }
+        if let Some(b) = table.get("clock_show_seconds").and_then(|v| v.as_bool()) {
+            cfg.clock_show_seconds = b;
         }
         cfg
     }
@@ -3415,5 +3428,118 @@ use_control_mode = true
         assert_eq!(bindings.len(), 1);
         let args = bindings[0].tmux_command_args();
         assert_eq!(args, vec!["zsh", "-i"]);
+    }
+
+    // ── [statusbar] loader (GAP-24) ─────────────────────────────────────
+
+    #[test]
+    fn test_load_statusbar_defaults_when_missing() {
+        // No [statusbar] table at all → use every field default.
+        let path = write_temp_toml(
+            "pureterm_test_statusbar_default.toml",
+            "[unrelated]\nkey = 1\n",
+        );
+        let cfg = AppConfig::load_statusbar(&path);
+        let _ = std::fs::remove_file(&path);
+
+        let defaults = StatusBarConfig::default();
+        assert_eq!(cfg.components, defaults.components);
+        assert_eq!(cfg.refresh_interval_secs, defaults.refresh_interval_secs);
+        assert_eq!(cfg.show_sparklines, defaults.show_sparklines);
+        assert_eq!(cfg.bar_height, defaults.bar_height);
+        assert_eq!(cfg.clock_format, defaults.clock_format);
+        assert_eq!(cfg.clock_show_seconds, defaults.clock_show_seconds);
+        // New field surfaces: default format must include `%S` so the
+        // show_seconds = false path has something to strip.
+        assert!(defaults.clock_format.contains("%S"));
+        assert!(defaults.clock_show_seconds);
+    }
+
+    #[test]
+    fn test_load_statusbar_overrides_clock_fields() {
+        // clock_format + clock_show_seconds are both optional; a partial
+        // override must not zero out the other.
+        let path = write_temp_toml(
+            "pureterm_test_statusbar_clock.toml",
+            r#"
+[statusbar]
+clock_format = "%H:%M"
+clock_show_seconds = false
+"#,
+        );
+        let cfg = AppConfig::load_statusbar(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(cfg.clock_format, "%H:%M");
+        assert!(!cfg.clock_show_seconds);
+        // Untouched fields keep defaults.
+        assert!(cfg.show_sparklines);
+        assert_eq!(cfg.bar_height, 24);
+        assert_eq!(cfg.components, StatusBarConfig::default().components);
+    }
+
+    #[test]
+    fn test_load_statusbar_empty_components_falls_back_to_default() {
+        // Empty `components = []` is a known foot-gun (renders a blank bar);
+        // the loader refuses to override defaults in that case.
+        let path = write_temp_toml(
+            "pureterm_test_statusbar_empty_components.toml",
+            r#"
+[statusbar]
+components = []
+"#,
+        );
+        let cfg = AppConfig::load_statusbar(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(cfg.components, StatusBarConfig::default().components);
+        assert!(!cfg.components.is_empty());
+    }
+
+    #[test]
+    fn test_load_statusbar_components_override_respected_when_non_empty() {
+        let path = write_temp_toml(
+            "pureterm_test_statusbar_components_override.toml",
+            r#"
+[statusbar]
+components = ["cwd", "git", "clock", "cursor"]
+"#,
+        );
+        let cfg = AppConfig::load_statusbar(&path);
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(cfg.components, vec![
+            "cwd".to_string(),
+            "git".to_string(),
+            "clock".to_string(),
+            "cursor".to_string(),
+        ]);
+    }
+
+    #[test]
+    fn test_load_statusbar_bar_height_is_clamped() {
+        // bar_height is clamped 18..=48 — both out-of-range values must be
+        // snapped to the bounds.
+        let path_high = write_temp_toml(
+            "pureterm_test_statusbar_height_high.toml",
+            r#"
+[statusbar]
+bar_height = 999
+"#,
+        );
+        let cfg = AppConfig::load_statusbar(&path_high);
+        let _ = std::fs::remove_file(&path_high);
+        assert_eq!(cfg.bar_height, 48);
+
+        let path_low = write_temp_toml(
+            "pureterm_test_statusbar_height_low.toml",
+            r#"
+[statusbar]
+bar_height = 5
+"#,
+        );
+        let cfg = AppConfig::load_statusbar(&path_low);
+        let _ = std::fs::remove_file(&path_low);
+        assert_eq!(cfg.bar_height, 18);
     }
 }

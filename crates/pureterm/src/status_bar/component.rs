@@ -16,8 +16,17 @@
 //!   pre-formats SSH/Vi into `(String, Color)` / `&'static str`.
 //! - `Send` because `PureTermApp` must be `Send` for the tokio executor and the
 //!   registry is a field of it. (The app is intentionally not `Sync`.)
+//!
+//! Group taxonomy (used by the chip renderer to assign cluster color and
+//! inter-group spacing — see [`crate::status_bar::chip`]):
+//! - `Context`: cwd / git / notifications (where you are).
+//! - `Runtime`: ssh / vimode / process / agent (what's running).
+//! - `System`: cpu / memory / network / battery / codeindex / lsp (machine vitals).
+//! - `Meta`: cursor / clock (terminal-local display state).
 
-use iced::{Color, Element};
+use std::borrow::Cow;
+
+use iced::{Color, Element, Theme};
 
 use crate::iced_app::Message;
 use crate::notification_store::NotificationSummary;
@@ -27,6 +36,27 @@ use super::stats::StatSnapshot;
 
 /// Owned status-bar element bound to the app's `Message`/`Theme`/`Renderer`.
 pub(crate) type BarElement<'a> = Element<'a, Message, iced::Theme, iced::Renderer>;
+
+/// Visual cluster a status-bar segment belongs to. Renderer uses this for chip
+/// tint + 8px inter-group spacing.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum BarGroup {
+    /// cwd / git / notifications
+    Context,
+    /// ssh / vimode / process / agent
+    Runtime,
+    /// cpu / memory / network / battery / codeindex / lsp
+    System,
+    /// cursor / clock (terminal-local display state)
+    Meta,
+}
+
+/// Clock configuration forwarded to the `Clock` component via `BarData`.
+#[derive(Clone, Debug)]
+pub struct ClockCfg {
+    pub format: Cow<'static, str>,
+    pub show_seconds: bool,
+}
 
 /// Read-only snapshot of the live app state a component may render.
 ///
@@ -54,12 +84,27 @@ pub struct BarData<'a> {
     pub notifications: Option<NotificationSummary>,
     pub cursor: (usize, usize),
     pub show_sparklines: bool,
+    /// Clock segment config (format + show_seconds). Owned; forwarded from
+    /// `[statusbar]` config so per-frame rendering needs no cfg lookup.
+    pub clock_cfg: &'a ClockCfg,
+    /// Active Iced theme, forwarded so chips can derive their background from
+    /// the palette. The reference is owned by `iced::Application::theme`;
+    /// borrowing here is safe because the status bar is rendered inside the
+    /// same `view` call that produced this snapshot.
+    pub theme_for_view: &'a Theme,
 }
 
 /// One segment of the bottom status bar.
 pub trait StatusBarComponent: Send {
     /// Stable component id (matches `[statusbar].components` entries).
     fn id(&self) -> &'static str;
+    /// Which visual cluster this segment belongs to. The chip renderer uses
+    /// this for both color tinting and the 8-px inter-group spacer. Default:
+    /// `BarGroup::Context` (existing components override as listed in the
+    /// module-level group taxonomy).
+    fn group(&self) -> BarGroup {
+        BarGroup::Context
+    }
     /// True ⇒ render right of the flexible spacer (e.g. clock, cursor).
     fn align_right(&self) -> bool {
         false

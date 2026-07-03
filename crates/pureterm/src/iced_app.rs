@@ -825,15 +825,17 @@ fn sidebar_content_height(viewport_height: f32, status_bar_height: f32) -> f32 {
 /// GAP-7.6: status-bar agent indicator. Returns the label + color to render,
 /// or `None` when the pane has no agent AND no feed is pending. Pure, tested.
 ///
-/// - `⚡ <kind>` (active, warm amber) / `❄ <kind>` (hibernated, cool blue)
+/// - `⚡ <kind>` (active, warm amber) / `💤 <kind> (sleep)` (hibernated, cool blue)
 /// - `⏳ <N>` feed-pending badge appended when N > 0 (warning amber); shown on
 ///   its own when the pane has no agent but approvals are queued elsewhere.
+///   The `(sleep)` text suffix replaced the original `❄` glyph because the
+///   snowflake reads as "frozen pane" rather than "agent session sleeping".
 fn agent_indicator(kind: &str, hibernated: bool, feed_pending: usize) -> Option<(String, Color)> {
     let amber = Color::from_rgba(0.85, 0.65, 0.3, 1.0);
     let cool = Color::from_rgba(0.45, 0.6, 0.85, 1.0);
     let warn = Color::from_rgba(0.95, 0.75, 0.3, 1.0);
     let pending_badge = if feed_pending > 0 {
-        format!("  \u{23f3} {}", feed_pending) // ⏳
+        format!("  \u{23f3} {feed_pending}") // ⏳
     } else {
         String::new()
     };
@@ -844,12 +846,12 @@ fn agent_indicator(kind: &str, hibernated: bool, feed_pending: usize) -> Option<
             None
         };
     }
-    let (glyph, color) = if hibernated {
-        ('\u{2744}', cool) // ❄
+    let (glyph, color, suffix) = if hibernated {
+        ("\u{1f4a4}", cool, " (sleep)") // 💤
     } else {
-        ('\u{26a1}', amber) // ⚡
+        ("\u{26a1}", amber, "") // ⚡
     };
-    Some((format!("  {glyph} {kind}{pending_badge}"), color))
+    Some((format!("  {glyph} {kind}{suffix}{pending_badge}"), color))
 }
 
 /// 分割线拖拽状态。
@@ -11600,9 +11602,13 @@ impl PureTermApp {
             .width(Length::Fill)
             .height(TAB_BAR_HEIGHT)
             .padding([4, 8])
-            .style(|_| container::Style {
+            .style(|_t: &Theme| container::Style {
+                // Reuse the status-bar background helper so the top and
+                // bottom bars stay visually synchronized under any future
+                // theme switch (today both resolve to ~rgb(34,34,39)
+                // against `Theme::Dark`).
                 background: Some(Background::Color(
-                    Color::from_rgba(0.12, 0.12, 0.14, 1.0),
+                    crate::status_bar::bar_bg(&Theme::Dark),
                 )),
                 text_color: None,
                 snap: false,
@@ -11654,8 +11660,13 @@ impl PureTermApp {
     }
 
     fn view_bottom_bar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
-        use iced::widget::{container, row, space};
+        use iced::widget::{button, container, row, space};
         use iced::{Background, Border, Length, Shadow};
+
+        // Resolve the active theme once per frame so every chip can read
+        // colors off `iced::Theme::Palette`. Today only `Theme::Dark` ships,
+        // but the helper path is wired for a future light/System switch.
+        let theme = Theme::Dark;
 
         // GAP-24: pre-compute the live per-pane/per-frame values into a portable
         // `BarData` snapshot (cfg-gated SSH/Vi/agent formatting stays here,
@@ -11737,6 +11748,12 @@ impl PureTermApp {
         #[cfg(not(unix))]
         let agent: Option<(String, Color)> = None;
 
+        // Per-frame clock config snapshot (owned; `BarData` borrows the ref).
+        let clock_cfg = crate::status_bar::component::ClockCfg {
+            format: std::borrow::Cow::Owned(self.status_bar_cfg.clock_format.clone()),
+            show_seconds: self.status_bar_cfg.clock_show_seconds,
+        };
+
         let data = crate::status_bar::BarData {
             cwd: self.status_bar_cwd.as_deref(),
             git_branch: self.status_bar_git_branch.as_deref(),
@@ -11760,33 +11777,124 @@ impl PureTermApp {
                     None
                 }
             }),
+            clock_cfg: &clock_cfg,
+            theme_for_view: &theme,
         };
 
-        // Iterate the configured component list; right-aligned components render
-        // after the flexible spacer (cursor/clock).
-        let mut left = row![].spacing(0).align_y(iced::Alignment::Center);
-        let mut right = row![].spacing(0).align_y(iced::Alignment::Center);
+        // ── Group rendering ──────────────────────────────────────────────
+        // Segments are clustered by `BarGroup` (Context / Runtime / System /
+        // Meta) into 4 sub-rows. We insert an 8-px spacer *between* groups
+        // and let chips within a group keep their built-in 4-px internal
+        // spacing. Meta sits at the far right (after the flexible spacer),
+        // so ⌘K / cursor / clock naturally align-right.
+        use crate::status_bar::component::BarGroup;
+        let mut group_context: Vec<Element<'_, Message, Theme, iced::Renderer>> = Vec::new();
+        let mut group_runtime: Vec<Element<'_, Message, Theme, iced::Renderer>> = Vec::new();
+        let mut group_system: Vec<Element<'_, Message, Theme, iced::Renderer>> = Vec::new();
+        let mut group_meta: Vec<Element<'_, Message, Theme, iced::Renderer>> = Vec::new();
         for comp in &self.status_bar_registry {
-            if comp.align_right() {
-                right = right.push(comp.view(&data));
-            } else {
-                left = left.push(comp.view(&data));
+            let el = comp.view(&data);
+            let target = if comp.align_right() { &mut group_meta }
+                         else { match comp.group() {
+                             BarGroup::Context => &mut group_context,
+                             BarGroup::Runtime => &mut group_runtime,
+                             BarGroup::System => &mut group_system,
+                             BarGroup::Meta => &mut group_meta,
+                         } };
+            target.push(el);
+        }
+
+        // Build the 3 left-side groups inline (avoids HRTB lifetime fight
+        // when row! takes a closure-returning-Element). Each empty group
+        // becomes an empty row so the outer `row!` keeps its expected shape.
+        let left_group0: Element<'_, Message, Theme, iced::Renderer> = {
+            let mut r = row![].spacing(4).align_y(iced::Alignment::Center);
+            for c in group_context.drain(..) {
+                r = r.push(c);
+            }
+            r.into()
+        };
+        let left_group1: Element<'_, Message, Theme, iced::Renderer> = {
+            let mut r = row![].spacing(4).align_y(iced::Alignment::Center);
+            r = r.push(space().width(Length::Fixed(8.0)));
+            for c in group_runtime.drain(..) {
+                r = r.push(c);
+            }
+            r.into()
+        };
+        let left_group2: Element<'_, Message, Theme, iced::Renderer> = {
+            let mut r = row![].spacing(4).align_y(iced::Alignment::Center);
+            r = r.push(space().width(Length::Fixed(8.0)));
+            for c in group_system.drain(..) {
+                r = r.push(c);
+            }
+            r.into()
+        };
+
+        let left = row![left_group0, left_group1, left_group2]
+            .spacing(0)
+            .align_y(iced::Alignment::Center);
+
+        // Meta group on the right, with a small ⌘K chip prepended so the
+        // command palette is reachable from the bar even when the system
+        // has no key focus on a pane (e.g. mouse over the bar).
+        let mut meta = row![].spacing(4).align_y(iced::Alignment::Center);
+        if !group_meta.is_empty() {
+            // GAP-X: ⌘K entry point. Visible affordance that mirrors the
+            // ⌘⇧P keybinding (no new action / message — reuses
+            // Message::OpenCommandPalette so existing keymap wiring is
+            // intact).
+            let meta_bg = crate::status_bar::chip_bg(&theme, BarGroup::Meta);
+            let meta_fg = crate::status_bar::chip_text(&theme, BarGroup::Meta);
+            let meta_border = crate::status_bar::chip_border(&theme);
+            let cmd_k_btn = button(
+                container(text("⌘K").size(11))
+                    .padding([2, 6])
+                    .style(move |_t: &Theme| container::Style {
+                        background: Some(Background::Color(meta_bg)),
+                        text_color: Some(meta_fg),
+                        border: Border {
+                            color: meta_border,
+                            width: 1.0,
+                            radius: 4.0.into(),
+                        },
+                        snap: false,
+                        shadow: Shadow::default(),
+                    }),
+            )
+            .on_press(Message::OpenCommandPalette)
+            .padding([0, 0])
+            .style(|_t: &Theme, _s: button::Status| button::Style {
+                background: None,
+                border: Border::default(),
+                text_color: Color::TRANSPARENT,
+                shadow: Shadow::default(),
+                snap: false,
+            });
+            meta = meta.push(cmd_k_btn);
+            meta = meta.push(space().width(Length::Fixed(8.0)));
+            for c in group_meta.drain(..) {
+                meta = meta.push(c);
             }
         }
-        let bar = row![left, space().width(Length::Fill), right];
 
+        let bar = row![left, space().width(Length::Fill), meta];
+
+        // Bar background & footer border derived from the active palette
+        // (currently `Theme::Dark`, but the path is hooked for any future
+        // theme switch).
+        let bg = crate::status_bar::bar_bg(&theme);
+        let footer = crate::status_bar::bar_border(&theme);
         container(bar.width(Length::Fill))
             .width(Length::Fill)
             .height(self.status_bar_cfg.effective_height())
             .padding([2, 8])
-            .style(|_| container::Style {
-                background: Some(Background::Color(Color::from_rgba(
-                    0.12, 0.12, 0.14, 1.0,
-                ))),
+            .style(move |_t: &Theme| container::Style {
+                background: Some(Background::Color(bg)),
                 text_color: None,
                 snap: false,
                 border: Border {
-                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.05),
+                    color: footer,
                     width: 0.5,
                     radius: 0.0.into(),
                 },
@@ -14660,15 +14768,18 @@ mod tests {
         let (label, _) = super::agent_indicator("claude-code", false, 0).unwrap();
         assert!(label.contains("claude-code"));
         assert!(label.contains('\u{26a1}')); // ⚡
-        assert!(!label.contains('\u{2744}')); // not ❄
+        assert!(!label.contains("(sleep)"));
+        assert!(!label.contains('\u{1f4a4}')); // not 💤
         assert!(!label.contains('\u{23f3}')); // not ⏳
     }
 
     #[test]
-    fn agent_indicator_hibernated_shows_snowflake() {
+    fn agent_indicator_hibernated_shows_sleep_suffix() {
         let (label, _) = super::agent_indicator("codex", true, 0).unwrap();
         assert!(label.contains("codex"));
-        assert!(label.contains('\u{2744}')); // ❄
+        assert!(label.contains("(sleep)"));
+        assert!(label.contains('\u{1f4a4}')); // 💤
+        assert!(!label.contains('\u{2744}')); // not ❄
     }
 
     #[test]

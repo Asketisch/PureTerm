@@ -9,6 +9,7 @@
 //! - [`publisher`] — the single shared `sysinfo`/`battery` sampler.
 //! - [`git`] — async porcelain-v2 git status (+ legacy pure-FS branch read).
 
+pub mod chip;
 pub mod component;
 pub mod components;
 pub mod git;
@@ -18,7 +19,9 @@ pub mod stats;
 
 use crate::app_config::StatusBarConfig;
 
-pub use component::{BarData, StatusBarComponent};
+pub use chip::{bar_bg, bar_border, chip, chip_bg, chip_border, chip_text, chip_with_color,
+    empty as empty_chip, group_spacer};
+pub use component::{BarData, BarGroup, StatusBarComponent};
 pub use git::{
     detect_git_op, find_git_dir, is_binary_available, parse_porcelain_v2, read_git_branch,
     spawn_git_status, GitOp, GitStatus,

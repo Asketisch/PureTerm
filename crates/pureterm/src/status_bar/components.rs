@@ -1,8 +1,12 @@
 //! GAP-24: concrete `StatusBarComponent` implementations.
 //!
-//! Existing segments (Cwd, Git, Ssh, ViMode, Process, Agent, Cursor) are ported
-//! verbatim from the old monolithic `view_bottom_bar`, preserving their exact
-//! formatting/colors. New segments: Clock, Cpu, Memory, Network, Battery.
+//! Every segment renders as a "chip" (rounded translucent container) tinted
+//! by its [`BarGroup`]. See [`crate::status_bar::chip`] for the renderer and
+//! the color derivation. The color we hand a chip — either the group default
+//! (via [`crate::status_bar::chip::chip`]) or a semantic color (via
+//! [`crate::status_bar::chip::chip_with_color`]) — is the only per-segment
+//! styling left over from the pre-chip era; the rest of the styling
+//! (background, border, padding, inter-group spacing) is centralized.
 //!
 //! Stat-holding segments (Cpu/Memory/Network/Battery) cache the last snapshot
 //! received via `apply_stats`; the publisher's ring buffer is the single source
@@ -11,14 +15,10 @@
 use iced::widget::{canvas, row, text};
 use iced::{Color, Length};
 
-use super::component::{BarData, BarElement, StatusBarComponent};
+use super::chip::{chip, chip_with_color, empty as empty_chip};
+use super::component::{BarData, BarElement, BarGroup, StatusBarComponent};
 use super::sparkline::SparklineProgram;
 use super::stats::StatSnapshot;
-
-/// Segment text: 11px (matches the original bar) with the given color.
-fn text_seg(label: String, color: Color) -> BarElement<'static> {
-    text(label).size(11).color(color).into()
-}
 
 /// Compact sparkline element (36×12) with a translucent fill.
 fn sparkline(samples: &[f32], color: Color) -> BarElement<'static> {
@@ -47,27 +47,34 @@ fn human_bytes(b: u64) -> String {
     }
 }
 
-// ── Existing segments (ported from view_bottom_bar) ────────────────────
+// ── Existing segments ──────────────────────────────────────────────────
 
 pub struct Cwd;
 impl StatusBarComponent for Cwd {
     fn id(&self) -> &'static str {
         "cwd"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Context
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
-        text_seg(
-            data.cwd.unwrap_or("~").to_string(),
-            Color::from_rgba(0.65, 0.75, 0.65, 1.0),
-        )
+        // Theme is carried per-call so the chip's text color follows the
+        // active palette. Today only `Theme::Dark` is exercised by the app;
+        // see `view_bottom_bar` for the resolution path.
+        chip(format!("\u{1f4c1} {}", data.cwd.unwrap_or("~")), self.group(),
+             data.theme_for_view)
     }
 }
 
 /// Build the base status-bar label for a git segment: branch + ahead/behind +
 /// per-category counts. Pure + unit-tested; the coloured op/PR suffixes are
 /// added as separate widgets in [`Git::view`]. Format:
-/// ` main ↑2↓1 ●2 ~1 +3 !1` (segments with a 0 count are omitted).
+/// `[br] main ↑2↓1 ●2 ~1 +3 !1` (segments with a 0 count are omitted). The
+/// leading `[br]` marker replaces the old Nerd Font PUA branch glyph
+/// (U+E0A0) so the label stays readable when the user doesn't have Nerd
+/// Fonts installed.
 fn git_bar_label(branch: &str, g: Option<&super::git::GitStatus>) -> String {
-    let mut label = format!("  \u{e0a0} {}", branch);
+    let mut label = format!("[br] {}", branch);
     if let Some(g) = g {
         if let Some(a) = g.ahead {
             if a > 0 {
@@ -80,7 +87,7 @@ fn git_bar_label(branch: &str, g: Option<&super::git::GitStatus>) -> String {
             }
         }
         if g.staged > 0 {
-            label.push_str(&format!(" \u{25cf}{}", g.staged)); // ●
+            label.push_str(&format!(" \u{25cf}{}", g.staged)); // ● (Unicode, no PUA)
         }
         if g.unstaged > 0 {
             label.push_str(&format!(" ~{}", g.unstaged));
@@ -100,6 +107,9 @@ impl StatusBarComponent for Git {
     fn id(&self) -> &'static str {
         "git"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Context
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         // Prefer the enriched porcelain status; fall back to the pure-FS branch.
         let branch = data
@@ -107,27 +117,31 @@ impl StatusBarComponent for Git {
             .and_then(|g| g.branch.clone())
             .or_else(|| data.git_branch.map(|s| s.to_string()));
         let Some(branch) = branch else {
-            // No git context: render nothing (zero-width empty text).
-            return text(String::new()).size(11).into();
+            return empty_chip();
         };
 
-        let base = Color::from_rgba(0.6, 0.65, 0.8, 1.0);
+        let theme = data.theme_for_view;
+        let group = self.group();
+        let label = git_bar_label(&branch, data.git_status);
+
+        // Build the base chip (group-tinted text).
+        let mut r = row![chip(label, group, theme)].spacing(4);
+
+        // Optional suffixes: in-progress op + linked PR. We render them as
+        // sibling small text widgets rather than chips so their semantic
+        // colors (amber for in-progress, state-colored for PR) stay distinct
+        // from the base Context chip.
+        let g = data.git_status;
         let amber = Color::from_rgba(0.95, 0.75, 0.3, 1.0);
         let green = Color::from_rgba(0.5, 0.8, 0.55, 1.0);
         let red = Color::from_rgba(0.9, 0.45, 0.45, 1.0);
         let purple = Color::from_rgba(0.65, 0.45, 0.85, 1.0);
 
-        let g = data.git_status;
-        let label = git_bar_label(&branch, g);
-
-        // Coloured suffixes (own text widgets so they can differ from the base):
-        // in-progress op (amber) + linked PR pill (state-coloured).
-        let op_seg = g.and_then(|g| {
-            (g.op != super::git::GitOp::None)
-                .then(|| text_seg(format!(" \u{21bb}{}", g.op.as_str()), amber)) // ⟳
-        });
-        let pr_seg = g.and_then(|g| {
-            g.pr.as_ref().map(|pr| {
+        if let Some(g) = g {
+            if g.op != super::git::GitOp::None {
+                r = r.push(text(format!(" ({})", g.op.as_str())).size(11).color(amber));
+            }
+            if let Some(pr) = g.pr.as_ref() {
                 let color = match pr.state.as_str() {
                     "MERGED" => purple,
                     "CLOSED" => red,
@@ -135,16 +149,8 @@ impl StatusBarComponent for Git {
                     _ if pr.checks.pending > 0 => amber,
                     _ => green,
                 };
-                text_seg(format!(" \u{29c9}#{}", pr.number), color) // ⧉
-            })
-        });
-
-        let mut r = row![text_seg(label, base)];
-        if let Some(s) = op_seg {
-            r = r.push(s);
-        }
-        if let Some(s) = pr_seg {
-            r = r.push(s);
+                r = r.push(text(format!("PR#{}", pr.number)).size(11).color(color));
+            }
         }
         r.into()
     }
@@ -155,11 +161,14 @@ impl StatusBarComponent for Ssh {
     fn id(&self) -> &'static str {
         "ssh"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Runtime
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some((label, color)) = &data.ssh {
-            text_seg(label.clone(), *color)
+            chip_with_color(label.clone(), self.group(), *color, data.theme_for_view)
         } else {
-            text(String::new()).size(11).into()
+            empty_chip()
         }
     }
 }
@@ -169,11 +178,19 @@ impl StatusBarComponent for ViMode {
     fn id(&self) -> &'static str {
         "vimode"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Runtime
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some(label) = data.vi_mode {
-            text_seg(label.to_string(), Color::from_rgba(0.2, 0.85, 0.7, 1.0))
+            chip_with_color(
+                label.to_string(),
+                self.group(),
+                Color::from_rgba(0.2, 0.85, 0.7, 1.0),
+                data.theme_for_view,
+            )
         } else {
-            text(String::new()).size(11).into()
+            empty_chip()
         }
     }
 }
@@ -183,11 +200,14 @@ impl StatusBarComponent for Process {
     fn id(&self) -> &'static str {
         "process"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Runtime
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some(proc) = data.process {
-            text_seg(format!("  {}", proc), Color::from_rgba(0.55, 0.55, 0.55, 1.0))
+            chip(format!("\u{25b8} {}", proc), self.group(), data.theme_for_view)
         } else {
-            text(String::new()).size(11).into()
+            empty_chip()
         }
     }
 }
@@ -197,11 +217,14 @@ impl StatusBarComponent for Agent {
     fn id(&self) -> &'static str {
         "agent"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Runtime
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some((label, color)) = &data.agent {
-            text_seg(label.clone(), *color)
+            chip_with_color(label.clone(), self.group(), *color, data.theme_for_view)
         } else {
-            text(String::new()).size(11).into()
+            empty_chip()
         }
     }
 }
@@ -212,14 +235,14 @@ impl StatusBarComponent for CodeIndex {
     fn id(&self) -> &'static str {
         "codeindex"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::System
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some(pct) = data.codeindex_percent {
-            text_seg(
-                format!(" idx {pct}%"),
-                Color::from_rgba(0.5, 0.75, 1.0, 1.0),
-            )
+            chip(format!("idx {pct}%"), self.group(), data.theme_for_view)
         } else {
-            text(String::new()).size(11).into()
+            empty_chip()
         }
     }
 }
@@ -230,14 +253,19 @@ impl StatusBarComponent for Lsp {
     fn id(&self) -> &'static str {
         "lsp"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::System
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some((errors, warnings)) = data.lsp_summary {
-            text_seg(
-                format!(" LSP {errors}E {warnings}W"),
+            chip_with_color(
+                format!("LSP {errors}E {warnings}W"),
+                self.group(),
                 Color::from_rgba(1.0, 0.55, 0.45, 1.0),
+                data.theme_for_view,
             )
         } else {
-            text(String::new()).size(11).into()
+            empty_chip()
         }
     }
 }
@@ -249,16 +277,21 @@ impl StatusBarComponent for Notifications {
     fn id(&self) -> &'static str {
         "notifications"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Context
+    }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let n = data.notifications.map(|s| s.total_unread).unwrap_or(0);
         if n > 0 {
-            // Amber to match the attention ring; bell glyph + count.
-            text_seg(
-                format!(" \u{1f514} {}", n),
+            // Amber to match the attention ring.
+            chip_with_color(
+                format!("\u{1f514} {n}"),
+                self.group(),
                 Color::from_rgba(1.0, 0.7, 0.2, 1.0),
+                data.theme_for_view,
             )
         } else {
-            text(String::new()).size(11).into()
+            empty_chip()
         }
     }
 }
@@ -278,15 +311,15 @@ impl StatusBarComponent for TriggerCount {
     fn id(&self) -> &'static str {
         "trigger_count"
     }
-    fn view(&self, _data: &BarData<'_>) -> BarElement<'static> {
+    fn group(&self) -> BarGroup {
+        BarGroup::Runtime
+    }
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let n = self.hits.load(std::sync::atomic::Ordering::Relaxed);
         if n > 0 {
-            text_seg(
-                format!(" \u{26a1} {}", n),
-                Color::from_rgba(0.55, 0.85, 0.55, 1.0),
-            )
+            chip(format!("\u{26a1} {n}"), self.group(), data.theme_for_view)
         } else {
-            text(String::new()).size(11).into()
+            empty_chip()
         }
     }
 }
@@ -296,28 +329,65 @@ impl StatusBarComponent for Cursor {
     fn id(&self) -> &'static str {
         "cursor"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Meta
+    }
     fn align_right(&self) -> bool {
         true
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
+        // Pin emoji (📍 U+1F4CD) — Unicode emoji, not Nerd Font PUA; renders
+        // through the system emoji fallback chain. Without a color-emoji
+        // font the pin shows as `?`; the `Ln N, Col M` text after the colon
+        // is always readable so the meaning ("cursor") survives any
+        // font-fallback path.
         let (r, c) = data.cursor;
-        text_seg(format!("{}:{}", r + 1, c + 1), Color::from_rgba(0.5, 0.5, 0.5, 1.0))
+        chip(
+            format!("\u{1f4cd} {}:{}", r + 1, c + 1),
+            self.group(),
+            data.theme_for_view,
+        )
     }
 }
 
-// ── New segments ───────────────────────────────────────────────────────
+// ── Meta / new segments ────────────────────────────────────────────────
 
 pub struct Clock;
 impl StatusBarComponent for Clock {
     fn id(&self) -> &'static str {
         "clock"
     }
+    fn group(&self) -> BarGroup {
+        BarGroup::Meta
+    }
     fn align_right(&self) -> bool {
         true
     }
-    fn view(&self, _data: &BarData<'_>) -> BarElement<'static> {
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let now = chrono::Local::now();
-        text_seg(now.format("%H:%M:%S").to_string(), Color::from_rgba(0.7, 0.7, 0.7, 1.0))
+        // If show_seconds is off, strip `%S` / `%s` tokens from the format so
+        // users don't have to author two config strings. We own the resulting
+        // String because the lifetime of the slice variant would be borrowed
+        // from `data` and survive into `format!` below.
+        let fmt_owned: String;
+        let fmt_slice: &str = if data.clock_cfg.show_seconds {
+            data.clock_cfg.format.as_ref()
+        } else {
+            let s = data.clock_cfg.format.as_ref();
+            let mut out = s.to_string();
+            for tok in [":%S", ":%s"] {
+                if out.contains(tok) {
+                    out = out.replace(tok, "");
+                }
+            }
+            fmt_owned = out;
+            fmt_owned.as_str()
+        };
+        chip(
+            format!("\u{1f552} {}", now.format(fmt_slice)),
+            self.group(),
+            data.theme_for_view,
+        )
     }
 }
 
@@ -335,9 +405,13 @@ impl StatusBarComponent for Cpu {
     fn id(&self) -> &'static str {
         "cpu"
     }
-    fn view(&self, _data: &BarData<'_>) -> BarElement<'static> {
+    fn group(&self) -> BarGroup {
+        BarGroup::System
+    }
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let color = Color::from_rgba(0.95, 0.6, 0.4, 1.0);
-        let label = text_seg(format!(" cpu {:>3.0}%", self.cpu_pct), color);
+        let label = chip(format!("cpu {:>3.0}%", self.cpu_pct), self.group(),
+                          data.theme_for_view);
         if self.show_sparkline && self.history.len() >= 2 {
             row![label, sparkline(&self.history, color)].spacing(4).into()
         } else {
@@ -364,9 +438,13 @@ impl StatusBarComponent for Memory {
     fn id(&self) -> &'static str {
         "memory"
     }
-    fn view(&self, _data: &BarData<'_>) -> BarElement<'static> {
+    fn group(&self) -> BarGroup {
+        BarGroup::System
+    }
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let color = Color::from_rgba(0.55, 0.8, 0.65, 1.0);
-        let label = text_seg(format!(" mem {}", human_bytes(self.used)), color);
+        let label = chip(format!("mem {}", human_bytes(self.used)), self.group(),
+                          data.theme_for_view);
         if self.show_sparkline && self.history.len() >= 2 {
             row![label, sparkline(&self.history, color)].spacing(4).into()
         } else {
@@ -394,15 +472,19 @@ impl StatusBarComponent for Network {
     fn id(&self) -> &'static str {
         "network"
     }
-    fn view(&self, _data: &BarData<'_>) -> BarElement<'static> {
+    fn group(&self) -> BarGroup {
+        BarGroup::System
+    }
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let color = Color::from_rgba(0.5, 0.75, 0.95, 1.0);
-        let label = text_seg(
+        let label = chip(
             format!(
-                " net {}\u{2193} {}\u{2191}",
+                "net {}\u{2193} {}\u{2191}",
                 human_bytes(self.down_bps),
-                human_bytes(self.up_bps)
+                human_bytes(self.up_bps),
             ),
-            color,
+            self.group(),
+            data.theme_for_view,
         );
         if self.show_sparkline && self.history.len() >= 2 {
             row![label, sparkline(&self.history, color)].spacing(4).into()
@@ -436,7 +518,10 @@ impl StatusBarComponent for Battery {
     fn id(&self) -> &'static str {
         "battery"
     }
-    fn view(&self, _data: &BarData<'_>) -> BarElement<'static> {
+    fn group(&self) -> BarGroup {
+        BarGroup::System
+    }
+    fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         match self.pct {
             Some(pct) => {
                 let icon = match self.charging {
@@ -449,10 +534,15 @@ impl StatusBarComponent for Battery {
                 } else {
                     Color::from_rgba(0.7, 0.85, 0.5, 1.0)
                 };
-                text_seg(format!(" {} {:>3.0}%", icon, pct), color)
+                chip_with_color(
+                    format!("{icon} {:>3.0}%", pct),
+                    self.group(),
+                    color,
+                    data.theme_for_view,
+                )
             }
             // No battery (desktop): render nothing.
-            None => text(String::new()).size(11).into(),
+            None => empty_chip(),
         }
     }
     fn apply_stats(&mut self, snap: &StatSnapshot) {
@@ -469,7 +559,7 @@ mod tests {
     #[test]
     fn git_bar_label_clean() {
         let g = GitStatus { branch: Some("main".into()), ..Default::default() };
-        assert_eq!(git_bar_label("main", Some(&g)), "  \u{e0a0} main");
+        assert_eq!(git_bar_label("main", Some(&g)), "[br] main");
     }
 
     #[test]
@@ -506,6 +596,6 @@ mod tests {
     #[test]
     fn git_bar_label_no_status_uses_branch_only() {
         // Branch known but porcelain not yet resolved → branch-only label.
-        assert_eq!(git_bar_label("dev", None), "  \u{e0a0} dev");
+        assert_eq!(git_bar_label("dev", None), "[br] dev");
     }
 }
