@@ -28,6 +28,6 @@ pub mod pty;
 pub mod backend;
 pub mod mirror;
 
-pub use envelope::{parse_envelope, TmuxCommand, TmuxEnvelope};
+pub use envelope::{parse_envelope, parse_envelopes, TmuxCommand, TmuxEnvelope};
 pub use backend::{SurfaceBackend, TmuxControlPty};
 pub use mirror::MirrorEvent;

@@ -5,9 +5,11 @@ category: 终端交互
 plan_type: arch
 priority: P0
 effort: XL
-status: progressing
+status: v2-closed
 v1_closed: 2026-07-02
-v1_summary: 全部 6 个组件的 v1 骨架 / 协议解析 / 枚举 / 测试已落地；v2 待完成 GPU blit 路径、真实 rustybuzz 集成、tmux -CC 全生命周期、Windows CI runner、wasmtime 运行时。逐组件详情见 checklist.md。
+v1_summary: 全部 6 个组件的 v1 骨架 / 协议解析 / 枚举 / 测试已落地。
+v2_closed: 2026-07-03
+v2_summary: 全部 6 个组件的 v2 落地（rustybuzz 真实集成 + shaper trait + CachedGlyph x_advance；image_atlas + ImageQuadState + surface_snapshot ImagePlacement；tmux_cc TmuxChild + pty 通道；ResumeBinding use_control_mode；local_socket 跨平台 + windows.rs 骨架；plugin_loader trait + StaticPluginLoader + WasmPluginLoader sketch + set_enabled）。剩余 wasmtime 实际链接、Windows CI runner、GPU quad shader 写入为 v3。逐组件详情见 checklist.md。
 umbrella: true
 components:
   - gap: t-core-graphics

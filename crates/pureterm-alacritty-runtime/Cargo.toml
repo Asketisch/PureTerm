@@ -8,3 +8,8 @@ description = "PureTerm - GPU glyph atlas runtime"
 # glyph_atlas 实际需要的依赖
 crossfont = "0.8.1"
 indexmap = { version = "2", features = ["std"] }
+
+# t-core-shaper: Harfbuzz via rustybuzz (UAX #29 + complex script shaping)
+rustybuzz = "0.20"
+unicode-bidi = "0.3"
+unicode-script = "0.5"

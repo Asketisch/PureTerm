@@ -70,6 +70,12 @@ mod events_bus;
 mod events_log;
 /// GAP-32: GitHub PR status via the `gh` CLI (reuses the user's `gh auth`).
 mod gh_pr;
+/// T-core-windows-conpty v2: Windows-specific bindings.
+#[cfg(target_os = "windows")]
+mod windows;
+/// T-core-plugin-runtime v2: plugin loader (trait + static + wasm sketch).
+mod plugin_loader;
+
 #[cfg(unix)]
 mod feed_client;
 /// GAP-7.6: read-only feed audit log viewer (`pureterm feed list`).
@@ -153,6 +159,8 @@ mod notification_store;
 mod notification_panel;
 /// GAP-15: per-pane shell-integration state (OSC 133 A/B/C/D state machine).
 mod shell_state;
+/// T-core-shaper v2: shaper config (backend, fallback chain).
+mod shaper_config;
 /// GAP-51: block-based output scaffold (data model + feature flag).
 mod output_blocks;
 /// GAP-10: pattern-match triggers (regex on output → highlight/notify/send_text/exec).

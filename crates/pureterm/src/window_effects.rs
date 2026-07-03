@@ -236,3 +236,36 @@ mod tests {
         assert!(!cfg.blur);
     }
 }
+
+    /// T-core-windows-conpty v2: the Windows blur stub returns
+    /// `UnsupportedPlatform` on non-Windows hosts (which is where this
+    /// test compiles) and is a no-op `Ok(())` once the winit/Win32
+    /// wiring lands in v3.
+    #[test]
+    fn apply_blur_disabled_yields_skipped() {
+        let mut cfg = WindowEffectsConfig::default();
+        cfg.enabled = false;
+        cfg.blur = false;
+        assert_eq!(apply_blur(&cfg), BlurApplyOutcome::Skipped);
+    }
+
+    /// When the config says `enabled = true, blur = false`, we also
+    /// skip (blur is gated on both flags).
+    #[test]
+    fn apply_blur_with_disabled_blur_flag_yields_skipped() {
+        let mut cfg = WindowEffectsConfig::default();
+        cfg.enabled = true;
+        cfg.blur = false;
+        assert_eq!(apply_blur(&cfg), BlurApplyOutcome::Skipped);
+    }
+
+    /// On non-macOS / non-Windows hosts, the cross-platform dispatch
+    /// returns `UnsupportedPlatform`.
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    #[test]
+    fn apply_blur_unsupported_on_linux_dev_hosts() {
+        let mut cfg = WindowEffectsConfig::default();
+        cfg.enabled = true;
+        cfg.blur = true;
+        assert_eq!(apply_blur(&cfg), BlurApplyOutcome::UnsupportedPlatform);
+    }

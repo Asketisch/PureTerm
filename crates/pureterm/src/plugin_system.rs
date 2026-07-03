@@ -87,6 +87,12 @@ pub struct PluginManifest {
     /// host call.
     #[serde(default)]
     pub config_schema: Option<toml::Value>,
+    /// T-core-plugin-runtime v2: per-plugin enable / disable. Flipped
+    /// by the `pureterm plugin enable|disable <name>` CLI; absent
+    /// defaults to `false` (the plugin loader treats the absence as
+    /// "user hasn't enabled it yet").
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 fn default_abi_version() -> u32 {
@@ -320,6 +326,36 @@ pub fn uninstall(cfg: &PluginSystemConfig, name: &str) -> Result<(), String> {
     std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
+/// T-core-plugin-runtime v2: flip the `enabled` flag on a plugin's
+/// manifest in-place. Returns Err if the plugin isn't installed or
+/// plugins are globally disabled.
+///
+/// The flag is read by the GUI on next startup; v3 will live-reload
+/// the manifest without requiring a restart.
+pub fn set_enabled(cfg: &PluginSystemConfig, name: &str, enabled: bool) -> Result<(), String> {
+    if !cfg.enabled {
+        return Err("plugins disabled".into());
+    }
+    if name.is_empty() || name.contains('/') || name == "." || name == ".." {
+        return Err("invalid plugin name".into());
+    }
+    let manifest_path = cfg.plugin_dir().join(name).join("plugin.toml");
+    if !manifest_path.exists() {
+        return Err(format!("plugin not installed: {name}"));
+    }
+    let text = std::fs::read_to_string(&manifest_path)
+        .map_err(|e| format!("read {}: {e}", manifest_path.display()))?;
+    let mut doc = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("parse {}: {e}", manifest_path.display()))?;
+    // Set `enabled = true|false` at the document root. Plugins that
+    // don't have an `[enabled]` flag yet get it created.
+    doc["enabled"] = toml_edit::value(enabled);
+    std::fs::write(&manifest_path, doc.to_string())
+        .map_err(|e| format!("write {}: {e}", manifest_path.display()))?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -362,6 +398,60 @@ mod tests {
         let cfg = enabled_cfg(&tmp);
         assert!(install_stub(&cfg, "").is_err());
         assert!(install_stub(&cfg, "a/b").is_err());
+    }
+
+    /// T-core-plugin-runtime v2: `enable` / `disable` flip the
+    /// `enabled` flag on the plugin's `plugin.toml`. After flipping,
+    /// re-reading the manifest reports the new state.
+    #[test]
+    fn set_enabled_flips_manifest_flag() {
+        let tmp = std::env::temp_dir().join("pureterm_plugins_set_enabled_test");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let cfg = enabled_cfg(&tmp);
+        let dir = install_stub(&cfg, "toggle").unwrap();
+        // Default state: enabled flag absent (defaults to false on read).
+        let m_before = load_manifest(&dir).unwrap();
+        assert_ne!(m_before.enabled, true, "stub installs with no enabled flag");
+
+        // Flip to true.
+        set_enabled(&cfg, "toggle", true).expect("enable");
+        let m_on = load_manifest(&dir).unwrap();
+        assert!(m_on.enabled, "after enable, flag must be true");
+
+        // Flip back to false.
+        set_enabled(&cfg, "toggle", false).expect("disable");
+        let m_off = load_manifest(&dir).unwrap();
+        assert!(!m_off.enabled, "after disable, flag must be false");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Setting enabled on a missing plugin surfaces an Err.
+    #[test]
+    fn set_enabled_rejects_unknown_plugin() {
+        let tmp = std::env::temp_dir().join("pureterm_plugins_set_enabled_unknown");
+        let _ = std::fs::remove_dir_all(&tmp);
+        let cfg = enabled_cfg(&tmp);
+        let err = set_enabled(&cfg, "ghost", true).unwrap_err();
+        assert!(err.contains("not installed"), "must report not installed: {err}");
+    }
+
+    /// `set_enabled` rejects empty / path-traversal names just like
+    /// the rest of the plugin API.
+    #[test]
+    fn set_enabled_rejects_invalid_names() {
+        let tmp = std::env::temp_dir().join("pureterm_plugins_set_enabled_invalid");
+        let cfg = enabled_cfg(&tmp);
+        assert!(set_enabled(&cfg, "", true).is_err());
+        assert!(set_enabled(&cfg, "a/b", true).is_err());
+        assert!(set_enabled(&cfg, "..", true).is_err());
+    }
+
+    /// Plugins disabled globally block the per-plugin toggle too.
+    #[test]
+    fn set_enabled_rejects_when_plugins_globally_disabled() {
+        let cfg = PluginSystemConfig::default();
+        assert!(set_enabled(&cfg, "any", true).is_err());
     }
 
     #[test]

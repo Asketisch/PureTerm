@@ -13,8 +13,9 @@
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
 use std::os::fd::{FromRawFd, RawFd};
-use std::os::unix::net::UnixStream;
 use std::num::NonZeroUsize;
+
+use crate::local_socket::{connect as local_connect, pair as local_pair, LocalStream};
 
 use polling::{Event, PollMode, Poller};
 use signal_hook::low_level::pipe as signal_pipe;
@@ -89,7 +90,7 @@ fn run_connect(
          session persists in puretermd after you exit"
     );
 
-    let mut data = UnixStream::connect(&data_path).map_err(|e| format!("data socket: {e}"))?;
+    let mut data = local_connect(&data_path).map_err(|e| format!("data socket: {e}"))?;
     data.set_nonblocking(true).map_err(|e| format!("set_nonblocking: {e}"))?;
 
     // Raw mode (best-effort; succeeds when run from a real terminal).
@@ -97,7 +98,7 @@ fn run_connect(
 
     // SIGWINCH → self-pipe so the poll loop can react to resizes.
     let (winch_send, winch_recv) =
-        UnixStream::pair().map_err(|e| format!("winch pipe: {e}"))?;
+        local_pair().map_err(|e| format!("winch pipe: {e}"))?;
     winch_recv.set_nonblocking(true).map_err(|e| format!("winch nonblock: {e}"))?;
     let _winch_sig = signal_pipe::register(signal_hook::consts::SIGWINCH, winch_send).ok();
 
@@ -199,7 +200,7 @@ fn run_connect(
 }
 
 /// Write all bytes to a non-blocking stream, spinning briefly on WouldBlock.
-fn write_all_stream(stream: &mut UnixStream, mut data: &[u8]) -> io::Result<()> {
+fn write_all_stream(stream: &mut LocalStream, mut data: &[u8]) -> io::Result<()> {
     while !data.is_empty() {
         match stream.write(data) {
             Ok(0) => return Err(io::ErrorKind::WriteZero.into()),

@@ -22,10 +22,11 @@
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
 use std::os::unix::io::{AsRawFd, FromRawFd, IntoRawFd};
-use std::os::unix::net::UnixStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
+
+use crate::local_socket::{connect as local_connect, pair as local_pair};
 
 use polling::{Event, PollMode, Poller};
 
@@ -45,7 +46,7 @@ pub struct DaemonPty {
     local: File,
     /// Self-pipe: the pump writes 1 byte here when a daemon `EXIT` frame
     /// arrives. `next_child_event` reads it.
-    signals: UnixStream,
+    signals: crate::local_socket::LocalStream,
     /// Channel to the pump for resize requests.
     resize_tx: mpsc::Sender<(u16, u16)>,
     /// Stop flag: set on drop so the pump exits gracefully.
@@ -60,20 +61,20 @@ impl DaemonPty {
     /// `data_path` is the per-session Unix socket returned by `session.attach`.
     pub fn connect(data_path: &std::path::Path) -> io::Result<Self> {
         // Socketpair: local (for PtyEventLoop) <-> pump (bridges daemon frames).
-        let (local_stream, pump_stream) = UnixStream::pair()?;
+        let (local_stream, pump_stream) = local_pair()?;
         local_stream.set_nonblocking(true)?;
         pump_stream.set_nonblocking(false)?; // pump uses blocking I/O
 
         let local = unsafe { File::from_raw_fd(local_stream.into_raw_fd()) };
 
         // Self-pipe for exit notification.
-        let (signals, sig_send) = UnixStream::pair()?;
+        let (signals, sig_send) = local_pair()?;
         signals.set_nonblocking(true)?;
 
         let (resize_tx, resize_rx) = mpsc::channel::<(u16, u16)>();
         let stop = Arc::new(AtomicBool::new(false));
 
-        let data_socket = UnixStream::connect(data_path)?;
+        let data_socket = local_connect(data_path)?;
         data_socket.set_nonblocking(false)?;
 
         let stop2 = stop.clone();
@@ -191,9 +192,9 @@ impl OnResize for DaemonPty {
 /// - pump_stream (bytes written by PtyEventLoop) → INPUT frames → daemon
 /// - resize_rx messages → RESIZE frames → daemon
 fn pump_loop(
-    mut data: UnixStream,
-    mut local: UnixStream,
-    mut sig_send: UnixStream,
+    mut data: crate::local_socket::LocalStream,
+    mut local: crate::local_socket::LocalStream,
+    mut sig_send: crate::local_socket::LocalStream,
     resize_rx: mpsc::Receiver<(u16, u16)>,
     stop: Arc<AtomicBool>,
 ) {

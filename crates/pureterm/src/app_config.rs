@@ -76,6 +76,40 @@ pub struct ResumeBinding {
     pub shell: Vec<String>,
     #[serde(default)]
     pub auto: bool,
+    /// T-core-tmux-cc v2: when `kind = "tmux"`, set `use_control_mode = true`
+    /// to attach via `tmux -CC` (control mode) instead of the legacy
+    /// `tmux attach -t`. The default `false` keeps existing configs
+    /// working without migration; v3 will flip the default to `true`.
+    #[serde(default)]
+    pub use_control_mode: bool,
+    /// T-core-tmux-cc v2: when `use_control_mode = true`, the GUI
+    /// captures this session name (auto-generated from `checkpoint`
+    /// if not provided) for the `tmux -CC new-session -A -s` call.
+    #[serde(default)]
+    pub session_name: Option<String>,
+}
+
+impl ResumeBinding {
+    /// Returns the effective `tmux -CC` arguments when this binding is
+    /// in tmux-control-mode. Falls back to a cold `attach -t` when
+    /// `use_control_mode = false`.
+    ///
+    /// v3 will prefer the `-CC` form once we have a stable GUI
+    /// integration; v2 keeps the cold path as the default for
+    /// backward-compatibility with existing user configs.
+    pub fn tmux_command_args(&self) -> Vec<String> {
+        if self.use_control_mode && self.kind == "tmux" {
+            let mut out = vec!["tmux".to_string(), "-CC".to_string(), "new-session".to_string(), "-A".to_string()];
+            let name = self.session_name.clone().unwrap_or_else(|| self.checkpoint.clone());
+            if !name.is_empty() {
+                out.push("-s".to_string());
+                out.push(format!("pureterm-{name}"));
+            }
+            out
+        } else {
+            self.shell.clone()
+        }
+    }
 }
 
 /// GAP-7.3: `[agent.hibernation]` settings. Defaults yield a disabled config,
@@ -1364,6 +1398,14 @@ impl AppConfig {
             cfg.max_image_bytes = (n.max(1024)) as usize;
         }
         cfg
+    }
+
+    /// T-core-shaper v2: `[shaper]` block — backend, language, fallback chain.
+    ///
+    /// The loader in `shaper_config::ShaperConfig::load` does the actual
+    /// TOML parse; this is a thin alias for ergonomics.
+    pub fn load_shaper(path: &Path) -> crate::shaper_config::ShaperConfig {
+        crate::shaper_config::ShaperConfig::load(path)
     }
 
     /// GAP-20: `[window.glass]`
@@ -3292,5 +3334,86 @@ left_default_open = true
         let _ = std::fs::remove_file(&path);
         assert_eq!(cfg, SidebarConfig::default());
         assert!(!cfg.left_default_open); // default false
+    }
+    fn resume_binding_without_cc_falls_back_to_shell_vec() {
+        let toml = r#"
+[[resume.bindings]]
+kind = "tmux"
+checkpoint = "work"
+shell = ["tmux", "attach", "-t", "{checkpoint}"]
+"#;
+        let path = write_temp_toml("pureterm_test_resume_no_cc.toml", toml);
+        let bindings = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(bindings.len(), 1);
+        let b = &bindings[0];
+        assert_eq!(b.kind, "tmux");
+        assert_eq!(b.checkpoint, "work");
+        assert!(!b.use_control_mode, "default must be false (back-compat)");
+        // tmux_command_args() returns the legacy shell when cc is off.
+        let args = b.tmux_command_args();
+        assert_eq!(args, vec!["tmux", "attach", "-t", "{checkpoint}"]);
+    }
+
+    #[test]
+    fn resume_binding_with_cc_emits_dash_dash_capital_c_c_args() {
+        let toml = r#"
+[[resume.bindings]]
+kind = "tmux"
+checkpoint = "work"
+shell = ["tmux", "attach", "-t", "work"]
+use_control_mode = true
+session_name = "ops"
+"#;
+        let path = write_temp_toml("pureterm_test_resume_with_cc.toml", toml);
+        let bindings = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(bindings.len(), 1);
+        let b = &bindings[0];
+        assert!(b.use_control_mode);
+        assert_eq!(b.session_name.as_deref(), Some("ops"));
+        let args = b.tmux_command_args();
+        // Expected: tmux -CC new-session -A -s pureterm-ops
+        assert!(args.contains(&"-CC".to_string()), "must include -CC: {args:?}");
+        assert!(args.contains(&"new-session".to_string()));
+        assert!(args.contains(&"-s".to_string()));
+        assert!(args.iter().any(|a| a == "pureterm-ops"), "session name must be prefixed with `pureterm-`: {args:?}");
+    }
+
+    #[test]
+    fn resume_binding_with_cc_falls_back_to_checkpoint_name() {
+        // No explicit `session_name` — we derive from `checkpoint`.
+        let toml = r#"
+[[resume.bindings]]
+kind = "tmux"
+checkpoint = "scratch"
+shell = ["tmux", "attach", "-t", "scratch"]
+use_control_mode = true
+"#;
+        let path = write_temp_toml("pureterm_test_resume_cc_default_name.toml", toml);
+        let bindings = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(bindings.len(), 1);
+        let args = bindings[0].tmux_command_args();
+        assert!(args.iter().any(|a| a == "pureterm-scratch"));
+    }
+
+    #[test]
+    fn resume_binding_with_cc_ignored_for_non_tmux_kind() {
+        // `use_control_mode = true` only takes effect for kind = "tmux";
+        // for any other kind the legacy shell vec is returned unchanged.
+        let toml = r#"
+[[resume.bindings]]
+kind = "zsh"
+checkpoint = "shell"
+shell = ["zsh", "-i"]
+use_control_mode = true
+"#;
+        let path = write_temp_toml("pureterm_test_resume_cc_non_tmux.toml", toml);
+        let bindings = AppConfig::load_resume_bindings(&path);
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(bindings.len(), 1);
+        let args = bindings[0].tmux_command_args();
+        assert_eq!(args, vec!["zsh", "-i"]);
     }
 }

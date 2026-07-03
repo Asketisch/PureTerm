@@ -608,7 +608,6 @@ fn run_pipe(
 /// tmux.
 fn run_wait_for(channel: String, signal: bool, lock: bool, unlock: bool) -> Result<(), String> {
     use std::io::{BufRead, BufReader, Write};
-    use std::os::unix::net::UnixStream;
 
     let socket = crate::daemon_client::ensure_daemon()
         .map_err(|e| format!("daemon unavailable: {e}"))?;
@@ -626,7 +625,7 @@ fn run_wait_for(channel: String, signal: bool, lock: bool, unlock: bool) -> Resu
     });
     let mut line = serde_json::to_string(&req).map_err(|e| format!("serialize: {e}"))?;
     line.push('\n');
-    let mut stream = UnixStream::connect(&socket).map_err(|e| format!("connect: {e}"))?;
+    let mut stream = crate::local_socket::connect(&socket).map_err(|e| format!("connect: {e}"))?;
     stream.write_all(line.as_bytes()).map_err(|e| format!("write: {e}"))?;
     stream.shutdown(std::net::Shutdown::Write).ok();
     let mut buf = String::new();

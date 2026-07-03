@@ -66,6 +66,77 @@ pub enum TmuxEnvelope {
     Unknown(String),
 }
 
+impl TmuxEnvelope {
+    /// Serialize this envelope to the line form tmux -CC expects on
+    /// stdin. Only envelopes the GUI needs to *send* (Input, Output
+    /// mirror, etc.) round-trip cleanly; the rest return `Unknown`
+    /// payloads for the caller to inspect.
+    pub fn serialize(&self) -> String {
+        match self {
+            Self::Input { pane_id, bytes } => {
+                // tmux -CC accepts `%input %<id> <base64-of-bytes>\n`.
+                use std::io::Write;
+                let mut buf = Vec::with_capacity(bytes.len() * 4 / 3 + 16);
+                buf.extend_from_slice(format!("%input %{pane_id} ").as_bytes());
+                // Minimal base64 encoder (avoid pulling in extra dep).
+                const TBL: &[u8; 64] =
+                    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                let mut i = 0;
+                while i + 3 <= bytes.len() {
+                    let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8) | (bytes[i + 2] as u32);
+                    buf.push(TBL[((n >> 18) & 0x3f) as usize]);
+                    buf.push(TBL[((n >> 12) & 0x3f) as usize]);
+                    buf.push(TBL[((n >> 6) & 0x3f) as usize]);
+                    buf.push(TBL[(n & 0x3f) as usize]);
+                    i += 3;
+                }
+                let rem = bytes.len() - i;
+                if rem == 1 {
+                    let n = (bytes[i] as u32) << 16;
+                    buf.push(TBL[((n >> 18) & 0x3f) as usize]);
+                    buf.push(TBL[((n >> 12) & 0x3f) as usize]);
+                    buf.push(b'=');
+                    buf.push(b'=');
+                } else if rem == 2 {
+                    let n = ((bytes[i] as u32) << 16) | ((bytes[i + 1] as u32) << 8);
+                    buf.push(TBL[((n >> 18) & 0x3f) as usize]);
+                    buf.push(TBL[((n >> 12) & 0x3f) as usize]);
+                    buf.push(TBL[((n >> 6) & 0x3f) as usize]);
+                    buf.push(b'=');
+                }
+                let mut s = String::from_utf8(buf).unwrap_or_default();
+                s.push('\n');
+                s
+            },
+            Self::Output { pane_id, bytes } => {
+                let mut s = format!("%output %{pane_id} {}\n", bytes.len());
+                s.push_str(std::str::from_utf8(bytes).unwrap_or(""));
+                s.push('\n');
+                s
+            },
+            Self::Begin { pane_id, timestamp, cols, rows } => {
+                format!("%begin %{pane_id} {timestamp} {cols} x {rows}\n")
+            },
+            Self::End => "%end\n".to_string(),
+            Self::Pause => "%pause\n".to_string(),
+            Self::Continue => "%continue\n".to_string(),
+            Self::Error(msg) => format!("%error {msg}\n"),
+            Self::WindowsHeader { w, s } => format!("%windows {w} {s}\n"),
+            Self::SessionChanged { session_id, name } => {
+                format!("%session-changed {session_id} {name}\n")
+            },
+            Self::SubscriptionChanged { name, value, flags } => {
+                if let Some(flags) = flags {
+                    format!("%subscription-changed {name} {value} {flags}\n")
+                } else {
+                    format!("%subscription-changed {name} {value}\n")
+                }
+            },
+            Self::Unknown(s) => format!("{s}\n"),
+        }
+    }
+}
+
 /// Parse one line of tmux control-mode output. Lines that don't start
 /// with `%` are returned as `Unknown` (raw line).
 ///
@@ -163,6 +234,16 @@ pub fn parse_windows_payload(payload: &str) -> Vec<(String, u32)> {
             let (id, idx) = line.split_once(':')?;
             Some((id.to_string(), idx.parse().ok()?))
         })
+        .collect()
+}
+
+/// Parse a multi-line tmux -CC blob into a flat sequence of envelopes.
+/// One envelope per line (the protocol is line-oriented). Lines that
+/// don't start with `%` are returned as `Unknown`.
+pub fn parse_envelopes(blob: &str) -> Vec<TmuxEnvelope> {
+    blob.lines()
+        .filter(|l| !l.is_empty())
+        .filter_map(parse_envelope)
         .collect()
 }
 

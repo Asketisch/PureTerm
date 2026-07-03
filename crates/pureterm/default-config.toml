@@ -231,6 +231,30 @@ max_images = 64
 # `TerminalGraphicsConfig`; raise to 256 MiB for high-res screenshots, lower
 # to 4 MiB to keep memory tight on shared hosts.
 max_image_bytes = 33554432
+
+# T-core-shaper v2: Harfbuzz via rustybuzz + per-script fallback chain.
+# Set `backend = "rustybuzz"` and provide a primary font blob (or rely on
+# the per-fallback-entry path) for true complex-script shaping (Arabic
+# final-form, Devanagari reph, emoji ZWJ sequences). The default
+# `monospace` shaper is the v1 pure-Rust cluster shaper — it correctly
+# handles Latin / CJK width but doesn't shape complex scripts.
+[shaper]
+backend = "monospace"
+language = "en-US"
+enable_features = true
+
+# Per-script fallback font chain. The first entry is the primary monospace
+# font; subsequent entries are tried in order for characters the primary
+# font doesn't cover. `path = ""` is allowed (the loader falls back to
+# the platform's system font lookup).
+fallback_chain = [
+    { name = "Monospace", path = "", script = "monospace" },
+    { name = "CJK JP",    path = "", script = "cjk-jp" },
+    { name = "CJK KR",    path = "", script = "cjk-kr" },
+    { name = "CJK SC",    path = "", script = "cjk-sc" },
+    { name = "Emoji",     path = "", script = "emoji" },
+    { name = "Serif",     path = "", script = "serif" },
+]
 #
 # GAP-20 / GAP-55: Window glass + opacity/blur (`[window]` nested tables).
 [window]

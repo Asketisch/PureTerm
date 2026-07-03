@@ -82,6 +82,8 @@ pub fn set_binding(
         checkpoint: checkpoint.to_string(),
         shell: shell.to_vec(),
         auto,
+        use_control_mode: false,
+        session_name: None,
     };
     if let Some(existing) = bindings
         .iter_mut()
@@ -443,6 +445,8 @@ mod tests {
             checkpoint: "work".into(),
             shell: shell.iter().map(|s| s.to_string()).collect(),
             auto,
+            use_control_mode: false,
+            session_name: None,
         }
     }
 

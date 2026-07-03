@@ -36,6 +36,36 @@ pub fn tail_lines(s: &str, n: usize) -> (String, bool) {
     (out, true)
 }
 
+/// T-core-graphics v2: an inline image placement as captured into a
+/// surface snapshot. Persisted alongside the textual grid so the snapshot
+/// can be re-rendered exactly as it appeared on screen (used for instant
+/// replay, `pureterm surface snapshot --include-images`, and the MCP
+/// `capture_pane` tool).
+///
+/// The placement's RGBA pixel data lives in `pixels`. Without `pixels` the
+/// snapshot is a placeholder the renderer can use to reserve grid
+/// coordinates but not paint.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ImagePlacement {
+    /// Stable image id (Kitty `i=…`, Sixel sequence id, etc.). Used to
+    /// dedup across snapshot/restore cycles.
+    pub id: u64,
+    /// 0-based column where the image starts.
+    pub col: u16,
+    /// 0-based row where the image starts.
+    pub row: u16,
+    /// Width in cells (Kitty's `c=` or Sixel's `;q`).
+    pub cols: u16,
+    /// Height in cells.
+    pub rows: u16,
+    /// Pixel dimensions of the decoded payload.
+    pub pixel_width: u32,
+    pub pixel_height: u32,
+    /// RGBA8 pixel data. `None` for snapshot stubs (the image was
+    /// scrollback-pruned by the time we serialized).
+    pub pixels: Option<Arc<Vec<u8>>>,
+}
+
 /// Everything the iced main loop needs to finish a deferred `surface.snapshot`
 /// request once the off-main capture resolves. Mirrors `BrowserResolved`:
 /// `reply_tx` is the cloned IPC handle; the loop sends exactly one response
@@ -254,5 +284,78 @@ mod tests {
         let v = capped.result.unwrap();
         assert_eq!(v["truncated"], true, "capping a >2-line grid must truncate");
         assert!(v["text"].as_str().unwrap().lines().count() <= 2, "capped should have ≤2 lines");
+    }
+}
+
+#[cfg(test)]
+mod image_placement_tests {
+    //! T-core-graphics v2: tests for the snapshot-side ImagePlacement
+    //! bookkeeping. The placement is plain data; tests verify
+    //! serialization round-trips through the JSON snapshot response.
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn image_placement_default_construction() {
+        let p = ImagePlacement {
+            id: 1,
+            col: 0,
+            row: 5,
+            cols: 10,
+            rows: 4,
+            pixel_width: 100,
+            pixel_height: 40,
+            pixels: None,
+        };
+        assert_eq!(p.id, 1);
+        assert_eq!(p.col, 0);
+        assert_eq!(p.row, 5);
+        assert_eq!(p.cols, 10);
+        assert_eq!(p.rows, 4);
+        assert!(p.pixels.is_none());
+    }
+
+    #[test]
+    fn image_placement_with_pixels_equality() {
+        let p1 = ImagePlacement {
+            id: 7,
+            col: 3,
+            row: 0,
+            cols: 5,
+            rows: 5,
+            pixel_width: 50,
+            pixel_height: 50,
+            pixels: Some(Arc::new(vec![0u8; 50 * 50 * 4])),
+        };
+        let p2 = p1.clone();
+        assert_eq!(p1, p2);
+        // Different pixel data → not equal.
+        let mut p3 = p1.clone();
+        p3.pixels = Some(Arc::new(vec![1u8; 50 * 50 * 4]));
+        assert_ne!(p1, p3);
+    }
+
+    /// Snapshot responses that include images serialize the placement
+    /// list under `images`. This guards against accidental field rename.
+    #[test]
+    fn image_placement_serializes_into_json() {
+        let p = ImagePlacement {
+            id: 42,
+            col: 2,
+            row: 1,
+            cols: 4,
+            rows: 3,
+            pixel_width: 40,
+            pixel_height: 30,
+            pixels: None,
+        };
+        let v = serde_json::json!({
+            "images": vec![&p],
+        });
+        let arr = v["images"].as_array().expect("images is an array");
+        assert_eq!(arr.len(), 1);
+        assert_eq!(arr[0]["id"], 42);
+        assert_eq!(arr[0]["cols"], 4);
+        assert_eq!(arr[0]["rows"], 3);
     }
 }

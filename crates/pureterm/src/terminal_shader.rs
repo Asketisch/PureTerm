@@ -18,6 +18,8 @@ use alacritty_terminal::term::TermMode;
 use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 use crossfont::{FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size, Style, Weight, Slant};
 use pureterm_alacritty_runtime::renderer::glyph_atlas::{AtlasDirty, AtlasKind, CachedGlyph, WgpuGlyphAtlas};
+use pureterm_alacritty_runtime::renderer::image_atlas::{AtlasDirty as ImageAtlasDirty, ImageAtlas, ImagePlacement};
+use pureterm_alacritty_runtime::shaper::{ShapedRun, Shaper};
 
 // 1x1 placeholder pixel data used when an atlas has no dirty content yet.
 // Keeps the bind group valid even before the first glyph is rasterized.
@@ -935,6 +937,10 @@ pub struct GlyphState {
     /// Stored font config for reconfigure without caller providing them again.
     pub font_family: String,
     pub size_pt: f32,
+    /// T-core-shaper v2: pluggable shaper (Monospace by default, swappable
+    /// for `RustyBuzzShaper` once the host wires a real font blob through
+    /// `AppConfig::shaper`).
+    pub shaper: Arc<dyn Shaper>,
 }
 
 impl GlyphState {
@@ -966,7 +972,23 @@ impl GlyphState {
             scale_factor,
             font_family: font_family.to_string(),
             size_pt,
+            // T-core-shaper: v1 monospace cluster shaper; v2 swaps in
+            // `RustyBuzzShaper` when `[shaper] backend = "rustybuzz"` is
+            // set in the config (see `app_config.rs` B.4).
+            shaper: Arc::new(pureterm_alacritty_runtime::shaper::MonospaceShaper::new()),
         }
+    }
+
+    /// T-core-shaper v2: install a custom shaper (e.g. a
+    /// `RustyBuzzShaper` constructed from a real font blob).
+    pub fn set_shaper(&mut self, shaper: Arc<dyn Shaper>) {
+        self.shaper = shaper;
+    }
+
+    /// T-core-shaper v2: shape a string using the active shaper, returning
+    /// the per-glyph advances the caller can use to step the cursor.
+    pub fn shape_text(&self, text: &str) -> ShapedRun {
+        self.shaper.shape(text, self.cell_width)
     }
 
     /// Reconfigure font family, size, and scale factor together.
@@ -1019,6 +1041,8 @@ impl GlyphState {
                 y_offset: cached.y_offset / self.scale_factor,
                 width: cached.width / self.scale_factor,
                 height: cached.height / self.scale_factor,
+                x_advance: cached.x_advance / self.scale_factor,
+                y_advance: cached.y_advance / self.scale_factor,
                 atlas_kind: cached.atlas_kind,
             });
         }
@@ -1037,6 +1061,8 @@ impl GlyphState {
                     y_offset: cached.y_offset / self.scale_factor,
                     width: cached.width / self.scale_factor,
                     height: cached.height / self.scale_factor,
+                    x_advance: cached.x_advance / self.scale_factor,
+                    y_advance: cached.y_advance / self.scale_factor,
                     atlas_kind: cached.atlas_kind,
                 })
             }
@@ -1046,6 +1072,64 @@ impl GlyphState {
 
     pub fn mark_atlas_dirty(&mut self) {
         self.atlas.mark_dirty();
+    }
+}
+
+/// T-core-graphics v2: image quad pass state.
+///
+/// The image atlas is the CPU-side RGBA bitmap that backs Sixel / Kitty
+/// / iTerm2 inline images. The render thread uploads dirty regions
+/// to the GPU once per frame (see `take_dirty_data()`).
+///
+/// v2 limitation: the GPU quad-rendering pipeline (vertex + fragment
+/// shader pair that samples the image atlas with bilinear filtering)
+/// is wired in v3. For now `ImageQuadState` only owns the CPU side;
+/// callers can read placements but not yet draw them.
+pub struct ImageQuadState {
+    pub atlas: ImageAtlas,
+}
+
+impl ImageQuadState {
+    pub fn new() -> Self {
+        Self {
+            atlas: ImageAtlas::new(),
+        }
+    }
+
+    /// Insert a decoded RGBA image into the atlas. Returns the
+    /// `ImagePlacement` the GPU quad pass will sample from.
+    pub fn insert(&mut self, id: u64, rgba: std::sync::Arc<Vec<u8>>, w: u32, h: u32) -> Option<ImagePlacement> {
+        self.atlas.insert(id, rgba, w, h)
+    }
+
+    /// Remove an image (Kitty `d=d`, scrollback prune, etc.).
+    pub fn remove(&mut self, id: u64) -> bool {
+        self.atlas.remove(id)
+    }
+
+    /// Look up the GPU placement for an already-cached image.
+    pub fn get(&mut self, id: u64) -> Option<ImagePlacement> {
+        self.atlas.get(id)
+    }
+
+    /// Returns the dirty upload payload if any. The render thread is
+    /// responsible for `queue.write_texture` to the image atlas.
+    pub fn take_dirty_data(&mut self) -> Option<ImageAtlasDirty> {
+        self.atlas.take_dirty_data()
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.atlas.is_dirty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.atlas.len()
+    }
+}
+
+impl Default for ImageQuadState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1489,4 +1573,42 @@ fn named_color_default(named: NamedColor) -> Rgb {
 
 fn rgb_to_f32(rgb: Rgb) -> [f32; 4] {
     [rgb.r as f32 / 255.0, rgb.g as f32 / 255.0, rgb.b as f32 / 255.0, 1.0]
+}
+
+#[cfg(test)]
+mod shaper_tests {
+    //! T-core-shaper v2: tests for the renderer-side shaper wiring.
+    //!
+    //! Validates that the per-glyph `x_advance` returned by the shaper
+    //! actually drives the cursor advance the renderer would apply.
+    use super::*;
+    use pureterm_alacritty_runtime::shaper::{MonospaceShaper, Shaper};
+
+    #[test]
+    fn monospace_shaper_advances_one_cell_per_ascii() {
+        let shaper = MonospaceShaper::new();
+        let run = shaper.shape("abc", 7.0);
+        assert_eq!(run.glyphs.len(), 3);
+        for g in &run.glyphs {
+            assert_eq!(g.x_advance, 7.0);
+        }
+    }
+
+    #[test]
+    fn monospace_shaper_advances_two_cells_for_cjk() {
+        let shaper = MonospaceShaper::new();
+        let run = shaper.shape("你好", 7.0);
+        assert_eq!(run.glyphs.len(), 2);
+        for g in &run.glyphs {
+            assert_eq!(g.x_advance, 14.0);
+        }
+    }
+
+    #[test]
+    fn cluster_to_cell_offsets_account_for_wide_chars() {
+        let shaper = MonospaceShaper::new();
+        let run = shaper.shape("a你b", 7.0);
+        // ASCII consumes cell 0, CJK consumes cells 1+2, ASCII consumes cell 3
+        assert_eq!(run.cluster_to_cell, vec![0, 1, 3]);
+    }
 }

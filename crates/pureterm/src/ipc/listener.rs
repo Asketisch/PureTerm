@@ -212,20 +212,20 @@ pub fn default_socket_path() -> PathBuf {
 }
 
 /// Find a running PureTerm instance's socket. Used by the CLI client.
-pub fn find_socket(socket_path: Option<PathBuf>) -> std::io::Result<std::os::unix::net::UnixStream> {
+pub fn find_socket(socket_path: Option<PathBuf>) -> std::io::Result<crate::local_socket::LocalStream> {
     use std::ffi::OsStr;
     use std::io::{Error as IoError, ErrorKind};
 
     // Handle explicit --socket CLI override.
     if let Some(path) = socket_path {
-        return std::os::unix::net::UnixStream::connect(&path)
+        return crate::local_socket::connect(&path)
             .map_err(|e| IoError::new(e.kind(), format!("invalid socket path {path:?}")));
     }
 
     // Check environment variable.
     if let Ok(path) = std::env::var(PURETERM_SOCKET_ENV) {
         let path = PathBuf::from(path);
-        if let Ok(stream) = std::os::unix::net::UnixStream::connect(&path) {
+        if let Ok(stream) = crate::local_socket::connect(&path) {
             return Ok(stream);
         }
     }
@@ -242,7 +242,7 @@ pub fn find_socket(socket_path: Option<PathBuf>) -> std::io::Result<std::os::uni
         if !name_matches {
             continue;
         }
-        match std::os::unix::net::UnixStream::connect(&path) {
+        match crate::local_socket::connect(&path) {
             Ok(stream) => return Ok(stream),
             Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
                 // Orphan socket from a dead instance; clean it up.

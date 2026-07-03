@@ -5,9 +5,10 @@
 //! with `DaemonPty` (which implements `EventedPty`).
 
 use std::io::{self, BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
+
+use crate::local_socket::{connect as local_connect, LocalStream};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -35,7 +36,7 @@ fn rpc_with_timeout(
     params: Option<serde_json::Value>,
     timeout: Duration,
 ) -> io::Result<JsonRpcResponse> {
-    let stream = UnixStream::connect(socket)?;
+    let stream = local_connect(socket)?;
     stream.set_write_timeout(Some(timeout))?;
     stream.set_read_timeout(Some(timeout))?;
 
@@ -89,7 +90,7 @@ enum PingOutcome {
 /// Probe the daemon with a short timeout, classifying the outcome. Used by
 /// `ensure_daemon` and `poll_daemon_ready` where bounding wait time matters.
 fn ping_outcome(socket: &Path, timeout: Duration) -> PingOutcome {
-    let mut stream = match UnixStream::connect(socket) {
+    let mut stream = match local_connect(socket) {
         Ok(s) => s,
         Err(_) => return PingOutcome::ConnectRefused,
     };

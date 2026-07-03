@@ -35,6 +35,13 @@ pub struct CachedGlyph {
     pub width: f32,
     /// Glyph height in pixels.
     pub height: f32,
+    /// Horizontal advance in pixels (post-shaping). v1 callers leave this
+    /// at `0.0`; the renderer applies the monospace cell width and the
+    /// shaping layer can override per-glyph in v2.
+    pub x_advance: f32,
+    /// Vertical advance in pixels (post-shaping). v1 callers leave this
+    /// at `0.0`; vertical scripts (CJK sideways) populate it.
+    pub y_advance: f32,
     /// Which atlas contains this glyph.
     pub atlas_kind: AtlasKind,
 }
@@ -215,6 +222,8 @@ impl WgpuGlyphAtlas {
                 y_offset: glyph.top as f32,
                 width: 0.0,
                 height: 0.0,
+                x_advance: 0.0,
+                y_advance: 0.0,
                 atlas_kind: AtlasKind::Grayscale,
             };
         }
@@ -247,6 +256,8 @@ impl WgpuGlyphAtlas {
             y_offset: glyph.top as f32,
             width: glyph_width as f32,
             height: glyph_height as f32,
+            x_advance: 0.0,
+            y_advance: 0.0,
             atlas_kind: AtlasKind::Grayscale,
         }
     }
@@ -270,6 +281,8 @@ impl WgpuGlyphAtlas {
                 y_offset: glyph.top as f32,
                 width: 0.0,
                 height: 0.0,
+                x_advance: 0.0,
+                y_advance: 0.0,
                 atlas_kind: AtlasKind::Color,
             };
         }
@@ -302,6 +315,8 @@ impl WgpuGlyphAtlas {
             y_offset: glyph.top as f32,
             width: glyph_width as f32,
             height: glyph_height as f32,
+            x_advance: 0.0,
+            y_advance: 0.0,
             atlas_kind: AtlasKind::Color,
         }
     }
@@ -729,6 +744,8 @@ impl WgpuGlyphAtlas {
                         y_offset: glyph.top as f32,
                         width: w as f32,
                         height: h as f32,
+                        x_advance: 0.0,
+                        y_advance: 0.0,
                         atlas_kind: AtlasKind::Color,
                     };
                     self.cache.insert(key, cached);
@@ -751,6 +768,8 @@ impl WgpuGlyphAtlas {
                         y_offset: glyph.top as f32,
                         width: w as f32,
                         height: h as f32,
+                        x_advance: 0.0,
+                        y_advance: 0.0,
                         atlas_kind: AtlasKind::Grayscale,
                     };
                     self.cache.insert(key, cached);
@@ -799,6 +818,53 @@ mod tests {
         assert_eq!(cached.width, 10.0);
         assert_eq!(cached.height, 14.0);
         assert_eq!(cached.atlas_kind, AtlasKind::Grayscale);
+        // v2: x_advance and y_advance default to 0; the shaper / renderer
+        // is responsible for filling them in from a real shaping pass.
+        assert_eq!(cached.x_advance, 0.0);
+        assert_eq!(cached.y_advance, 0.0);
+    }
+
+    /// v2: a `CachedGlyph` constructed manually (e.g. by the shaper when
+    /// producing a shaped run) must preserve the per-glyph `x_advance`.
+    /// This guards against accidental field-stripping during struct
+    /// refactors.
+    #[test]
+    fn test_cached_glyph_preserves_x_advance() {
+        let g = CachedGlyph {
+            u: 0.0,
+            v: 0.0,
+            u2: 0.25,
+            v2: 0.5,
+            x_offset: 0.0,
+            y_offset: 0.0,
+            width: 8.0,
+            height: 14.0,
+            x_advance: 12.0,
+            y_advance: 0.0,
+            atlas_kind: AtlasKind::Grayscale,
+        };
+        assert_eq!(g.x_advance, 12.0);
+        assert_eq!(g.y_advance, 0.0);
+    }
+
+    /// v2: a `CachedGlyph` for a CJK wide char must carry a 2-cell advance.
+    #[test]
+    fn test_cached_glyph_cjk_advance() {
+        let g = CachedGlyph {
+            u: 0.0,
+            v: 0.0,
+            u2: 0.0,
+            v2: 0.0,
+            x_offset: 0.0,
+            y_offset: 0.0,
+            width: 14.0,
+            height: 14.0,
+            x_advance: 14.0, // 2 cells at 7 px each
+            y_advance: 0.0,
+            atlas_kind: AtlasKind::Grayscale,
+        };
+        // When cell width is 7, 2-cell wide = 14.0
+        assert_eq!(g.x_advance, 14.0);
     }
 
     #[test]

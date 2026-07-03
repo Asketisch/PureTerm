@@ -18,6 +18,17 @@ pub enum PluginSub {
     Uninstall {
         name: String,
     },
+    /// T-core-plugin-runtime v2: enable a previously-installed plugin
+    /// (writes `enabled = true` to its manifest; the GUI re-scans on
+    /// the next start).
+    Enable {
+        name: String,
+    },
+    /// T-core-plugin-runtime v2: disable a plugin without removing it
+    /// from disk (writes `enabled = false` to its manifest).
+    Disable {
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -143,6 +154,20 @@ pub fn dispatch_plugin(cmd: PluginSub) {
         },
         PluginSub::Uninstall { name } => match crate::plugin_system::uninstall(&cfg, &name) {
             Ok(()) => println!("uninstalled plugin: {name}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+        PluginSub::Enable { name } => match crate::plugin_system::set_enabled(&cfg, &name, true) {
+            Ok(()) => println!("enabled plugin: {name}"),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
+        },
+        PluginSub::Disable { name } => match crate::plugin_system::set_enabled(&cfg, &name, false) {
+            Ok(()) => println!("disabled plugin: {name}"),
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(1);

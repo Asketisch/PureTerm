@@ -185,6 +185,13 @@ fn is_combining(c: char) -> bool {
     )
 }
 
+/// Real rustybuzz shaper + font fallback chain (v2).
+pub mod fallback;
+pub mod rustybuzz_shaper;
+
+pub use fallback::{FallbackChain, FallbackChainBuilder, FallbackScript, NamedFontFace};
+pub use rustybuzz_shaper::{FontFace, RustyBuzzConfig, RustyBuzzShaper};
+
 #[cfg(test)]
 mod tests {
     use super::*;
