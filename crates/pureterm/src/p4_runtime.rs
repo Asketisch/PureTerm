@@ -40,11 +40,31 @@ pub struct P4Features {
     pub print_cfg: crate::print_support::PrintSupportConfig,
     pub accessibility_cfg: crate::accessibility::AccessibilityConfig,
     pub accessibility: crate::accessibility::AccessibilityState,
+    // T-core-graphics v3: 后台图像解码通道。
+    //
+    // `image_decode_tx`: 主线程在收到 `Event::GraphicsImage` 时,把待解码图像
+    // 推入。worker 线程解码后通过 `image_decode_rx` 回传 RGBA 像素。
+    //
+    // 主线程在 `prepare()` 前 `try_recv()` 排空所有就绪的 `DecodedImage`,
+    // 喂给 `ImageQuadState::insert` 后进入 GPU atlas。
+    //
+    // 通道在 `P4Features::load` 时由 `image_decode_worker::spawn()` 创建,
+    // 跟随 `P4Features` 整个生命周期(进程退出时自动 drop)。
+    pub image_decode_tx:
+        std::sync::mpsc::Sender<alacritty_terminal::event::GraphicsImage>,
+    /// T-core-graphics v3: 后台解码 worker 的接收端。`Receiver` 不能 `Clone`,
+    /// 所以包成 `Arc<Mutex<...>>` 让 `P4Features` 整体可 `Clone`。
+    /// 主线程在 `prepare()` 前持有锁 `try_recv()` 排空。
+    pub image_decode_rx:
+        std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<crate::image_decode_worker::DecodedImage>>>,
 }
 
 impl P4Features {
     pub fn load(path: &std::path::Path) -> Self {
         let terminal_graphics_cfg = crate::app_config::AppConfig::load_terminal_graphics(path);
+        // T-core-graphics v3: 后台图像解码通道(独立线程,主线程不阻塞)。
+        let (image_decode_tx, image_decode_rx) = crate::image_decode_worker::spawn();
+        let image_decode_rx = std::sync::Arc::new(std::sync::Mutex::new(image_decode_rx));
         Self {
             voice_input_cfg: crate::app_config::AppConfig::load_voice_input(path),
             voice_input: crate::voice_input::VoiceInputState::default(),
@@ -86,6 +106,9 @@ impl P4Features {
             print_cfg: crate::app_config::AppConfig::load_print_support(path),
             accessibility_cfg: crate::app_config::AppConfig::load_accessibility(path),
             accessibility: crate::accessibility::AccessibilityState::default(),
+            // T-core-graphics v3: 后台图像解码通道(Sender/Receiver)。
+            image_decode_tx,
+            image_decode_rx,
         }
     }
 

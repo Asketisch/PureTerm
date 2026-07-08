@@ -138,10 +138,10 @@ pub struct ImageStore {
 }
 
 #[derive(Debug, Clone)]
-struct StoredImage {
+pub struct StoredImage {
     image: GraphicsImage,
     /// Number of bytes the image occupies in the store.
-    bytes: usize,
+    pub(crate) bytes: usize,
 }
 
 impl ImageStore {
@@ -192,6 +192,21 @@ impl ImageStore {
     /// Look up an image by id (Kitty). Returns `None` if absent.
     pub fn get_by_id(&self, id: u32) -> Option<&GraphicsImage> {
         self.by_id.get(&id).map(|s| &s.image)
+    }
+
+    /// T-core-graphics v3: iterate the sequential (Sixel / iTerm2) image
+    /// queue in insertion order. Used by `iced_app.rs` to populate the
+    /// per-frame `image_quad_draws` list.
+    pub fn sequential(&self) -> impl Iterator<Item = &GraphicsImage> {
+        self.sequential.iter().map(|s| &s.image)
+    }
+
+    /// T-core-graphics v3: iterate the id-keyed (Kitty) image map. The
+    /// iterator order is `HashMap`'s (effectively random); callers that
+    /// need stable ordering should sort by `placement.z` (which
+    /// `image_quad_draws` already does).
+    pub fn by_id_values(&self) -> impl Iterator<Item = &GraphicsImage> {
+        self.by_id.values().map(|s| &s.image)
     }
 
     /// Total image count.

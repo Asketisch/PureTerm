@@ -526,6 +526,20 @@ pub struct PureTermApp {
     background_image_mode: crate::background_image::BackgroundMode,
     background_image_opacity: f32,
     background_image_signature: u64,
+    /// T-core-graphics v3: shared image quad state. `image_quad_state`
+    /// owns the CPU-side RGBA atlas (LRU + dirty-region tracking); the
+    /// `TerminalProgram::draw` reads it to populate per-frame
+    /// `image_quad_draws`, which the render thread then converts to
+    /// vertex/index buffers.
+    image_quad_state: std::sync::Arc<std::sync::Mutex<crate::terminal_shader::ImageQuadState>>,
+    /// T-core-graphics v3: per-frame draw list for the image quad pass.
+    /// Cleared + repopulated each frame in `TerminalProgram::draw` from
+    /// the visible portion of `p4.image_store`.
+    image_quad_draws: std::sync::Arc<std::sync::Mutex<Vec<crate::terminal_shader::ImageQuadDraw>>>,
+    /// T-core-graphics v3: alias to `p4.image_decode_rx` for cloning into
+    /// each `TerminalProgram`. The renderer drains it on every `prepare()`
+    /// to push freshly decoded images into `image_quad_state`.
+    decode_rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<crate::image_decode_worker::DecodedImage>>>,
     /// GAP-56: focus-follows-mouse state (X11-style hover focus).
     focus_follows_mouse_cfg: crate::focus_follows_mouse::FocusFollowsMouseConfig,
     focus_follows_mouse_state: crate::focus_follows_mouse::FocusFollowsMouseState,
@@ -2152,6 +2166,10 @@ impl PureTermApp {
             toolbelt: crate::toolbelt::ToolbeltState::default(),
             quake_cfg,
             quake: crate::quake_dock::QuakeDockState::default(),
+            // T-core-graphics v3: capture the decode channel BEFORE moving
+            // `p4` into `Self`. `P4Features: Clone` so we can clone the field
+            // first, then move the whole struct in below.
+            decode_rx: p4.image_decode_rx.clone(),
             p4,
             replay_viewer: crate::instant_replay::ReplayViewer::default(),
             pane_marks: HashMap::new(),
@@ -2185,6 +2203,13 @@ impl PureTermApp {
             background_image_mode: bg_cfg_snapshot.mode,
             background_image_opacity: bg_cfg_snapshot.opacity,
             background_image_signature: bg_signature,
+            // T-core-graphics v3: shared image quad state. The `p4.image_decode_rx`
+            // was created by `P4Features::load` (see `image_decode_worker::spawn`).
+            // We alias it here so it can be cloned into every `TerminalProgram`.
+            image_quad_state: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::terminal_shader::ImageQuadState::new(),
+            )),
+            image_quad_draws: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             focus_follows_mouse_cfg: ffm_cfg_snapshot,
             focus_follows_mouse_state: crate::focus_follows_mouse::FocusFollowsMouseState::default(),
             last_hovered_pane: None,
@@ -5305,6 +5330,15 @@ impl PureTermApp {
                                 TerminalEvent::GraphicsImage(img) => {
                                     if self.p4.terminal_graphics_cfg.enabled {
                                         let _ = self.p4.image_store.insert(img.clone());
+                                        // T-core-graphics v3: 把图像推到后台解码 worker
+                                        // (PNG 字节流在这里被解码成 RGBA,主线程不阻塞)。
+                                        // worker 解码完成后通过 `image_decode_rx` 回传,
+                                        // 在 `prepare()` 前的排空阶段喂给 `ImageQuadState`。
+                                        // 通道满或 worker 已退出时 `send` 失败,这里记 debug
+                                        // 不影响正常路径。
+                                        if let Err(e) = self.p4.image_decode_tx.send(img) {
+                                            log::debug!("image-decode tx send failed: {e}");
+                                        }
                                     }
                                 }
                             }
@@ -13983,6 +14017,9 @@ impl PureTermApp {
                             background_mode: self.background_image_mode,
                             background_opacity: self.background_image_opacity,
                             background_signature: self.background_image_signature,
+                            image_quad_state: self.image_quad_state.clone(),
+                            image_quad_draws: self.image_quad_draws.clone(),
+                            decode_rx: self.decode_rx.clone(),
                         })
                         .width(Length::Fill)
                         .height(Length::Fill);
@@ -14326,6 +14363,29 @@ impl PureTermApp {
         };
 
         self.publish_trigger_highlights_for_view(pane_id, is_active);
+        // T-core-graphics v3: refresh the per-frame image quad draw list from
+        // the live `ImageStore`. v3 keeps this simple: every Kitty/Sixel/iTerm2
+        // image with a grid placement is drawn. Visible-cell clipping (using
+        // `display_offset` + computed_rows/cols) is a v3+1 refinement that
+        // doesn't block the image_quad pipeline plumbing.
+        {
+            use crate::terminal_shader::ImageQuadDraw;
+            let mut draws = self.image_quad_draws.lock().unwrap();
+            draws.clear();
+            for entry in self.p4.image_store.sequential().chain(
+                self.p4.image_store.by_id_values()
+            ) {
+                let p = &entry.placement;
+                draws.push(ImageQuadDraw {
+                    image_id: p.id,
+                    col: p.col,
+                    row: p.row,
+                    cols: p.cols,
+                    rows: p.rows,
+                    z: p.z,
+                });
+            }
+        }
 
         let shader = Shader::new(TerminalProgram {
             ctx,
@@ -14342,6 +14402,9 @@ impl PureTermApp {
             background_mode: self.background_image_mode,
             background_opacity: self.background_image_opacity,
             background_signature: self.background_image_signature,
+            image_quad_state: self.image_quad_state.clone(),
+            image_quad_draws: self.image_quad_draws.clone(),
+            decode_rx: self.decode_rx.clone(),
         })
         .width(Length::Fill)
         .height(Length::Fill);

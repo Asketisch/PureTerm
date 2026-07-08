@@ -18,8 +18,10 @@
 ### A.2 image atlas（GPU）
 - [x] `crates/pureterm-alacritty-runtime/src/alacritty/renderer/image_atlas.rs` 新文件 —— LRU + dirty-region 上传，11 单测。**注**：v2 把 sky-line 改为基于"占用矩形列表"的 next-free-slot 算法（原 skyline 实现有边界场景 bug，详见 image_atlas_tests::multiple_images_pack_without_overlap）。
 - [x] `crates/pureterm-alacritty-runtime/src/alacritty/renderer/mod.rs` 导出 `ImageAtlas`。
-- [x] `crates/pureterm/src/terminal_shader.rs` 新增 `ImageQuadState` —— image quad pass 的 CPU 侧入口（GPU shader 写入在 v3）。
+- [x] `crates/pureterm/src/terminal_shader.rs` 新增 `ImageQuadState` —— image quad pass 的 CPU 侧入口。
 - [x] `crates/pureterm/src/terminal_image_store.rs` 新文件，`ImageStore { id → ImagePlacement }`，含 attach / detach / scrollback-prune 接口。（v1 已实现在 `terminal_graphics.rs` 中）
+- [x] **v3 GPU shader 写入**：`crates/pureterm-alacritty-runtime/src/alacritty/renderer/shaders/image_quad.wgsl` 新文件（WGSL，NDC 转换 + 圆角裁剪 + atlas UV 采样）。`TerminalPipeline` 新增 `image_quad_pipeline` / `image_atlas_bgl` / `image_atlas_sampler` / `image_atlas_texture` / `image_atlas_view` / `image_atlas_size` / `image_atlas_bind_group` 字段；`Pipeline::new()` 初始化所有上述字段。`prepare()` 中 atlas 上传段参照 glyph atlas 模式（`create_texture_with_data` 首次 / `queue.write_texture` per dirty rect 稳态 / 1×1 placeholder 兜底）。`draw()` 在 `bg_color` 与 `cell_text` 之间插入 image_quad pass。
+- [x] **v3 后台解码 worker**：`crates/pureterm/src/image_decode_worker.rs` 新文件，独立线程接收 `GraphicsImage`（PNG → `image::load_from_memory` 解码，RGBA 直通）→ `DecodedImage` 通过 mpsc 回主线程。`P4Features` 持有 channel；`iced_app.rs` 在 `GraphicsImage` 事件分支把图像推入 tx；`prepare()` 排空 rx 喂给 `ImageQuadState::insert`。
 
 ### A.3 OS / 配置 / 持久化
 - [x] `crates/pureterm/src/surface_snapshot.rs` —— `SurfaceSnapshot` 已有 `images: Vec<ImagePlacement>` 字段，Serialize/Deserialize 3 单测。
@@ -28,7 +30,8 @@
 - [x] `crates/pureterm/default-config.toml:227` 默认值同步。
 
 ### A.4 E2E
-- [ ] `crates/pureterm/src/graphics_e2e.rs` 真启 shell 跑 `img2sixel` / `kitty +kitten icat`，截图对比。（v3）
+- [x] `crates/pureterm/src/graphics_e2e.rs` 真启 shell 跑 `img2sixel` / `kitty +kitten icat`，截图对比。（v3 默认 `#[ignore]`，需要外部工具链时手动 `cargo test --include-ignored`）
+- [x] **v3 单测**：`crates/pureterm/src/graphics_render_tests.rs` 新文件，11 用例覆盖 ImageQuadVertex 布局（Pod/Zeroable/desc）、ImageQuadDraw z-order 排序、ImageQuadState dirty-region 契约、ImageStore 迭代器不重不漏、e2e pipeline store→atlas→dirty。
 - [x] 现有回归：跑 `cargo test -p alacritty_terminal -p pureterm` 全绿（1 个 pre-existing `decscl::parse_vt200` 失败，与本 PR 无关）。
 
 ---

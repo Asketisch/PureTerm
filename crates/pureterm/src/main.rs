@@ -80,6 +80,17 @@ mod gh_pr;
 mod windows;
 /// T-core-plugin-runtime v2: plugin loader (trait + static + wasm sketch).
 mod plugin_loader;
+/// T-core-graphics v3: 后台图像解码 worker(PNG → RGBA)。
+/// 主线程把 GraphicsImage 推入 tx,worker 解码后通过 rx 喂给 GPU atlas。
+mod image_decode_worker;
+/// T-core-graphics v3: image quad pass 单测(Vertex 布局、atlas dirty-region、
+/// ImageStore → ImageQuadDraw 端到端管线)。覆盖 Step 4 验收项。
+#[cfg(test)]
+mod graphics_render_tests;
+/// T-core-graphics v3 E2E (checklist A.4):真启 shell 跑 `img2sixel` /
+/// `kitty +kitten icat`。默认 `#[ignore]`,需要外部工具时手动跑。
+#[cfg(all(test, unix))]
+mod graphics_e2e;
 
 #[cfg(unix)]
 mod feed_client;
