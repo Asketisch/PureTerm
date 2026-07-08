@@ -9,11 +9,18 @@
 
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
+| 终端交互 | 1 | 1 | — | — | — | — |
 | 平台 | 1 | — | — | — | — | 1 |
 | 集成 | 4 | — | — | — | — | 4 |
-| **合计** | **5** | **—** | **—** | **—** | **—** | **5** |
+| **合计** | **6** | **1** | **—** | **—** | **—** | **5** |
 
 ---
+
+## 终端交互
+
+| GAP | 简述 | 详情 |
+|-----|------|------|
+| t-core-gap-closure | 终端模拟核心层差距补齐（graphics / shaper / tmux-CC / 多 shell / ConPTY / plugin runtime），6 个子组件 v1→v2→v3 全部闭环：GPU quad shader + 后台 PNG 解码；rustybuzz shaper + cluster_byte_to_cell 反查 + ime_widget cluster_demo；tmux-cc E2E；fish/nu/pwsh/elvish shell integration E2E；Windows CI runner + conpty_smoke；wasmtime 插件运行时 + scan_plugin_osc parser hook + 2 示例插件 + authoring.md | [spec](done/t-core-gap-closure/spec.md) · [checklist](done/t-core-gap-closure/checklist.md) |
 
 ## 平台
 

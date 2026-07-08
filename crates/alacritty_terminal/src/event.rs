@@ -133,6 +133,21 @@ pub struct GraphicsImage {
     pub encoded: Vec<u8>,
 }
 
+/// T-core-plugin-runtime v3: a parser-hook OSC sequence destined for a
+/// named plugin. Emitted by `event_loop::scan_plugin_osc` whenever the
+/// PTY byte stream contains
+/// `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` (or ST-terminated).
+/// The host dispatches on `name` to route `payload` to the plugin's
+/// `HostFn::Parser` callback.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PluginOsc {
+    /// Plugin manifest name (lowercase `[a-z0-9_-]+`).
+    pub name: String,
+    /// Raw payload bytes between the second `;` and the terminator.
+    /// Untouched — the plugin decides how to interpret it.
+    pub payload: Vec<u8>,
+}
+
 /// GAP-09: a desktop notification surfaced from the PTY (OSC 9/99/777),
 /// synthesized from a bell, or posted via the CLI.
 //
@@ -226,6 +241,14 @@ pub enum Event {
     /// Carries either decoded RGBA pixels or a still-encoded payload plus
     /// the grid placement; the renderer decides when to blit.
     GraphicsImage(GraphicsImage),
+
+    /// T-core-plugin-runtime v3: parser hook output. Plugins register a
+    /// `TerminalParserHook` Provides capability; the host forwards any
+    /// `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` sequence here so
+    /// the plugin's `HostFn::Parser` callback can act on it. `name` is
+    /// the plugin's manifest name (lowercase, `[a-z0-9_-]+`); `payload`
+    /// is the raw bytes between the second `;` and the terminator.
+    PluginOsc(PluginOsc),
 }
 
 impl Debug for Event {
@@ -253,6 +276,7 @@ impl Debug for Event {
                 img.protocol, img.width, img.height, img.placement.col, img.placement.row,
                 img.placement.cols, img.placement.rows,
             ),
+            Event::PluginOsc(p) => write!(f, "PluginOsc({}, {} bytes)", p.name, p.payload.len()),
         }
     }
 }

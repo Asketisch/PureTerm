@@ -1,0 +1,10 @@
+[package]
+name = "cpu-status"
+version = "0.1.0"
+edition = "2021"
+description = "Example PureTerm plugin: CPU status bar component"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]

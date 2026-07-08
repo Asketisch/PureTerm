@@ -230,6 +230,16 @@ where
                 }));
             }
 
+            // T-core-plugin-runtime v3: parser hook. Scan for
+            // `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` sequences
+            // and forward each as `Event::PluginOsc`. The host dispatches
+            // on `name` to route `payload` to the plugin's `HostFn::Parser`
+            // callback (wired in `iced_app.rs` once the plugin loader is
+            // instantiated).
+            for event in scan_plugin_osc(&buf[..unprocessed]) {
+                self.event_proxy.send_event(event);
+            }
+
             processed += unprocessed;
             unprocessed = 0;
 
@@ -1742,6 +1752,161 @@ fn decode_base64(s: &str) -> Option<Vec<u8>> {
         }
     }
     Some(out)
+}
+
+/// T-core-plugin-runtime v3: scan for `OSC 1337;PureTerm-Plugin-<name>;<payload>`
+/// sequences and emit each as an `Event::PluginOsc`. The host dispatches on
+/// `name` to route `payload` to the plugin's `HostFn::Parser` callback.
+///
+/// Wire format:
+///   `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07`  (BEL terminator)
+///   `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x1b\\` (ST terminator)
+///
+/// `<name>` must match `[a-zA-Z0-9_-]+` (the plugin manifest's name, which
+/// the loader already validates). `<payload>` is the raw bytes up to the
+/// terminator — not base64, not hex, just the literal bytes (plugins that
+/// need binary safety can base64-encode the payload themselves).
+///
+/// Sequences that span a buffer boundary are skipped (same limitation as
+/// `scan_osc7` / `scan_osc133` — rare in practice, and the next PTY read
+/// will re-deliver the prefix).
+fn scan_plugin_osc(buf: &[u8]) -> SmallVec<[Event; 2]> {
+    let mut out: SmallVec<[Event; 2]> = SmallVec::new();
+    let prefix = b"\x1b]1337;PureTerm-Plugin-";
+    let mut i = 0;
+    while i + prefix.len() < buf.len() {
+        // Find the next OSC 1337 plugin prefix.
+        let Some(pos) = memchr::memchr(prefix[0], &buf[i..]) else {
+            break;
+        };
+        let start = i + pos;
+        if !buf[start..].starts_with(prefix) {
+            i = start + 1;
+            continue;
+        }
+        let after_prefix = start + prefix.len();
+        if after_prefix >= buf.len() {
+            break;
+        }
+
+        // Scan the plugin name until `;`.
+        let mut name_end = after_prefix;
+        while name_end < buf.len() && buf[name_end] != b';' {
+            let c = buf[name_end];
+            if !(c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
+                break;
+            }
+            name_end += 1;
+        }
+        if name_end >= buf.len() || buf[name_end] != b';' {
+            // Malformed name (invalid char or no `;`). Skip past this
+            // prefix occurrence and keep scanning.
+            i = start + 1;
+            continue;
+        }
+        let name = std::str::from_utf8(&buf[after_prefix..name_end])
+            .unwrap_or("")
+            .to_string();
+        if name.is_empty() {
+            i = start + 1;
+            continue;
+        }
+
+        // Scan the payload until BEL or ST.
+        let payload_start = name_end + 1;
+        let mut p = payload_start;
+        while p < buf.len() {
+            match buf[p] {
+                0x07 => break, // BEL
+                0x1b if p + 1 < buf.len() && buf[p + 1] == b'\\' => break, // ST
+                _ => p += 1,
+            }
+        }
+        if p >= buf.len() {
+            // No terminator — sequence spans buffer boundary, skip.
+            i = start + 1;
+            continue;
+        }
+        let payload = buf[payload_start..p].to_vec();
+        out.push(Event::PluginOsc(crate::event::PluginOsc { name, payload }));
+        i = p + 1;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests_plugin_osc {
+    use super::*;
+    use crate::event::{Event, PluginOsc};
+
+    #[test]
+    fn scans_bel_terminated_plugin_osc() {
+        let buf = b"some text\x1b]1337;PureTerm-Plugin-hello;world\x07more";
+        let events = scan_plugin_osc(buf);
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            Event::PluginOsc(PluginOsc { name, payload }) => {
+                assert_eq!(name, "hello");
+                assert_eq!(payload, b"world");
+            }
+            other => panic!("expected PluginOsc, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn scans_st_terminated_plugin_osc() {
+        let buf = b"\x1b]1337;PureTerm-Plugin-cpu;load=42\x1b\\";
+        let events = scan_plugin_osc(buf);
+        assert_eq!(events.len(), 1);
+        if let Event::PluginOsc(p) = &events[0] {
+            assert_eq!(p.name, "cpu");
+            assert_eq!(p.payload, b"load=42");
+        } else {
+            panic!();
+        }
+    }
+
+    #[test]
+    fn scans_multiple_in_one_buffer() {
+        let buf = b"\x1b]1337;PureTerm-Plugin-a;1\x07\x1b]1337;PureTerm-Plugin-b;2\x07";
+        let events = scan_plugin_osc(buf);
+        assert_eq!(events.len(), 2);
+    }
+
+    #[test]
+    fn skips_malformed_name() {
+        // Name contains `!` — invalid char, sequence is skipped.
+        let buf = b"\x1b]1337;PureTerm-Plugin-bad!name;x\x07";
+        let events = scan_plugin_osc(buf);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn skips_empty_name() {
+        let buf = b"\x1b]1337;PureTerm-Plugin-;x\x07";
+        let events = scan_plugin_osc(buf);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn skips_unterminated_sequence() {
+        // No BEL or ST — spans buffer boundary.
+        let buf = b"\x1b]1337;PureTerm-Plugin-x;payload-without-terminator";
+        let events = scan_plugin_osc(buf);
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn payload_can_contain_semicolons() {
+        let buf = b"\x1b]1337;PureTerm-Plugin-x;a;b;c\x07";
+        let events = scan_plugin_osc(buf);
+        assert_eq!(events.len(), 1);
+        if let Event::PluginOsc(p) = &events[0] {
+            assert_eq!(p.payload, b"a;b;c");
+        } else {
+            panic!();
+        }
+    }
 }
 
 #[cfg(test)]

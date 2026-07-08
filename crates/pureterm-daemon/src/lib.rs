@@ -27,6 +27,10 @@ pub mod ring_buffer;
 pub mod shell_integration;
 pub mod runtime;
 pub mod session;
+/// T-core-shell-integ v3 E2E (checklist D.5): preamble → OSC 133 解析器
+/// 闭环验证。fish/pwsh/elv/nu 4 个 #[ignore] + 1 个 always-on 子项覆盖。
+#[cfg(all(test, unix))]
+mod shell_integ_e2e;
 pub mod pipe_pane;
 pub mod tunnel;
 pub mod wait_for;

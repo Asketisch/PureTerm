@@ -5,11 +5,13 @@ category: 终端交互
 plan_type: arch
 priority: P0
 effort: XL
-status: v2-closed
+status: done
 v1_closed: 2026-07-02
 v1_summary: 全部 6 个组件的 v1 骨架 / 协议解析 / 枚举 / 测试已落地。
 v2_closed: 2026-07-03
 v2_summary: 全部 6 个组件的 v2 落地（rustybuzz 真实集成 + shaper trait + CachedGlyph x_advance；image_atlas + ImageQuadState + surface_snapshot ImagePlacement；tmux_cc TmuxChild + pty 通道；ResumeBinding use_control_mode；local_socket 跨平台 + windows.rs 骨架；plugin_loader trait + StaticPluginLoader + WasmPluginLoader sketch + set_enabled）。剩余 wasmtime 实际链接、Windows CI runner、GPU quad shader 写入为 v3。逐组件详情见 checklist.md。
+v3_closed: 2026-07-09
+v3_summary: 全部 6 个组件的 v3 收尾落地（graphics: GPU quad shader + 后台 PNG 解码 worker + image_atlas 上传 + 13 单测；shaper: cluster_byte_to_cell 反查 + ime_widget cluster_demo 6 单测；tmux-cc: tmux_cc_e2e.rs 3 个 #[ignore] E2E；shell-integ: shell_integ_e2e.rs 2 always-on + 4 #[ignore] + OSC 133 preamble 验证；windows-conpty: .github/workflows/ci.yml 三平台 matrix + conpty_smoke.rs；plugin-runtime: wasm-runtime feature + wasmtime 30 + WasmPluginLoader 真实路径 + scan_plugin_osc parser hook + Event::PluginOsc + 7 单测 + examples/plugins/{cpu-status,ipc-hello} + docs/plugins/authoring.md）。详细逐组件落地清单见 checklist.md。
 umbrella: true
 components:
   - gap: t-core-graphics

@@ -88,9 +88,13 @@ mod image_decode_worker;
 #[cfg(test)]
 mod graphics_render_tests;
 /// T-core-graphics v3 E2E (checklist A.4):真启 shell 跑 `img2sixel` /
-/// `kitty +kitten icat`。默认 `#[ignore]`,需要外部工具时手动跑。
+/// `kitty +kitten icat`。默认 `#[ignore]`,需要外部工具链时手动跑。
 #[cfg(all(test, unix))]
 mod graphics_e2e;
+/// T-core-tmux-cc v3 E2E (checklist C.6):真启 `tmux -CC`,3-window +
+/// 跨重启 reattach。默认 `#[ignore]`,需要 tmux 时手动跑。
+#[cfg(all(test, unix))]
+mod tmux_cc_e2e;
 
 #[cfg(unix)]
 mod feed_client;

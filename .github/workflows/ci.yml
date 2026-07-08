@@ -1,0 +1,101 @@
+# PureTerm CI — three-platform build + test matrix.
+#
+# T-core-windows-conpty v3 (checklist E.6): adds the `windows-2022`
+# runner alongside the existing macOS + Linux runners. The matrix
+# covers:
+#   - ubuntu-22.04  (x86_64-unknown-linux-gnu)
+#   - macos-14      (aarch64-apple-darwin, M1)
+#   - windows-2022  (x86_64-pc-windows-msvc)
+#
+# Each runner runs `cargo build` + `cargo test` for the workspace.
+# Windows-specific tests (`conpty_smoke.rs`, `windows.rs`) are gated
+# `#[cfg(windows)]` so they no-op on the other runners.
+#
+# The matrix uses `fast` profile by default (no LTO) for feedback;
+# release builds are out of scope here (use a separate workflow).
+#
+# Why three runners instead of just one: PureTerm links against
+# platform-specific backends (rustix-openpty on Unix, ConPTY on
+# Windows, objc2 on macOS) — type errors in cfg-gated code don't
+# surface on a single platform.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: "-D warnings"
+  # Keep SCCACHE warm across runs (reduces build time on cached
+  # dependencies; the Rust toolchain is cached separately via
+  # `actions-rust-lang/setup-rust-toolchain`).
+  SCCACHE_DIR: ${{ github.workspace }}/.sccache
+
+jobs:
+  build-test:
+    name: Build + Test (${{ matrix.os }} / ${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfreetype6-dev libfontconfig1-dev \
+            libssl-dev pkg-config \
+            cmux imagemagick
+
+      - name: Cache cargo registry + build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "."
+          target-dir: target
+          key: ${{ matrix.os }}-${{ matrix.target }}
+
+      - name: Build (debug)
+        run: cargo build --workspace --target ${{ matrix.target }}
+
+      - name: Test
+        # Run all unit + integration tests. `#[ignore]`d E2E tests
+        # (graphics/tmux-cc/shell-integ/conpty-smoke) stay skipped —
+        # they need external binaries or display surfaces that CI
+        # runners don't provide.
+        run: cargo test --workspace --target ${{ matrix.target }} --no-fail-fast
+
+  clippy:
+    name: Clippy (linux)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfreetype6-dev libfontconfig1-dev libssl-dev pkg-config
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets -- -D warnings

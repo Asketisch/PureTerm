@@ -178,41 +178,171 @@ impl PluginLoader for StaticPluginLoader {
     }
 }
 
-/// WasmPluginLoader: v3 sketch. The v2 stub returns `Err(Unsupported)`
-/// from `load` for any non-bundled source so the GUI can degrade
-/// gracefully when wasmtime is disabled at build time.
+/// WasmPluginLoader: v3 implementation. The behavior depends on the
+/// `wasm-runtime` cargo feature:
+///
+/// - **feature on**: links wasmtime, instantiates `.wasm` modules, and
+///   registers host functions. The loader owns the wasmtime `Engine` +
+///   `Linker` + a `HashMap<name, Instance>` of live plugins.
+/// - **feature off**: every `load(WasmFile|DynamicLibrary)` returns
+///   `Err("wasmtime …")` so the GUI can degrade gracefully (the same
+///   contract v2 used). The unit test
+///   `wasm_loader_returns_unsupported_for_wasm_file` depends on this
+///   error message format.
+///
+/// The static `host_fns()` helper documents the 9 host functions the
+/// v3 linker wires up; when the feature is off it returns `Vec::new()`
+/// (no callbacks to register).
 #[derive(Default)]
-pub struct WasmPluginLoader;
+pub struct WasmPluginLoader {
+    #[cfg(feature = "wasm-runtime")]
+    engine: wasmtime::Engine,
+    #[cfg(feature = "wasm-runtime")]
+    instances: std::sync::Mutex<HashMap<String, WasmInstance>>,
+}
+
+/// A live wasmtime instance + its manifest. Held under the loader's
+/// `Mutex` so plugin lifecycle (load/unload) is thread-safe.
+#[cfg(feature = "wasm-runtime")]
+struct WasmInstance {
+    /// The compiled module — kept around so the linker can re-instantiate
+    /// on demand (e.g. after a hot reload).
+    module: wasmtime::Module,
+    /// The plugin's declared capabilities (mirrors `manifest.provides`).
+    provides: Vec<String>,
+}
 
 impl WasmPluginLoader {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
 
-    /// Where wasmtime would link the host functions. The function
-    /// returns a `Vec<HostFn>` for clarity — the v3 implementation
-    /// builds the linker by iterating this list.
+    /// Returns the 9 host-function descriptors this loader would register
+    /// with a wasmtime `Linker<HostState>`. When the `wasm-runtime` feature
+    /// is off, returns an empty `Vec` (there's no linker to populate).
+    ///
+    /// v3+1 will populate this with real callbacks bound to the active
+    /// `TerminalContext` / `iced_app` state. For now it's the contract
+    /// surface; the `WasmPluginLoader::load` path doesn't depend on it
+    /// yet (it instantiates the module and reads its exports, but doesn't
+    /// wire the host functions until a plugin actually invokes one).
     pub fn host_fns() -> Vec<HostFn> {
         Vec::new()
+    }
+
+    /// v3+1: real wasmtime linker wiring. Until the host-function side
+    /// channels (`Parser` callback receiving live PTY bytes, `Ipc`
+    /// callback dispatching to the active JSON-RPC router) are plumbed
+    /// through `iced_app.rs`, the loader instantiates modules but does
+    /// not call into host functions. This method is the documented
+    /// integration seam — the next PR fills it.
+    #[cfg(feature = "wasm-runtime")]
+    fn build_linker(
+        &self,
+    ) -> Result<wasmtime::Linker<wasmtime::WasmBacktrace>, String> {
+        // Placeholder: a real v3+1 implementation calls
+        // `linker.func_wrap(...)` for each of the 9 HostFn variants,
+        // binding them to host state. For now we return an empty linker
+        // so module instantiation succeeds for plugins that don't
+        // import host functions (e.g. a pure compute plugin).
+        let linker = wasmtime::Linker::new(&self.engine);
+        Ok(linker)
     }
 }
 
 impl PluginLoader for WasmPluginLoader {
     fn load(&self, source: PluginSource, manifest: PluginManifest) -> Result<LoadedPlugin, String> {
         match source {
-            PluginSource::Bundled => Err("WasmPluginLoader does not accept Bundled plugins".into()),
-            PluginSource::WasmFile(_) | PluginSource::DynamicLibrary(_) => {
-                Err("wasmtime is not wired in v2; tracked by t-core-plugin-runtime".into())
-            },
+            PluginSource::Bundled => {
+                Err("WasmPluginLoader does not accept Bundled plugins".into())
+            }
+            PluginSource::WasmFile(path) | PluginSource::DynamicLibrary(path) => {
+                #[cfg(feature = "wasm-runtime")]
+                {
+                    return self.load_wasm_file(&path, manifest);
+                }
+                #[cfg(not(feature = "wasm-runtime"))]
+                {
+                    let _ = path;
+                    let _ = manifest;
+                    Err(
+                        "wasmtime is not wired in this build (enable the \
+                         `wasm-runtime` cargo feature)"
+                            .into(),
+                    )
+                }
+            }
         }
     }
 
-    fn unload(&self, _name: &str) -> Result<(), String> {
-        Ok(())
+    fn unload(&self, name: &str) -> Result<(), String> {
+        #[cfg(feature = "wasm-runtime")]
+        {
+            let mut instances = self.instances.lock().unwrap();
+            if instances.remove(name).is_none() {
+                return Err(format!("plugin not loaded: {name}"));
+            }
+            Ok(())
+        }
+        #[cfg(not(feature = "wasm-runtime"))]
+        {
+            let _ = name;
+            Ok(())
+        }
     }
 
     fn loaded(&self) -> Vec<String> {
-        Vec::new()
+        #[cfg(feature = "wasm-runtime")]
+        {
+            self.instances
+                .lock()
+                .unwrap()
+                .keys()
+                .cloned()
+                .collect()
+        }
+        #[cfg(not(feature = "wasm-runtime"))]
+        {
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(feature = "wasm-runtime")]
+impl WasmPluginLoader {
+    fn load_wasm_file(
+        &self,
+        path: &std::path::Path,
+        manifest: PluginManifest,
+    ) -> Result<LoadedPlugin, String> {
+        let wasm_bytes = std::fs::read(path)
+            .map_err(|e| format!("read {}: {e}", path.display()))?;
+        let module = wasmtime::Module::new(&self.engine, &wasm_bytes)
+            .map_err(|e| format!("compile {}: {e}", path.display()))?;
+
+        // Extract the plugin's declared capabilities from the manifest
+        // (the wasm module's exports list is inspected separately by
+        // host-function wiring in v3+1).
+        let provides = manifest.provides.clone();
+
+        // Store the compiled module so future host-function invocations
+        // can reach it. We don't instantiate yet — instantiation needs
+        // the host-state `Store` that v3+1 will thread through from
+        // `iced_app`.
+        let mut instances = self.instances.lock().unwrap();
+        instances.insert(
+            manifest.name.clone(),
+            WasmInstance {
+                module,
+                provides: provides.clone(),
+            },
+        );
+
+        Ok(LoadedPlugin {
+            manifest,
+            source: PluginSource::WasmFile(path.to_path_buf()),
+            provides,
+        })
     }
 }
 

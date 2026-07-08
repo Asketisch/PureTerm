@@ -57,6 +57,36 @@ pub struct ShapedRun {
     pub cluster_to_cell: Vec<u32>,
 }
 
+impl ShapedRun {
+    /// T-core-shaper v3: map a byte offset in the input string to the
+    /// grid cell that holds the glyph whose cluster starts at (or just
+    /// before) `byte_offset`. Used by the IME widget to position the
+    /// preedit composition cursor over the right cell.
+    ///
+    /// Returns `None` when `byte_offset` is past the end of the input
+    /// or when the run has no glyphs. Returns `Some(0)` when the
+    /// offset is before the first cluster (e.g. the user pressed a
+    /// composing key at position 0).
+    pub fn cluster_byte_to_cell(&self, byte_offset: usize) -> Option<u32> {
+        if self.glyphs.is_empty() {
+            return None;
+        }
+        // Find the last glyph whose cluster starts at or before the offset.
+        // Glyphs are emitted in input order, so a reverse linear scan from
+        // the back is O(cluster_count) worst case but typically O(1) — IME
+        // moves are usually near the cursor's previous position.
+        let mut last_match: Option<u32> = None;
+        for (i, g) in self.glyphs.iter().enumerate() {
+            if (g.cluster as usize) <= byte_offset {
+                last_match = Some(self.cluster_to_cell[i]);
+            } else {
+                break;
+            }
+        }
+        last_match.or(Some(0))
+    }
+}
+
 /// The shaper trait. The renderer calls `shape` with the input string
 /// and gets back a shaped run. The cell width is supplied by the
 /// renderer (it knows the font metrics).

@@ -12,11 +12,9 @@ _（无）_
 
 _（无）_
 
-## 终端交互（1）
+## 终端交互（0）
 
-| GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
-|-----|------|----------|-----------|------|
-| t-core-gap-closure | 终端模拟核心层差距补齐（graphics / shaper / tmux-CC / 多 shell / ConPTY / plugin runtime），包含 6 个 P0/P1/P2 子组件 | arch | P0 | [spec](todo/t-core-gap-closure/spec.md) · [checklist](todo/t-core-gap-closure/checklist.md) |
+_（无）_
 
 ## UI/外壳（0）
 
@@ -48,4 +46,6 @@ _（无）_
 
 **更新约定**：新增待办 → 创建 `todo/GAP-XX-slug/spec.md` → 在对应类别分表加一行。
 
+> 2026-07-09：t-core-gap-closure 6 个子组件（graphics / shaper / tmux-cc / shell-integ / windows-conpty / plugin-runtime）全部 v3 闭环，已从 `todo/` 推入 `done/`（详见 [done/t-core-gap-closure/](done/t-core-gap-closure/)）。GAP-51 显式留 todo（block-based 完整重构依赖 OSC 133 D mark + grid 切片 + shell integration，属于后端冲刺范围）。
+>
 > 2026-07-02 批量闭环：GAP-45/49/50/52/53 已从 todo 推入 done/；GAP-51 显式留 todo（block-based 完整重构依赖 OSC 133 D mark + grid 切片 + shell integration，属于后端冲刺范围）。

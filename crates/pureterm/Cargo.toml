@@ -16,6 +16,14 @@ mcp-server = [
     "tokio/rt",
     "tokio/rt-multi-thread",
 ]
+# T-core-plugin-runtime v3: real wasmtime linking. Off by default —
+# wasmtime + wasmtime-component-model add 50+ MB to cold builds and
+# are not needed for the common "build & run" loop. Enable with
+# `--features wasm-runtime`. When disabled, `WasmPluginLoader::load`
+# returns `Err("wasm-runtime feature not enabled")` so the GUI can
+# degrade gracefully (matches the checklist's `Err(Unsupported)`
+# fallback contract).
+wasm-runtime = ["dep:wasmtime"]
 
 [dependencies]
 pureterm-alacritty-runtime = { workspace = true }
@@ -100,6 +108,16 @@ rmcp = { version = "=1.7.0", optional = true, features = ["server", "transport-i
 # `#[tool]` expansion emits symbols (`schema_for_input`) absent from the 1.7.0
 # runtime. Declaring the exact match here steers the whole graph to 1.7.0.
 rmcp-macros = { version = "=1.7.0", optional = true }
+# T-core-plugin-runtime v3: wasmtime runtime for `.wasm` plugins.
+# Optional + feature-gated (`wasm-runtime`). Off by default — wasmtime
+# pulls in 50+ MB of native code + cranelift, lengthening cold builds
+# by minutes. The `WasmPluginLoader` impl checks the feature flag at
+# compile time and falls back to `Err(Unsupported)` when off.
+wasmtime = { version = "30", optional = true, default-features = false, features = [
+    "cranelift",
+    "runtime",
+    "component-model",
+] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

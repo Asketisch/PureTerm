@@ -1,0 +1,10 @@
+[package]
+name = "ipc-hello"
+version = "0.1.0"
+edition = "2021"
+description = "Example PureTerm plugin: IPC method plugin.hello(name)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]

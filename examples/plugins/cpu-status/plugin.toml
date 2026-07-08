@@ -1,0 +1,31 @@
+# Example plugin 1: CPU status bar component.
+#
+# This plugin registers a `StatusBarComponent` Provides capability. The
+# host calls the plugin's `render` export every status-bar refresh tick;
+# the plugin returns a JSON widget description the host translates into
+# an iced widget.
+#
+# Build (requires `wasm32-wasip1` target + the `wasm-runtime` feature):
+#   cd examples/plugins/cpu-status
+#   cargo build --release --target wasm32-wasip1
+#   cp ../../../target/wasm32-wasip1/release/cpu_status.wasm .
+#
+# Install:
+#   pureterm plugin install ./cpu_status.wasm
+
+[plugin]
+name = "cpu-status"
+version = "0.1.0"
+description = "CPU usage monitor for the PureTerm status bar."
+author = "PureTerm"
+abi_version = 1
+
+[plugin.provides]
+status_bar_component = "render"
+
+[plugin.config_schema]
+# Optional: declare the config keys the plugin reads. The host validates
+# the user's `[[plugins.config]]` block against this schema before
+# instantiating the plugin.
+refresh_interval_ms = { type = "integer", default = 1000, min = 100, max = 60000 }
+color = { type = "string", default = "#58c4dc" }
