@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Tabby** | 完整 Serial 连接 + Telnet 连接 + Hex 输入/输出 + 自动重连 | `tabby-serial/src/`, `tabby-telnet/src/` |
+| **参考实现 A** | 完整 Serial 连接 + Telnet 连接 + Hex 输入/输出 + 自动重连 | `tabby-serial/src/`, `tabby-telnet/src/` |
 
 ## PureTerm 现状
 

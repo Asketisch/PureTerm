@@ -54,7 +54,7 @@
 | GAP-13 | Broadcast Input（⌘⌃B 多 pane 广播） | feature | P3 | ✅ | [spec](reviewed/GAP-13-broadcast-input/spec.md) |
 | GAP-14 | Enhanced Vim（operators/registers MVP） | enhance | P3 | ✅ | [spec](reviewed/GAP-14-enhanced-vim-mode/spec.md) |
 | GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-18-bidi-support/spec.md) |
-| GAP-17 | Sixel/Kitty 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-kitty-graphics/spec.md) |
+| GAP-17 | Sixel / 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-graphics-protocol/spec.md) |
 
 ## UI/外壳（24）
 

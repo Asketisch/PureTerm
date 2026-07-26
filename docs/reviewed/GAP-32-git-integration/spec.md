@@ -21,8 +21,8 @@ e2e: manual-e2e/gap-32-git-integration.md
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | 每个 workspace 显示分支、linked PR 状态/编号 | — |
-| **iTerm2** | iTermGitState 状态栏组件 | `sources/StatusBar/Components/iTermGitState` |
-| **Kaku** | Lazygit 集成（`Cmd+Shift+G`），未提交更改提示 | `Kaku-main/crates/kaku/src/lazygit.rs` |
+| **参考实现 A** | GitState 状态栏组件 | `sources/StatusBar/Components/GitState` |
+| **参考实现 B** | Lazygit 集成（`Cmd+Shift+G`），未提交更改提示 | `参考实现源码/crates/kaku/src/lazygit.rs` |
 
 ## PureTerm 现状
 

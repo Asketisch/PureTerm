@@ -19,9 +19,9 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | Semantic History：Cmd-click 打开文件在编辑器中（带行号），URL 点击打开浏览器 | `sources/SemanticHistory/` (iTermSemanticHistoryController, iTermURLActionFactory, iTermPathFinder) |
+| **参考实现 A** | Semantic History：Cmd-click 打开文件在编辑器中（带行号），URL 点击打开浏览器 | `sources/SemanticHistory/` (SemanticHistoryController, URLActionFactory, PathFinder) |
 | **cmux** | 全局搜索 + 文件预览 | — |
-| **Tabby** | URL 点击通过 @xterm/addon-web-links | — |
+| **参考实现 B** | URL 点击通过 @xterm/addon-web-links | — |
 
 ## PureTerm 现状
 

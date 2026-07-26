@@ -20,7 +20,7 @@ reviewed: 2026-07-01
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Tabby** | ngx-translate，10+ 语言，Crowdin 工作流 | `locale/` |
+| **参考实现 A** | ngx-translate，10+ 语言，Crowdin 工作流 | `locale/` |
 
 ## PureTerm 现状
 

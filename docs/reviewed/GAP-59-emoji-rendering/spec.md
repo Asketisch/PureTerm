@@ -20,8 +20,8 @@ reviewed: 2026-07-01
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Kaku** | 专用 Emoji 着色器通道 | `Kaku-main/crates/termwiz/src/shader.wgsl` |
-| **iTerm2** | Emoji 渲染支持 | — |
+| **参考实现 A** | 专用 Emoji 着色器通道 | `参考实现源码/crates/termwiz/src/shader.wgsl` |
+| **参考实现 B** | Emoji 渲染支持 | — |
 
 ## PureTerm 现状
 
@@ -43,6 +43,6 @@ Emoji 渲染是基础能力，当前实现已覆盖大部分场景。
 
 1. Emoji 字体：`Noto Color Emoji` 或 `Apple Color Emoji`
 2. 字体回退：文本 → Emoji 字体 → CJK 字体
-3. 纹理 atlas：Emoji 专用 texture page（类 Kaku）
+3. 纹理 atlas：Emoji 专用 texture page（类业界实现）
 4. ZWJ 序列：确保 Unicode 14+ 支持
 5. 性能：Emoji atlas 缓存，避免重复光栅化

@@ -19,9 +19,9 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | 屏幕截图 + 鼠标点击/键盘输入，Mac/Linux/Win 全平台支持 | `crates/computer_use/src/` |
-| **iTerm2** | 无 | — |
-| **Kaku** | 无 | — |
+| **参考实现 A** | 屏幕截图 + 鼠标点击/键盘输入，Mac/Linux/Win 全平台支持 | `crates/computer_use/src/` |
+| **参考实现 B** | 无 | — |
+| **参考实现 C** | 无 | — |
 
 ## PureTerm 现状
 
@@ -31,7 +31,7 @@ closed: 2026-06-29
 
 **P2 — AI 差异化能力**
 
-Computer Use 是 AI agent 能力的终极扩展，Warp 将其作为差异化功能。但实现复杂度高，且大部分终端用户场景不需要。
+Computer Use 是 AI agent 能力的终极扩展，业界将其作为核心能力。但实现复杂度高，且大部分终端用户场景不需要。
 
 ## 工作量
 

@@ -1,7 +1,7 @@
 // T-core-graphics v3: image quad pass.
 //
 // Samples the image atlas (a single Rgba8UnormSrgb texture that packs all
-// visible Sixel / Kitty / iTerm2 inline images side by side) at per-vertex
+// visible Sixel / chunked-graphics / inline images side by side) at per-vertex
 // atlas UV coords. Each image is rendered as a screen-space quad whose size
 // comes from the host CPU (col, row, cols, rows * cell_w, cell_h).
 //

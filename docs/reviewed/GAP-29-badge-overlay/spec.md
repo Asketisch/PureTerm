@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | 可配置 badge overlay（位置、颜色、文字、透明度） | `sources/Drawing/iTermBadgeLabel.h/m` |
+| **参考实现 A** | 可配置 badge overlay（位置、颜色、文字、透明度） | `sources/Drawing/BadgeLabel.h/m` |
 
 ## PureTerm 现状
 

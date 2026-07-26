@@ -241,7 +241,7 @@ locale = "en"
 enabled = false
 # api_url = "https://api.openai.com/v1/audio/transcriptions"
 #
-# GAP-17: Sixel / Kitty inline graphics.
+# GAP-17: Sixel / chunked inline graphics.
 [terminal_graphics]
 enabled = false
 max_images = 64

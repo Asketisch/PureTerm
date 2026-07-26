@@ -20,7 +20,7 @@ reviewed: 2026-07-01
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | Terminal content printing with accessory view | `sources/Printing/` (iTermPrintAccessoryViewController) |
+| **参考实现 A** | Terminal content printing with accessory view | `sources/Printing/` (PrintAccessoryViewController) |
 
 ## PureTerm 现状
 

@@ -20,7 +20,7 @@ closed: 2026-06-28
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | Dock 徽章 + Dock 右键菜单显示最近 Workspace | `Sources/DockController.swift` |
-| **iTerm2** | macOS 通知角标 | — |
+| **参考实现 A** | macOS 通知角标 | — |
 
 ## PureTerm 现状
 

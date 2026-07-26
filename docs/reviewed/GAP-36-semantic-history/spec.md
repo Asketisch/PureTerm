@@ -19,7 +19,7 @@ Cmd-click 终端输出中的文件路径，自动在编辑器中打开对应文�
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | Cmd-click 打开文件在编辑器中（带行号），支持多种编辑器 | `sources/SemanticHistory/` |
+| **参考实现 A** | Cmd-click 打开文件在编辑器中（带行号），支持多种编辑器 | `sources/SemanticHistory/` |
 
 ## PureTerm 现状
 

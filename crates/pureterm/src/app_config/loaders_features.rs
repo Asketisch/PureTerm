@@ -118,8 +118,8 @@ impl AppConfig {
     }
 
     /// GAP-17: `[terminal_graphics]`. T-core-closure adds `max_image_bytes`
-    /// and `max_concurrent_images` so pathological Kitty PNG payloads
-    /// (multi-MB) are rejected at the config level before they pin the
+    /// and `max_concurrent_images` so pathological chunked-graphics PNG
+    /// payloads (multi-MB) are rejected at the config level before they pin the
     /// store.
     pub fn load_terminal_graphics(path: &Path) -> crate::terminal_graphics::TerminalGraphicsConfig {
         let mut cfg = crate::terminal_graphics::TerminalGraphicsConfig::default();

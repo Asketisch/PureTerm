@@ -19,9 +19,9 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | 完整 vim 状态机：motions, operators, text objects, registers, brackets | `crates/vim/src/` |
-| **iTerm2** | Copy Mode：Vim-like keyboard-driven text selection with cursor navigation, selection modes, mark jumping | `sources/CopyMode/` (iTermCopyModeHandler, iTermCopyModeState) |
-| **Tabby** | 通过 xterm.js addon 支持基本 vim 键绑定 | — |
+| **参考实现 A** | 完整 vim 状态机：motions, operators, text objects, registers, brackets | `crates/vim/src/` |
+| **参考实现 B** | Copy Mode：Vim-like keyboard-driven text selection with cursor navigation, selection modes, mark jumping | `sources/CopyMode/` (CopyModeHandler, CopyModeState) |
+| **参考实现 C** | 通过 xterm.js addon 支持基本 vim 键绑定 | — |
 
 ## PureTerm 现状
 

@@ -24,8 +24,8 @@ reviewed: 2026-07-01
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Ghostty** | 完全 VoiceOver 支持 | `Surface.zig` |
-| **iTerm2** | Accessibility 支持 | `sources/Accessibility/` |
+| **参考实现 A** | 完全 VoiceOver 支持 | `Surface.zig` |
+| **参考实现 B** | Accessibility 支持 | `sources/Accessibility/` |
 
 ## PureTerm 现状
 

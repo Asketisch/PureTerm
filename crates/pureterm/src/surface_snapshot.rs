@@ -47,14 +47,14 @@ pub fn tail_lines(s: &str, n: usize) -> (String, bool) {
 /// coordinates but not paint.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ImagePlacement {
-    /// Stable image id (Kitty `i=…`, Sixel sequence id, etc.). Used to
-    /// dedup across snapshot/restore cycles.
+    /// Stable image id (chunked-graphics `i=…`, Sixel sequence id, etc.).
+    /// Used to dedup across snapshot/restore cycles.
     pub id: u64,
     /// 0-based column where the image starts.
     pub col: u16,
     /// 0-based row where the image starts.
     pub row: u16,
-    /// Width in cells (Kitty's `c=` or Sixel's `;q`).
+    /// Width in cells (chunked-graphics `c=` or Sixel's `;q`).
     pub cols: u16,
     /// Height in cells.
     pub rows: u16,

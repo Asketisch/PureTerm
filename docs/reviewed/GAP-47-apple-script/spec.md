@@ -19,7 +19,7 @@ macOS 上通过 AppleScript 实现外部自动化——其他应用（如 Alfred
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Kaku** | 只读 AppleScript：get name/version/frontmost, quit | `Kaku-main/crates/kaku/src/applescript.rs` |
+| **参考实现 A** | 只读 AppleScript：get name/version/frontmost, quit | `参考实现源码/crates/kaku/src/applescript.rs` |
 | **cmux** | AppleScriptBridge（完整读写） | `Sources/AppleScriptBridge.swift` |
 
 ## PureTerm 现状

@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | 内置 LSP client（rust-analyzer, gopls, pyright, clangd, ts-ls） | `crates/lsp/src/`, `crates/lsp/src/servers/` |
+| **参考实现 A** | 内置 LSP client（rust-analyzer, gopls, pyright, clangd, ts-ls） | `crates/lsp/src/`, `crates/lsp/src/servers/` |
 
 ## PureTerm 现状
 
@@ -29,7 +29,7 @@ closed: 2026-06-29
 
 **P1 — AI 差异化能力**
 
-LSP Client 是终端内代码补全和诊断的基础，Warp 将其作为 AI 开发环境的核心能力。
+LSP Client 是终端内代码补全和诊断的基础，业界将其作为核心能力。
 
 ## 工作量
 

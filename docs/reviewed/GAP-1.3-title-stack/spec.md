@@ -20,7 +20,7 @@ e2e: manual-e2e/gap-1.3-title-stack.md
 
 | 竞品 | 功能 |
 |------|------|
-| **iTerm2** | 动态标题 + 标题栈 |
+| **参考实现 A** | 动态标题 + 标题栈 |
 | **Alacritty** | OSC 0/2 + push/pop title |
 
 ## PureTerm 现状

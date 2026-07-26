@@ -102,5 +102,5 @@ open dist/PureTerm.app
 - **`gh` 未装/未认证**：PR 块与 Create-PR 整体降级（PR 块显 banner / Create-PR toast），不做内置 GitHub OAuth。
 - **远程/SSH pane 的 git**：porcelain/`gh` 依赖远端是否有 `git`/`gh`；SSH pane 的 lazygit 已降级 toast，Create-PR 在 SSH 上同样依赖远端 `gh`。
 - **`git2` crate / 直接 GitHub API**：本特性**有意弃用**（shell-out 零新依赖、复用用户 `gh auth`）。
-- **`Cmd+Shift+G` → lazygit 热键**：竞品 Kaku 用 `Cmd+Shift+G`，但 PureTerm 该键已是 SearchPrev；git 面板定 ⌘⇧B，lazygit 经面板按钮 / 命令面板（`Action::OpenLazygit` 无默认键，有意保留）。
+- **`Cmd+Shift+G` → lazygit 热键**：竞品用 `Cmd+Shift+G`，但 PureTerm 该键已是 SearchPrev；git 面板定 ⌘⇧B，lazygit 经面板按钮 / 命令面板（`Action::OpenLazygit` 无默认键，有意保留）。
 - **事件流订阅 `events.subscribe` 流式 MCP**：被 GAP-6.7 的 IPC 阻塞式限制阻塞，非本 GAP；当前 `events tail` 走文件轮询（150ms）。

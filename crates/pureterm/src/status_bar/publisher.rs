@@ -3,8 +3,8 @@
 //! One long-lived `iced::stream::channel` task owns the only `sysinfo::System` /
 //! `Networks` + `battery::Manager`, samples at the configured cadence, holds
 //! ~120-sample ring buffers, and emits one `Message::StatusBarStats` per sample.
-//! This mirrors iTerm2's singleton `iTermPublisher` (one timer feeds every
-//! consumer) and the in-repo `config_watcher.rs` subscription pattern.
+//! This mirrors the mainstream terminal singleton-publisher pattern (one
+//! timer feeds every consumer) and the in-repo `config_watcher.rs` subscription pattern.
 //!
 //! The publisher's own sleep loop is the SOLE sampler; `StatusBarTick` does not
 //! trigger sampling — this decouples metric cadence (perf-relevant) from the git

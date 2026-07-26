@@ -50,8 +50,8 @@ pub struct TerminalPipeline {
     // T-core-graphics v3: image quad pipeline + atlas binding.
     //
     // The atlas is a single 2048×2048 RGBA8 texture (matching `ImageAtlas`
-    // on the CPU side); every visible Sixel / Kitty / iTerm2 image lives
-    // somewhere inside it, packed by `ImageAtlas`'s row-stride allocator.
+    // on the CPU side); every visible Sixel / chunked-graphics / inline
+    // image lives somewhere inside it, packed by `ImageAtlas`'s row-stride allocator.
     // The CPU uploads dirty sub-rects each frame; this struct holds the
     // persistent GPU texture + view + bind group so we don't recreate them
     // when there's no new content.

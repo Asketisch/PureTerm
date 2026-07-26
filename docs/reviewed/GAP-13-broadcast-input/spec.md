@@ -19,8 +19,8 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | Send keyboard to multiple sessions with password broadcast | `sources/InputBroadcasting/` (iTermBroadcastInputHelper) |
-| **Kaku** | 当前 tab / 所有 tab 广播 | — |
+| **参考实现 A** | Send keyboard to multiple sessions with password broadcast | `sources/InputBroadcasting/` (BroadcastInputHelper) |
+| **参考实现 B** | 当前 tab / 所有 tab 广播 | — |
 
 ## PureTerm 现状
 

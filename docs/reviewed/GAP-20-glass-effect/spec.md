@@ -20,8 +20,8 @@ macOS 26+ 使用 `NSGlassEffectView` 实现系统级毛玻璃效果；macOS 13-1
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | GlassEffectView（`Sources/GlassEffectView.swift`） | `Sources/GlassEffectView.swift` |
-| **Kaku** | `window_background_opacity` + `macos_window_background_blur`（WezTerm 原生支持） | — |
-| **Tabby** | 透明度/模糊（Windows/macOS，通过 Electron） | — |
+| **参考实现 A** | `window_background_opacity` + `macos_window_background_blur`（业界终端原生支持） | — |
+| **参考实现 B** | 透明度/模糊（Windows/macOS，通过 Electron） | — |
 
 ## PureTerm 现状
 

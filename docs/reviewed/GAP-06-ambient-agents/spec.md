@@ -19,7 +19,7 @@ AI agent 在云端异步执行任务（代码审查、issue triage、PR review�
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | 云端异步 AI 任务，消息系统（SSE），多来源（CLI/Slack/GitHub/Linear） | `app/src/ai/ambient_agents/`, `app/src/ai/agent_sdk/ambient.rs` |
+| **参考实现 A** | 云端异步 AI 任务，消息系统（SSE），多来源（CLI/Slack/GitHub/Linear） | `app/src/ai/ambient_agents/`, `app/src/ai/agent_sdk/ambient.rs` |
 | **cmux** | Cloud VM + Web 平台，但非异步 agent 模式 | — |
 
 ## PureTerm 现状
@@ -30,7 +30,7 @@ AI agent 在云端异步执行任务（代码审查、issue triage、PR review�
 
 **P3 — 终端增强**
 
-Ambient Agents 是 Warp 的差异化功能，但需要云端基础设施。PureTerm 可作为长期目标。
+Ambient Agents 是 block 输出模型的差异化功能，但需要云端基础设施。PureTerm 可作为长期目标。
 
 ## 工作量
 
@@ -41,6 +41,6 @@ Ambient Agents 是 Warp 的差异化功能，但需要云端基础设施。PureT
 ## 实现方向
 
 1. 纯客户端实现：通过 GitHub Actions / Linear webhook 触发本地 agent
-2. 或：接入 Warp 的 Ambient Agent API（如果开放）
+2. 或：接入业界 Ambient Agent API（如果开放）
 3. 消息通知：复用 Event System（GAP-6.7）+ macOS/Linux 通知
 4. UI：侧边栏显示异步任务状态和结果

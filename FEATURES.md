@@ -56,7 +56,7 @@
 ### GAP-24 Enhanced Status Bar(2026-06-26)
 - 把原 monolithic `view_bottom_bar`(6 段 inline `text`)重构为 `StatusBarComponent` trait + `Vec<Box<dyn StatusBarComponent>>` 注册表;每段自渲染 `iced::Element<'static>`,`view_bottom_bar` 只组装 `BarData` 快照(SSH/Vi/agent 的 cfg-gated 格式化留在 in-module)
 - 新增段:**CPU / Memory / Network(带 sparkline)+ Clock + Battery**;原有 Cwd/Git/Ssh/ViMode/Process/Agent/Cursor 全部移植上 trait
-- **Sparkline**:`iced::widget::canvas` 自定义 `SparklineProgram`,移植 iTerm2 `bezierPathWithValues` 数学(右锚定 / 自动缩放 ceiling floor 1.0 防 /0 / 60 点窗口;`path::Builder` 非 Clone 故 stroke/fill 两 builder 共享点集)
+- **Sparkline**:`iced::widget::canvas` 自定义 `SparklineProgram`,移植业界 sparkline bezier 曲线数学(右锚定 / 自动缩放 ceiling floor 1.0 防 /0 / 60 点窗口;`path::Builder` 非 Clone 故 stroke/fill 两 builder 共享点集)
 - **系统指标**:单一长生命周期 `iced::stream::channel` 发布者,持唯一 `sysinfo::System`/`Networks` + `battery::Manager`,1 Hz(可配)采样 + 120 点 ring buffer → `Message::StatusBarStats`;macOS `battery::Manager` 持 `Rc<IoKitManager>`(!Send),故每 tick 用 sync IIFE 重建并在 `.await` 前释放,保 future Send
 - **Git 增强**:`git status --porcelain=v2 --branch` 一条子进程出 branch + dirty(●)+ ahead/behind(↑↓);`Task::perform` 跑在 GUI 线程外;`git` 缺失/非 repo 回退纯 FS `read_git_branch`(行为不回退)
 - **配置**:`[statusbar]` 段(`components` 顺序列表 / `refresh_interval_secs` / `show_sparklines` / `bar_height`);sparkline 开时 `effective_height()` 自动 ≥28px;`terminal_content_height` 改为运行时高度参数(26 处调用点更新)
@@ -185,7 +185,7 @@
 
 ### GAP-1.3 标题栈 / OSC 动态标题(CSI 22t/23t + OSC 0/2)(2026-06-25)
 - 程序设标题(OSC 0/2 `\e]0;title\a`)与压弹栈(CSI 22t push / 23t pop)真实反映到窗口标题 + Tab 标题(此前标题事件在事件桥被丢弃,程序设标题无任何可见效果)
-- 显示策略:OSC 动态标题优先;空 / `None` / `ResetTitle` 回退 PureTerm 派生标题(`#1` / `🔒 SSH: <name>`),与 iTerm2 / Ghostty / Alacritty 一致
+- 显示策略:OSC 动态标题优先;空 / `None` / `ResetTitle` 回退 PureTerm 派生标题(`#1` / `🔒 SSH: <name>`),与主流终端行为一致
 - 核心栈复用上游 alacritty_terminal(`Term::{push,pop,set}_title` + `title_stack`,深度上限 4096;vte 已接好 `22t→push_title` / `23t→pop_title` / `OSC 0,2→set_title`),不改 vendored 源码
 - 实现:`terminal_context.rs::ChannelEventListener` 转发 `Event::Title`/`ResetTitle`(此前 `_ => return` 丢弃)+ `iced_app.rs` `pane_osc_title` side-map(仿 `pane_cwds`,不改 `Pane` 结构体)+ 事件循环两 arm + `resolve_display_title` 纯函数 + `tab_display_title` 接线(窗口标题 / Tab 栏 / Tab 切换器 / AppSnapshot)
 - 单测:桥接转发 3 + `resolve_display_title` 3;全 461 绿
@@ -628,7 +628,7 @@ action = { Ssh = "ListProfiles" }
 - `[voice_input].enabled` + `api_url` + push-to-talk state
 - 实现：`voice_input.rs`（Whisper/cpal 未接）
 
-### GAP-17 Sixel/Kitty Graphics MVP
+### GAP-17 Sixel / Chunked Graphics MVP
 - `[terminal_graphics]` + 协议检测 + LRU cache scaffold
 - 实现：`terminal_graphics.rs`
 

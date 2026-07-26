@@ -101,10 +101,10 @@ fn address_bar_confirm_load_url_updates_ctx_before_realize() {
 /// normalize → new-ctx contract.
 #[test]
 fn address_bar_no_target_branch_uses_normalized_url() {
-    let url = crate::iced_app::normalize_url_input("ghostty.org");
-    assert_eq!(url, "https://ghostty.org");
+    let url = crate::iced_app::normalize_url_input("example.com");
+    assert_eq!(url, "https://example.com");
 
     // target == None → spawn_web_pane builds a fresh ctx from the URL.
     let ctx = BrowserContext::new(&url);
-    assert_eq!(ctx.url(), "https://ghostty.org");
+    assert_eq!(ctx.url(), "https://example.com");
 }

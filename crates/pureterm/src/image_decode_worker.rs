@@ -33,7 +33,7 @@ use alacritty_terminal::event::{GraphicsFormat, GraphicsImage};
 
 /// 已解码的 RGBA 图像,主线程可直接消费送入 `ImageQuadState`。
 ///
-/// `id` 是 `GraphicsPlacement.id`(Kitty 用,`0` 表示 Sixel/iTerm2)。
+/// `id` 是 `GraphicsPlacement.id`(chunked-graphics 用,`0` 表示 Sixel/inline image)。
 /// `placement` 携带网格位置信息(列/行/列数/行数/z-order),
 /// renderer 用它把图像 quad 映射到正确的格子坐标。
 #[derive(Debug, Clone)]
@@ -107,7 +107,7 @@ fn decode(img: &GraphicsImage) -> Option<DecodedImage> {
                 Ok(dyn_img) => {
                     let rgba = dyn_img.to_rgba8();
                     let (w, h) = rgba.dimensions();
-                    // PNG 解码后的尺寸可能与 kitty 协议声明的不同;
+                    // PNG 解码后的尺寸可能与图形协议声明的不同;
                     // 使用解码后的真实尺寸,这是 GPU atlas 要用的尺寸。
                     Some(DecodedImage {
                         id: img.placement.id,

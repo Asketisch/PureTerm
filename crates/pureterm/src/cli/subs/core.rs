@@ -273,7 +273,7 @@ impl DebugSub {
 pub enum ShortcutsSub {
     /// List current key bindings
     List,
-    /// Apply a preset (default|vim|tmux|iterm|vscode|agent-triage)
+    /// Apply a preset (default|vim|tmux|macos|vscode|agent-triage)
     Preset { name: String },
     /// Reset to factory defaults
     Reset,

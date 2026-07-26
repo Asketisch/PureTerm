@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::password_manager::PasswordRef;
 use crate::serial_telnet::{SerialSettings, SessionType};
 
-/// SSH Profile for PureTerm (similar to Tabby)
+/// SSH Profile for PureTerm
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, SerdeReplace)]
 pub struct SshProfile {
     pub name: String,

@@ -19,7 +19,7 @@ closed: 2026-07-02
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | 交互式文档，代码 cell + markdown + output，AI Document/Plan | `app/src/notebooks/` |
+| **参考实现 A** | 交互式文档，代码 cell + markdown + output，AI Document/Plan | `app/src/notebooks/` |
 
 ## PureTerm 现状
 
@@ -29,7 +29,7 @@ closed: 2026-07-02
 
 **P2 — 终端增强**
 
-Notebooks 是 Warp 的差异化功能，但需要大量 UI 和执行引擎开发。
+Notebooks 是 block 输出模型的差异化功能，但需要大量 UI 和执行引擎开发。
 
 ## 工作量
 

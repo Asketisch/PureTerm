@@ -16,13 +16,13 @@ moved_reason: "Block-based output 跟后端 shell integration / OSC 133 / grid �
 
 ## 概述
 
-Warp 的核心创新——将终端输出按命令分割为独立 Block，每个 Block 包含：命令文本、输出内容、exit code、执行时间、session ID。支持 Block 过滤、搜索、元数据查看。
+block 输出模型的核心创新——将终端输出按命令分割为独立 Block，每个 Block 包含：命令文本、输出内容、exit code、执行时间、session ID。支持 Block 过滤、搜索、元数据查看。
 
 ## 竞品参考
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | Block-based output，sum-tree O(log n) 查找，Block 过滤/搜索/metadata，Rich Content（Block 内嵌 AI 视图） | `app/src/terminal/model/block.rs` (3345 lines), `app/src/terminal/block_list_viewport.rs` (1600+ lines) |
+| **参考实现 A** | Block-based output，sum-tree O(log n) 查找，Block 过滤/搜索/metadata，Rich Content（Block 内嵌 AI 视图） | `app/src/terminal/model/block.rs` (3345 lines), `app/src/terminal/block_list_viewport.rs` (1600+ lines) |
 
 ## PureTerm 现状
 
@@ -32,7 +32,7 @@ Warp 的核心创新——将终端输出按命令分割为独立 Block，每个
 
 **P2 — 终端增强**
 
-Block-based Output 是 Warp 的核心差异化功能，但需要重构终端输出模型，工程量巨大。
+Block-based Output 是 block 输出模型的差异化功能，但需要重构终端输出模型，工程量巨大。
 
 ## 工作量
 

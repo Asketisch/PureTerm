@@ -19,7 +19,7 @@ closed: 2026-07-02
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Tabby** | Angular NgModule 插件架构，NPM 包管理，社区插件（Docker, Quick Cmds, Save Output 等） | `tabby-plugin-manager/src/`, `app/src/plugins.ts` |
+| **参考实现 A** | Angular NgModule 插件架构，NPM 包管理，社区插件（Docker, Quick Cmds, Save Output 等） | `tabby-plugin-manager/src/`, `app/src/plugins.ts` |
 
 ## PureTerm 现状
 

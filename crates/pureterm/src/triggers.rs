@@ -179,7 +179,7 @@ pub struct TemplateContext<'a> {
     pub variables: &'a HashMap<String, String>,
 }
 
-/// Expand iTerm2-style trigger parameter templates.
+/// Expand mainstream-terminal-style trigger parameter templates.
 ///
 /// Supported substitutions:
 /// - `{match}`, `$0`, `\0` — full match

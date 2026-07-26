@@ -21,8 +21,8 @@ review: 2026-07-01
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | 垂直 Tabs（Workspaces）+ 水平 Surface tabs，Workspace Groups 侧边栏 | `Sources/Sidebar/` |
-| **iTerm2** | Toolbelt（11 tools：command history, directories, jobs, notes, paste history, profiles, snippets 等） | `sources/Toolbelt/` |
-| **Tabby** | 左侧 Profile 列表 | — |
+| **参考实现 A** | Toolbelt（11 tools：command history, directories, jobs, notes, paste history, profiles, snippets 等） | `sources/Toolbelt/` |
+| **参考实现 B** | 左侧 Profile 列表 | — |
 
 ## PureTerm 现状
 

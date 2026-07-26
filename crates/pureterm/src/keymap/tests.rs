@@ -156,7 +156,7 @@ fn test_parse_search_actions() {
     assert_eq!(parse_action("SearchToggleRegex"), Ok(Action::SearchToggleRegex));
     assert_eq!(parse_action("SearchToggleWholeWord"), Ok(Action::SearchToggleWholeWord));
     assert_eq!(parse_action("SearchToggleFollow"), Ok(Action::SearchToggleFollow));
-    // iTerm2/Alacritty-style aliases
+    // mainstream-terminal-style aliases
     assert_eq!(parse_action("Find"), Ok(Action::SearchForward));
     assert_eq!(parse_action("FindInDirectory"), Ok(Action::SearchInDirectory));
     assert_eq!(parse_action("FindNext"), Ok(Action::SearchNext));

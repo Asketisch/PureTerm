@@ -90,7 +90,7 @@ src/                          # 主源代码
 ### overlay.rs
 GPU 覆盖层顶点生成，作为 `PureTermApp` 的 impl 块。两个关键方法：
 - `render_context_menu_overlay()` -- 渲染上下文菜单（圆角矩形背景 8pt 半径、分隔线、悬浮高亮 4pt、文本、边框）
-- `render_tab_bar_overlay()` -- 渲染 Ghostty 风格标签栏（背景 x0.85 暗化、底部分隔线、标签页圆角矩形 6pt、关闭按钮圆形 24pt、颜色指示条、"+" 新建按钮、文本截断）
+- `render_tab_bar_overlay()` -- 渲染现代圆角标签栏（背景 x0.85 暗化、底部分隔线、标签页圆角矩形 6pt、关闭按钮圆形 24pt、颜色指示条、"+" 新建按钮、文本截断）
 
 还包含 `parse_hex_color()` 辅助函数（十六进制颜色字符串转 [u8; 3]）。
 

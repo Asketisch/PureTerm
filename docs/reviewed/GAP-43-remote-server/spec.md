@@ -13,14 +13,14 @@ closed: 2026-06-29
 
 ## 概述
 
-SSH 连接后，远程服务器运行一个轻量 daemon，提供：远程文件浏览、协作编辑、repo metadata sync。类似 Warp 的 Remote Server 架构。
+SSH 连接后，远程服务器运行一个轻量 daemon，提供：远程文件浏览、协作编辑、repo metadata sync。类似业界 Remote Server 架构。
 
 ## 竞品参考
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | SSH + protobuf daemon，远程文件操作，协作编辑，repo metadata sync | `crates/remote_server/src/`, `app/src/remote_server/` |
-| **iTerm2** | SSH with file browser, folder picker, file transfer | `sources/SSH/` |
+| **参考实现 A** | SSH + protobuf daemon，远程文件操作，协作编辑，repo metadata sync | `crates/remote_server/src/`, `app/src/remote_server/` |
+| **参考实现 B** | SSH with file browser, folder picker, file transfer | `sources/SSH/` |
 
 ## PureTerm 现状
 

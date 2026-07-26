@@ -19,10 +19,10 @@ closed: 2026-06-08
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | 完整 Preferences UI（XIB，多标签页） | `sources/Preferences/` |
-| **Tabby** | Settings UI（Angular 组件） | — |
-| **Kaku** | `Cmd + ,` 设置面板 | — |
-| **Warp** | Settings View（app 内） | `app/src/settings_view/` |
+| **参考实现 A** | 完整 Preferences UI（XIB，多标签页） | `sources/Preferences/` |
+| **参考实现 B** | Settings UI（Angular 组件） | — |
+| **参考实现 C** | `Cmd + ,` 设置面板 | — |
+| **参考实现 D** | Settings View（app 内） | `app/src/settings_view/` |
 
 ## PureTerm 现状
 

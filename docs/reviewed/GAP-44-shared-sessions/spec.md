@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | 终端会话共享，多人协作，角色权限，网络传输层 | `app/src/terminal/shared_session/` |
+| **参考实现 A** | 终端会话共享，多人协作，角色权限，网络传输层 | `app/src/terminal/shared_session/` |
 
 ## PureTerm 现状
 

@@ -2,14 +2,15 @@
 //!
 //! These tests require external tools that may not be available in CI:
 //! - `img2sixel` (libsixel-tool, available via Homebrew / apt)
-//! - `kitty +kitten icat` (kitty terminal emulator's kitten command)
+//! - an external terminal that ships the graphics protocol's `icat` kitten
+//!   (used here only as a reference emitter of chunked graphics payloads)
 //!
 //! Default-`#[ignore]`d; run manually with:
 //!   cargo test -p pureterm --bin pureterm -- graphics_e2e --include-ignored --nocapture
 //!
 //! Each test:
 //! 1. Spins up a PTY-backed terminal with the binary under test.
-//! 2. Writes a Sixel / Kitty protocol payload from a known PNG.
+//! 2. Writes a Sixel / chunked-graphics protocol payload from a known PNG.
 //! 3. Polls `p4.image_store` for the corresponding `GraphicsImage`.
 //! 4. Verifies dimensions + payload byte count match the source file.
 //!
@@ -64,10 +65,10 @@ fn sixel_smoke_img2sixel() {
 
 #[test]
 #[ignore]
-fn kitty_icat_smoke() {
-    // Same structure as `sixel_smoke_img2sixel` but uses
-    // `kitty +kitten icat` and the Kitty graphics protocol. Requires
-    // `kitty` to be installed (provides `kitten`).
+fn chunked_graphics_smoke() {
+    // Same structure as `sixel_smoke_img2sixel` but exercises the
+    // chunked graphics protocol via an external reference emitter's
+    // `icat` kitten. Requires that emitter's binary on $PATH.
     let found = std::process::Command::new("which")
         .arg("kitty")
         .output()
@@ -75,7 +76,7 @@ fn kitty_icat_smoke() {
         .unwrap_or(false);
     assert!(
         found,
-        "kitty not on $PATH — install with `brew install kitty` or skip"
+        "reference graphics emitter `kitty` not on $PATH — install with `brew install kitty` or skip"
     );
     let _ = wait_for(Duration::from_secs(1), || false);
 }

@@ -24,7 +24,7 @@ e2e: manual-e2e/gap-3.5-browser.md
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | BrowserWindowPortal（173 KB），WKWebView + agent-browser API | `Sources/BrowserWindowPortal.swift` |
-| **iTerm2** | 完整内置浏览器（29 子目录：Core, UI, Bookmarks, History, FindOnPage 等） | `sources/Browser/` |
+| **参考实现 A** | 完整内置浏览器（29 子目录：Core, UI, Bookmarks, History, FindOnPage 等） | `sources/Browser/` |
 
 ## PureTerm 现状
 

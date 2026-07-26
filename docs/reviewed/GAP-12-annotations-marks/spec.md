@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | **Annotations**: PTYAnnotation + PTYNoteViewController（行内笔记）。**Marks**: Shell prompt marks, image marks, captured output marks, block marks, button marks, fold marks, path marks | `sources/Annotations/` (PTYAnnotation.h/m, PTYNoteViewController.h/m), `sources/Marks/` (VT100ScreenMark.h/m, iTermImageMark.h/m, iTermCapturedOutputMark.h/m, BlockMark.swift, ButtonMark.swift, FoldMark.swift, PathMark.swift) |
+| **参考实现 A** | **Annotations**: PTYAnnotation + PTYNoteViewController（行内笔记）。**Marks**: Shell prompt marks, image marks, captured output marks, block marks, button marks, fold marks, path marks | `sources/Annotations/` (PTYAnnotation.h/m, PTYNoteViewController.h/m), `sources/Marks/` (VT100ScreenMark.h/m, InlineImageMark.h/m, CapturedOutputMark.h/m, BlockMark.swift, ButtonMark.swift, FoldMark.swift, PathMark.swift) |
 | **cmux** | 无明确 Annotations/Marks | — |
 
 ## PureTerm 现状

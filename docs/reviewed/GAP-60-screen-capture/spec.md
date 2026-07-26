@@ -20,8 +20,8 @@ reviewed: 2026-07-01
 
 | 立品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | Built-in screenshot functionality | `sources/Screenshots/` |
-| **Warp** | Computer Use 中包含截图能力 | `crates/computer_use/src/` |
+| **参考实现 A** | Built-in screenshot functionality | `sources/Screenshots/` |
+| **参考实现 B** | Computer Use 中包含截图能力 | `crates/computer_use/src/` |
 
 ## PureTerm 现状
 

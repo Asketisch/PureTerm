@@ -1,5 +1,5 @@
-//! T-core-graphics v3: Sixel/Kitty/iTerm2 内联图 quad pass 的状态与
-//! per-image 描述符。
+//! T-core-graphics v3: Sixel/chunked-graphics/inline-image 内联图 quad pass
+//! 的状态与 per-image 描述符。
 //!
 //! - [`ImageQuadState`] 是 CPU 侧的图像 atlas(单张 2048×2048 RGBA8 纹理),
 //!   暴露 insert/remove/get/take_dirty_data 等操作。
@@ -12,9 +12,9 @@ use pureterm_alacritty_runtime::renderer::image_atlas::{
 
 /// T-core-graphics v2: image quad pass state.
 ///
-/// The image atlas is the CPU-side RGBA bitmap that backs Sixel / Kitty
-/// / iTerm2 inline images. The render thread uploads dirty regions
-/// to the GPU once per frame (see `take_dirty_data()`).
+/// The image atlas is the CPU-side RGBA bitmap that backs Sixel /
+/// chunked-graphics / inline images. The render thread uploads dirty
+/// regions to the GPU once per frame (see `take_dirty_data()`).
 ///
 /// v2 limitation: the GPU quad-rendering pipeline (vertex + fragment
 /// shader pair that samples the image atlas with bilinear filtering)
@@ -37,7 +37,7 @@ impl ImageQuadState {
         self.atlas.insert(id, rgba, w, h)
     }
 
-    /// Remove an image (Kitty `d=d`, scrollback prune, etc.).
+    /// Remove an image (chunked-graphics `d=d`, scrollback prune, etc.).
     pub fn remove(&mut self, id: u64) -> bool {
         self.atlas.remove(id)
     }
@@ -76,8 +76,8 @@ impl Default for ImageQuadState {
 /// cols*cell_w, rows*cell_h)`.
 ///
 /// `image_id` is the `GraphicsPlacement.id` from the original
-/// `Event::GraphicsImage` — when the same id re-transmits (Kitty `a=T,i=…`),
-/// the atlas entry is replaced and the new `ImagePlacement` UVs are used.
+/// `Event::GraphicsImage` — when the same id re-transmits (chunked-graphics
+/// `a=T,i=…`), the atlas entry is replaced and the new `ImagePlacement` UVs are used.
 #[derive(Debug, Clone)]
 pub struct ImageQuadDraw {
     pub image_id: u32,

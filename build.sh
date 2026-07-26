@@ -969,7 +969,7 @@ bundle_for_host() {
 # macOS universal2 bundler — builds both arm64 + x86_64, runs `lipo -create`
 # to merge each Mach-O into a single universal2 binary inside `Contents/MacOS`,
 # then assembles a single .app that runs natively on both Intel and Apple
-# Silicon Macs. This is what `alacritty-mac`, `kitty-mac`, etc. ship.
+# Silicon Macs. This is what mainstream Rust-native terminal macOS apps ship.
 # -----------------------------------------------------------------------------
 bundle_macos_universal() {
     local arm64_triple="aarch64-apple-darwin"

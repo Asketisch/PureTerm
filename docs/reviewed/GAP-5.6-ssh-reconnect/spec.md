@@ -21,7 +21,7 @@ e2e: manual-e2e/gap-5.6-ssh-reconnect.md
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | 完整事件流状态机 | — |
-| **iTerm2** | SSH 重连支持 | — |
+| **参考实现 A** | SSH 重连支持 | — |
 | **Termius** | 商业 SSH 客户端，完整重连 | — |
 
 ## PureTerm 现状

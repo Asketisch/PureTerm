@@ -20,9 +20,9 @@ e2e: manual-e2e/gap-02-error-recovery.md
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Kaku** | 非零退出时自动发送失败命令给 LLM，显示修复建议（`Cmd+Shift+E`） | `Kaku-main/crates/kaku/src/error_recovery.rs` |
-| **Warp** | Block-based output 中每个 command block 记录 exit code，AI 可基于上下文分析 | `app/src/terminal/model/block.rs` (exit_code 字段) |
-| **iTerm2** | Triggers 系统可匹配 exit code 并触发通知/脚本，但无内置 AI 分析 | `sources/Triggers/` |
+| **参考实现 A** | 非零退出时自动发送失败命令给 LLM，显示修复建议（`Cmd+Shift+E`） | `参考实现源码/crates/kaku/src/error_recovery.rs` |
+| **参考实现 B** | Block-based output 中每个 command block 记录 exit code，AI 可基于上下文分析 | `app/src/terminal/model/block.rs` (exit_code 字段) |
+| **参考实现 C** | Triggers 系统可匹配 exit code 并触发通知/脚本，但无内置 AI 分析 | `sources/Triggers/` |
 
 ## PureTerm 现状
 
@@ -63,7 +63,7 @@ e2e: manual-e2e/gap-02-error-recovery.md
 
 **P0 — AI 核心管道**
 
-错误恢复是 AI 终端最直接的价值体现——用户打错命令，终端自动告诉他怎么改。Kaku 将此作为核心功能。
+错误恢复是 AI 终端最直接的价值体现——用户打错命令，终端自动告诉他怎么改。业界将此作为核心功能。
 
 ## 工作量
 

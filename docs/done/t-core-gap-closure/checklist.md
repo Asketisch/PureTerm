@@ -7,7 +7,7 @@
 
 ---
 
-## A. t-core-graphics（Sixel + Kitty graphics 两家必上，iTerm2 image 推荐）
+## A. t-core-graphics（Sixel + 图形协议 两家必上，inline image 协议推荐）
 
 ### A.1 解析层
 - [x] `crates/alacritty_terminal/src/event_loop.rs:572` 旁新增 `scan_graphics` —— 通过 `tests_sixel` 6 用例。

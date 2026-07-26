@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | 1Password, LastPass, Keychain, command-line adapters, echo probe | `sources/PasswordManager/` (OnePasswordDataSource, LastPassDataSource, KeychainPasswordDataSource, CommandLinePasswordDataSource, iTermEchoProbe) |
+| **参考实现 A** | 1Password, LastPass, Keychain, command-line adapters, echo probe | `sources/PasswordManager/` (OnePasswordDataSource, LastPassDataSource, KeychainPasswordDataSource, CommandLinePasswordDataSource, EchoProbe) |
 
 ## PureTerm 现状
 

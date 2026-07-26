@@ -21,8 +21,8 @@ e2e: manual-e2e/gap-09-notification.md
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | OSC 9/99/777 解析，蓝色环覆盖，通知面板（`Cmd+I`），Dock 徽章，`cmux notify` CLI hook | `Sources/NotificationCenter/` |
-| **iTerm2** | macOS 通知，trigger-based，bell，command completion | `sources/Notifications/` (iTermNotificationController, iTermNotificationCenter) |
-| **Tabby** | 通过 xterm.js addon 支持基本通知 | — |
+| **参考实现 A** | macOS 通知，trigger-based，bell，command completion | `sources/Notifications/` (NotificationController, NotificationCenter) |
+| **参考实现 B** | 通过 xterm.js addon 支持基本通知 | — |
 
 ## PureTerm 现状
 

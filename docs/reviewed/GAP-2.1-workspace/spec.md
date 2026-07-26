@@ -22,7 +22,7 @@ plan: plan.md
 | 竞品 | 功能 |
 |------|------|
 | **cmux** | Workspace 命名分组 + 切换 |
-| **iTerm2** | Window / Tab / Session 分层 |
+| **参考实现 A** | Window / Tab / Session 分层 |
 
 ## PureTerm 现状
 

@@ -1,6 +1,6 @@
-# PureTerm iTerm2-compatible keymap
-# Matches common iTerm2 defaults for users migrating from iTerm2.
-# Usage: pureterm shortcuts preset iterm
+# PureTerm macOS-classic keymap
+# Matches common macOS terminal defaults for users migrating from macOS terminals.
+# Usage: pureterm shortcuts preset macos
 
 [[keyboard.bindings]]
 key = "t"
@@ -42,7 +42,7 @@ key = "Enter"
 mods = "Command|Shift"
 action = "ToggleZoom"
 
-# iTerm2: ⌘] / ⌘[ for pane focus
+# macOS: ⌘] / ⌘[ for pane focus
 [[keyboard.bindings]]
 key = "]"
 mods = "Command"
@@ -53,7 +53,7 @@ key = "["
 mods = "Command"
 action = "FocusPanePrev"
 
-# iTerm2: ⌘⇧Enter maximize pane
+# macOS: ⌘⇧Enter maximize pane
 [[keyboard.bindings]]
 key = "Enter"
 mods = "Command|Shift"
@@ -84,7 +84,7 @@ key = "P"
 mods = "Command"
 action = "OpenCommandPalette"
 
-# iTerm2: ⌘⇧N new window (map to MovePaneToNewWindow)
+# macOS: ⌘⇧N new window (map to MovePaneToNewWindow)
 [[keyboard.bindings]]
 key = "N"
 mods = "Command|Shift"

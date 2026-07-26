@@ -27,7 +27,7 @@
 - **SSH 一等公民** — 完整后端 + Profile + 加密凭证 + 主 UI 设置 + 命令面板一跳到底(2026-06-08 GAP-5.7/5.8/5.9 闭环)
 - **独立设置 UI 进程** — Iced 0.14 daemon,`Cmd+,` 启动,6 个分类页面
 - **命令面板** — `⌘⇧P` 触发,`nucleo-matcher` 模糊搜索,Actions / Profiles 双模式
-- **快捷键自定义** — TOML 配置驱动 + 6 套预设模板(vim/tmux/iterm/vscode/agent-triage) + CLI `pureterm shortcuts` + 热重载(2026-06-12 GAP-3.7 闭环)
+- **快捷键自定义** — TOML 配置驱动 + 6 套预设模板(vim/tmux/macos/vscode/agent-triage) + CLI `pureterm shortcuts` + 热重载(2026-06-12 GAP-3.7 闭环)
 - **Socket API v2** — JSON-RPC 2.0 over Unix socket,31 个 method 跨 8 命名空间;结构化 CLI `pureterm <group> <sub>`(GAP-6.2)+ 原始 `pureterm msg` 逃生舱,含写操作(tab/pane/ssh/config)(2026-06-13 GAP-6.1/6.2)
 - **状态栏** — 底部 24px,显示 CWD / Git 分支 / SSH / 进程名 / 光标位置(2026-06-12 GAP-3.4)
 - **Vi Copy Mode** — `Ctrl+Shift+Space` 进入,hjkl 导航,v/V/Ctrl+v 选区,y 复制,/ 搜索(2026-06-12 GAP-4.1)
@@ -165,7 +165,7 @@ PureTerm 由 6 个 crate 组成的工作区:
 
 ### 自定义命令(2026-06-15 GAP-6.4)
 - 在 `pureterm.toml` 声明 `[[commands]]`,把常用 shell 片段(deploy / make test / ssh 跳板)做成「绑快捷键 + ⌘⇧P 可搜 + 一键触发」的命令
-- **执行模型**:触发时把 `command + 回车` 写进**当前 pane 的 PTY**,在 pane 的 shell/CWD 执行、输出可见(类似 iTerm2 snippets / tmux send-keys);不引入新进程管理,快捷键与命令面板共用同一 `dispatch_action`
+- **执行模型**:触发时把 `command + 回车` 写进**当前 pane 的 PTY**,在 pane 的 shell/CWD 执行、输出可见(类似主流终端 snippet / tmux send-keys);不引入新进程管理,快捷键与命令面板共用同一 `dispatch_action`
 - 配置示例:
   ```toml
   [[commands]]
@@ -413,7 +413,7 @@ action = { Ssh = "ListProfiles" }
 # 查看当前所有快捷键
 pureterm shortcuts list
 
-# 切换预设模板(vim/tmux/iterm/vscode/agent-triage)
+# 切换预设模板(vim/tmux/macos/vscode/agent-triage)
 pureterm shortcuts preset vim
 
 # 恢复默认
@@ -586,7 +586,7 @@ PureTerm 扩展段:
 - ✅ **GAP-2.3** Socket API v2 协议骨架(JSON-RPC 2.0 + 基础 method + CLI `pureterm msg`)
 - ✅ **GAP-2.5** 多 UI 路径统一治理(alacritty-runtime 精简为 glyph_atlas)
 - ✅ **GAP-3.4** 状态栏(底部 24px:CWD · Git 分支 · SSH · 进程名 · 光标位置)
-- ✅ **GAP-3.7** 快捷键 6 套预设模板(tmux / Vim / iTerm / agent-triage / vscode / custom)
+- ✅ **GAP-3.7** 快捷键 6 套预设模板(tmux / Vim / macos / agent-triage / vscode / custom)
 - ✅ **GAP-4.1** Vi Copy Mode(ViSubMode 状态机 + 18 ViMotion + visual/block/yank + 搜索 + GPU 高亮)
 - ✅ **GAP-5.7/5.8/5.9** SSH 一等公民(Tab UI + 设置面板 + 命令面板集成)
 - ✅ **GAP-5.1** 持久 PTY 守护进程 `puretermd`(关 GUI 不丢会话:PTY master fd 由 pump 线程持有,1 MiB scrollback 回放,多 attach 扇出)

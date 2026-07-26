@@ -5325,7 +5325,7 @@ impl PureTermApp {
                                 // the live image store. v1 only logs at debug
                                 // (the GPU blit path is wired in v2); the
                                 // store is the source of truth for the
-                                // chunked Kitty reassembler and the
+                                // chunked-graphics reassembler and the
                                 // scrollback-prune pass.
                                 TerminalEvent::GraphicsImage(img) => {
                                     if self.p4.terminal_graphics_cfg.enabled {
@@ -6891,7 +6891,7 @@ impl PureTermApp {
             }
             // GAP-3.8 / GAP-4.3: surface search overlay
             Message::SurfaceSearchOpen => {
-                // ⌘F toggles: if already open, close (iTerm2/VS Code behavior).
+                // ⌘F toggles: if already open, close (mainstream editor behavior).
                 if self.surface_search.is_some() {
                     self.close_surface_search();
                     return Task::none();
@@ -9544,8 +9544,8 @@ impl PureTermApp {
             Action::SearchToggleFollow => Task::done(Message::SurfaceSearchToggleFollow),
 
             // GAP-6.4: write `command + Enter` into the active pane's PTY.
-            // Runs in the pane's shell/CWD (like iTerm2 snippets / tmux
-            // send-keys); output is visible. No new process management.
+            // Runs in the pane's shell/CWD (like mainstream terminal
+            // snippets / tmux send-keys); output is visible. No new process management.
             Action::CustomCommand(id) => {
                 if let Some(cmd) = self.custom_commands.iter().find(|c| c.id == id) {
                     if let Some(ctx) = self.active_terminal_ctx() {
@@ -14364,8 +14364,8 @@ impl PureTermApp {
 
         self.publish_trigger_highlights_for_view(pane_id, is_active);
         // T-core-graphics v3: refresh the per-frame image quad draw list from
-        // the live `ImageStore`. v3 keeps this simple: every Kitty/Sixel/iTerm2
-        // image with a grid placement is drawn. Visible-cell clipping (using
+        // the live `ImageStore`. v3 keeps this simple: every chunked-graphics
+        // / Sixel / inline image with a grid placement is drawn. Visible-cell clipping (using
         // `display_offset` + computed_rows/cols) is a v3+1 refinement that
         // doesn't block the image_quad pipeline plumbing.
         {
@@ -14541,7 +14541,7 @@ impl PureTermApp {
         // 50ms = 20Hz gives a 3x idle CPU reduction while keeping
         // background work (PTY echo drain, trigger scan, notify dispatch,
         // resize_pending apply) bounded to a 50ms worst-case delay.
-        // See plan: /Users/admin/.claude-mini/plans/resilient-waddling-hinton.md
+        // See the resilient-waddling-hinton design plan.
         // Fix 1.
         let wakeup_sub = time::every(Duration::from_millis(50)).map(|_| Message::TerminalWakeup);
         // GAP-5.6: ~4 Hz tick that flushes the layout snapshot if it's been

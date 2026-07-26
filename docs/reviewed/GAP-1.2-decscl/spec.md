@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Ghostty** | 完整的终端模式管理，包括 DECSCL | `src/terminal/modes.zig` |
+| **参考实现 A** | 完整的终端模式管理，包括 DECSCL | `src/terminal/modes.zig` |
 
 ## PureTerm 现状
 

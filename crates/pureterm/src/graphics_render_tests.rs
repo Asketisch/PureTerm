@@ -211,7 +211,7 @@ fn image_store_iterators_cover_all_images() {
     use crate::terminal_graphics::ImageStore;
 
     let mut store = ImageStore::new(16, 4 * 1024 * 1024);
-    // Two Kitty images (id != 0) + two Sixel (id == 0).
+    // Two chunked-graphics images (id != 0) + two Sixel (id == 0).
     for id in [101u32, 102u32] {
         let img = GraphicsImage {
             protocol: GraphicsProtocol::Kitty,

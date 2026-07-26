@@ -1,6 +1,6 @@
 //! GPU 顶点类型:`BgVertex`(背景色 quad)/`TextVertex`(字形 quad)/
-//! `BgImageVertex`(整屏背景图 quad)/`ImageQuadVertex`(Sixel/Kitty/iTerm2
-//! 内联图 quad) 以及 uniform 结构 `ScreenUniforms`。
+//! `BgImageVertex`(整屏背景图 quad)/`ImageQuadVertex`(Sixel/chunked-graphics
+//! /inline-image 内联图 quad) 以及 uniform 结构 `ScreenUniforms`。
 //!
 //! 每个顶点结构都通过 `wgpu::VertexBufferLayout` 暴露对应的属性描述符,
 //! 供 `pipeline.rs` 在创建渲染管线时绑定。布局/字段与拆分前完全一致。

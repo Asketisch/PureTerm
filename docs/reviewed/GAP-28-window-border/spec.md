@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | `iTermWindowBorderView`（自定义窗口边框） | `sources/TerminalView/` |
+| **参考实现 A** | `WindowBorderView`（自定义窗口边框） | `sources/TerminalView/` |
 
 ## PureTerm 现状
 

@@ -1,8 +1,8 @@
-//! T-core-graphics v2: GPU image atlas for Sixel / Kitty graphics / iTerm2.
+//! T-core-graphics v2: GPU image atlas for Sixel / chunked graphics / inline image.
 //!
 //! Mirrors the design of `glyph_atlas.rs` but stores RGBA pixels (Sixel
-//! and iTerm2 images are already RGBA; Kitty's PNG payload is decoded
-//! before insertion). Key differences from the glyph atlas:
+//! and inline images are already RGBA; chunked-graphics PNG payload is
+//! decoded before insertion). Key differences from the glyph atlas:
 //!
 //! - **Single RGBA bitmap** — no separate grayscale path. Images are
 //!   always full-color.
@@ -173,7 +173,7 @@ impl ImageAtlas {
     }
 
     /// Remove an image from the atlas (e.g. when the terminal
-    /// scrollbacks past it or the protocol sends a Kitty `d=d`).
+    /// scrollbacks past it or the protocol sends a chunked-graphics `d=d`).
     pub fn remove(&mut self, id: u64) -> bool {
         let removed = self.cache.shift_remove(&id).is_some();
         if removed {

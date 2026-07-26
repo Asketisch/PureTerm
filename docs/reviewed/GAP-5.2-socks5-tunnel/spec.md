@@ -21,7 +21,7 @@ e2e: manual-e2e/gap-5.2-socks5-tunnel.md
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | SSH Tunnel（`Sources/SSH/Tunnel.swift`） | `Sources/SSH/Tunnel.swift` |
-| **Tabby** | 通过 SSH 插件支持端口转发 | — |
+| **参考实现 A** | 通过 SSH 插件支持端口转发 | — |
 
 ## PureTerm 现状
 

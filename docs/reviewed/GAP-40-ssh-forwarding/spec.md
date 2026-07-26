@@ -20,8 +20,8 @@ aliases: [GAP-5.4]
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Tabby** | X11 转发 + 端口转发 | `tabby-ssh/src/` |
-| **iTerm2** | SSH with file browser, folder picker, file transfer | `sources/SSH/` |
+| **参考实现 A** | X11 转发 + 端口转发 | `tabby-ssh/src/` |
+| **参考实现 B** | SSH with file browser, folder picker, file transfer | `sources/SSH/` |
 
 ## PureTerm 现状
 

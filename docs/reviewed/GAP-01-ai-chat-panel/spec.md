@@ -19,9 +19,9 @@ closed: 2026-06-28
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Kaku** | `Cmd+L` 打开 Chat Panel，流式 Markdown + 代码高亮，终端上下文注入 | `Kaku-main/crates/kaku/src/chat/` |
-| **Warp** | 内置 Oz agent，多 harness（Oz/Claude/Codex/Gemini），headless terminal pane 执行 | `app/src/ai/agent/`, `app/src/ai/agent_sdk/driver.rs` |
-| **iTerm2** | AITerm：多 LLM provider（OpenAI/Anthropic/Gemini/DeepSeek），streaming SSE，function calling，vector store RAG | `sources/AITerm/` (LLM.swift, ChatViewController.swift, ChatWindowController.swift) |
+| **参考实现 A** | `Cmd+L` 打开 Chat Panel，流式 Markdown + 代码高亮，终端上下文注入 | `参考实现源码/crates/kaku/src/chat/` |
+| **参考实现 B** | 内置 Oz agent，多 harness（Oz/Claude/Codex/Gemini），headless terminal pane 执行 | `app/src/ai/agent/`, `app/src/ai/agent_sdk/driver.rs` |
+| **参考实现 C** | AITerm：多 LLM provider（OpenAI/Anthropic/Gemini/DeepSeek），streaming SSE，function calling，vector store RAG | `sources/AITerm/` (LLM.swift, ChatViewController.swift, ChatWindowController.swift) |
 | **cmux** | 无内置 Chat，依赖外部 agent | — |
 
 ## PureTerm 现状
@@ -54,7 +54,7 @@ closed: 2026-06-28
 
 **P0 — AI 核心管道**
 
-AI Chat Panel 是 AI-native 终端的门面功能，直接决定用户对"AI 终端"的第一印象。Kaku 和 Warp 都将其作为核心卖点。
+AI Chat Panel 是 AI-native 终端的门面功能，直接决定用户对"AI 终端"的第一印象。业界 AI 终端都将其作为核心卖点。
 
 ## 工作量
 

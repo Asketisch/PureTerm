@@ -1,8 +1,8 @@
 //! wgpu 字体图集 — 由主路径 `crates/pureterm/src/terminal_shader.rs` 引用。
 //!
 //! - `glyph_atlas` — grayscale + RGBA text glyph atlas (LRU + dirty region upload).
-//! - `image_atlas` — RGBA-only image atlas for Sixel / Kitty / iTerm2 inline.
+//! - `image_atlas` — RGBA-only image atlas for Sixel / chunked-graphics / inline image.
 
 pub mod glyph_atlas;
-/// T-core-graphics v2: RGBA image atlas for Sixel / Kitty / iTerm2.
+/// T-core-graphics v2: RGBA image atlas for Sixel / chunked-graphics / inline image.
 pub mod image_atlas;

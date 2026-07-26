@@ -20,8 +20,8 @@ closed: 2026-06-29
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | `Cmd+Shift+N` 新建窗口，跨窗口通知路由 | — |
-| **Tabby** | 完整多窗口支持 | — |
-| **Kaku** | 窗口快照（自动保存/恢复多窗口布局） | `Kaku-main/crates/kaku/src/snapshots.rs` |
+| **参考实现 A** | 完整多窗口支持 | — |
+| **参考实现 B** | 窗口快照（自动保存/恢复多窗口布局） | `参考实现源码/crates/kaku/src/snapshots.rs` |
 
 ## PureTerm 现状
 

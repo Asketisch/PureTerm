@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Kaku** | AI 人格文件（SOUL.md/STYLE.md/SKILL.md/MEMORY.md），启动时引导 LLM，自动策展 MEMORY.md | `Kaku-main/crates/kaku/src/soul/` |
+| **参考实现 A** | AI 人格文件（SOUL.md/STYLE.md/SKILL.md/MEMORY.md），启动时引导 LLM，自动策展 MEMORY.md | `参考实现源码/crates/kaku/src/soul/` |
 
 ## PureTerm 现状
 

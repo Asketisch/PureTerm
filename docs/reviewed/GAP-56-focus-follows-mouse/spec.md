@@ -20,7 +20,7 @@ X11 风格的焦点行为——鼠标移动到哪个 pane，哪个 pane 就自�
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | X11-style with CPS integration | `sources/FocusFollowsMouse/` |
+| **参考实现 A** | X11-style with CPS integration | `sources/FocusFollowsMouse/` |
 
 ## PureTerm 现状
 

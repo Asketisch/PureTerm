@@ -95,8 +95,8 @@ META: dict[str, dict] = {
         "category": "终端交互", "plan_type": "enhance", "priority": "P2", "effort": "M",
         "status": "in-progress", "closed": None,
     },
-    "17-sixel-kitty-graphics": {
-        "gap": "GAP-17", "dir": "GAP-17-sixel-kitty-graphics", "title": "Sixel & Kitty Graphics",
+    "17-sixel-graphics-protocol": {
+        "gap": "GAP-17", "dir": "GAP-17-sixel-graphics-protocol", "title": "Sixel & Chunked Graphics",
         "category": "终端交互", "plan_type": "feature", "priority": "P4", "effort": "L",
         "status": "not-started", "closed": None,
     },

@@ -146,11 +146,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 - GPU-accelerated terminal rendering with wgpu
-- Ghostty-style tab bar with SDF rounded corners
+- Modern rounded tab bar with SDF rounded corners
 - Split panes (horizontal and vertical)
 - SSH, Serial, Telnet session support
 - VTE parser with full CSI/ESC/OSC/DCS/APC/PM sequence handling
-- Kitty inline image protocol
+- Terminal inline image protocol
 - Shell integration via OSC 133 marks
 - egui-based settings panel (General, Appearance, Terminal, Profiles, Hotkeys)
 - Command palette and profile selector

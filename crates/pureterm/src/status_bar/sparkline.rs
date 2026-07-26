@@ -1,15 +1,15 @@
 //! GAP-24: sparkline mini-graph drawn via `iced::widget::canvas`.
 //!
-//! Ports iTerm2's `bezierPathWithValues` math: right-anchored polyline (newest
-//! sample at the right edge), auto-scaling ceiling (floored at 1.0 so an all-zero
-//! series still renders without divide-by-zero). Fixed 60-slot window; fewer
-//! samples occupy the right portion.
+//! Ports a right-anchored sparkline bezier math: right-anchored polyline
+//! (newest sample at the right edge), auto-scaling ceiling (floored at 1.0
+//! so an all-zero series still renders without divide-by-zero). Fixed
+//! 60-slot window; fewer samples occupy the right portion.
 
 use iced::mouse;
 use iced::widget::canvas::{self, Geometry};
 use iced::{Color, Point, Rectangle};
 
-/// Visible sample window (matches iTerm2's `maximumNumberOfValues`).
+/// Visible sample window (matches the mainstream terminal sparkline window size).
 pub const WINDOW: usize = 60;
 
 /// A self-contained canvas program rendering one time-series sparkline.

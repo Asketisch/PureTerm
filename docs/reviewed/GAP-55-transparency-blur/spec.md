@@ -20,8 +20,8 @@ reviewed: 2026-07-01
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Tabby** | 透明度/模糊（Windows/macOS，通过 Electron） | — |
-| **Kaku** | `window_background_opacity` + `macos_window_background_blur`（WezTerm 原生） | — |
+| **参考实现 A** | 透明度/模糊（Windows/macOS，通过 Electron） | — |
+| **参考实现 B** | `window_background_opacity` + `macos_window_background_blur`（业界终端原生） | — |
 
 ## PureTerm 现状
 

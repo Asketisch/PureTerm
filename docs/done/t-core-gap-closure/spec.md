@@ -15,7 +15,7 @@ v3_summary: 全部 6 个组件的 v3 收尾落地（graphics: GPU quad shader + 
 umbrella: true
 components:
   - gap: t-core-graphics
-    title: 图形协议 (Sixel + Kitty graphics + iTerm2 inline image 三选二)
+    title: 图形协议 (Sixel + 图形协议 + inline image 协议 三选二)
     priority: P0
     effort: M (10–14 d)
   - gap: t-core-shaper
@@ -45,11 +45,11 @@ moved_to_todo: 2026-07-02
 
 ## 概述
 
-对标 Kaku / cmux / Ghostty / iTerm2 / Nezha / Orca / Tabby / Warp 后，识别出 PureTerm 在终端模拟核心层的 6 块结构性短板。这是一份 umbrella spec，落地时会拆成 6 个独立 GAP-XX 分别走 done → reviewed 流程。
+对标业界主流终端后，识别出 PureTerm 在终端模拟核心层的 6 块结构性短板。这是一份 umbrella spec，落地时会拆成 6 个独立 GAP-XX 分别走 done → reviewed 流程。
 
 | # | P | 主题 | 估时 | 阻塞 |
 |---|---|---|---|---|
-| 1 | P0 | 图形协议 (Sixel + Kitty + iTerm2 inline 中至少两家) | 10–14 d | Agent 富媒体输出 |
+| 1 | P0 | 图形协议 (Sixel + 图形协议 + inline image 协议 中至少两家) | 10–14 d | Agent 富媒体输出 |
 | 2 | P0 | Harfbuzz shaper (rustybuzz) + cluster + advance | 8–12 d | 所有复杂脚本 |
 | 3 | P0 | tmux 控制模式 | 12–18 d | 会话迁移 |
 | 4 | P1 | Shell integ 覆盖 fish / nu / PowerShell / elvish | 5–8 d | Win/fish 用户 |
@@ -60,14 +60,14 @@ moved_to_todo: 2026-07-02
 
 ---
 
-## 1. 组件 t-core-graphics —— 图形协议 (Sixel + Kitty)
+## 1. 组件 t-core-graphics —— 图形协议 (Sixel + 图形协议)
 
 **优先级 P0，估时 M（10–14 d）。**
 
 ### PureTerm 现状（审计证据）
 
 **已存在（seam 可接入）**
-- `crates/pureterm/src/terminal_graphics.rs:1-78` —— `GraphicsPlacement { id, cols, rows, payload_len }` + FIFO `GraphicsCache` + `detect_protocol` 仅嗅探 `\x1b_G` (Kitty) / `\x1bPq` (Sixel)。
+- `crates/pureterm/src/terminal_graphics.rs:1-78` —— `GraphicsPlacement { id, cols, rows, payload_len }` + FIFO `GraphicsCache` + `detect_protocol` 仅嗅探 `\x1b_G` (图形协议) / `\x1bPq` (Sixel)。
 - `crates/pureterm/src/p4_runtime.rs:8-9,43-45` —— `P4Runtime` 已带 `terminal_graphics_cfg` + `graphics_cache` 字段。
 - `crates/pureterm/src/app_config.rs:1329-1332` —— `AppConfig::load_terminal_graphics` 读 `[terminal_graphics]` 表。
 - `crates/pureterm/default-config.toml:227` —— 默认 `[terminal_graphics]` block 已就绪。
@@ -86,15 +86,15 @@ moved_to_todo: 2026-07-02
 
 | 来源 | 协议 | 路径 |
 |------|------|------|
-| **Kaku** | Sixel | `/Users/admin/Code/Github/Terminal/Kaku-main/term/src/terminalstate/sixel.rs:7-126` (DCS 参数 + palette + 像素) |
-| **Kaku** | Sixel image-store | `/Users/admin/Code/Github/Terminal/Kaku-main/term/src/terminalstate/image.rs:55-260` |
-| **Kaku** | iTerm2 inline | `/Users/admin/Code/Github/Terminal/Kaku-main/term/src/terminalstate/iterm.rs` |
-| **iTerm2** | Sixel parser | `/Users/admin/Code/Github/Terminal/iTerm2-master/sources/VT100/VT100SixelParser.{h,m}` + `VT100Output.h:159` |
-| **iTerm2** | Inline image | `/Users/admin/Code/Github/Terminal/iTerm2-master/sources/VT100/VT100InlineImageHelper.h:2` |
-| **Ghostty** | Kitty API | `/Users/admin/Code/Github/Terminal/ghostty-main/src/lib_vt.zig:244-259` |
-| **Ghostty** | Kitty renderer | `/Users/admin/Code/Github/Terminal/ghostty-main/src/renderer/image.zig:342,469` |
-| **Warp** | markdown 替代路线 | `/Users/admin/Code/Github/Terminal/warp-main/crates/warp_terminal/src/model/block_id.rs:4-26` |
-| **Tabby** | xterm addon-image | `/Users/admin/Code/Github/Terminal/tabby-master/tabby-terminal/package.json:39` |
+| **参考实现 A** | Sixel | `参考实现源码/term/src/terminalstate/sixel.rs:7-126` (DCS 参数 + palette + 像素) |
+| **参考实现 A** | Sixel image-store | `参考实现源码/term/src/terminalstate/image.rs:55-260` |
+| **参考实现 A** | inline image 协议 | `参考实现源码/term/src/terminalstate/iterm.rs` |
+| **参考实现 B** | Sixel parser | `参考实现源码/sources/VT100/VT100SixelParser.{h,m}` + `VT100Output.h:159` |
+| **参考实现 B** | Inline image | `参考实现源码/sources/VT100/VT100InlineImageHelper.h:2` |
+| **参考实现 C** | 图形协议 API | `参考实现源码/src/lib_vt.zig:244-259` |
+| **参考实现 C** | 图形协议 renderer | `参考实现源码/src/renderer/image.zig:342,469` |
+| **参考实现 D** | markdown 替代路线 | `参考实现源码/crates/warp_terminal/src/model/block_id.rs:4-26` |
+| **参考实现 E** | xterm addon-image | `参考实现源码/tabby-terminal/package.json:39` |
 
 ### 实现方向
 
@@ -107,7 +107,7 @@ moved_to_todo: 2026-07-02
 7. `surface_snapshot.rs` `SurfaceSnapshot` 加 `images: Vec<ImagePlacement>` 字段，保跨重启 / instant replay 持久化。
 
 ### 验收
-- `tests_osc133` 邻居加 `tests_sixel` + `tests_kitty_graphics` 各 ≥6 用例。
+- `tests_osc133` 邻居加 `tests_sixel` + `tests_graphics_protocol` 各 ≥6 用例。
 - `image_atlas.rs` LRU 测试镜像 `glyph_atlas` 已有 11 个。
 - E2E `crates/pureterm/src/graphics_e2e.rs` 真跑 `img2sixel` / `kitty +kitten icat`，快照对比。
 
@@ -136,13 +136,13 @@ moved_to_todo: 2026-07-02
 
 | 来源 | 路径 |
 |------|------|
-| **Kaku** harfbuzz dep | `/Users/admin/Code/Github/Terminal/Kaku-main/Cargo.toml:133` `harfbuzz = { path = "deps/harfbuzz" }` |
-| **Ghostty** harfbuzz dep | `/Users/admin/Code/Github/Terminal/ghostty-main/build.zig.zon:70` |
-| **iTerm2** ligature logic | `/Users/admin/Code/Github/Terminal/iTerm2-master/Drawing/iTermAttributedStringBuilder.m:549-679` |
-| **Warp** grapheme index | `/Users/admin/Code/Github/Terminal/warp-main/crates/warp_terminal/src/model/grid/flat_storage/index.rs:35,50` |
-| **Warp** Mac CoreText | `/Users/admin/Code/Github/Terminal/warp-main/crates/warpui/src/platform/mac/text_layout.rs` |
-| **Ghostty** UAX #29 | `/Users/admin/Code/Github/Terminal/ghostty-main/src/unicode/grapheme.zig:5-41` |
-| **Tabby** addon-ligatures | `/Users/admin/Code/Github/Terminal/tabby-master/tabby-terminal/package.json:36-44` |
+| **参考实现 A** harfbuzz dep | `参考实现源码/Cargo.toml:133` `harfbuzz = { path = "deps/harfbuzz" }` |
+| **参考实现 C** harfbuzz dep | `参考实现源码/build.zig.zon:70` |
+| **参考实现 B** ligature logic | `参考实现源码/Drawing/AttributedStringBuilder.m:549-679` |
+| **参考实现 D** grapheme index | `参考实现源码/crates/warp_terminal/src/model/grid/flat_storage/index.rs:35,50` |
+| **参考实现 D** Mac CoreText | `参考实现源码/crates/warpui/src/platform/mac/text_layout.rs` |
+| **参考实现 C** UAX #29 | `参考实现源码/src/unicode/grapheme.zig:5-41` |
+| **参考实现 E** addon-ligatures | `参考实现源码/tabby-terminal/package.json:36-44` |
 
 ### 实现方向
 
@@ -181,16 +181,16 @@ moved_to_todo: 2026-07-02
 
 | 来源 | 路径 |
 |------|------|
-| **Warp** 控制模式状态机 | `/Users/admin/Code/Github/Terminal/warp-main/app/src/terminal/writeable_pty/pty_controller.rs:82-140` |
-| **Warp** SSH-tmux wrapper | `/Users/admin/Code/Github/Terminal/warp-main/app/src/lib.rs:1829-1837` |
-| **iTerm2** -CC | `/Users/admin/Code/Github/Terminal/iTerm2-master/sources/TmuxController.{h,m}` + `PTYSession.h:848` |
-| **Kaku** envelope parser | `/Users/admin/Code/Github/Terminal/Kaku-main/mux/src/tmux.rs` + `crates/wezterm-escape-parser/src/tmux_cc/mod.rs` |
-| **Ghostty** | `/Users/admin/Code/Github/Terminal/ghostty-main/src/termio/stream_handler.zig:73-430` |
-| **cmux** | `/Users/admin/Code/Github/Terminal/cmux-main/CLI/CMUXCLI+TmuxCompatSupport.swift` |
+| **参考实现 D** 控制模式状态机 | `参考实现源码/app/src/terminal/writeable_pty/pty_controller.rs:82-140` |
+| **参考实现 D** SSH-tmux wrapper | `参考实现源码/app/src/lib.rs:1829-1837` |
+| **参考实现 B** -CC | `参考实现源码/sources/TmuxController.{h,m}` + `PTYSession.h:848` |
+| **参考实现 A** envelope parser | `参考实现源码/mux/src/tmux.rs` + `crates/wezterm-escape-parser/src/tmux_cc/mod.rs` |
+| **参考实现 C** | `参考实现源码/src/termio/stream_handler.zig:73-430` |
+| **cmux** | `参考实现源码/CLI/CMUXCLI+TmuxCompatSupport.swift` |
 
 ### 实现方向
 
-1. 新建 `crates/pureterm/src/tmux_cc/` 目录（`envelope.rs` / `pty.rs` / `backend.rs` / `mirror.rs`），结构对齐 Kaku `mux/src/tmux.rs`。
+1. 新建 `crates/pureterm/src/tmux_cc/` 目录（`envelope.rs` / `pty.rs` / `backend.rs` / `mirror.rs`），结构对齐业界参考实现 `mux/src/tmux.rs`。
 2. `tmux_cc/envelope.rs` —— 解析 8 种核心 envelope：`%begin %0 ...` / `%end` / `%output` / `%input` / `%session_changed` / `%windows` + `error` / `pause` / `subscription-changed`。
 3. `tmux_cc/pty.rs` —— 启 `tmux -CC new-session -A` / `attach -t`，持 alacritty `tty::new`，stdout 喂 envelope parser。
 4. `tmux_cc/backend.rs` —— `Surface::TmuxControl(TmuxControlPty)` variant，挂 `split_tree.rs:50-55`。
@@ -231,12 +231,12 @@ moved_to_todo: 2026-07-02
 
 | 来源 | 路径 |
 |------|------|
-| **Ghostty** 全 5 种 | `/Users/admin/Code/Github/Terminal/ghostty-main/src/shell-integration/{bash,zsh,fish,nushell,elvish}/` |
-| **Ghostty** bash | `/Users/admin/Code/Github/Terminal/ghostty-main/src/shell-integration/bash/ghostty.bash:191-323` |
-| **Ghostty** bash-preexec | `/Users/admin/Code/Github/Terminal/ghostty-main/src/shell-integration/bash/bash-preexec.sh:1` |
-| **Warp** bootstrap | `/Users/admin/Code/Github/Terminal/warp-main/app/assets/bundled/bootstrap/` (含 `pwsh.ps1`, `bash_body.sh`, `zsh_body.sh`) |
-| **iTerm2** prompt API | `/Users/admin/Code/Github/Terminal/iTerm2-master/api/library/python/iterm2/iterm2/prompts.py` |
-| **iTerm2** Claude hook | `/Users/admin/Code/Github/Terminal/iTerm2-master/sources/ClaudeCode/ClaudeCodeHookEvent.swift` |
+| **参考实现 C** 全 5 种 | `参考实现源码/src/shell-integration/{bash,zsh,fish,nushell,elvish}/` |
+| **参考实现 C** bash | `参考实现源码/src/shell-integration/bash/ghostty.bash:191-323` |
+| **参考实现 C** bash-preexec | `参考实现源码/src/shell-integration/bash/bash-preexec.sh:1` |
+| **参考实现 D** bootstrap | `参考实现源码/app/assets/bundled/bootstrap/` (含 `pwsh.ps1`, `bash_body.sh`, `zsh_body.sh`) |
+| **参考实现 B** prompt API | `参考实现源码/api/library/python/iterm2/iterm2/prompts.py` |
+| **参考实现 B** Claude hook | `参考实现源码/sources/ClaudeCode/ClaudeCodeHookEvent.swift` |
 
 ### 实现方向
 
@@ -277,11 +277,11 @@ moved_to_todo: 2026-07-02
 | 来源 | 路径 |
 |------|------|
 | **alacritty** vendored ConPTY | `crates/alacritty_terminal/src/tty/windows/conpty.rs:107` 起 |
-| **Warp** bundled conpty.dll | `/Users/admin/Code/Github/Terminal/warp-main/crates/warp_util/src/assets.rs:8` |
-| **Tabby** Win 检测 | `/Users/admin/Code/Github/Terminal/tabby-master/tabby-local/src/components/shellSettingsTab.component.ts:9-18` |
-| **Tabby** Win pty | `/Users/admin/Code/Github/Terminal/tabby-master/tabby-electron/src/pty.ts:14` |
-| **Nezha** platform 抽象 | `/Users/admin/Code/Github/Terminal/nezha-main/src-tauri/src/platform/{unix,windows,mod}.rs` |
-| **Orca** 三平台并列 | `/Users/admin/Code/Github/Terminal/orca-main/native/computer-use-{linux,macos,windows}` |
+| **参考实现 D** bundled conpty.dll | `参考实现源码/crates/warp_util/src/assets.rs:8` |
+| **参考实现 E** Win 检测 | `参考实现源码/tabby-local/src/components/shellSettingsTab.component.ts:9-18` |
+| **参考实现 E** Win pty | `参考实现源码/tabby-electron/src/pty.ts:14` |
+| **Nezha** platform 抽象 | `参考实现源码/src-tauri/src/platform/{unix,windows,mod}.rs` |
+| **Orca** 三平台并列 | `参考实现源码/native/computer-use-{linux,macos,windows}` |
 
 ### 实现方向
 
@@ -323,11 +323,11 @@ moved_to_todo: 2026-07-02
 
 | 来源 | 路径 |
 |------|------|
-| **Tabby** plugin 生态 | `/Users/admin/Code/Github/Terminal/tabby-master/tabby-core/src/api/{profileProvider, hostApp, hotkeyProvider, hostWindow, toolbarButtonProvider, selector, tabContextMenuProvider, configProvider, fileProvider, mainProcess, menu, platform, theme, tabRecovery, hotkeyProvider}.ts` |
-| **Tabby** 加载 | `/Users/admin/Code/Github/Terminal/tabby-master/tabby-electron/src/colorSchemes.ts:10-31` + `platform.service.ts:74-75` |
-| **Kaku** Lua API | `/Users/admin/Code/Github/Terminal/Kaku-main/kaku-gui/src/scripting/` + `lua-api-crates/*` |
-| **Warp** workflows | `/Users/admin/Code/Github/Terminal/warp-main/crates/integration/src/test/workflows.rs` + `crates/warp-workflows` |
-| **iTerm2** status bar API | `/Users/admin/Code/Github/Terminal/iTerm2-master/api/library/python/iterm2/iterm2/statusbar.py` |
+| **参考实现 E** plugin 生态 | `参考实现源码/tabby-core/src/api/{profileProvider, hostApp, hotkeyProvider, hostWindow, toolbarButtonProvider, selector, tabContextMenuProvider, configProvider, fileProvider, mainProcess, menu, platform, theme, tabRecovery, hotkeyProvider}.ts` |
+| **参考实现 E** 加载 | `参考实现源码/tabby-electron/src/colorSchemes.ts:10-31` + `platform.service.ts:74-75` |
+| **参考实现 A** Lua API | `参考实现源码/kaku-gui/src/scripting/` + `lua-api-crates/*` |
+| **参考实现 D** workflows | `参考实现源码/crates/integration/src/test/workflows.rs` + `crates/warp-workflows` |
+| **参考实现 B** status bar API | `参考实现源码/api/library/python/iterm2/iterm2/statusbar.py` |
 
 ### 实现方向
 
@@ -387,7 +387,7 @@ moved_to_todo: 2026-07-02
 | 周 | 主题 | 负责 |
 |---|---|---|
 | W1–W2 | t-core-shaper (Rustybuzz) + t-core-graphics Sixel 部分 | SE-A / SE-B |
-| W3–W4 | t-core-graphics (Kitty + iTerm2 inline) | SE-B |
+| W3–W4 | t-core-graphics (图形协议 + inline image 协议) | SE-B |
 | W3–W5 | t-core-tmux-cc | SE-C |
 | W6–W7 | t-core-shell-integ (fish/nu/PowerShell/elvish) | SE-A |
 | W6–W9 | t-core-windows-conpty（穿 t-core-tmux-cc 收尾间隙） | SE-D |
@@ -398,9 +398,9 @@ moved_to_todo: 2026-07-02
 ## 9. 不在本 Roadmap（下轮）
 
 - Reflow on resize 显式可开关
-- Semantic zones（iTerm2 独有）
-- Cloud shared session（Warp Drive，需要后端）
-- Mobile / web runtime（Ghostty/Warp WASM、Orca mobile）
+- Semantic zones（业界部分终端独有）
+- Cloud shared session（云端共享会话，需要后端）
+- Mobile / web runtime（业界终端 WASM、Orca mobile）
 - Computer-use sandbox（已有 GAP-04，需补 Linux/Windows）
 
 ---

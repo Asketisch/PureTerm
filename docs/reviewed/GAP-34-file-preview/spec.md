@@ -20,7 +20,7 @@ closed: 2026-06-29
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
 | **cmux** | 图片/PDF（缩略图）/Text/QuickLook/媒体播放 | — |
-| **iTerm2** | QuickLook for selected text + Portholes（JSON/Markdown/Text in-terminal viewers） | `sources/QuickLook/` (iTermQuickLookController), `sources/Portholes/` (JSONPortholeRenderer, MarkdownPortholeRenderer, TextViewPorthole) |
+| **参考实现 A** | QuickLook for selected text + Portholes（JSON/Markdown/Text in-terminal viewers） | `sources/QuickLook/` (QuickLookController), `sources/Portholes/` (JSONPortholeRenderer, MarkdownPortholeRenderer, TextViewPorthole) |
 
 ## PureTerm 现状
 

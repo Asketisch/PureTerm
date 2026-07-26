@@ -19,8 +19,8 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Kaku** | `# <描述>` 在提示符生成 shell 命令 | `Kaku-main/crates/kaku/src/natural_language.rs` |
-| **Warp** | AI agent 可生成命令，但无 `#` 快捷语法 | — |
+| **参考实现 A** | `# <描述>` 在提示符生成 shell 命令 | `参考实现源码/crates/kaku/src/natural_language.rs` |
+| **参考实现 B** | AI agent 可生成命令，但无 `#` 快捷语法 | — |
 
 ## PureTerm 现状
 
@@ -30,7 +30,7 @@ closed: 2026-06-29
 
 **P2 — 终端增强**
 
-自然语言命令是 AI 终端的便捷入口，比打开 Chat Panel 更轻量。Kaku 将其作为核心体验。
+自然语言命令是 AI 终端的便捷入口，比打开 Chat Panel 更轻量。业界将其作为核心体验。
 
 ## 工作量
 

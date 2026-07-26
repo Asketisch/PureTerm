@@ -20,8 +20,8 @@ e2e: manual-e2e/gap-32-git-integration.md
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | 40+ 状态栏组件：CPU/memory/network utilization, git state, battery, clock, job status, search field, snippets, sparklines, progress, composer, triggers | `sources/StatusBar/Components/` (iTermCPUUtilization, iTermMemoryUtilization, iTermNetworkUtilization, iTermGitState, iTermStatusBarBatteryComponent, iTermStatusBarClockComponent, iTermStatusBarJobComponent, iTermStatusBarSearchFieldComponent, iTermStatusBarSnippetComponent, iTermStatusBarSparklinesComponent, iTermStatusBarProgressComponent, iTermsStatusBarComposerComponent, iTermStatusBarTriggersComponent) |
-| **Kaku** | 无明确状态栏 | — |
+| **参考实现 A** | 40+ 状态栏组件：CPU/memory/network utilization, git state, battery, clock, job status, search field, snippets, sparklines, progress, composer, triggers | `sources/StatusBar/Components/` (CpuUtilization, MemoryUtilization, NetworkUtilization, GitState, StatusBarBatteryComponent, StatusBarClockComponent, StatusBarJobComponent, StatusBarSearchFieldComponent, StatusBarSnippetComponent, StatusBarSparklinesComponent, StatusBarProgressComponent, StatusBarComposerComponent, StatusBarTriggersComponent) |
+| **参考实现 B** | 无明确状态栏 | — |
 
 ## PureTerm 现状
 
@@ -36,13 +36,13 @@ e2e: manual-e2e/gap-32-git-integration.md
 
 **GAP-09 扩展（2026-06-28）：** 状态栏新增 `Notifications` 段（🔔 未读计数，`[notification].enabled` 门控）。
 
-**defer 后续：** 搜索框 / snippet / composer / triggers progress 计数（iTerm2 有、PureTerm MVP 未做）。
+**defer 后续：** 搜索框 / snippet / composer / triggers progress 计数（业界终端有、PureTerm MVP 未做）。
 
 ## 优先级
 
 **P2 — 终端增强**
 
-Status Bar 是开发者实时信息的入口，iTerm2 的 40+ 组件是其核心优势。
+Status Bar 是开发者实时信息的入口，业界终端的 40+ 组件是其核心优势。
 
 ## 工作量
 

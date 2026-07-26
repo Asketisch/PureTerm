@@ -19,8 +19,8 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | Full bidirectional text support with RTL annotation | `sources/Drawing/BidiDisplayInfo.swift` |
-| **Ghostty** | 完整 Unicode BiDi 支持 | `src/unicode/` |
+| **参考实现 A** | Full bidirectional text support with RTL annotation | `sources/Drawing/BidiDisplayInfo.swift` |
+| **参考实现 B** | 完整 Unicode BiDi 支持 | `src/unicode/` |
 
 ## PureTerm 现状
 

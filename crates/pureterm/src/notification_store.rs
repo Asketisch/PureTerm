@@ -17,7 +17,7 @@ pub use alacritty_terminal::event::{Notification, NotifySource};
 /// One notification as recorded in the history (notification + provenance).
 #[derive(Debug, Clone)]
 pub struct NotificationEntry {
-    /// Monotonic store-assigned id (distinct from the kitty OSC 99 `i`).
+    /// Monotonic store-assigned id (distinct from the OSC 99 `i`).
     pub seq: u64,
     pub notification: Notification,
     pub pane_id: PaneId,
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn same_id_replaces_entry() {
-        // OSC 99 dedup safety net: same `i` replaces the prior entry (kitty update).
+        // OSC 99 dedup safety net: same `i` replaces the prior entry (protocol update).
         let mut s = NotificationStore::new(10);
         let mut a = notif(NotifySource::Osc99, "first");
         a.id = Some("job1".to_string());

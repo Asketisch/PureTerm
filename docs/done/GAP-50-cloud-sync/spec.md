@@ -19,7 +19,7 @@ closed: 2026-07-02
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | Settings/preferences 云端同步 | `app/src/settings/cloud_preferences_syncer.rs` |
+| **参考实现 A** | Settings/preferences 云端同步 | `app/src/settings/cloud_preferences_syncer.rs` |
 
 ## PureTerm 现状
 

@@ -88,7 +88,7 @@ mod image_decode_worker;
 #[cfg(test)]
 mod graphics_render_tests;
 /// T-core-graphics v3 E2E (checklist A.4):真启 shell 跑 `img2sixel` /
-/// `kitty +kitten icat`。默认 `#[ignore]`,需要外部工具链时手动跑。
+/// 外部参考图形协议发射器。默认 `#[ignore]`,需要外部工具链时手动跑。
 #[cfg(all(test, unix))]
 mod graphics_e2e;
 /// T-core-tmux-cc v3 E2E (checklist C.6):真启 `tmux -CC`,3-window +
@@ -192,7 +192,7 @@ mod terminal_shader;
 mod vi_mode_handler;
 /// GAP-05: Voice input (push-to-talk scaffold).
 mod voice_input;
-/// GAP-17: Sixel / Kitty graphics protocol scaffold.
+/// GAP-17: Sixel / chunked graphics protocol scaffold.
 mod terminal_graphics;
 /// GAP-20: macOS glass / vibrancy effect.
 // Body is already platform-portable: `apply_glass_effect` no-ops on non-macOS.
@@ -279,12 +279,12 @@ pub(crate) fn shortcuts_preset(name: &str) {
         "default" => include_str!("../../../resources/presets/default.toml").to_string(),
         "vim" => include_str!("../../../resources/presets/vim.toml").to_string(),
         "tmux" => include_str!("../../../resources/presets/tmux.toml").to_string(),
-        "iterm" => include_str!("../../../resources/presets/iterm.toml").to_string(),
+        "macos" => include_str!("../../../resources/presets/macos.toml").to_string(),
         "vscode" => include_str!("../../../resources/presets/vscode.toml").to_string(),
         "agent-triage" => include_str!("../../../resources/presets/agent-triage.toml").to_string(),
         _ => {
             eprintln!("Unknown preset: {name}");
-            eprintln!("Available: default, vim, tmux, iterm, vscode, agent-triage");
+            eprintln!("Available: default, vim, tmux, macos, vscode, agent-triage");
             std::process::exit(1);
         }
     };

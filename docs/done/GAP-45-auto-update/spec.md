@@ -19,7 +19,7 @@ closed: 2026-07-02
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Tabby** | electron-updater + keygen.sh + GitHub Actions 夜间构建 | `tabby-core/src/services/updater.service.ts` |
+| **参考实现 A** | electron-updater + keygen.sh + GitHub Actions 夜间构建 | `tabby-core/src/services/updater.service.ts` |
 | **cmux** | Sparkle 框架 | `Sources/Updater/SparkleController.swift` |
 
 ## PureTerm 现状

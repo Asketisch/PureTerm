@@ -36,7 +36,7 @@ _（无）_
 
 | GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
 |-----|------|----------|-----------|------|
-| GAP-51 | 块级输出（block-based output，Warp 风格；arch 类，scaffold done，完整重构待后端冲刺） | arch | P2 | [spec](todo/GAP-51-block-based-output/spec.md) |
+| GAP-51 | 块级输出（block-based output，业界风格；arch 类，scaffold done，完整重构待后端冲刺） | arch | P2 | [spec](todo/GAP-51-block-based-output/spec.md) |
 
 ## 视觉（0）
 

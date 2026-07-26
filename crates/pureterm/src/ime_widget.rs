@@ -273,7 +273,7 @@ mod cluster_demo {
     #[allow(dead_code)]
     fn cluster_demo_e2e_documentation() {
         // 1. Boot `pureterm` on a host with a display.
-        // 2. Run `kitty +kitten unicode-test` in the terminal pane.
+        // 2. Run a unicode-test emitter in the terminal pane.
         // 3. The terminal pane's IME wrapper receives a composing event
         //    with a `preedit: Some("…")` byte stream.
         // 4. For each byte offset in the preedit stream, call

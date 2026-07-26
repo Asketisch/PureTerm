@@ -126,7 +126,7 @@ winit `ApplicationHandler` 的实现，持有整个应用状态：
 2. `compute_layout()` 获取所有窗格的 `PaneRect`（减去标签栏高度 `tab_bar.height`，已缩放为物理像素）
 3. 对每个窗格 `build_vertices(snapshot, ..., viewport)` 生成背景+字形顶点
 4. 合并所有窗格顶点/索引，添加分隔线、焦点边框、上下文菜单顶点
-5. `render_tab_bar_overlay()` 绘制 Ghostty 风格标签栏（所有尺寸使用 TabBarState 缓存的物理像素值）
+5. `render_tab_bar_overlay()` 绘制现代圆角标签栏（所有尺寸使用 TabBarState 缓存的物理像素值）
 6. `draw_to_surface()` 渲染终端内容（返回 frame 不 present）
 7. 若设置面板可见 → `egui_backend.run()` + `render()` 用 `LoadOp::Load` 覆盖 → `frame.present()`
 8. 否则直接 `frame.present()`

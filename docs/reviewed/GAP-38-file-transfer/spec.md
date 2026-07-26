@@ -19,8 +19,8 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | SCP/SFTP support，拖拽上传 | `sources/FileTransfer/` (FileTransferManager, SCPFile, SCPPath, TerminalFile, TransferrableFile) |
-| **Tabby** | Zmodem 文件传输（通过 zmodem.js） | — |
+| **参考实现 A** | SCP/SFTP support，拖拽上传 | `sources/FileTransfer/` (FileTransferManager, SCPFile, SCPPath, TerminalFile, TransferrableFile) |
+| **参考实现 B** | Zmodem 文件传输（通过 zmodem.js） | — |
 
 ## PureTerm 现状
 

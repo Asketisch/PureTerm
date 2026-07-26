@@ -19,9 +19,9 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | `iTermTabBarControlView`（可自定义外观、拖拽排序、按钮关闭） | `sources/TerminalView/` |
-| **Tabby** | 完整 Tab Bar（支持任意边停靠） | — |
-| **Kaku** | 完整 Tab 支持（Cmd+T/W/1-9） | — |
+| **参考实现 A** | `TabBarControlView`（可自定义外观、拖拽排序、按钮关闭） | `sources/TerminalView/` |
+| **参考实现 B** | 完整 Tab Bar（支持任意边停靠） | — |
+| **参考实现 C** | 完整 Tab 支持（Cmd+T/W/1-9） | — |
 
 ## PureTerm 现状
 

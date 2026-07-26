@@ -19,9 +19,9 @@ closed: 2026-06-28
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Warp** | Tree-sitter 语义 chunking + Merkle tree 增量同步 + 嵌入向量，跨 session/config 搜索 | `crates/ai/src/index/full_source_code_embedding/` |
+| **参考实现 A** | Tree-sitter 语义 chunking + Merkle tree 增量同步 + 嵌入向量，跨 session/config 搜索 | `crates/ai/src/index/full_source_code_embedding/` |
 | **cmux** | 全局搜索 ripgrep + 搜索索引（FileSearchRipgrepParser），非语义级别 | `Sources/` (搜索索引相关) |
-| **iTerm2** | Open Quickly 自建索引（FileSearchRipgrepParser），关键词级别 | `sources/` (搜索索引相关) |
+| **参考实现 B** | Open Quickly 自建索引（FileSearchRipgrepParser），关键词级别 | `sources/` (搜索索引相关) |
 
 ## PureTerm 现状
 
@@ -31,7 +31,7 @@ closed: 2026-06-28
 
 **P1 — AI 差异化能力**
 
-Codebase Indexing 是 AI agent 深度理解代码的基础，Warp 将其作为核心 AI 能力。对 PureTerm 而言，这是从"终端工具"升级为"AI 开发环境"的关键一步。
+Codebase Indexing 是 AI agent 深度理解代码的基础，业界将其作为核心能力。对 PureTerm 而言，这是从"终端工具"升级为"AI 开发环境"的关键一步。
 
 ## 工作量
 

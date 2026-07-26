@@ -53,8 +53,8 @@ pub enum TerminalEvent {
     /// GAP-09: terminal bell (0x07) — surfaced as an additional "needs
     /// attention" signal (was previously dropped by the `_ => return` below).
     Bell,
-    /// T-core-graphics: a decoded graphics image (Sixel / Kitty / iTerm2
-    /// inline). Surfaced so the GUI's `ImageStore` can pick it up and the
+    /// T-core-graphics: a decoded graphics image (Sixel / chunked-graphics
+    /// / inline image). Surfaced so the GUI's `ImageStore` can pick it up and the
     /// renderer can blit it onto the grid.
     GraphicsImage(alacritty_terminal::event::GraphicsImage),
 }

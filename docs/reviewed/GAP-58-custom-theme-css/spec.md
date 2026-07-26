@@ -20,8 +20,8 @@ reviewed: 2026-07-01
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Tabby** | 完整 Theme API，自定义 CSS 注入，社区贡献配色方案 | `tabby-core/src/api/theme.ts`, `tabby-community-color-schemes/src/` |
-| **Kaku** | 内置主题（Kaku Dark/Light），字体（JetBrains Mono），自动暗/亮切换 | `Kaku-main/crates/termwiz/src/color.rs` |
+| **参考实现 A** | 完整 Theme API，自定义 CSS 注入，社区贡献配色方案 | `tabby-core/src/api/theme.ts`, `tabby-community-color-schemes/src/` |
+| **参考实现 B** | 内置主题（参考实现 Dark/Light），字体（JetBrains Mono），自动暗/亮切换 | `参考实现源码/crates/termwiz/src/color.rs` |
 
 ## PureTerm 现状
 

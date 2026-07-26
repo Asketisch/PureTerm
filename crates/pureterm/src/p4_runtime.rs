@@ -8,13 +8,13 @@ pub struct P4Features {
     pub terminal_graphics_cfg: crate::terminal_graphics::TerminalGraphicsConfig,
     pub graphics_cache: crate::terminal_graphics::GraphicsCache,
     /// T-core-closure: live image store. The renderer pulls decoded RGBA
-    /// (or encoded PNG) payloads from here; the chunked Kitty reassembler
+    /// (or encoded PNG) payloads from here; the chunked-graphics reassembler
     /// feeds it. Replaces the previous dead-code `GraphicsCache` field
     /// (kept for backward compatibility — `GraphicsCache` is still used by
     /// legacy callers; new code should use `image_store`).
     pub image_store: crate::terminal_graphics::ImageStore,
-    /// T-core-closure: cross-read Kitty graphics chunk reassembler.
-    pub kitty_assembler: crate::terminal_graphics::KittyAssembler,
+    /// T-core-closure: cross-read chunked-graphics reassembler.
+    pub graphics_assembler: crate::terminal_graphics::GraphicsAssembler,
     pub glass_cfg: crate::macos_glass_effect::GlassEffectConfig,
     pub touch_bar_cfg: crate::macos_touch_bar::TouchBarConfig,
     pub tab_bar_cfg: crate::visual_tab_bar::VisualTabBarConfig,
@@ -80,7 +80,7 @@ impl P4Features {
                 terminal_graphics_cfg.max_images,
                 terminal_graphics_cfg.max_image_bytes,
             ),
-            kitty_assembler: crate::terminal_graphics::KittyAssembler::new(),
+            graphics_assembler: crate::terminal_graphics::GraphicsAssembler::new(),
             glass_cfg: crate::app_config::AppConfig::load_glass_effect(path),
             touch_bar_cfg: crate::app_config::AppConfig::load_touch_bar(path),
             tab_bar_cfg: crate::app_config::AppConfig::load_visual_tab_bar(path),

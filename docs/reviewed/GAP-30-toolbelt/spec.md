@@ -19,7 +19,7 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | 11 tools: command history, directories, jobs, named marks, notes, paste history, profiles, snippets, status, captured output, web view | `sources/Toolbelt/` (ToolCommandHistoryView, ToolDirectoriesView, ToolJobs, ToolNamedMarks, ToolNotes, ToolPasteHistory, ToolProfiles, iTermToolSnippets, ToolStatus, CapturedOutput, ToolWebView) |
+| **参考实现 A** | 11 tools: command history, directories, jobs, named marks, notes, paste history, profiles, snippets, status, captured output, web view | `sources/Toolbelt/` (ToolCommandHistoryView, ToolDirectoriesView, ToolJobs, ToolNamedMarks, ToolNotes, ToolPasteHistory, ToolProfiles, ToolSnippets, ToolStatus, CapturedOutput, ToolWebView) |
 
 ## PureTerm 现状
 
@@ -29,7 +29,7 @@ closed: 2026-06-29
 
 **P3 — 兼容性/国际化**
 
-Toolbelt 是 iTerm2 的特色功能，但大部分工具可通过 CLI 替代。
+Toolbelt 是 业界终端的特色功能，但大部分工具可通过 CLI 替代。
 
 ## 工作量
 

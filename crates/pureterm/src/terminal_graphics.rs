@@ -1,4 +1,4 @@
-//! T-core-graphics: Sixel / Kitty graphics / iTerm2 inline image —
+//! T-core-graphics: Sixel / chunked graphics protocol / inline image —
 //! the GUI-side half. The byte-level parser lives in
 //! `alacritty_terminal::event_loop::scan_graphics`; this module owns the
 //! in-memory image store and its integration with the surface snapshot /
@@ -7,9 +7,9 @@
 //! ## Model
 //!
 //! 1. The terminal's event loop emits `Event::GraphicsImage` for every
-//!    fully-assembled single-chunk image (Sixel / `a=T` Kitty / iTerm2
-//!    inline). Multi-chunk Kitty images are assembled here, in [`ImageStore`],
-//!    keyed by image id (`i=…`).
+//!    fully-assembled single-chunk image (Sixel / `a=T` chunked-graphics /
+//!    inline image). Multi-chunk graphics images are assembled here, in
+//!    [`ImageStore`], keyed by image id (`i=…`).
 //! 2. The renderer reads from [`ImageStore`] when its atlas has a free slot
 //!    and the image's grid placement overlaps the viewport.
 //! 3. Scrollback pruning trims the store's image set to entries that still
@@ -17,33 +17,33 @@
 //!    scrollback are removed, anchors inside are kept — the spec calls this
 //!    the "scrollback prune" pass).
 //!
-//! v1 deliberately keeps the surface small: the Sixel/Kitty byte parser is
+//! v1 deliberately keeps the surface small: the Sixel/graphics byte parser is
 //! real and the store is real; the GPU blit path is wired in v2.
 
 use std::collections::{HashMap, VecDeque};
 
 use alacritty_terminal::event::GraphicsImage;
 
-/// Reassembled Kitty graphics chunk (only the `i=` id and the base64
+/// Reassembled chunked-graphics chunk (only the `i=` id and the base64
 /// payload; the renderer reads `width` / `height` from the chunked
 /// metadata when the final chunk arrives).
 #[derive(Debug, Clone)]
-struct KittyChunk {
+struct GraphicsChunk {
     /// Payload bytes of this chunk (decoded from base64).
     bytes: Vec<u8>,
     /// Final chunk? (`m=1`)
     final_chunk: bool,
 }
 
-/// Kitty graphics multi-chunk reassembler. A single image id maps to a
+/// Chunked-graphics multi-chunk reassembler. A single image id maps to a
 /// FIFO of chunks; the final chunk's arrival flushes the concatenation
 /// into a single [`GraphicsImage`].
 #[derive(Debug, Clone, Default)]
-pub struct KittyAssembler {
-    by_id: HashMap<u32, VecDeque<KittyChunk>>,
+pub struct GraphicsAssembler {
+    by_id: HashMap<u32, VecDeque<GraphicsChunk>>,
 }
 
-impl KittyAssembler {
+impl GraphicsAssembler {
     pub fn new() -> Self {
         Self { by_id: HashMap::new() }
     }
@@ -55,8 +55,8 @@ impl KittyAssembler {
     ///
     /// `format`, `width`, `height`, and `cols`/`rows` come from the final
     /// chunk's metadata. The first chunk's metadata is discarded — the
-    /// Kitty spec only requires the metadata to be repeated on every chunk,
-    /// so the cleanest source is whatever the last chunk carries.
+    /// chunked-graphics spec only requires the metadata to be repeated on
+    /// every chunk, so the cleanest source is whatever the last chunk carries.
     pub fn push(
         &mut self,
         id: u32,
@@ -69,7 +69,7 @@ impl KittyAssembler {
         final_chunk: bool,
     ) -> Option<GraphicsImage> {
         let entry = self.by_id.entry(id).or_default();
-        entry.push_back(KittyChunk { bytes, final_chunk });
+        entry.push_back(GraphicsChunk { bytes, final_chunk });
         if !final_chunk {
             return None;
         }
@@ -117,21 +117,21 @@ impl KittyAssembler {
     }
 }
 
-/// In-memory store of decoded graphics images, keyed by image id (Kitty)
-/// or insertion order (Sixel / iTerm2, which carry no id). The renderer
-/// reads from here when blitting.
+/// In-memory store of decoded graphics images, keyed by image id (chunked
+/// graphics protocol) or insertion order (Sixel / inline image, which
+/// carry no id). The renderer reads from here when blitting.
 #[derive(Debug, Clone)]
 pub struct ImageStore {
-    /// id → image (Kitty).
+    /// id → image (chunked graphics protocol).
     by_id: HashMap<u32, StoredImage>,
-    /// Sixel / iTerm2 images, indexed by insertion order. Eviction is FIFO
-    /// when `max_entries` is reached.
+    /// Sixel / inline-image images, indexed by insertion order. Eviction
+    /// is FIFO when `max_entries` is reached.
     sequential: VecDeque<StoredImage>,
     /// Monotonic z counter assigned at insertion time.
     z_next: u32,
-    /// Hard cap on total images. Oldest Sixel/iTerm2 entries are evicted
-    /// first; Kitty images keyed by `id` are pinned while the chunked
-    /// reassembler holds them.
+    /// Hard cap on total images. Oldest Sixel/inline-image entries are
+    /// evicted first; chunked-graphics images keyed by `id` are pinned
+    /// while the reassembler holds them.
     max_entries: usize,
     /// Optional byte cap; the per-image size is checked on insertion.
     max_image_bytes: usize,
@@ -176,11 +176,11 @@ impl ImageStore {
         let stored = StoredImage { image: image.clone(), bytes };
 
         if image.placement.id != 0 {
-            // Kitty: keyed by id; a retransmission replaces the previous
-            // content for the same id.
+            // Chunked graphics: keyed by id; a retransmission replaces the
+            // previous content for the same id.
             self.by_id.insert(image.placement.id, stored);
         } else {
-            // Sixel / iTerm2: sequential FIFO.
+            // Sixel / inline image: sequential FIFO.
             self.sequential.push_back(stored);
             while self.sequential.len() + self.by_id.len() > self.max_entries {
                 self.sequential.pop_front();
@@ -189,21 +189,21 @@ impl ImageStore {
         Some(z)
     }
 
-    /// Look up an image by id (Kitty). Returns `None` if absent.
+    /// Look up an image by id (chunked graphics protocol). Returns `None` if absent.
     pub fn get_by_id(&self, id: u32) -> Option<&GraphicsImage> {
         self.by_id.get(&id).map(|s| &s.image)
     }
 
-    /// T-core-graphics v3: iterate the sequential (Sixel / iTerm2) image
-    /// queue in insertion order. Used by `iced_app.rs` to populate the
-    /// per-frame `image_quad_draws` list.
+    /// T-core-graphics v3: iterate the sequential (Sixel / inline-image)
+    /// image queue in insertion order. Used by `iced_app.rs` to populate
+    /// the per-frame `image_quad_draws` list.
     pub fn sequential(&self) -> impl Iterator<Item = &GraphicsImage> {
         self.sequential.iter().map(|s| &s.image)
     }
 
-    /// T-core-graphics v3: iterate the id-keyed (Kitty) image map. The
-    /// iterator order is `HashMap`'s (effectively random); callers that
-    /// need stable ordering should sort by `placement.z` (which
+    /// T-core-graphics v3: iterate the id-keyed (chunked graphics) image
+    /// map. The iterator order is `HashMap`'s (effectively random); callers
+    /// that need stable ordering should sort by `placement.z` (which
     /// `image_quad_draws` already does).
     pub fn by_id_values(&self) -> impl Iterator<Item = &GraphicsImage> {
         self.by_id.values().map(|s| &s.image)
@@ -232,9 +232,9 @@ impl ImageStore {
             }
             true
         });
-        // Kitty images keyed by id are pinned — the spec says "scrollback
-        // bookkeeping is keyed by grid placement", and a chunked image that
-        // hasn't been completed yet has no grid placement to prune against.
+        // Chunked-graphics images keyed by id are pinned — the spec says
+        // "scrollback bookkeeping is keyed by grid placement", and a chunked
+        // image that hasn't been completed yet has no grid placement to prune against.
         dropped
     }
 }
@@ -243,14 +243,18 @@ impl ImageStore {
 ///
 /// This is the byte-prefix sniff used by the scrollback / status surfaces
 /// to decide whether a chunk deserves a scan pass; the real parse lives in
-/// `alacritty_terminal::event_loop::scan_graphics`.
+/// `alacritty_terminal::event_loop::scan_graphics`. Returned IDs are
+/// internal stable identifiers (see inline comments).
 pub fn detect_protocol(chunk: &[u8]) -> Option<&'static str> {
+    // Protocol IDs are internal (not exposed to users); they identify which
+    // escape-sequence family a chunk belongs to, for the scrollback/status
+    // scan decision. See `alacritty_terminal::event_loop::scan_graphics`.
     if chunk.starts_with(b"\x1b_G") {
-        Some("kitty")
+        Some("graphics") // APC `_` — chunked graphics protocol
     } else if chunk.starts_with(b"\x1bPq") {
-        Some("sixel")
+        Some("sixel") // DCS `Pq` — sixel raster protocol
     } else if chunk.starts_with(b"\x1b]1337;File=") {
-        Some("iterm2")
+        Some("inline_image") // OSC 1337 — inline image protocol
     } else {
         None
     }
@@ -258,7 +262,7 @@ pub fn detect_protocol(chunk: &[u8]) -> Option<&'static str> {
 
 /// Legacy metadata-only graphics placement cache. Kept because P4 runtime
 /// constructs one for backward-compat with pre-t-core-closure callers; the
-/// new code path uses [`ImageStore`] / [`KittyAssembler`] above. The
+/// new code path uses [`ImageStore`] / [`GraphicsAssembler`] above. The
 /// v1 cache only tracks `(id, cols, rows, payload_len)` — no pixels.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphicsPlacement {
@@ -304,8 +308,9 @@ impl GraphicsCache {
 pub struct TerminalGraphicsConfig {
     pub enabled: bool,
     pub max_images: usize,
-    /// Per-image byte cap. Kitty PNG images can be megabytes; the default
-    /// (32 MiB) rejects pathological payloads before they pin the store.
+    /// Per-image byte cap. Chunked-graphics PNG images can be megabytes;
+    /// the default (32 MiB) rejects pathological payloads before they pin
+    /// the store.
     pub max_image_bytes: usize,
 }
 
@@ -338,10 +343,10 @@ mod tests {
     }
 
     #[test]
-    fn detects_kitty_sixel_iterm2() {
-        assert_eq!(detect_protocol(b"\x1b_G"), Some("kitty"));
+    fn detects_graphics_sixel_inline_image() {
+        assert_eq!(detect_protocol(b"\x1b_G"), Some("graphics"));
         assert_eq!(detect_protocol(b"\x1bPq"), Some("sixel"));
-        assert_eq!(detect_protocol(b"\x1b]1337;File="), Some("iterm2"));
+        assert_eq!(detect_protocol(b"\x1b]1337;File="), Some("inline_image"));
         assert!(detect_protocol(b"hello").is_none());
     }
 
@@ -359,7 +364,7 @@ mod tests {
     fn store_evicts_oldest_sequential() {
         let mut s = ImageStore::new(2, 1024 * 1024);
         for i in 0..3 {
-            // id=0 → sequential (Sixel/iTerm2 mode).
+            // id=0 → sequential (Sixel / inline-image mode).
             let mut img = rgba_image(0, 1, 1, 1, 1, 0);
             img.placement.id = 0;
             img.placement.row = i as u16;
@@ -396,8 +401,8 @@ mod tests {
     }
 
     #[test]
-    fn kitty_assembler_emits_only_on_final() {
-        let mut a = KittyAssembler::new();
+    fn graphics_assembler_emits_only_on_final() {
+        let mut a = GraphicsAssembler::new();
         // m=0 → more chunks → None
         let r = a.push(
             1,

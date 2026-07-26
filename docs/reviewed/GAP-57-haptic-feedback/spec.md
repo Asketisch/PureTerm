@@ -20,7 +20,7 @@ reviewed: 2026-07-01
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | Trackpad haptic feedback | `sources/Haptics/` (iTermHapticActuator) |
+| **参考实现 A** | Trackpad haptic feedback | `sources/Haptics/` (HapticActuator) |
 
 ## PureTerm 现状
 

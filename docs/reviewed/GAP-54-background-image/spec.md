@@ -20,8 +20,8 @@ reviewed: 2026-07-01
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **Tabby** | 自定义背景图片（插件支持） | — |
-| **Kaku** | `window_background_opacity` + `macos_window_background_blur` | — |
+| **参考实现 A** | 自定义背景图片（插件支持） | — |
+| **参考实现 B** | `window_background_opacity` + `macos_window_background_blur` | — |
 
 ## PureTerm 现状
 

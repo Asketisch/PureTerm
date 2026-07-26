@@ -19,8 +19,8 @@ closed: 2026-06-29
 
 | 竞品 | 功能 | 代码路径 |
 |------|------|----------|
-| **iTerm2** | 完整 Touch Bar 支持（NSTouchBar，可自定义按钮） | `sources/TouchBar/` |
-| **Tabby** | 无 | — |
+| **参考实现 A** | 完整 Touch Bar 支持（NSTouchBar，可自定义按钮） | `sources/TouchBar/` |
+| **参考实现 B** | 无 | — |
 
 ## PureTerm 现状
 
