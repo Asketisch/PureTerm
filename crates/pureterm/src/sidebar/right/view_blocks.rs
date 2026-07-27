@@ -1,9 +1,21 @@
-use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
+//! GAP-51 v1: Blocks sidebar view.
+//!
+//! Filtering is done inline using `PaneBlockStore::filtered` (single source of
+//! truth). The view paginates the result newest-first into `PAGE_SIZE`-sized
+//! chunks and renders `page` (clamped to `[0, total_pages)`).
+
+use iced::widget::{button, column, row, space, text, text_input};
+use iced::{Color, Element, Length, Theme};
 
 use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
 use crate::iced_app::Message;
+use crate::output_blocks::{BlockFilter, OutputBlock};
 use crate::sidebar::RightMode;
+
+/// Newest-first pagination chunk size. The store keeps at most
+/// `BLOCK_STORE_MAX = 256` blocks per pane; with `PAGE_SIZE = 50` that's at
+/// most ~6 pages of dense activity before the oldest get dropped.
+pub(crate) const PAGE_SIZE: usize = 50;
 
 pub(crate) fn view_blocks<'a>(blocks: BlocksTabData<'a>) -> Element<'a, Message, Theme, iced::Renderer> {
     let dim = Color::from_rgba(0.55, 0.55, 0.55, 1.0);
@@ -37,31 +49,68 @@ pub(crate) fn view_blocks<'a>(blocks: BlocksTabData<'a>) -> Element<'a, Message,
             .padding(4),
     );
 
-    let q = blocks.search.trim().to_lowercase();
-    let filtered: Vec<_> = blocks
-        .blocks
-        .iter()
-        .filter(|b| blocks.exit_filter.matches(b))
-        .filter(|b| {
-            if q.is_empty() {
-                return true;
-            }
-            b.command
-                .as_deref()
-                .is_some_and(|c| c.to_lowercase().contains(&q))
-                || b
-                    .output_text
-                    .as_deref()
-                    .is_some_and(|t| t.to_lowercase().contains(&q))
-        })
-        .collect();
+    // Single-source filtering: PaneBlockStore::filtered is the only place that
+    // knows how to match exit code + query against command/output_text.
+    let filter = BlockFilter {
+        exit: blocks.exit_filter,
+        query: Some(blocks.search),
+    };
+    let filtered = blocks.store.filtered(&filter);
+    let filtered_total = filtered.len();
+    let store_total = blocks.store.len();
 
-    if filtered.is_empty() {
-        col = col.push(text("(no blocks yet)").size(10).color(dim));
+    if filtered_total == 0 {
+        if store_total == 0 {
+            col = col.push(text("(no blocks yet)").size(10).color(dim));
+        } else {
+            col = col.push(
+                text("(no blocks match filter)").size(10).color(dim),
+            );
+        }
         return col.into();
     }
 
-    for block in filtered.iter().rev().take(64) {
+    let page_size = blocks.page_size.max(1);
+    let total_pages = filtered_total.div_ceil(page_size);
+    // Clamp so page always points at a valid slice.
+    let page = blocks.page.min(total_pages.saturating_sub(1));
+
+    // filtered is oldest-first; page 0 = the LAST `page_size` entries;
+    // page 1 = the chunk before that; etc.
+    let start = filtered_total.saturating_sub((page + 1) * page_size);
+    let end = filtered_total.saturating_sub(page * page_size);
+    let page_slice: &[&OutputBlock] = &filtered[start..end];
+
+    // Footer: "showing X–Y of K" + prev/next buttons.
+    let first = start + 1;
+    let last = end;
+    let footer = row![
+        text(format!("{first}–{last} of {filtered_total}"))
+            .size(9)
+            .color(dim),
+        space().width(Length::Fill),
+        button(text("‹").size(10))
+            .on_press_maybe((page > 0).then(|| Message::BlockOutputPageChanged {
+                pane: blocks.pane_id,
+                delta: -1,
+            }))
+            .padding([2, 6])
+            .style(button::secondary),
+        text(format!("{}/{}", page + 1, total_pages))
+            .size(9)
+            .color(dim),
+        button(text("›").size(10))
+            .on_press_maybe((page + 1 < total_pages).then(|| Message::BlockOutputPageChanged {
+                pane: blocks.pane_id,
+                delta: 1,
+            }))
+            .padding([2, 6])
+            .style(button::secondary),
+    ]
+    .spacing(4);
+    col = col.push(footer);
+
+    for block in page_slice.iter().copied() {
         let cmd = block
             .command
             .as_deref()
@@ -102,4 +151,3 @@ pub(crate) fn view_blocks<'a>(blocks: BlocksTabData<'a>) -> Element<'a, Message,
 
     col.into()
 }
-

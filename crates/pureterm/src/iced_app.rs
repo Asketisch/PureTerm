@@ -576,6 +576,12 @@ pub struct PureTermApp {
     pane_block_stores: HashMap<PaneId, crate::output_blocks::PaneBlockStore>,
     block_output_filter: crate::output_blocks::BlockExitFilter,
     block_output_search: String,
+    /// GAP-51 v1: per-pane Blocks sidebar page index (for paging past
+    /// `PAGE_SIZE` when many blocks accumulate). 0 = newest page.
+    block_output_page: HashMap<PaneId, usize>,
+    /// GAP-51 v1: a default empty store for the Blocks tab when there's no
+    /// active pane — avoids creating temporaries that can't be borrowed.
+    default_block_store: crate::output_blocks::PaneBlockStore,
     /// GAP-33: Port scanner sidebar tab.
     port_scanner_cfg: crate::app_config::PortScannerConfig,
     port_scanner_entries: Vec<crate::port_scanner::ListeningPort>,
@@ -1046,6 +1052,12 @@ pub enum Message {
     BlockOutputJumpToRow(usize),
     BlockOutputCycleFilter,
     BlockOutputSearchChanged(String),
+    /// GAP-51 v1: turn to next/previous page of the Blocks sidebar (per-pane).
+    BlockOutputPageChanged { pane: u64, delta: i32 },
+    /// GAP-51 v1: result of an off-main `capture_row_range_async` call. The
+    /// iced loop dispatches this once the spawn_blocking task resolves, at
+    /// which point the block is appended to the per-pane store.
+    BlockCaptured(crate::output_blocks::BlockCaptureRequest),
     /// GAP-01: AI Chat panel — toggle / input / send / stream chunks.
     ToggleAiChatPanel,
     AiChatInputChanged(String),
@@ -2153,6 +2165,8 @@ impl PureTermApp {
             pane_block_stores: HashMap::new(),
             block_output_filter: crate::output_blocks::BlockExitFilter::default(),
             block_output_search: String::new(),
+            block_output_page: HashMap::new(),
+            default_block_store: crate::output_blocks::PaneBlockStore::default(),
             port_scanner_cfg,
             port_scanner_entries: Vec::new(),
             remote_files: crate::remote_files::RemoteFilesState::default(),
@@ -5016,6 +5030,7 @@ impl PureTermApp {
                                 // `pane_shell_state`/`shell_integration_cfg`/`events`,
                                 // staying disjoint from the loop's `windows` borrow.
                                 TerminalEvent::ShellMark(mark) => {
+                                    use crate::output_blocks::BlockCaptureRequest;
                                     use crate::shell_state::{shell_mark_kind_str, FinishedCommand};
 
                                     let include_text =
@@ -5058,6 +5073,11 @@ impl PureTermApp {
                                     );
 
                                     // GAP-51: record block boundary on command finish.
+                                    // v1: defer the grid slice to `spawn_blocking` so a
+                                    // long output can't stutter the GUI thread (same
+                                    // pattern as `surface.snapshot`). The result lands
+                                    // as `Message::BlockCaptured` below and is appended
+                                    // to `PaneBlockStore` in a single dispatch.
                                     if self.block_output_cfg.enabled
                                         && mark.kind
                                             == alacritty_terminal::event::ShellMarkKind::OutputEnd
@@ -5067,43 +5087,44 @@ impl PureTermApp {
                                                 .pane_shell_state
                                                 .get(pane_id)
                                                 .and_then(|s| s.last_output_start_row());
-                                            let output_text = self.pane_terminal_ctx(*pane_id).map(|ctx| {
-                                                let term = ctx.terminal().lock_unfair();
-                                                let start = output_start
-                                                    .unwrap_or_else(|| cmd.pane_row_at_b.saturating_add(1));
-                                                crate::surface_snapshot::capture_row_range(
-                                                    &term,
-                                                    start,
-                                                    mark.row,
-                                                    512,
-                                                )
-                                            });
-                                            let store = self
-                                                .pane_block_stores
-                                                .entry(*pane_id)
-                                                .or_default();
-                                            let block = store.push_from_command(
-                                                pane_id.0,
-                                                cmd,
-                                                mark.row,
-                                                output_start,
-                                                output_text,
-                                            );
-                                            self.events.emit(
-                                                crate::events::Category::Shell,
-                                                "shell.block_finished".to_string(),
-                                                session_id,
-                                                serde_json::json!({
-                                                    "pane_id": pane_id.0,
-                                                    "block_id": block.id,
-                                                    "command_row": block.command_row,
-                                                    "output_start_row": block.output_start_row,
-                                                    "output_end_row": block.output_end_row,
-                                                    "exit_code": block.exit_code,
-                                                    "duration_us": block.duration_us,
-                                                    "command": block.command,
-                                                }),
-                                            );
+                                            let start_row = output_start
+                                                .unwrap_or_else(|| cmd.pane_row_at_b.saturating_add(1));
+                                            // Clone the `Term` arc so the closure owns it;
+                                            // `Arc::clone` is cheap and the lock is only
+                                            // held for the `bounds_to_string` walk.
+                                            if let Some(arc_ctx) = self.pane_terminal_ctx(*pane_id) {
+                                                let term_arc = Arc::clone(arc_ctx.terminal());
+                                                let cmd_for_task = cmd.clone();
+                                                let meta = crate::output_blocks::BlockMeta {
+                                                    session_id: session_id.clone(),
+                                                    cwd: self.pane_cwds.get(pane_id).cloned(),
+                                                    started_at_us: cmd.started_at_us,
+                                                };
+                                                let req_for_event = crate::output_blocks::BlockCaptureRequest {
+                                                    pane_id: pane_id.0,
+                                                    cmd: cmd_for_task.clone(),
+                                                    start_row: output_start,
+                                                    end_row: mark.row,
+                                                    meta: meta.clone(),
+                                                    text: None,
+                                                };
+                                                trigger_tasks.push(Task::perform(
+                                                    crate::surface_snapshot::capture_row_range_async(
+                                                        term_arc,
+                                                        start_row,
+                                                        mark.row,
+                                                        512,
+                                                    ),
+                                                    move |text| Message::BlockCaptured(BlockCaptureRequest {
+                                                        pane_id: req_for_event.pane_id,
+                                                        cmd: req_for_event.cmd,
+                                                        start_row: req_for_event.start_row,
+                                                        end_row: req_for_event.end_row,
+                                                        meta: req_for_event.meta,
+                                                        text,
+                                                    }),
+                                                ));
+                                            }
                                         }
                                     }
 
@@ -6228,6 +6249,50 @@ impl PureTermApp {
             }
             Message::BlockOutputSearchChanged(q) => {
                 self.block_output_search = q;
+            }
+            Message::BlockOutputPageChanged { pane, delta } => {
+                let page = self.block_output_page.entry(crate::split_tree::PaneId(pane)).or_insert(0);
+                if *page as i32 + delta < 0 {
+                    *page = 0;
+                } else {
+                    *page = page.saturating_add(delta as usize);
+                }
+            }
+            Message::BlockCaptured(req) => {
+                // The off-main `capture_row_range_async` finished — append the
+                // block now and emit `block.finished` (was `shell.block_finished`
+                // pre-v1; the latter name was never consumed externally, so this
+                // is a straight rename, not a deprecation cycle).
+                let store = self
+                    .pane_block_stores
+                    .entry(crate::split_tree::PaneId(req.pane_id))
+                    .or_default();
+                let block = store.push(
+                    req.pane_id,
+                    &req.cmd,
+                    req.end_row,
+                    req.start_row,
+                    req.text,
+                    &req.meta,
+                );
+                let session_id = req.meta.session_id.clone();
+                self.events.emit(
+                    crate::events::Category::Shell,
+                    "block.finished".to_string(),
+                    session_id,
+                    serde_json::json!({
+                        "pane_id": req.pane_id,
+                        "block_id": block.id,
+                        "command_row": block.command_row,
+                        "output_start_row": block.output_start_row,
+                        "output_end_row": block.output_end_row,
+                        "exit_code": block.exit_code,
+                        "duration_us": block.duration_us,
+                        "started_at_us": block.started_at_us,
+                        "cwd": block.cwd,
+                        "command": block.command,
+                    }),
+                );
             }
             Message::ToggleAiChatPanel => {
                 if self.ai_chat_panel.open {
@@ -13895,18 +13960,28 @@ impl PureTermApp {
             find_loading: self.remote_files.find_loading,
             find_error: self.remote_files.find_error.as_deref(),
         };
-        let empty_blocks: &[crate::output_blocks::OutputBlock] = &[];
-        let active_blocks = self
-            .active_tab_ref()
-            .map(|t| t.active_pane)
-            .and_then(|pid| self.pane_block_stores.get(&pid))
-            .map(|s| s.blocks())
-            .unwrap_or(empty_blocks);
+        // GAP-51 v1: Blocks tab — pass the store ref and let the view do inline
+        // filtering (single source of truth: PaneBlockStore::filtered).
+        let (active_pane_id, blocks_store): (u64, &crate::output_blocks::PaneBlockStore) =
+            match self.active_tab_ref().map(|t| t.active_pane) {
+                Some(pid) => match self.pane_block_stores.get(&pid) {
+                    Some(store) => (pid.0, store),
+                    None => (pid.0, &self.default_block_store),
+                },
+                None => (0, &self.default_block_store),
+            };
+        let page = *self
+            .block_output_page
+            .get(&crate::split_tree::PaneId(active_pane_id))
+            .unwrap_or(&0);
         let blocks = crate::sidebar::right::BlocksTabData {
-            blocks: active_blocks,
+            store: blocks_store,
             exit_filter: self.block_output_filter,
             search: &self.block_output_search,
             enabled: self.block_output_cfg.enabled,
+            page,
+            page_size: crate::sidebar::right::PAGE_SIZE,
+            pane_id: active_pane_id,
         };
         let toolbelt = crate::sidebar::right::ToolbeltTabData {
             history: &self.toolbelt.command_history,

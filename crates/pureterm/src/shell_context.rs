@@ -105,6 +105,7 @@ mod tests {
             exit_code: exit,
             duration_us: dur,
             pane_row_at_b: 0,
+            started_at_us: None,
         }
     }
 

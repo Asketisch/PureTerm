@@ -177,6 +177,28 @@ pub fn capture_row_range(
     tail_lines(&full, max_lines).0
 }
 
+/// GAP-51 v1: off-main variant of [`capture_row_range`]. The OSC 133 D mark
+/// handler in the iced loop defers to this so a long-running grid walk can't
+/// stutter the GUI (the same pattern as the `surface.snapshot` IPC tool).
+///
+/// `term_arc` is shared with the PTY reader thread; we hold the lock only for
+/// the duration of the `bounds_to_string` walk and release before returning.
+/// The `Some`/`None` shape lets callers distinguish "captured successfully"
+/// from "the task panicked / the runtime was shut down".
+pub async fn capture_row_range_async(
+    term_arc: Arc<FairMutex<Term<ChannelEventListener>>>,
+    start_row: usize,
+    end_row: usize,
+    max_lines: usize,
+) -> Option<String> {
+    tokio::task::spawn_blocking(move || {
+        let term = term_arc.lock();
+        capture_row_range(&term, start_row, end_row, max_lines)
+    })
+    .await
+    .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{capture, tail_lines};
@@ -284,6 +306,26 @@ mod tests {
         let v = capped.result.unwrap();
         assert_eq!(v["truncated"], true, "capping a >2-line grid must truncate");
         assert!(v["text"].as_str().unwrap().lines().count() <= 2, "capped should have ≤2 lines");
+    }
+
+    // ── GAP-51 v1: capture_row_range_async ───────────────────────────────
+    //
+    // `capture_row_range_async` defers the lock + `bounds_to_string` walk to
+    // `spawn_blocking`. Building a runtime here (instead of using a
+    // `#[tokio::test]` attribute we don't depend on) keeps the test surface
+    // self-contained.
+    #[test]
+    fn capture_row_range_async_returns_some() {
+        let term = term_with("async-hello\r\nasync-world\r\n");
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("build runtime");
+        let text = rt
+            .block_on(super::capture_row_range_async(term, 0, 1, 32))
+            .expect("async capture resolves to Some");
+        assert!(text.contains("async-hello"), "missing async-hello: {text:?}");
+        assert!(text.contains("async-world"), "missing async-world: {text:?}");
     }
 }
 

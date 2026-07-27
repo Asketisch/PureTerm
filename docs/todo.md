@@ -32,11 +32,9 @@ _（无）_
 
 _（无）_
 
-## 集成（1）
+## 集成（0）
 
-| GAP | 简述 | 规划类型 | 项目优先级 | 详情 |
-|-----|------|----------|-----------|------|
-| GAP-51 | 块级输出（block-based output，业界风格；arch 类，scaffold done，完整重构待后端冲刺） | arch | P2 | [spec](todo/GAP-51-block-based-output/spec.md) |
+_（无）_
 
 ## 视觉（0）
 
@@ -46,6 +44,6 @@ _（无）_
 
 **更新约定**：新增待办 → 创建 `todo/GAP-XX-slug/spec.md` → 在对应类别分表加一行。
 
-> 2026-07-09：t-core-gap-closure 6 个子组件（graphics / shaper / tmux-cc / shell-integ / windows-conpty / plugin-runtime）全部 v3 闭环，已从 `todo/` 推入 `done/`（详见 [done/t-core-gap-closure/](done/t-core-gap-closure/)）。GAP-51 显式留 todo（block-based 完整重构依赖 OSC 133 D mark + grid 切片 + shell integration，属于后端冲刺范围）。
->
-> 2026-07-02 批量闭环：GAP-45/49/50/52/53 已从 todo 推入 done/；GAP-51 显式留 todo（block-based 完整重构依赖 OSC 133 D mark + grid 切片 + shell integration，属于后端冲刺范围）。
+> 2026-07-27: GAP-51 最小闭环（数据完整 / spawn_blocking / sum-tree 增量 / 分页过滤 / 事件名统一），已从 `todo/` 推入 `done/`。
+> 2026-07-09：t-core-gap-closure 6 个子组件（graphics / shaper / tmux-cc / shell-integ / windows-conpty / plugin-runtime）全部 v3 闭环，已从 `todo/` 推入 `done/`（详见 [done/t-core-gap-closure/](done/t-core-gap-closure/)）。
+> 2026-07-02 批量闭环：GAP-45/49/50/52/53 已从 todo 推入 done/。

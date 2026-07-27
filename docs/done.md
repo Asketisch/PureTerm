@@ -11,8 +11,8 @@
 |------|------|----|----|----|----|----|
 | 终端交互 | 1 | 1 | — | — | — | — |
 | 平台 | 1 | — | — | — | — | 1 |
-| 集成 | 4 | — | — | — | — | 4 |
-| **合计** | **6** | **1** | **—** | **—** | **—** | **5** |
+| 集成 | 5 | — | — | — | — | 5 |
+| **合计** | **7** | **1** | **—** | **—** | **—** | **6** |
 
 ---
 
@@ -34,6 +34,7 @@
 |-----|------|------|
 | GAP-49 | 插件系统：目录扫描 + `plugin.toml` 清单解析/校验 + `install` / `uninstall` + `list` 报告 manifest 错误 + 9 项单测（运行时仍延后到 Phase D） | [spec](done/GAP-49-plugin-system/spec.md) |
 | GAP-50 | 云同步：本地 bundle（`~/.config/pureterm/sync/latest.json`）+ GitHub Gist push/pull（reqwest + bearer auth）+ schema 版本控制 + `pureterm sync push/pull --remote` CLI + 8 项单测 | [spec](done/GAP-50-cloud-sync/spec.md) |
+| GAP-51 | 块级输出：补齐 `OutputBlock`（session_id/cwd/started_at_us/kind/tags）+ `capture_row_range_async` 走 `spawn_blocking` 不卡帧 + `BlockSumTree` 增量 push + `PaneBlockStore::filtered` 单一过滤源 + 侧栏分页（PAGE_SIZE=50，去掉 64 行硬切）+ 事件名 `block.finished`（原 `shell.block_finished`，无外部消费者直更）+ 7 + 10 + 9 单测 | [spec](done/GAP-51-block-based-output/spec.md) |
 | GAP-52 | Workflows：参数化 `{{key}}` 展开 + 缺失参数检查 + 类别（palette 分组）+ 别名（name 优先）+ `pureterm workflow run` CLI + 7 项单测 | [spec](done/GAP-52-workflows/spec.md) |
 | GAP-53 | Notebooks：`.pureterm` JSON cell 格式 + cell 执行引擎（`$SHELL -c`，捕获 stdout/stderr）+ `pureterm notebook show/new/run` CLI + 9 项单测 | [spec](done/GAP-53-notebooks/spec.md) |
 

@@ -69,9 +69,17 @@ pub struct RemoteFilesTabData<'a> {
 }
 
 /// Block list for the Blocks tab (GAP-51).
+///
+/// Filtering is done inline in the view — `exit_filter` + `search` are the
+/// parameters. The view calls `PaneBlockStore::filtered` to get the final
+/// result (single source of truth), paginates newest-first, and renders the
+/// page. This struct only carries configuration/state.
 pub struct BlocksTabData<'a> {
-    pub blocks: &'a [crate::output_blocks::OutputBlock],
+    pub store: &'a crate::output_blocks::PaneBlockStore,
     pub exit_filter: crate::output_blocks::BlockExitFilter,
     pub search: &'a str,
     pub enabled: bool,
+    pub page: usize,
+    pub page_size: usize,
+    pub pane_id: u64,
 }

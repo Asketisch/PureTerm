@@ -15,3 +15,4 @@ pub(crate) use data::{
     SurfaceFindData, ToolbeltTabData,
 };
 pub(crate) use main::view;
+pub(crate) use view_blocks::PAGE_SIZE;

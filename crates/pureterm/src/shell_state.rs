@@ -11,9 +11,20 @@
 //! struct stores only what each mark carries — no `Instant` bookkeeping.
 
 use alacritty_terminal::event::{ShellMark, ShellMarkKind};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Max finished commands retained per pane (newest kept; oldest drained).
 pub const SHELL_HISTORY_MAX: usize = 64;
+
+/// UNIX-epoch microseconds at the OSC 133 B (CommandStart) mark. Returned
+/// `None` for any failure (clock before epoch, etc.) — never panics, so the
+/// state machine stays robust on weird systems.
+fn now_us() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_micros() as u64)
+}
 
 /// One finalized command, recovered at its OutputEnd (D) mark.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -29,6 +40,10 @@ pub struct FinishedCommand {
     /// Grid row of the B (CommandStart) mark — the command line. Kept for a
     /// future scroll-to-command feature (deferred from this gap).
     pub pane_row_at_b: usize,
+    /// UNIX-epoch microseconds at the B mark — the "command started"
+    /// timestamp. `None` when the B mark didn't carry the info (today: never;
+    /// the timestamp is stamped locally by `apply_mark` at B-time).
+    pub started_at_us: Option<u64>,
 }
 
 /// Per-pane shell-integration state, keyed by `PaneId` in the app.
@@ -36,11 +51,11 @@ pub struct FinishedCommand {
 pub struct ShellState {
     /// Newest-last finished commands; bounded to [`SHELL_HISTORY_MAX`].
     pub history: Vec<FinishedCommand>,
-    /// Pending B (CommandStart): `(row, text-sliced-fresh-at-B)`. `None` until the
-    /// user submits a command; consumed (cleared) on the next D. The text is
-    /// captured at B-time because by D-time the B row's grid content has drifted
-    /// (output / the next prompt overwrote it).
-    pending_b: Option<(usize, Option<String>)>,
+    /// Pending B (CommandStart): `(row, text-sliced-fresh-at-B, started_at_us)`.
+    /// `None` until the user submits a command; consumed (cleared) on the next
+    /// D. The text is captured at B-time because by D-time the B row's grid
+    /// content has drifted (output / the next prompt overwrote it).
+    pending_b: Option<(usize, Option<String>, Option<u64>)>,
     /// Row of the most recent C (OutputStart) mark (unused for text recovery in
     /// v1, but tracked for completeness/future use).
     last_c_row: Option<usize>,
@@ -74,7 +89,10 @@ impl ShellState {
             ShellMarkKind::CommandStart => {
                 self.integrated = true;
                 let text = if include_text { mark.command.clone() } else { None };
-                self.pending_b = Some((mark.row, text));
+                // Stamp the local "command started" timestamp so block-based
+                // output can carry an absolute started_at without depending on
+                // duration_us (which is shell-reported and may be absent).
+                self.pending_b = Some((mark.row, text, now_us()));
                 None
             }
             ShellMarkKind::OutputStart => {
@@ -84,12 +102,13 @@ impl ShellState {
             }
             ShellMarkKind::OutputEnd => {
                 self.integrated = true;
-                self.pending_b.take().map(|(row, text)| {
+                self.pending_b.take().map(|(row, text, started_at_us)| {
                     let cmd = FinishedCommand {
                         text,
                         exit_code: mark.exit_code,
                         duration_us: mark.duration_us,
                         pane_row_at_b: row,
+                        started_at_us,
                     };
                     self.history.push(cmd.clone());
                     if self.history.len() > SHELL_HISTORY_MAX {
@@ -264,5 +283,21 @@ mod tests {
         assert_eq!(shell_mark_kind_str(ShellMarkKind::CommandStart), "command_started");
         assert_eq!(shell_mark_kind_str(ShellMarkKind::OutputStart), "output_started");
         assert_eq!(shell_mark_kind_str(ShellMarkKind::OutputEnd), "command_finished");
+    }
+
+    #[test]
+    fn finished_command_carries_started_at() {
+        // B (CommandStart) should stamp the local "command started"
+        // timestamp; D (OutputEnd) should propagate it onto the
+        // finalized `FinishedCommand`.
+        let mut s = ShellState::default();
+        let _ = s.apply_mark(&mark_b(5, "cargo test"), true);
+        let finalized = s.apply_mark(&mark_d(0, 1_000), true);
+        let cmd = finalized.expect("D finalizes");
+        let started = cmd.started_at_us.expect("B-stamped timestamp survives D");
+        // Sanity bound: today (2026+ epoch) is well past 1.7e15 µs. If the
+        // clock is before UNIX_EPOCH the function would return None, which
+        // would already fail the expect above.
+        assert!(started > 1_700_000_000_000_000, "started_at_us is plausible: {started}");
     }
 }
