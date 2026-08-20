@@ -1,28 +1,28 @@
 #!/usr/bin/env bash
 # =============================================================================
-# PureTerm cross-platform build & bundle script
-# Supports: macOS (aarch64 / x86_64), Linux (gnu + musl, aarch64 / x86_64),
-#           Windows MSVC (aarch64 / x86_64).
+# PureTerm 跨平台构建与打包脚本
+# 支持:macOS(aarch64 / x86_64)、Linux(gnu + musl,aarch64 / x86_64)、
+#           以及 Windows MSVC(aarch64 / x86_64)。
 #
-# Usage: ./build.sh [OPTIONS] <MODE>
+# 用法:./build.sh [OPTIONS] <MODE>
 #
-# Modes:
-#   debug     development build (dev profile)
-#   release   optimised release build (thin LTO + strip)
-#   test      run the test suite (nextest → fallback cargo test)
-#   app       build + bundle for the host OS in the host target triple
-#   app-all   build + bundle for the host OS in every installed target triple
-#   matrix    build + bundle across the full target matrix
-#             (skips targets whose toolchain isn't installed)
-#   info      print detected platform, installed targets, available tools
-#   clean     remove all build artefacts
+# 模式:
+#   debug     开发构建(dev profile)
+#   release   优化发布构建(thin LTO + strip)
+#   test      运行测试套件(nextest,回退 cargo test)
+#   app       在宿主 target triple 上为宿主 OS 构建 + 打包
+#   app-all   在所有已安装 target triple 上为宿主 OS 构建 + 打包
+#   matrix    跨完整 target 矩阵构建 + 打包
+#             (跳过未安装工具链的 target)
+#   info      打印检测到的平台、已安装 target、可用工具
+#   clean     删除所有构建产物
 #
-# Run `./build.sh --help` for the full option list.
+# 运行 `./build.sh --help` 查看完整选项列表。
 # =============================================================================
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# Project constants
+# 项目常量
 # -----------------------------------------------------------------------------
 readonly PROJECT_NAME="PureTerm"
 readonly BINARY_NAME="pureterm"
@@ -32,15 +32,15 @@ readonly DIST_DIR="./dist"
 readonly SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # -----------------------------------------------------------------------------
-# Static target matrix
+# 静态 target 矩阵
 #
-# Each entry: "<host-os-key>:<triple>:<arch-suffix>". `os-key` is what
-# `bundle_<os>` switches on; `arch-suffix` becomes part of the bundle name
-# (e.g. `aarch64-unknown-linux-gnu` → `linux-gnu-aarch64`).
+# 每条条目:"<host-os-key>:<triple>:<arch-suffix>"。`os-key` 是
+# `bundle_<os>` 分支判断用的键;`arch-suffix` 成为包名的一部分
+# (例如 `aarch64-unknown-linux-gnu` → `linux-gnu-aarch64`)。
 #
-# `matrix` and `app-all` only consider entries whose triple is in
-# `rustup target list --installed`; entries the user can't build right now
-# are skipped with a `WARN`, never a hard error.
+# `matrix` 与 `app-all` 只考虑 triple 在
+# `rustup target list --installed` 中的条目;用户当前无法构建的
+# 条目以 `WARN` 跳过,绝不硬报错。
 # -----------------------------------------------------------------------------
 readonly TARGET_MATRIX=(
     "macos:aarch64-apple-darwin:arm64"
@@ -54,7 +54,7 @@ readonly TARGET_MATRIX=(
 )
 
 # -----------------------------------------------------------------------------
-# Version extraction (single source of truth: crates/pureterm/Cargo.toml)
+# 版本提取(唯一真源:crates/pureterm/Cargo.toml)
 # -----------------------------------------------------------------------------
 extract_version() {
     grep '^version' "$SCRIPT_DIR/crates/pureterm/Cargo.toml" \
@@ -64,7 +64,7 @@ extract_version() {
 readonly VERSION="$(extract_version)"
 
 # -----------------------------------------------------------------------------
-# Colours (auto-disabled when piped or NO_COLOR set, per no-color.org)
+# 颜色(管道输出或设置 NO_COLOR 时自动禁用,遵循 no-color.org 约定)
 # -----------------------------------------------------------------------------
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     # 使用 ANSI-C quoting ($'...') 让 \033 在赋值时被解析为真实 ESC
@@ -90,7 +90,7 @@ success() { printf "${GREEN}  ✓${RESET}    %s\n" "$*"; }
 note()    { printf "${BOLD}  ·${RESET}     %s\n" "$*"; }
 
 # -----------------------------------------------------------------------------
-# Help text
+# 帮助文本
 # -----------------------------------------------------------------------------
 usage() {
     cat <<EOF
@@ -148,17 +148,17 @@ EOF
 }
 
 # -----------------------------------------------------------------------------
-# Toolchain detection
+# 工具链检测
 # -----------------------------------------------------------------------------
-# Populates: TOOL_* flags (yes/"") + TOOLCHAIN_INFO (pretty summary).
+# 填充:TOOL_* 标志(yes/"")+ TOOLCHAIN_INFO(格式化摘要)。
 detect_toolchain() {
     local tools=()
 
-    # sccache — silently degrade if missing.
-    # The repo's .cargo/config.toml has `rustc-wrapper = "sccache"` which is
-    # a hard config setting (not an env var), so we need to *override* it
-    # at the cargo invocation level when sccache isn't on PATH. Otherwise
-    # `cargo build` exits 127 with "process didn't exit successfully: sccache".
+    # sccache —— 缺失时静默降级。
+    # 仓库的 .cargo/config.toml 中设有 `rustc-wrapper = "sccache"`,这是
+    # 硬性配置(不是环境变量),sccache 不在 PATH 时需要在
+    # cargo 调用层面 *覆盖* 它。否则
+    # `cargo build` 会以 127 退出,报 "process didn't exit successfully: sccache"。
     if command -v sccache &>/dev/null; then
         TOOL_SCCACHE="yes"
         export RUSTC_WRAPPER=sccache
@@ -168,7 +168,7 @@ detect_toolchain() {
         unset RUSTC_WRAPPER 2>/dev/null || true
     fi
 
-    # cargo-nextest — double-check it actually works (PATH can lie).
+    # cargo-nextest —— 二次确认它真的能跑(PATH 可能说谎)。
     if command -v cargo-nextest &>/dev/null && cargo nextest --help &>/dev/null; then
         TOOL_NEXTEST="yes"
         tools+=("nextest")
@@ -176,7 +176,7 @@ detect_toolchain() {
         TOOL_NEXTEST=""
     fi
 
-    # Fast Linux linkers.
+    # 快速 Linux 链接器。
     local uname_s
     uname_s="$(uname -s)"
     if [ "$uname_s" = "Linux" ]; then
@@ -187,7 +187,7 @@ detect_toolchain() {
         fi
     fi
 
-    # Platform-specific bundlers — informational, NEVER fatal.
+    # 平台专用打包器 —— 仅信息性,绝不致命。
     command -v hdiutil      &>/dev/null && TOOL_HDIUTIL="yes"      || TOOL_HDIUTIL=""
     command -v codesign     &>/dev/null && TOOL_CODESIGN="yes"     || TOOL_CODESIGN=""
     if command -v xcrun &>/dev/null && xcrun -f notarytool &>/dev/null; then
@@ -202,7 +202,7 @@ detect_toolchain() {
     command -v zip          &>/dev/null && TOOL_ZIP="yes"          || TOOL_ZIP=""
     command -v signtool     &>/dev/null && TOOL_SIGNTOOL="yes"     || TOOL_SIGNTOOL=""
 
-    # PowerShell on Windows for zip fallback (only relevant on Windows).
+    # Windows 上的 PowerShell,作为 zip 兜底(仅 Windows 相关)。
     command -v powershell   &>/dev/null && TOOL_PWSH="yes"         || TOOL_PWSH=""
     command -v pwsh         &>/dev/null && TOOL_PWSH_CORE="yes"    || TOOL_PWSH_CORE=""
 
@@ -214,7 +214,7 @@ detect_toolchain() {
 }
 
 # -----------------------------------------------------------------------------
-# Platform / target detection
+# 平台 / target 检测
 # -----------------------------------------------------------------------------
 host_os() {
     case "$(uname -s)" in
@@ -233,7 +233,7 @@ host_arch() {
     esac
 }
 
-# Translate a triple's arch-token to our bundle arch-suffix.
+# 把 triple 的架构 token 翻译为我们的包架构后缀。
 arch_from_triple() {
     local triple="$1"
     case "$triple" in
@@ -245,27 +245,27 @@ arch_from_triple() {
 }
 
 # -----------------------------------------------------------------------------
-# Target matrix expansion
+# target 矩阵展开
 # -----------------------------------------------------------------------------
-# Input: --arch / --target / --targets (global vars).
-# Output: TARGETS[] = list of triples to build, in stable order.
+# 输入:--arch / --target / --targets(全局变量)。
+# 输出:TARGETS[] = 待构建 triple 列表,顺序稳定。
 expand_targets() {
     local host
     host="$(host_os)"
 
-    # Explicit --target wins.
+    # 显式 --target 优先。
     if [ -n "${OPT_TARGET:-}" ]; then
         TARGETS=("$OPT_TARGET")
         return
     fi
 
-    # Explicit --targets (comma-separated) wins.
+    # 显式 --targets(逗号分隔)优先。
     if [ -n "${OPT_TARGETS:-}" ]; then
         IFS=',' read -ra TARGETS <<<"$OPT_TARGETS"
         return
     fi
 
-    # --arch filter: emit matching entries from TARGET_MATRIX.
+    # --arch 过滤:从 TARGET_MATRIX 输出匹配条目。
     if [ -n "${OPT_ARCH:-}" ]; then
         TARGETS=()
         local want_arch="$OPT_ARCH"
@@ -281,17 +281,17 @@ expand_targets() {
         return
     fi
 
-    # Default: just the host triple.
+    # 默认:仅宿主 triple。
     TARGETS=("$(rustc -vV | sed -n 's|host: ||p')")
 }
 
-# Return 0 if triple is in `rustup target list --installed`, 1 otherwise.
+# triple 在 `rustup target list --installed` 中返回 0,否则 1。
 target_installed() {
     local t="$1"
     rustup target list --installed 2>/dev/null | tr -d ' ' | grep -qx "$t"
 }
 
-# Make sure triple is installed; if not, optionally install (--auto-install-targets).
+# 确保 triple 已安装;未装时可选安装(--auto-install-targets)。
 ensure_target() {
     local t="$1"
     if target_installed "$t"; then
@@ -310,7 +310,7 @@ ensure_target() {
 }
 
 # -----------------------------------------------------------------------------
-# Pre-flight: confirm Cargo workspace parses.
+# 预检:确认 Cargo 工作区可解析。
 # -----------------------------------------------------------------------------
 preflight() {
     if ! command -v cargo &>/dev/null; then
@@ -328,7 +328,7 @@ preflight() {
 }
 
 # -----------------------------------------------------------------------------
-# Clean
+# 清理
 # -----------------------------------------------------------------------------
 readonly EMBEDDED_RESOURCE_CRATES=(pureterm-gui)
 
@@ -350,9 +350,9 @@ do_clean() {
 }
 
 # -----------------------------------------------------------------------------
-# Binary path resolution
+# 二进制路径解析
 # -----------------------------------------------------------------------------
-# Per-target binary directory under target/<triple>/<profile>/
+# target/<triple>/<profile>/ 下的每 target 二进制目录
 target_dir() {
     local profile="$1" triple="${2:-${HOST_TRIPLE:-}}"
     if [ -n "$triple" ]; then
@@ -362,7 +362,7 @@ target_dir() {
     fi
 }
 
-# Resolved on-disk path to a built binary for the given triple + profile.
+# 解析给定 triple + profile 已构建二进制的磁盘路径。
 binary_path() {
     local name="$1" profile="$2" triple="${3:-${HOST_TRIPLE:-}}"
     if [ -n "$triple" ]; then
@@ -373,11 +373,11 @@ binary_path() {
 }
 
 # -----------------------------------------------------------------------------
-# Cargo invocation helpers
+# cargo 调用辅助
 # -----------------------------------------------------------------------------
-# Emit the cargo `--config` flags needed to make this run robust.
-#   - When sccache isn't on PATH, override the repo's `[build] rustc-wrapper
-#     = "sccache"` so cargo doesn't invoke a missing binary.
+# 输出使本次运行稳健所需的 cargo `--config` 标志。
+#   - sccache 不在 PATH 时,覆盖仓库的 `[build] rustc-wrapper
+#     = "sccache",以免 cargo 调用缺失的二进制。
 cargo_config_args() {
     local args=()
     if [ -z "${TOOL_SCCACHE:-}" ]; then
@@ -386,8 +386,8 @@ cargo_config_args() {
     printf '%s\n' "${args[@]}"
 }
 
-# Build one binary in one triple. Logs a clear error if the binary isn't on
-# disk after a "successful" cargo build (catches missing --features cases).
+# 在一个 triple 上构建一个二进制。cargo build "成功"
+# 之后二进制不在盘上时记录清晰错误(捕获漏 --features 的情况)。
 cargo_build_one() {
     local pkg="$1" bin="$2" profile="$3" triple="$4"
     local cmd=(cargo build)
@@ -398,7 +398,7 @@ cargo_build_one() {
         cmd+=(--timings)
     fi
     cmd+=(-p "$pkg" --bin "$bin")
-    # Inject any --config overrides (e.g. disable sccache when missing).
+    # 注入所有 --config 覆盖(例如 sccache 缺失时禁用它)。
     while IFS= read -r arg; do
         [ -n "$arg" ] && cmd+=("$arg")
     done < <(cargo_config_args)
@@ -408,7 +408,7 @@ cargo_build_one() {
         return 1
     fi
 
-    # Verify the artifact actually exists.
+    # 校验产物确实存在。
     local path
     path="$(binary_path "$bin" "$profile" "$triple")"
     if [ ! -x "$path" ] && [ ! -f "$path" ]; then
@@ -419,8 +419,8 @@ cargo_build_one() {
     return 0
 }
 
-# Build all workspace binaries the bundler cares about.
-# Args: <profile> <triple>
+# 构建打包器关心的所有工作区二进制。
+# 参数:<profile> <triple>
 build_all_binaries() {
     local profile="$1" triple="$2"
 
@@ -434,7 +434,7 @@ build_all_binaries() {
 }
 
 # -----------------------------------------------------------------------------
-# Mode: build (debug / release) — no bundle, just compile for the host.
+# 模式:build(debug / release)— 不打包,仅为宿主编译。
 # -----------------------------------------------------------------------------
 build_debug() {
     if [ "$CLEAN_BEFORE_BUILD" = "true" ]; then
@@ -457,7 +457,7 @@ build_release() {
 }
 
 # -----------------------------------------------------------------------------
-# Mode: test
+# 模式:test
 # -----------------------------------------------------------------------------
 build_test() {
     step "运行测试套件 (cargo profile: ${TEST_PROFILE})..."
@@ -488,7 +488,7 @@ build_test() {
 }
 
 # -----------------------------------------------------------------------------
-# Mode: info
+# 模式:info
 # -----------------------------------------------------------------------------
 mode_info() {
     local host
@@ -533,12 +533,12 @@ EOF
 }
 
 # =============================================================================
-# Bundlers
+# 打包器
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# macOS bundler — produces .app (+ .app.zip, optional .dmg, optional codesign
-# + notarize).
+# macOS 打包器—— 产出 .app(+ .app.zip,可选 .dmg,可选签名
+# + 公证)。
 # -----------------------------------------------------------------------------
 bundle_macos() {
     local triple="$1"
@@ -561,13 +561,13 @@ bundle_macos() {
 
     step "组装 macOS .app: ${app_dir}"
 
-    # Fresh layout.
+    # 全新布局。
     rm -rf "$app_dir"
     mkdir -p "${app_dir}/Contents/MacOS" \
              "${app_dir}/Contents/Resources" \
              "${app_dir}/Contents/Frameworks"
 
-    # Binaries.
+    # 二进制。
     cp "$bin" "${app_dir}/Contents/MacOS/${BINARY_NAME}"
     chmod +x "${app_dir}/Contents/MacOS/${BINARY_NAME}"
     if [ -f "$settings_bin" ]; then
@@ -581,29 +581,29 @@ bundle_macos() {
         warn "未找到 ${DAEMON_BIN} — 会话将无法在 GUI 关闭后存活"
     fi
 
-    # Info.plist — both the helper-managed and inline-fallback branches are
-    # served by `bundle_macos_write_info_plist`, which is shared with the
-    # universal builder.
+    # Info.plist—— 辅助函数管理与内联兜底两个分支都由
+    # `bundle_macos_write_info_plist` 提供,与 universal
+    # 构建器共享。
     bundle_macos_write_info_plist "$app_dir"
 
-    # Icons.
-    # macOS reads `Contents/Resources/PureTerm.icns` whenever Info.plist
-    # declares `CFBundleIconFile = PureTerm` (the `.icns` extension is
-    # implicit). We copy only the .icns — a stray `.png` next to it can
-    # confuse Finder's icon cache and the `deficon` slot for documents.
+    # 图标。
+    # macOS 读取 `Contents/Resources/PureTerm.icns`,只要 Info.plist
+    # 声明了 `CFBundleIconFile = PureTerm`(`.icns` 扩展名
+    # 隐含)。我们只拷贝 .icns—— 旁边多余的 `.png` 可能
+    # 弄乱 Finder 图标缓存与文档 `deficon` 槽位。
     if [ -f "${SCRIPT_DIR}/assets/${PROJECT_NAME}.icns" ]; then
         cp "${SCRIPT_DIR}/assets/${PROJECT_NAME}.icns" \
            "${app_dir}/Contents/Resources/${PROJECT_NAME}.icns"
     else
         warn "缺少 assets/${PROJECT_NAME}.icns — .app 将没有图标"
     fi
-    # Drop any cached icon.png; we keep assets/icon.png as the cross-platform
-    # source icon (Linux/Windows), not a macOS bundle resource.
+    # 丢弃任何缓存的 icon.png;assets/icon.png 保留为跨平台
+    # 源图标(Linux/Windows),而非 macOS 包资源。
     rm -f "${app_dir}/Contents/Resources/icon.png"
 
     success "macOS .app 创建完成: ${app_dir} ($(du -sh "$app_dir" | cut -f1))"
 
-    # ---- codesign (optional) ----
+    # ---- 代码签名(可选)----
     if [ "${OPT_SIGN:-no}" = "yes" ] && [ -n "${TOOL_CODESIGN}" ] && \
        [ -n "${CODESIGN_IDENTITY:-}" ]; then
         step "codesign (identity=${CODESIGN_IDENTITY})..."
@@ -613,7 +613,7 @@ bundle_macos() {
         warn "未配置 CODESIGN_IDENTITY — 跳过签名"
     fi
 
-    # ---- notarize (optional) ----
+    # ---- 公证(可选)----
     if [ "${OPT_NOTARIZE:-no}" = "yes" ] && [ -n "${TOOL_NOTARY}" ] && \
        [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
         step "notarytool 提交公证..."
@@ -631,12 +631,12 @@ bundle_macos() {
         warn "未配置 APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID — 跳过公证"
     fi
 
-    # ---- zip (always) ----
+    # ---- zip(总是)----
     if [ "${OPT_BUNDLE:-all}" != "none" ]; then
         bundle_macos_zip "$app_dir" "$app_name"
     fi
 
-    # ---- dmg (optional, requires hdiutil) ----
+    # ---- dmg(可选,需要 hdiutil)----
     if [ "${OPT_BUNDLE:-all}" = "all" ] || [ "${OPT_BUNDLE:-}" = "dmg" ]; then
         if [ -n "${TOOL_HDIUTIL}" ]; then
             bundle_macos_dmg "$app_dir" "$app_name"
@@ -650,13 +650,13 @@ bundle_macos_zip() {
     local app_dir="$1" name="$2"
     local out="${DIST_DIR}/${name}.app.zip"
     step "打包 .app.zip: ${out}"
-    # $app_dir is "./dist/PureTerm.app" relative to repo root.
-    # After `cd $DIST_DIR`, the relative path is just "PureTerm.app".
+    # $app_dir 是相对仓库根的 "./dist/PureTerm.app"。
+    # `cd $DIST_DIR` 之后,相对路径只是 "PureTerm.app"。
     local rel_target
     rel_target="$(basename "$app_dir")"
-    # `zip` is invoked from inside $DIST_DIR, so the output file must
-    # also be relative to that directory — otherwise "./dist/..." doesn't
-    # resolve after we `cd` into "./dist/".
+    # `zip` 在 $DIST_DIR 内部调用,输出文件必须
+    # 同样相对该目录—— 否则 cd 进 "./dist/" 后 "./dist/..."
+    # 无法解析。
     local out_name
     out_name="$(basename "$out")"
     (cd "$DIST_DIR" && rm -f "$out_name" && zip -yrq "$out_name" "$rel_target")
@@ -669,21 +669,21 @@ bundle_macos_dmg() {
     local final_dmg="${DIST_DIR}/${name}.dmg"
     step "创建 .dmg (hdiutil)..."
 
-    # Mountable read-write dmg first.
+    # 先做可挂载的可读写 dmg。
     rm -f "$rw_dmg" "$final_dmg"
     hdiutil create -srcfolder "$app_dir" -volname "$name" -fs HFS+ \
         -fsargs "-c c=64,a=16,e=16" -format UDRW "$rw_dmg" 2>/dev/null || \
     hdiutil create -srcfolder "$app_dir" -volname "$name" -fs HFS+ \
         -format UDRW "$rw_dmg"
 
-    # Convert to compressed read-only (UDZO).
+    # 再转为压缩只读(UDZO)。
     hdiutil convert "$rw_dmg" -format UDZO -imagekey zlib-level=9 -o "$final_dmg"
     rm -f "$rw_dmg"
     success "已生成: ${final_dmg} ($(du -h "$final_dmg" | cut -f1))"
 }
 
 # -----------------------------------------------------------------------------
-# Linux bundler — produces a staged tree + .tar.gz (and .tar.zst if zstd).
+# Linux 打包器—— 产出暂存目录树 + .tar.gz(有 zstd 时加 .tar.zst)。
 # -----------------------------------------------------------------------------
 bundle_linux() {
     local triple="$1"
@@ -717,7 +717,7 @@ bundle_linux() {
              "${data_dir}/doc/pureterm" \
              "${data_dir}/man/man1"
 
-    # Binaries.
+    # 二进制。
     cp "$bin" "${bin_install_dir}/${BINARY_NAME}"
     chmod +x "${bin_install_dir}/${BINARY_NAME}"
     if [ -f "$settings_bin" ]; then
@@ -729,7 +729,7 @@ bundle_linux() {
         chmod +x "${bin_install_dir}/${DAEMON_BIN}"
     fi
 
-    # .desktop — rewrite Exec= to the staged absolute path.
+    # .desktop—— 把 Exec= 改写为暂存绝对路径。
     if [ -f "${SCRIPT_DIR}/extra/linux/pureterm.desktop" ]; then
         sed "s|^Exec=pureterm$|Exec=${bin_install_dir}/${BINARY_NAME}|" \
             "${SCRIPT_DIR}/extra/linux/pureterm.desktop" \
@@ -737,14 +737,14 @@ bundle_linux() {
         chmod 644 "${data_dir}/applications/pureterm.desktop"
     fi
 
-    # AppStream metadata.
+    # AppStream 元数据。
     if [ -f "${SCRIPT_DIR}/extra/linux/pureterm.appdata.xml" ]; then
         cp "${SCRIPT_DIR}/extra/linux/pureterm.appdata.xml" \
            "${data_dir}/metainfo/pureterm.appdata.xml"
         chmod 644 "${data_dir}/metainfo/pureterm.appdata.xml"
     fi
 
-    # Icons.
+    # 图标。
     if [ -f "${SCRIPT_DIR}/assets/icon.png" ]; then
         cp "${SCRIPT_DIR}/assets/icon.png" \
            "${data_dir}/icons/hicolor/256x256/apps/pureterm.png"
@@ -754,7 +754,7 @@ bundle_linux() {
            "${data_dir}/icons/hicolor/scalable/apps/pureterm.svg"
     fi
 
-    # Documentation.
+    # 文档。
     if [ -f "${SCRIPT_DIR}/LICENSE" ]; then
         cp "${SCRIPT_DIR}/LICENSE" "${data_dir}/doc/pureterm/copyright"
     fi
@@ -765,7 +765,7 @@ bundle_linux() {
         cp "${SCRIPT_DIR}/build/linux/pureterm.1" "${data_dir}/man/man1/pureterm.1"
     fi
 
-    # INSTALL.md
+    # INSTALL.md(安装说明)
     cat > "${stage}/INSTALL.md" <<'INSTALL'
 # PureTerm — Linux 安装说明
 
@@ -803,14 +803,14 @@ INSTALL
 
     success "staged tree 准备完成: ${stage} ($(du -sh "$stage" | cut -f1))"
 
-    # ---- tar.gz (always) ----
+    # ---- tar.gz(总是)----
     if [ "${OPT_BUNDLE:-all}" != "none" ]; then
         local out="${DIST_DIR}/${stage_name}.tar.gz"
         step "打包 .tar.gz: ${out}"
         (cd "$DIST_DIR" && tar -czf "$out" "$stage_name")
         success "已生成: ${out} ($(du -h "$out" | cut -f1))"
 
-        # ---- tar.zst (optional) ----
+        # ---- tar.zst(可选)----
         if [ "${OPT_BUNDLE:-all}" = "all" ] && [ -n "${TOOL_ZSTD}" ]; then
             local out_zst="${DIST_DIR}/${stage_name}.tar.zst"
             step "打包 .tar.zst: ${out_zst}"
@@ -819,7 +819,7 @@ INSTALL
         fi
     fi
 
-    # ---- direct install (optional, gated behind --install) ----
+    # ---- 直接安装(可选,--install 门控)----
     if [ "${OPT_INSTALL:-no}" = "yes" ]; then
         local target="/opt/pureterm-${VERSION}"
         step "安装到 ${target}..."
@@ -840,7 +840,7 @@ INSTALL
 }
 
 # -----------------------------------------------------------------------------
-# Windows bundler — produces a folder + .zip (signtool optional).
+# Windows 打包器—— 产出目录 + .zip(signtool 可选)。
 # -----------------------------------------------------------------------------
 bundle_windows() {
     local triple="$1"
@@ -881,10 +881,10 @@ bundle_windows() {
         cp "${SCRIPT_DIR}/LICENSE" "${stage}/LICENSE"
     fi
 
-    # README-Windows.md (auto-stub if missing).
+    # README-Windows.md(缺失时自动生成桩)。
     if [ ! -f "${SCRIPT_DIR}/build/windows/README-Windows.md" ]; then
         cat > "${stage}/README-Windows.md" <<'WINREADME'
-# PureTerm (Windows)
+# PureTerm Windows 版
 
 本目录包含便携版 PureTerm。
 
@@ -909,7 +909,7 @@ WINREADME
 
     success "staged tree 准备完成: ${stage} ($(du -sh "$stage" | cut -f1))"
 
-    # ---- signtool (optional) ----
+    # ---- signtool(可选)----
     if [ "${OPT_SIGN:-no}" = "yes" ] && [ -n "${TOOL_SIGNTOOL}" ] && \
        [ -n "${WINDOWS_CERT_FILE:-}" ] && [ -n "${WINDOWS_CERT_PASSWORD:-}" ]; then
         step "signtool 签名 .exe..."
@@ -923,7 +923,7 @@ WINREADME
         warn "未配置 WINDOWS_CERT_FILE / WINDOWS_CERT_PASSWORD — 跳过签名"
     fi
 
-    # ---- zip (always when bundling) ----
+    # ---- zip(打包时总是)----
     if [ "${OPT_BUNDLE:-all}" != "none" ]; then
         local out="${DIST_DIR}/${stage_name}.zip"
         if [ -n "${TOOL_ZIP}" ]; then
@@ -933,7 +933,7 @@ WINREADME
             local pwsh_cmd="powershell"
             [ -n "${TOOL_PWSH_CORE}" ] && pwsh_cmd="pwsh"
             step "打包 .zip (Compress-Archive): ${out}"
-            # PowerShell Compress-Archive needs an absolute destination path.
+            # PowerShell Compress-Archive 需要绝对目标路径。
             local abs_out
             abs_out="$(cd "$DIST_DIR" && pwd)/$(basename "$out")"
             (cd "$DIST_DIR" && \
@@ -948,7 +948,7 @@ WINREADME
 }
 
 # -----------------------------------------------------------------------------
-# Bundle dispatcher — pick the right bundler for the current host's OS key.
+# 打包分发器—— 按当前宿主的 OS 键选择正确的打包器。
 # -----------------------------------------------------------------------------
 bundle_for_host() {
     local triple="$1" profile="${2:-release}"
@@ -966,10 +966,10 @@ bundle_for_host() {
 }
 
 # -----------------------------------------------------------------------------
-# macOS universal2 bundler — builds both arm64 + x86_64, runs `lipo -create`
-# to merge each Mach-O into a single universal2 binary inside `Contents/MacOS`,
-# then assembles a single .app that runs natively on both Intel and Apple
-# Silicon Macs. This is what mainstream Rust-native terminal macOS apps ship.
+# macOS universal2 打包器—— 构建 arm64 + x86_64 双架构,运行 `lipo -create`
+# 把每个 Mach-O 合并为 `Contents/MacOS` 内单个 universal2 二进制,
+# 再组装一个在 Intel 与 Apple
+# Silicon Mac 上都能原生运行的 .app。主流 Rust 原生终端 macOS App 皆如此。
 # -----------------------------------------------------------------------------
 bundle_macos_universal() {
     local arm64_triple="aarch64-apple-darwin"
@@ -987,17 +987,17 @@ bundle_macos_universal() {
 
     step "开始 macOS universal2 构建 (arm64 + x86_64)..."
 
-    # Build both architectures. We need BOTH to succeed — unlike the matrix
-    # mode (which skips on failure), universal is opt-in so a partial build
-    # is a hard error.
+    # 构建两种架构。两者必须都成功—— 与 matrix
+    # 模式(失败即跳过)不同,universal 是显式选择,部分构建
+    # 即硬错误。
     ensure_target "$arm64_triple" || return 1
     ensure_target "$x64_triple"   || return 1
     build_all_binaries "$profile" "$arm64_triple" || return 1
     build_all_binaries "$profile" "$x64_triple"   || return 1
 
-    # Stage per-arch binaries into a tmp directory so `bundle_macos` can
-    # copy from there. We override `binary_path` semantics by copying each
-    # pair into a parallel `tmp_universal/<triple>/release/` layout.
+    # 把每架构二进制暂存到临时目录,供 `bundle_macos`
+    # 从中拷贝。通过把每对二进制拷进平行的
+    # `tmp_universal/<triple>/release/` 布局来覆盖 `binary_path` 语义。
     local tmp_universal
     tmp_universal="$(mktemp -d -t pureterm-universal)"
     trap "rm -rf '$tmp_universal'" RETURN
@@ -1014,19 +1014,19 @@ bundle_macos_universal() {
         cp "target/${t}/release/${DAEMON_BIN}"     "${dir}/${DAEMON_BIN}"     2>/dev/null || true
     done
 
-    # Now build the .app, but with per-arch staging dirs as the source. We
-    # do a one-off assembly (not through `bundle_macos` because that function
-    # expects a single triple).
+    # 现在构建 .app,但源是每架构暂存目录。我们
+    # 做一次性组装(不经 `bundle_macos`,因为该函数
+    # 只预期单个 triple)。
     local app_dir="${DIST_DIR}/${PROJECT_NAME}.app"
     rm -rf "$app_dir"
     mkdir -p "${app_dir}/Contents/MacOS" \
              "${app_dir}/Contents/Resources" \
              "${app_dir}/Contents/Frameworks"
 
-    # Info.plist
+    # Info.plist(应用信息)
     bundle_macos_write_info_plist "$app_dir"
 
-    # Combine binaries with lipo for universal2 output.
+    # 用 lipo 合并二进制为 universal2 输出。
     local arm_bin="${tmp_universal}/${arm64_triple}/release/${BINARY_NAME}"
     local x64_bin="${tmp_universal}/${x64_triple}/release/${BINARY_NAME}"
     if [ ! -f "$arm_bin" ] || [ ! -f "$x64_bin" ]; then
@@ -1040,7 +1040,7 @@ bundle_macos_universal() {
         -output "${app_dir}/Contents/MacOS/${BINARY_NAME}"
     chmod +x "${app_dir}/Contents/MacOS/${BINARY_NAME}"
 
-    # Same for the helper binaries (best-effort).
+    # 辅助二进制同样处理(尽力而为)。
     for helper in "${SETTINGS_BIN}" "${DAEMON_BIN}"; do
         local a="${tmp_universal}/${arm64_triple}/release/${helper}"
         local x="${tmp_universal}/${x64_triple}/release/${helper}"
@@ -1053,7 +1053,7 @@ bundle_macos_universal() {
         fi
     done
 
-    # Icons.
+    # 图标。
     if [ -f "${SCRIPT_DIR}/assets/${PROJECT_NAME}.icns" ]; then
         cp "${SCRIPT_DIR}/assets/${PROJECT_NAME}.icns" \
            "${app_dir}/Contents/Resources/${PROJECT_NAME}.icns"
@@ -1062,13 +1062,13 @@ bundle_macos_universal() {
 
     success "macOS universal2 .app 创建完成: ${app_dir} ($(du -sh "$app_dir" | cut -f1))"
 
-    # Sanity check.
+    # 健全性检查。
     if command -v lipo &>/dev/null; then
         step "验证 universal2 binary:"
         file "${app_dir}/Contents/MacOS/${BINARY_NAME}"
     fi
 
-    # Zip + dmg + codesign + notary if requested.
+    # 按要求 zip + dmg + 签名 + 公证。
     if [ "${OPT_BUNDLE:-all}" != "none" ]; then
         bundle_macos_zip "$app_dir" "${PROJECT_NAME}-${VERSION}-universal"
     fi
@@ -1078,20 +1078,20 @@ bundle_macos_universal() {
         fi
     fi
 
-    # Codesign / notarize (same path as single-arch).
+    # 签名 / 公证(与单架构同路径)。
     bundle_macos_codesign_notarize "$app_dir"
 }
 
-# Helper used by both bundle_macos (single arch) and bundle_macos_universal
-# to emit Info.plist. Always sets `CFBundleIconFile = PureTerm`.
+# bundle_macos(单架构)与 bundle_macos_universal
+# 共用的 Info.plist 输出辅助。总是设置 `CFBundleIconFile = PureTerm`。
 bundle_macos_write_info_plist() {
     local app_dir="$1"
     if [ -f "${SCRIPT_DIR}/extra/osx/Info.plist" ]; then
         cp "${SCRIPT_DIR}/extra/osx/Info.plist" "${app_dir}/Contents/Info.plist"
-        # Resolve PlistBuddy by absolute path — it's at `/usr/libexec/PlistBuddy`
-        # on macOS but not on bare PATH in many contexts (CI, fresh shells).
-        # `plutil` is also installed under the same prefix; fall back if
-        # PlistBuddy isn't there at all.
+        # PlistBuddy 用绝对路径解析—— 它在 macOS 的 `/usr/libexec/PlistBuddy`
+        # 上,但许多场景(CI、新 shell)裸 PATH 上没有。
+        # `plutil` 也装在同一前缀下;PlistBuddy
+        # 完全不存在时回退。
         local plist="${app_dir}/Contents/Info.plist"
         local pb
         pb="/usr/libexec/PlistBuddy"
@@ -1099,10 +1099,10 @@ bundle_macos_write_info_plist() {
             pb="$(command -v PlistBuddy 2>/dev/null || true)"
         fi
         if [ -x "$pb" ]; then
-            # `Set` only updates existing keys; use `Add` so we can introduce
-            # CFBundleIconFile / NSHumanReadableCopyright even when the source
-            # extra/osx/Info.plist doesn't ship them (which is the current
-            # state — Finder then falls back to a generic icon).
+            # `Set` 只更新已存在的键;用 `Add` 才能在源
+            # extra/osx/Info.plist 未带 CFBundleIconFile /
+            # NSHumanReadableCopyright 时也引入它们(这正是当前
+            # 状态—— 否则 Finder 回退到通用图标)。
             "$pb" -c "Set :CFBundleShortVersionString ${VERSION}" "$plist" >/dev/null 2>&1 || true
             "$pb" -c "Set :CFBundleVersion 1" "$plist" >/dev/null 2>&1 || true
             "$pb" -c "Add :CFBundleIconFile string ${PROJECT_NAME}" "$plist" >/dev/null 2>&1 || \
@@ -1112,8 +1112,8 @@ bundle_macos_write_info_plist() {
                 "$pb" -c "Set :NSHumanReadableCopyright 'Copyright $(date +%Y) ${PROJECT_NAME}.'" \
                        "$plist" >/dev/null 2>&1 || true
         elif command -v plutil &>/dev/null; then
-            # plutil fallback: keys that aren't already set are inserted via
-            # `plutil -replace`; absent keys are written with `plutil -insert`.
+            # plutil 兜底:已设置的键用
+            # `plutil -replace`,缺失的键用 `plutil -insert` 写入。
             local copyright_str="Copyright $(date +%Y) ${PROJECT_NAME}."
             plutil -replace CFBundleShortVersionString -string "${VERSION}" "$plist" >/dev/null 2>&1 || true
             plutil -replace CFBundleVersion -string "1" "$plist" >/dev/null 2>&1 || true
@@ -1148,11 +1148,11 @@ PLIST
     fi
 }
 
-# Shared codesign + notary path (extracted from bundle_macos for reuse).
+# 签名 + 公证共享路径(从 bundle_macos 抽出复用)。
 bundle_macos_codesign_notarize() {
     local app_dir="$1"
 
-    # ---- codesign (optional) ----
+    # ---- 代码签名(可选)----
     if [ "${OPT_SIGN:-no}" = "yes" ] && [ -n "${TOOL_CODESIGN}" ] && \
        [ -n "${CODESIGN_IDENTITY:-}" ]; then
         step "codesign (identity=${CODESIGN_IDENTITY})..."
@@ -1162,7 +1162,7 @@ bundle_macos_codesign_notarize() {
         warn "未配置 CODESIGN_IDENTITY — 跳过签名"
     fi
 
-    # ---- notarize (optional) ----
+    # ---- 公证(可选)----
     if [ "${OPT_NOTARIZE:-no}" = "yes" ] && [ -n "${TOOL_NOTARY}" ] && \
        [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_PASSWORD:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ]; then
         step "notarytool 提交公证..."
@@ -1185,19 +1185,19 @@ bundle_macos_codesign_notarize() {
 }
 
 # -----------------------------------------------------------------------------
-# Top-level modes: app, app-all, matrix
+# 顶层模式:app、app-all、matrix
 # -----------------------------------------------------------------------------
 mode_app() {
-    # --universal takes precedence on macOS — produces a single .app that runs
-    # natively on both Apple Silicon and Intel. Otherwise build + bundle for
-    # the (explicit or host) target.
+    # macOS 上 --universal 优先—— 产出单个在
+    # Apple Silicon 与 Intel 都原生运行的 .app。否则为
+    # (显式或宿主)target 构建 + 打包。
     if [ "${OPT_UNIVERSAL:-no}" = "yes" ] && [ "$(host_os)" = "macos" ]; then
         bundle_macos_universal
         return $?
     fi
 
-    # Default to the host arch (arm64 on Apple Silicon) so the .app doesn't
-    # trigger Rosetta on day one. --target can override.
+    # 默认宿主架构(Apple Silicon 上为 arm64),使 .app
+    # 开箱即不触发 Rosetta。--target 可覆盖。
     local triple="${TARGETS[0]:-${HOST_TRIPLE:-}}"
     if [ -n "$triple" ] && [ "$triple" != "${HOST_TRIPLE:-}" ]; then
         ensure_target "$triple" || return 1
@@ -1232,9 +1232,9 @@ mode_matrix() {
         IFS=':' read -r os_key triple arch_suffix <<<"$entry"
         step "==== matrix: ${os_key} / ${triple} ===="
 
-        # Cross-compile build is best-effort: even if the rustup target is
-        # installed, the host may not have a sysroot / linker for it.
-        # We try the build; on failure we warn and continue.
+        # 交叉编译构建尽力而为:即使 rustup target
+        # 已安装,宿主可能没有对应 sysroot / 链接器。
+        # 尝试构建;失败则警告并继续。
         if ! ensure_target "$triple"; then
             continue
         fi
@@ -1242,8 +1242,8 @@ mode_matrix() {
             warn "构建失败: ${triple} (跨编译需要匹配的 sysroot/linker;继续下一个)"
             continue
         fi
-        # Bundling must run on a host that matches the target OS.
-        # Skip foreign-OS bundles: e.g. we can't produce a .dmg on Linux.
+        # 打包必须在与目标 OS 匹配的宿主上运行。
+        # 跳过外 OS 的打包:例如 Linux 上产不出 .dmg。
         if [ "$os_key" != "$(host_os)" ]; then
             note "跳过 ${os_key} 打包: 当前主机 $(host_os) 不匹配"
             continue
@@ -1257,7 +1257,7 @@ mode_matrix() {
 }
 
 # =============================================================================
-# Argument parsing
+# 参数解析
 # =============================================================================
 MODE=""
 CLEAN_BEFORE_BUILD="false"
@@ -1333,7 +1333,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # =============================================================================
-# Main
+# 主流程
 # =============================================================================
 if [ -z "$MODE" ]; then
     error "请指定构建模式 (debug / release / app / test / info / clean / ...)"
@@ -1341,7 +1341,7 @@ if [ -z "$MODE" ]; then
     exit 1
 fi
 
-# `info` runs before preflight so users can debug env without a cargo check.
+# `info` 在预检前运行,用户无需 cargo check 即可调试环境。
 if [ "$MODE" = "info" ]; then
     detect_toolchain
     mode_info
@@ -1352,13 +1352,13 @@ preflight
 detect_toolchain
 HOST_TRIPLE="$(rustc -vV | sed -n 's|host: ||p')"
 
-# Resolve TARGETS[] for any mode that needs it.
+# 为需要它的任何模式解析 TARGETS[]。
 case "$MODE" in
     app|app-all|matrix)
         expand_targets
         if [ "$MODE" = "matrix" ]; then
-            # Use the static matrix verbatim; --arch / --target / --targets are
-            # still honored by expand_targets.
+            # 原样使用静态矩阵;--arch / --target / --targets
+            # 仍由 expand_targets 遵循。
             if [ -z "${OPT_TARGET:-}${OPT_TARGETS:-}${OPT_ARCH:-}" ]; then
                 TARGETS=()
                 _entry=""

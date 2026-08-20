@@ -12,17 +12,16 @@ use aes_gcm::aead::rand_core::RngCore;
 use argon2::password_hash::SaltString;
 use zeroize::Zeroizing;
 
-/// Encrypted credential storage with master password (cross-platform)
+/// 加密凭据存储,支持主密码(跨平台)
 pub struct CredentialStore {
     creds_path: PathBuf,
-    /// Bug #7 fix: wrap the master key in `Zeroizing` so its memory is
-    /// wiped on drop (`lock`, panic unwinding, or `Drop`). The previous
-    /// `Vec<u8>` only had its bytes zeroed in the explicit `lock` call,
-    /// leaving the key in memory the rest of the time.
+    /// Bug #7 修复:将主密钥包在 `Zeroizing` 中,使其在丢弃(`lock`、
+    /// panic 展开或 `Drop`)时自动清零内存。之前的 `Vec<u8>` 只在显式
+    /// `lock` 调用时清空字节,其余时间密钥都留在内存中。
     master_key: Option<Zeroizing<Vec<u8>>>,
 }
 
-/// Stored credential entry
+/// 存储的凭据条目
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CredentialEntry {
     host: String,
@@ -30,17 +29,17 @@ struct CredentialEntry {
     nonce: Vec<u8>,
 }
 
-/// Credential store file format
+/// 凭据库文件格式
 #[derive(serde::Serialize, serde::Deserialize)]
 struct CredentialFile {
     salt: String,
-    verifier: Vec<u8>, // encrypted known plaintext to verify password
-    nonce: Vec<u8>,    // nonce used for verifier encryption
+    verifier: Vec<u8>, // 加密的已知明文,用于校验主密码
+    nonce: Vec<u8>,    // 校验器加密所用的 nonce
     entries: Vec<CredentialEntry>,
 }
 
 impl CredentialStore {
-    /// Create a new credential store at the given path
+    /// 在给定路径创建新的凭据库
     pub fn new(creds_path: PathBuf) -> Self {
         Self {
             creds_path,
@@ -48,17 +47,17 @@ impl CredentialStore {
         }
     }
 
-    /// Check if credentials file exists
+    /// 检查凭据文件是否存在
     pub fn exists(&self) -> bool {
         self.creds_path.exists()
     }
 
-    /// Check if store is unlocked
+    /// 检查凭据库是否已解锁
     pub fn is_unlocked(&self) -> bool {
         self.master_key.is_some()
     }
 
-    /// Setup master password for first time (creates encrypted file)
+    /// 首次设置主密码(同时创建加密文件)
     pub fn setup_master(&self, master: &str) -> io::Result<()> {
         if self.exists() {
             return Err(io::Error::new(
@@ -67,18 +66,18 @@ impl CredentialStore {
             ));
         }
 
-        // Generate random salt
+        // 生成随机盐值
         let salt = SaltString::generate(&mut OsRng);
         let salt_bytes = salt.as_str().as_bytes();
 
-        // Derive key using Argon2id
+        // 使用 Argon2id 派生密钥
         let key = derive_key(master, salt_bytes);
 
-        // Create a verifier (encrypted known plaintext to verify password)
+        // 创建校验器(加密的已知明文,用于校验密码)
         let verifier_plaintext = b"PURETERM_CREDENTIAL_STORE_V1";
         let (verifier_enc, verifier_nonce) = encrypt(key.as_slice(), verifier_plaintext);
 
-        // Create empty credential file
+        // 创建空的凭据文件
         let cred_file = CredentialFile {
             salt: salt.to_string(),
             verifier: verifier_enc,
@@ -86,28 +85,28 @@ impl CredentialStore {
             entries: Vec::new(),
         };
 
-        // Write to file
+        // 写入文件
         let file = File::create(&self.creds_path)?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer(&mut writer, &cred_file)?;
         writer.flush()?;
 
-        // Note: We don't store the key in memory after setup_master for security.
-        // User must call unlock() to unlock the store and load the key into memory.
+        // 注意:出于安全考虑,setup_master 之后不会在内存中保留密钥。
+        // 用户必须调用 unlock() 解锁凭据库并将密钥载入内存。
         Ok(())
     }
 
-    /// Unlock with master password
+    /// 使用主密码解锁
     pub fn unlock(&mut self, master: &str) -> io::Result<()> {
         let file = File::open(&self.creds_path)?;
         let mut reader = BufReader::new(file);
         let cred_file: CredentialFile = serde_json::from_reader(&mut reader)?;
 
-        // Derive key from password
+        // 从密码派生密钥
         let salt_bytes = cred_file.salt.as_bytes();
         let key = derive_key(master, salt_bytes);
 
-        // Verify password by attempting to decrypt the verifier
+        // 通过尝试解密校验器来验证密码
         let decrypted = match decrypt(key.as_slice(), &cred_file.verifier, &cred_file.nonce) {
             Ok(pt) => pt,
             Err(_) => {
@@ -118,7 +117,7 @@ impl CredentialStore {
             },
         };
 
-        // Verify the plaintext matches expected value
+        // 校验明文与期望值一致
         if &decrypted[..] != b"PURETERM_CREDENTIAL_STORE_V1" {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -126,45 +125,43 @@ impl CredentialStore {
             ));
         }
 
-        // Password verified, store key in a Zeroizing wrapper so the buffer
-        // is wiped on drop.
+        // 密码验证通过,将密钥包在 Zeroizing 中,丢弃时自动清零缓冲区。
         self.master_key = Some(key);
         Ok(())
     }
 
-    /// Lock (clear master key from memory). The `Zeroizing` wrapper
-    /// guarantees the underlying buffer is wiped on drop, so we simply
-    /// drop our handle here.
+    /// 锁定(从内存中清除主密钥)。`Zeroizing` 包装保证底层缓冲区在
+    /// 丢弃时清零,这里只需丢弃句柄即可。
     pub fn lock(&mut self) {
         self.master_key = None;
     }
 
-    /// Store encrypted credential
+    /// 存储加密凭据
     pub fn store(&self, host: &str, password: &[u8]) -> io::Result<()> {
         let key = self
             .master_key
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "store is locked"))?;
 
-        // Read existing file
+        // 读取已有文件
         let file = File::open(&self.creds_path)?;
         let mut reader = BufReader::new(file);
         let mut cred_file: CredentialFile = serde_json::from_reader(&mut reader)?;
 
-        // Remove existing entry for this host if present
+        // 移除该主机已有的条目(若存在)
         cred_file.entries.retain(|e| e.host != host);
 
-        // Encrypt the password
+        // 加密密码
         let (encrypted, nonce) = encrypt(key.as_slice(), password);
 
-        // Add new entry
+        // 新增条目
         cred_file.entries.push(CredentialEntry {
             host: host.to_string(),
             encrypted,
             nonce,
         });
 
-        // Write back
+        // 写回文件
         let file = File::create(&self.creds_path)?;
         let mut writer = BufWriter::new(file);
         serde_json::to_writer(&mut writer, &cred_file)?;
@@ -173,19 +170,19 @@ impl CredentialStore {
         Ok(())
     }
 
-    /// Retrieve decrypted credential
+    /// 取出解密后的凭据
     pub fn retrieve(&self, host: &str) -> io::Result<Vec<u8>> {
         let key = self
             .master_key
             .as_ref()
             .ok_or_else(|| io::Error::new(io::ErrorKind::PermissionDenied, "store is locked"))?;
 
-        // Read existing file
+        // 读取已有文件
         let file = File::open(&self.creds_path)?;
         let mut reader = BufReader::new(file);
         let cred_file: CredentialFile = serde_json::from_reader(&mut reader)?;
 
-        // Find entry for host
+        // 查找主机的条目
         let entry = cred_file
             .entries
             .iter()
@@ -197,7 +194,7 @@ impl CredentialStore {
                 )
             })?;
 
-        // Decrypt
+        // 解密
         let decrypted = decrypt(key.as_slice(), &entry.encrypted, &entry.nonce).map_err(|_| {
             io::Error::new(io::ErrorKind::InvalidData, "failed to decrypt credential")
         })?;
@@ -207,18 +204,17 @@ impl CredentialStore {
 }
 
 impl Drop for CredentialStore {
-    /// Bug #7 fix: ensure the master key is wiped on drop. The
-    /// `Zeroizing` wrapper already wipes the buffer; we just need to
-    /// drop the field here (e.g. on panic unwinding, or when the owning
-    /// struct is dropped without an explicit `lock`).
+    /// Bug #7 修复:确保主密钥在丢弃时被清除。`Zeroizing` 包装已负责
+    /// 清零缓冲区,这里只需丢弃该字段(例如在 panic 展开时,或所有者
+    /// 未显式调用 `lock` 即被丢弃时)。
     fn drop(&mut self) {
         self.master_key = None;
     }
 }
 
-/// Derive a 256-bit key from password using Argon2id.
+/// 使用 Argon2id 从密码派生 256 位密钥。
 ///
-/// Returned wrapped in `Zeroizing` so the buffer is wiped on drop.
+/// 返回值包在 `Zeroizing` 中,丢弃时自动清零缓冲区。
 fn derive_key(password: &str, salt: &[u8]) -> Zeroizing<Vec<u8>> {
     let argon2 = argon2::Argon2::new(
         argon2::Algorithm::Argon2id,
@@ -233,10 +229,10 @@ fn derive_key(password: &str, salt: &[u8]) -> Zeroizing<Vec<u8>> {
     key
 }
 
-/// Encrypt plaintext using AES-256-GCM
+/// 使用 AES-256-GCM 加密明文
 fn encrypt(key: &[u8], plaintext: &[u8]) -> (Vec<u8>, Vec<u8>) {
     let cipher = Aes256Gcm::new_from_slice(key).expect("invalid key length");
-    // Generate a random 12-byte nonce
+    // 生成随机的 12 字节 nonce
     let mut nonce_bytes = [0u8; 12];
     OsRng.try_fill_bytes(&mut nonce_bytes).expect("failed to generate nonce");
     let nonce = aes_gcm::Nonce::from_slice(&nonce_bytes);
@@ -248,7 +244,7 @@ fn encrypt(key: &[u8], plaintext: &[u8]) -> (Vec<u8>, Vec<u8>) {
     (ciphertext, nonce_bytes.to_vec())
 }
 
-/// Decrypt ciphertext using AES-256-GCM
+/// 使用 AES-256-GCM 解密密文
 fn decrypt(key: &[u8], ciphertext: &[u8], nonce_bytes: &[u8]) -> Result<Vec<u8>, ()> {
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|_| ())?;
     let nonce = aes_gcm::Nonce::from_slice(nonce_bytes);
@@ -278,21 +274,21 @@ mod tests {
 
         let store = CredentialStore::new(creds_path.clone());
 
-        // Setup master password
+        // 设置主密码
         store.setup_master("test_master_password").expect("setup failed");
 
         assert!(store.exists());
 
-        // Unlock with correct password
+        // 用正确密码解锁
         let mut store = store;
         store.unlock("test_master_password").expect("unlock failed");
         assert!(store.is_unlocked());
 
-        // Lock
+        // 锁定
         store.lock();
         assert!(!store.is_unlocked());
 
-        // Clean up
+        // 清理
         let _ = fs::remove_file(&creds_path);
     }
 
@@ -310,24 +306,24 @@ mod tests {
         let mut store = store;
         store.unlock("store_retrieve_password").expect("unlock failed");
 
-        // Store a credential
+        // 存储一条凭据
         store
             .store("example.com", b"secret_password_123")
             .expect("store failed");
 
-        // Retrieve it
+        // 取出该凭据
         let retrieved = store.retrieve("example.com").expect("retrieve failed");
         assert_eq!(retrieved, b"secret_password_123");
 
-        // Retrieve non-existent should fail
+        // 取不存在的凭据应失败
         assert!(store.retrieve("nonexistent.com").is_err());
 
-        // Lock and verify cannot store/retrieve
+        // 锁定后验证无法存储/取出
         store.lock();
         assert!(store.store("test.com", b"test").is_err());
         assert!(store.retrieve("example.com").is_err());
 
-        // Clean up
+        // 清理
         let _ = fs::remove_file(&creds_path);
     }
 
@@ -347,7 +343,7 @@ mod tests {
         let result = store.unlock("wrong_password");
         assert!(result.is_err());
 
-        // Clean up
+        // 清理
         let _ = fs::remove_file(&creds_path);
     }
 

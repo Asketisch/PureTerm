@@ -1,10 +1,10 @@
-//! Alacritty - The GPU Enhanced Terminal.
+//! PureTerm 的终端仿真核心(基于 Alacritty 的 alacritty_terminal)。
 
 #![warn(rust_2018_idioms, future_incompatible)]
 #![deny(clippy::all, clippy::if_not_else, clippy::enum_glob_use)]
 #![cfg_attr(clippy, deny(warnings))]
 
-/// GAP-1.2: DECSCL conformance level tracking (VT100–VT400).
+/// GAP-1.2:DECSCL 一致性等级跟踪(VT100–VT400)。
 pub mod decscl;
 
 pub mod event;

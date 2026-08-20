@@ -1,51 +1,51 @@
-//! T-core-shaper: Font fallback chain for per-glyph font selection.
+//! T-core-shaper:按字形选择字体的字体回退链。
 //!
-//! The fallback chain maps Unicode script ranges to specific font faces,
-//! enabling proper rendering of CJK, emoji, and complex scripts without
-//! requiring a single monolithic font file.
+//! 回退链把 Unicode 文字区间映射到具体字面,
+//! 使 CJK、emoji 与复杂文字无需单一巨型
+//! 字体文件即可正确渲染。
 //!
-//! Default chain (from spec):
-//! 1. Monospace (primary) — Latin / ASCII / basic symbols
-//! 2. CJK JP — Hiragana, Katakana, Japanese Kanji
-//! 3. CJK KR — Hangul, Korean Hanja
-//! 4. CJK SC — Simplified Chinese
-//! 5. Emoji — Color emoji (ZWJ sequences, modifiers)
-//! 6. Serif — Fallback for rare characters
+//! 默认链(来自规格说明):
+//! 1. Monospace(主字体)——拉丁 / ASCII / 基本符号
+//! 2. CJK JP——平假名、片假名、日文汉字
+//! 3. CJK KR——谚文、韩文汉字
+//! 4. CJK SC——简体中文
+//! 5. Emoji——彩色 emoji(ZWJ 序列、修饰符)
+//! 6. Serif——罕见字符的兜底
 
 use std::sync::Arc;
 
 use super::{rustybuzz_shaper::FontFace, RustyBuzzShaper, RustyBuzzConfig};
 
-/// A named font face in the fallback chain.
+/// 回退链中的一个命名字面。
 #[derive(Clone, Debug)]
 pub struct NamedFontFace {
-    /// Human-readable name (e.g., "Monospace", "CJK JP").
+    /// 人类可读名称(如 "Monospace"、"CJK JP")。
     pub name: String,
-    /// The actual font data.
+    /// 实际字体数据。
     pub face: FontFace,
-    /// Unicode script this face is optimized for.
+    /// 该字面针对的 Unicode 文字。
     pub script: FallbackScript,
 }
 
-/// The supported fallback scripts in priority order.
+/// 按优先级排列的受支持回退文字。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FallbackScript {
-    /// Primary monospace font (Latin, ASCII, basic symbols).
+    /// 主等宽字体(拉丁、ASCII、基本符号)。
     Monospace,
-    /// Japanese fonts (Hiragana, Katakana, Kanji).
+    /// 日文字体(平假名、片假名、汉字)。
     CjkJp,
-    /// Korean fonts (Hangul, Hanja).
+    /// 韩文字体(谚文、汉字)。
     CjkKr,
-    /// Simplified Chinese fonts.
+    /// 简体中文字体。
     CjkSc,
-    /// Color emoji font.
+    /// 彩色 emoji 字体。
     Emoji,
-    /// Serif fallback for rare characters.
+    /// 罕见字符的衬线兜底。
     Serif,
 }
 
 impl FallbackScript {
-    /// Get the display name of this script.
+    /// 取该文字的显示名。
     pub fn name(&self) -> &'static str {
         match self {
             Self::Monospace => "monospace",
@@ -57,7 +57,7 @@ impl FallbackScript {
         }
     }
 
-    /// Get the rustybuzz script tag for this fallback.
+    /// 取该回退对应的 rustybuzz 文字标签。
     pub fn script_tag(&self) -> &'static str {
         match self {
             Self::Monospace => "latn",
@@ -70,41 +70,41 @@ impl FallbackScript {
     }
 }
 
-/// The font fallback chain. Holds a list of named font faces ordered by
-/// priority and provides methods to select the best face for a given input.
+/// 字体回退链。持有按优先级排序的命名字面列表,
+/// 并提供为给定输入选择最佳字面的方法。
 #[derive(Clone, Debug)]
 pub struct FallbackChain {
-    /// Ordered list of font faces.
+    /// 有序的字面列表。
     pub faces: Vec<NamedFontFace>,
 }
 
 impl Default for FallbackChain {
     fn default() -> Self {
-        // Build the default chain with no actual fonts (stub).
-        // In production, these would be loaded from system fonts or bundled.
+        // 构建不含实际字体的默认链(桩)。
+        // 生产环境中应从系统字体或捆绑字体加载。
         Self { faces: Vec::new() }
     }
 }
 
 impl FallbackChain {
-    /// Create a new fallback chain with the given named font faces.
+    /// 用给定的命名字面创建新的回退链。
     pub fn new(faces: Vec<NamedFontFace>) -> Self {
         Self { faces }
     }
 
-    /// Get the primary (first) font face. This is used for Latin/ASCII text.
+    /// 取主(第一个)字面。用于拉丁/ASCII 文本。
     pub fn primary(&self) -> Option<&FontFace> {
         self.faces.first().map(|f| &f.face)
     }
 
-    /// Get a font face by script type.
+    /// 按文字类型取字面。
     pub fn by_script(&self, script: FallbackScript) -> Option<&FontFace> {
         self.faces.iter()
             .find(|f| f.script == script)
             .map(|f| &f.face)
     }
 
-    /// Build a RustyBuzzConfig from this fallback chain.
+    /// 从此回退链构建 RustyBuzzConfig。
     pub fn build_config(&self, language: String) -> RustyBuzzConfig {
         let primary = self.primary().cloned();
         let mut fallbacks = Vec::new();
@@ -120,14 +120,14 @@ impl FallbackChain {
         }
     }
 
-    /// Create a shaper from this fallback chain.
+    /// 从此回退链创建整形器。
     pub fn create_shaper(&self, language: String) -> RustyBuzzShaper {
         let config = self.build_config(language);
         RustyBuzzShaper::new(config)
     }
 }
 
-/// A builder for constructing fallback chains with specific font data.
+/// 用特定字体数据构建回退链的 builder。
 #[derive(Debug)]
 pub struct FallbackChainBuilder {
     faces: Vec<NamedFontFace>,
@@ -144,7 +144,7 @@ impl Default for FallbackChainBuilder {
 }
 
 impl FallbackChainBuilder {
-    /// Set the primary monospace font.
+    /// 设置主等宽字体。
     pub fn with_monospace(mut self, data: Arc<Vec<u8>>) -> Self {
         self.faces.push(NamedFontFace {
             name: "Monospace".to_string(),
@@ -154,7 +154,7 @@ impl FallbackChainBuilder {
         self
     }
 
-    /// Add a CJK JP font.
+    /// 添加 CJK JP 字体。
     pub fn with_cjk_jp(mut self, data: Arc<Vec<u8>>) -> Self {
         self.faces.push(NamedFontFace {
             name: "CJK JP".to_string(),
@@ -164,7 +164,7 @@ impl FallbackChainBuilder {
         self
     }
 
-    /// Add a CJK KR font.
+    /// 添加 CJK KR 字体。
     pub fn with_cjk_kr(mut self, data: Arc<Vec<u8>>) -> Self {
         self.faces.push(NamedFontFace {
             name: "CJK KR".to_string(),
@@ -174,7 +174,7 @@ impl FallbackChainBuilder {
         self
     }
 
-    /// Add a CJK SC font.
+    /// 添加 CJK SC 字体。
     pub fn with_cjk_sc(mut self, data: Arc<Vec<u8>>) -> Self {
         self.faces.push(NamedFontFace {
             name: "CJK SC".to_string(),
@@ -184,7 +184,7 @@ impl FallbackChainBuilder {
         self
     }
 
-    /// Add an emoji font.
+    /// 添加 emoji 字体。
     pub fn with_emoji(mut self, data: Arc<Vec<u8>>) -> Self {
         self.faces.push(NamedFontFace {
             name: "Emoji".to_string(),
@@ -194,7 +194,7 @@ impl FallbackChainBuilder {
         self
     }
 
-    /// Add a serif fallback font.
+    /// 添加衬线兜底字体。
     pub fn with_serif(mut self, data: Arc<Vec<u8>>) -> Self {
         self.faces.push(NamedFontFace {
             name: "Serif".to_string(),
@@ -204,18 +204,18 @@ impl FallbackChainBuilder {
         self
     }
 
-    /// Set the language for shaping.
+    /// 设置整形所用语言。
     pub fn with_language(mut self, lang: String) -> Self {
         self.language = lang;
         self
     }
 
-    /// Build the fallback chain.
+    /// 构建回退链。
     pub fn build(self) -> FallbackChain {
         FallbackChain::new(self.faces)
     }
 
-    /// Build a shaper directly.
+    /// 直接构建整形器。
     pub fn create_shaper(self) -> RustyBuzzShaper {
         let language = self.language.clone();
         let chain = self.build();
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_build_config_from_chain() {
-        // With no fonts, the config should have None primary and empty fallbacks.
+        // 无字体时,配置的主字体应为 None、回退为空。
         let chain = FallbackChain::default();
         let config = chain.build_config("en-US".to_string());
         assert!(config.font_face.is_none());
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn test_builder_creates_shaper() {
-        // Even without real fonts, the builder should produce a valid shaper.
+        // 即使没有真实字体,builder 也应产出合法整形器。
         let shaper = FallbackChainBuilder::default().create_shaper();
         let run = shaper.shape("hello", 7.0);
         assert_eq!(run.glyphs.len(), 5); // Monospace fallback.

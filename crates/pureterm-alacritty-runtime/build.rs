@@ -9,15 +9,15 @@ fn main() {
     }
     println!("cargo:rustc-env=VERSION={version}");
 
-    // t-core-windows-conpty (E.1): the original build.rs unconditionally
-    // calls `embed_resource::compile("src/alacritty/windows/alacritty.rc",
-    // …)` on Windows, but the file doesn't exist in this crate's tree —
-    // the vendored Alacritty sources in `crates/alacritty_terminal/` are
-    // the actual conpty home, not this one. The Windows build therefore
-    // fails before reaching the main source. Fix: skip the embed if the
-    // file isn't on disk; this keeps the v1 cargo build green on both
-    // Linux and Windows, and the conpty resources can be re-attached
-    // in a follow-up.
+    // t-core-windows-conpty(E.1):原 build.rs 在 Windows 上无条件
+    // 调用 `embed_resource::compile("src/alacritty/windows/alacritty.rc",
+    // …)`,但该文件在本 crate 的目录树里不存在——
+    // `crates/alacritty_terminal/` 里 vendored 的 Alacritty 源码
+    // 才是 conpty 的真正所在地,不是这里。Windows 构建因此在
+    // 进入主源码之前就失败。修复:文件不在磁盘上时跳过
+    // embed;这使 v1 的 cargo 构建在 Linux 与
+    // Windows 上都能保持绿色,conpty 资源可在后续
+    // 重新接回。
     #[cfg(windows)]
     {
         let rc_path = PathBuf::from("src/alacritty/windows/alacritty.rc");
@@ -26,12 +26,12 @@ fn main() {
                 .manifest_required()
                 .unwrap();
         } else {
-            // The `.rc` is missing in this minimal runtime crate; the
-            // main `pureterm` binary's Windows resources live in
-            // `crates/pureterm/windows/`, not here. v1 is a no-op; the
-            // build emits no manifest-required assertion, but cargo
-            // still produces a valid exe. Re-enable in v2 once the
-            // resource layout is decided.
+            // 本极简运行时 crate 中缺少 `.rc`;主 `pureterm`
+            // 二进制的 Windows 资源位于
+            // `crates/pureterm/windows/`,不在这里。v1 为空操作;
+            // 构建不发出任何需要 manifest 的断言,但 cargo
+            // 仍产出有效可执行文件。待 v2 资源
+            // 布局确定后再启用。
         }
     }
 }

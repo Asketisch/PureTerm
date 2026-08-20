@@ -8,7 +8,7 @@
 
 use super::target::PaneInfo;
 
-/// Translate a tmux key name to bytes; unknown names are sent literally.
+/// 把 tmux 键名翻译成对应字节;未知名称原样返回。
 pub(super) fn map_key(k: &str) -> String {
     match k {
         "Enter" | "C-m" | "Return" => "\r".into(),
@@ -27,7 +27,7 @@ pub(super) fn map_key(k: &str) -> String {
     }
 }
 
-/// Render a tmux `-F` format string against a pane row.
+/// 把 tmux 的 `-F` 格式串渲染到单个窗格行上。
 pub(super) fn render_format(fmt: &str, p: &PaneInfo) -> String {
     let active = if p.active { "1" } else { "0" };
     let cwd = p.cwd.clone().unwrap_or_default();

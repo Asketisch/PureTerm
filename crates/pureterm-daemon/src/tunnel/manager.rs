@@ -11,9 +11,9 @@ use super::handler::run_tunnel;
 use super::{new_tunnel_id, TunnelEntry, TunnelInfo, TunnelLive, TunnelManager};
 
 impl TunnelManager {
-    /// Register + launch a tunnel. Binds the SOCKS5 listener synchronously so
-    /// the returned id is immediately usable (the port is reserved before the
-    /// async connect even starts). Returns the tunnel id.
+    /// 注册 + 启动一条隧道。同步绑定 SOCKS5 监听器,使
+    /// 返回的 id 立即可用(端口在异步连接开始前就已保留)。
+    /// 返回隧道 id。
     pub fn start(
         &self,
         rt: &tokio::runtime::Handle,
@@ -26,7 +26,7 @@ impl TunnelManager {
         remote_dns: bool,
         forward_agent: bool,
     ) -> Result<String, String> {
-        // Bind first so a port clash fails fast (before we touch the network).
+        // 先绑定,使端口冲突快速失败(在触碰网络之前)。
         let listener = StdTcpListener::bind(("127.0.0.1", local_port))
             .map_err(|e| format!("bind 127.0.0.1:{local_port} failed: {e}"))?;
         listener
@@ -72,7 +72,7 @@ impl TunnelManager {
         Ok(id)
     }
 
-    /// Enumerate live tunnels as serializable descriptors.
+    /// 把存活隧道枚举为可序列化描述符。
     pub fn list(&self) -> Vec<TunnelInfo> {
         self.tunnels
             .lock()
@@ -97,8 +97,8 @@ impl TunnelManager {
             .collect()
     }
 
-    /// Stop + remove a tunnel (aborts the connect/accept task; dropping the
-    /// russh `Handle` disconnects the SSH session). Returns whether it existed.
+    /// 停止 + 移除隧道(中止连接/accept 任务;丢弃 russh
+    /// `Handle` 即断开 SSH 会话)。返回它是否曾存在。
     pub fn stop(&self, id: &str) -> bool {
         if let Some(entry) = self.tunnels.lock().unwrap().remove(id) {
             let mut e = entry.lock().unwrap();
@@ -111,9 +111,9 @@ impl TunnelManager {
         }
     }
 
-    /// Provide the auth secret to a tunnel parked in `NeedAuth`. Errors if the
-    /// tunnel is unknown or not currently awaiting auth (e.g. still connecting,
-    /// or already authenticated).
+    /// 把认证机密交给驻留在 `NeedAuth` 的隧道。隧道未知
+    /// 或当前不在等待认证(如仍在连接中,
+    /// 或已认证)时报错。
     pub fn provide_auth(&self, id: &str, secret: String) -> Result<(), String> {
         let entry = self
             .tunnels
@@ -130,15 +130,15 @@ impl TunnelManager {
         tx.send(secret).map_err(|_| "auth receiver dropped".to_string())
     }
 
-    /// Set the shared TOFU host-key store (called once from `runtime` at daemon
-    /// startup, before any tunnel is started). Subsequent tunnels consult it in
+    /// 设置共享的 TOFU 主机密钥存储(守护进程启动时由 `runtime`
+    /// 调用一次,先于任何隧道启动)。后续隧道在
     /// `ClientHandler::check_server_key`.
     pub fn set_known_hosts(&self, kh: Arc<KnownHosts>) {
         let _ = self.known_hosts.set(kh);
     }
 
-    /// Snapshot all entries (live + restored-stopped) as serializable configs
-    /// for `tunnels.json` persistence.
+    /// 把所有条目(存活 + 恢复的已停止)快照为可序列化配置,
+    /// 供 `tunnels.json` 持久化。
     pub fn snapshot_configs(&self) -> Vec<crate::persist::TunnelConfig> {
         self.tunnels
             .lock()
@@ -159,9 +159,9 @@ impl TunnelManager {
             .collect()
     }
 
-    /// GAP-5.2 config-only restore: register a persisted config as a `Stopped`
-    /// entry (visible in `tunnel.list`) with no listener/task. The user
-    /// re-starts it explicitly via `tunnel.start`.
+    /// GAP-5.2 仅配置恢复:把持久化配置注册为 `Stopped` 条目
+    /// (在 `tunnel.list` 中可见),不绑监听器、无任务。用户
+    /// 经 `tunnel.start` 显式重启它。
     pub fn register_stopped(&self, cfg: crate::persist::TunnelConfig) {
         let id = new_tunnel_id();
         let local_port = cfg.local_port;

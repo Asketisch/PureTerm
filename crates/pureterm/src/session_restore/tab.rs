@@ -53,15 +53,15 @@ pub(super) fn restore_one_tab(
         }
 
         let Some(sid) = pane_snap.session_id.as_ref() else {
-            // Non-daemon pane (direct PTY) — cannot survive. Prune.
+            // 非守护进程窗格(直接 PTY)——无法存活。裁剪掉。
             let _ = tree.remove(*old_id);
             continue;
         };
         if !alive_ids.contains(sid.as_str()) {
-            // GAP-7.5: session died while the GUI was closed. If this pane
-            // tracked an agent session id, cold-resume it (e.g.
-            // `claude --resume <id>`) into a fresh daemon session; otherwise
-            // prune (a plain shell can't be revived).
+            // GAP-7.5:GUI 关闭期间会话已死。若该窗格
+            // 登记过 agent 会话 id,则冷恢复它(例如
+            // `claude --resume <id>`)至一个新守护进程会话;否则
+            // 裁剪(普通 shell 无法复活)。
             if let Some(agent_id) = pane_snap.agent_session_id.as_ref() {
                 match cold_resume_agent(agent_id, pane_snap.agent_kind.as_deref()) {
                     Ok(ctx) => {
@@ -83,7 +83,7 @@ pub(super) fn restore_one_tab(
                     ),
                 }
             }
-            // Plain shell (no agent_session_id), or cold-resume failed: prune.
+            // 普通 shell(无 agent_session_id),或冷恢复失败:裁剪。
             let _ = tree.remove(*old_id);
             continue;
         }
@@ -109,11 +109,11 @@ pub(super) fn restore_one_tab(
     }
 
     if alive_panes.is_empty() {
-        return None; // whole tab died
+        return None; // 整个标签页都退出了
     }
 
-    // Remap surviving old PaneIds -> fresh ones, walking the pruned tree's
-    // new leaf order so panes line up with the rebuilt split tree.
+    // 把存活的旧 PaneId 重映射为新 id,按裁剪后树
+    // 的新叶序进行,使窗格与重建后的拆分树对齐。
     let new_leaf_order = tree.pane_ids();
     debug_assert_eq!(new_leaf_order.len(), alive_panes.len());
     let mut mapping: std::collections::HashMap<PaneId, PaneId> =

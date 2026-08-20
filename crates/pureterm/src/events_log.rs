@@ -1,14 +1,13 @@
-//! GAP-6.7: pure file I/O for the event stream — append-with-rotation writer,
-//! recent-reader, and follow-tailer for `events.jsonl`.
+//! GAP-6.7：事件流的纯文件 I/O——带轮转的追加写入器、最近事件读取器、
+//! 以及针对 `events.jsonl` 的跟随 tail。
 //!
-//! Mirrors the reader/writer split of [`crate::feed_log`] (path-override seam so
-//! tests use a tempdir; the public wrappers resolve the real path). No bus
-//! dependency, no IPC — just bytes on disk. Rotation is logrotate-style: when
-//! the active file reaches [`ROTATE_THRESHOLD_BYTES`], it's renamed to a single
-//! `.1` archive (capping total disk at ~2× threshold); the next append opens a
-//! fresh active file.
+//! 与 [`crate::feed_log`] 保持相同的读写分离（提供路径覆盖接缝，测试可用
+//! 临时目录；公开包装函数解析真实路径）。不依赖事件总线、不涉及 IPC——
+//! 只是磁盘上的字节。轮转采用 logrotate 风格：当活动文件达到
+//! [`ROTATE_THRESHOLD_BYTES`] 时，重命名为单个 `.1` 归档（磁盘总量上限约为
+//! 阈值的 2 倍）；下一次追加打开新的活动文件。
 //!
-//! Schema is [`crate::events::AppEvent`]; each event is one JSON line.
+//! 结构见 [`crate::events::AppEvent`]；每个事件占一行 JSON。
 
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
@@ -16,25 +15,25 @@ use std::time::Duration;
 
 use crate::events::{AppEvent, TypeFilter};
 
-/// Rotate the active log once it reaches this size (16 MiB). One `.1` archive
-/// is kept, so worst-case disk is ~32 MiB.
+/// 活动日志达到该大小（16 MiB）即轮转。仅保留一个 `.1` 归档，
+/// 磁盘占用最坏约为 32 MiB。
 pub const ROTATE_THRESHOLD_BYTES: u64 = 16 * 1024 * 1024;
 
-/// `data_local_dir()/pureterm/events.jsonl` (sibling of `feed.jsonl`).
+/// `data_local_dir()/pureterm/events.jsonl`（与 `feed.jsonl` 同级）。
 pub fn events_path() -> PathBuf {
     dirs::data_local_dir().unwrap_or_else(std::env::temp_dir).join("pureterm").join("events.jsonl")
 }
 
-/// The rotated archive path (`events.jsonl` → `events.jsonl.1`).
+/// 轮转后的归档路径（`events.jsonl` → `events.jsonl.1`）。
 fn archive_of(path: &Path) -> PathBuf {
     let mut s = path.as_os_str().to_owned();
     s.push(".1");
     PathBuf::from(s)
 }
 
-/// Append one event to `path`, rotating first if the active file is already at
-/// or over `threshold`. Best-effort: dir creation + rotation failures are
-/// logged and skipped (an event log must never crash its producer).
+/// 向 `path` 追加一个事件，若活动文件已达到或超过 `threshold` 则先轮转。
+/// 尽力而为：目录创建与轮转失败仅记录日志并跳过（事件日志绝不能让其
+/// 生产者崩溃）。
 fn append_with_threshold(path: &Path, event: &AppEvent, threshold: u64) {
     use std::io::Write;
 
@@ -44,7 +43,7 @@ fn append_with_threshold(path: &Path, event: &AppEvent, threshold: u64) {
         }
     }
 
-    // Rotate before append so the active file stays ≤ threshold + one line.
+    // 先轮转再追加，使活动文件始终 ≤ 阈值 + 一行。
     if let Ok(meta) = std::fs::metadata(path) {
         if meta.len() >= threshold {
             let _ = std::fs::rename(path, archive_of(path));
@@ -64,21 +63,21 @@ fn append_with_threshold(path: &Path, event: &AppEvent, threshold: u64) {
     }
 }
 
-/// Append one event at the default rotation threshold.
+/// 以默认轮转阈值追加一个事件。
 pub fn append_to_path(path: &Path, event: &AppEvent) {
     append_with_threshold(path, event, ROTATE_THRESHOLD_BYTES);
 }
 
-/// Append one event to the real log path.
+/// 向真实日志路径追加一个事件。
 pub fn append(event: &AppEvent) {
     append_to_path(&events_path(), event);
 }
 
-/// Read up to `limit` events (newest first) from `path`, optionally filtered.
+/// 从 `path` 读取最多 `limit` 条事件（最新在前），可按需过滤。
 ///
-/// Reads both the `.1` archive (older) and the active file (newer); malformed
-/// lines are skipped (append-only log never blocks on a corrupt tail).
-/// `since_seq` keeps only events with `seq > since_seq`. Missing file → `[]`.
+/// 同时读取 `.1` 归档（较旧）与活动文件（较新）；跳过畸形行
+///（追加式日志不会因损坏的尾部而阻塞）。`since_seq` 只保留 `seq > since_seq`
+/// 的事件。文件不存在 → 返回 `[]`。
 pub fn read_recent_from_path(
     path: &Path,
     filter: &TypeFilter,
@@ -86,7 +85,7 @@ pub fn read_recent_from_path(
     since_seq: Option<u64>,
 ) -> Vec<AppEvent> {
     let mut all: Vec<AppEvent> = Vec::new();
-    // archive first (older), then active (newer) → chronological order.
+    // 先读归档（较旧），再读活动文件（较新）→ 按时间顺序。
     for p in [archive_of(path).as_path(), path] {
         if let Ok(text) = std::fs::read_to_string(p) {
             for line in text.lines() {
@@ -99,7 +98,7 @@ pub fn read_recent_from_path(
             }
         }
     }
-    all.reverse(); // newest first
+    all.reverse(); // 最新在前
     all.into_iter()
         .filter(|e| filter.matches(e))
         .filter(|e| since_seq.map_or(true, |s| e.seq > s))
@@ -107,13 +106,12 @@ pub fn read_recent_from_path(
         .collect()
 }
 
-/// Read recent events from the real log path.
+/// 从真实日志路径读取最近的事件。
 pub fn read_recent(filter: &TypeFilter, limit: usize, since_seq: Option<u64>) -> Vec<AppEvent> {
     read_recent_from_path(&events_path(), filter, limit, since_seq)
 }
 
-/// Platform inode for rotation detection (0 where unavailable — size-shrink
-/// detection still catches rotation).
+/// 用于轮转检测的平台 inode（不可用时为 0——通过文件缩水检测仍能发现轮转）。
 #[cfg(unix)]
 fn inode_of(meta: &std::fs::Metadata) -> u64 {
     use std::os::unix::fs::MetadataExt;
@@ -124,25 +122,22 @@ fn inode_of(_meta: &std::fs::Metadata) -> u64 {
     0
 }
 
-/// Poll interval for [`tail_follow`]. Bounds tail latency to ≤ this value.
+/// [`tail_follow`] 的轮询间隔。将 tail 延迟限制在 ≤ 该值。
 ///
-/// GAP-6.7 originally listed "kqueue/inotify" as the tail optimization, but on
-/// macOS `notify`'s `RecommendedWatcher` is FSEvents, which (a) delivers events
-/// daemon-batched at ~1s latency — no better than polling — and (b) measurably
-/// stalls other threads' `thread::sleep` once its runloop is active. So the
-/// optimization landed as a poll-interval reduction (75ms → 150ms, roughly
-/// halving idle wakeups for a debug tail that may be left running) plus a
-/// testable read-path refactor (`drain_once`), not an event-driven wake.
+/// GAP-6.7 最初把 "kqueue/inotify" 列为 tail 优化方案，但在 macOS 上 
+/// `notify` 的 `RecommendedWatcher` 走 FSEvents：(a) 事件由守护进程批量投递，
+/// 延迟约 1 秒——并不比轮询好；(b) 其 runloop 一旦激活，会明显干扰其他线程的
+/// `thread::sleep`。因此落地的优化是降低轮询间隔（75ms → 150ms，把可能常驻的
+/// 调试用 tail 的空闲唤醒大约减半），外加一次可测试的读路径重构（`drain_once`），
+/// 而非事件驱动的唤醒。
 const TAIL_FALLBACK_MS: u64 = 150;
 
-/// One pass of the tail's read path: detect rotation (inode change or file
-/// shrink → reopen from start) and drain any bytes appended since `last_pos`,
-/// invoking `on_event` for each complete matching line. Partial trailing lines
-/// stay buffered in `leftover` across passes.
+/// tail 读路径的一趟：检测轮转（inode 变化或文件缩水 → 从头重新打开），
+/// 并排空 `last_pos` 之后追加的字节，对每条完整且匹配的行调用 `on_event`。
+/// 行尾残缺部分在多次遍历之间暂存于 `leftover`。
 ///
-/// Factored out of [`tail_follow`] so the read path is unit-testable without
-/// the infinite wait loop. Returns `true` if it made progress (rotated or read
-/// >0 bytes).
+/// 从 [`tail_follow`] 中拆出，使读路径无需无限等待循环即可单元测试。
+/// 若取得进展（发生轮转或读取 >0 字节）则返回 `true`。
 fn drain_once(
     path: &Path,
     file: &mut std::fs::File,
@@ -154,7 +149,7 @@ fn drain_once(
 ) -> bool {
     let mut progress = false;
 
-    // Rotation detection: inode changed, or file shrank below our cursor.
+    // 轮转检测：inode 变化，或文件缩水到游标之下。
     let rotated = match std::fs::metadata(path) {
         Ok(m) => inode_of(&m) != *inode || m.len() < *last_pos,
         Err(_) => false,
@@ -171,7 +166,7 @@ fn drain_once(
         *inode = std::fs::metadata(path).map(|m| inode_of(&m)).unwrap_or(*inode);
     }
 
-    // Drain whatever has been appended since our cursor.
+    // 排空自游标以来追加的内容。
     let mut chunk = Vec::new();
     let n = match file.read_to_end(&mut chunk) {
         Ok(n) => n,
@@ -181,7 +176,7 @@ fn drain_once(
         progress = true;
         *last_pos += n as u64;
         leftover.extend_from_slice(&chunk);
-        // Emit every complete line; keep the trailing partial for next pass.
+        // 逐条发出完整行；行尾残缺部分留给下一趟。
         while let Some(idx) = leftover.iter().position(|&b| b == b'\n') {
             let line_bytes: Vec<u8> = leftover.drain(..=idx).collect();
             let trimmed = line_bytes[..line_bytes.len().saturating_sub(1)].trim_ascii();
@@ -199,15 +194,14 @@ fn drain_once(
     progress
 }
 
-/// Block forever, invoking `on_event` for each newly-appended matching event.
+/// 永久阻塞，对每条新追加且匹配的事件调用 `on_event`。
 ///
-/// Starts at the current EOF (follows from now, like `tail -f`); survives
-/// rotation by detecting an inode change or a file shrink and reopening from
-/// the start of the fresh active file. Partial trailing lines are buffered
-/// across passes so a write split across the read never loses an event. Polls
-/// every [`TAIL_FALLBACK_MS`] (see its doc comment for why not `notify`).
+/// 从当前 EOF 开始（从现在开始跟随，类似 `tail -f`）；通过检测 inode 变化或文件
+/// 缩水来存活轮转，并从新的活动文件开头重新打开。跨趟缓冲行尾残缺部分，
+/// 因此一次跨越读取边界的写入不会丢失事件。每隔 [`TAIL_FALLBACK_MS`] 轮询
+///（为何不用 `notify` 见该常量的文档）。
 pub fn tail_follow(path: &Path, filter: &TypeFilter, mut on_event: impl FnMut(&AppEvent)) -> ! {
-    // Wait for the file to exist, then open at EOF.
+    // 等待文件出现，然后在 EOF 处打开。
     let (mut file, mut last_pos, mut inode) = loop {
         if let Ok(f) = std::fs::File::open(path) {
             let len = f.metadata().map(|m| m.len()).unwrap_or(0);
@@ -234,8 +228,8 @@ pub fn tail_follow(path: &Path, filter: &TypeFilter, mut on_event: impl FnMut(&A
     }
 }
 
-// `trim_ascii` stabilized in 1.81+; provide a tiny fallback so the MSRV isn't
-// pinned higher than the rest of the crate. Operates on bytes (events are UTF-8).
+// `trim_ascii` 在 1.81+ 才稳定；提供一个微型回退，避免把 MSRV 定得比
+// 本 crate 其他部分更高。按字节处理（事件均为 UTF-8）。
 trait TrimAscii {
     fn trim_ascii(&self) -> &Self;
 }
@@ -281,23 +275,23 @@ mod tests {
     fn rotation_archives_active_file_at_threshold() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("events.jsonl");
-        // Threshold tiny so one event trips it. Note: rotation is checked by
-        // the *current* file size, so the 1st write (file=0) won't rotate; the
-        // 2nd write (file≥1 byte) will rotate the first event into .1.
+        // 阈值设得很小，一条事件即可触发。注意：轮转按*当前*文件大小判断，
+        // 因此第 1 次写入（文件为 0）不会轮转；第 2 次写入（文件≥1 字节）
+        // 会把第一条事件轮转到 .1。
         for i in 1..=3 {
             append_with_threshold(&path, &ev(i, Category::Feed, "feed.requested"), 4);
         }
         assert!(archive_of(&path).exists(), "archive should exist after rotation");
         let archive_text = std::fs::read_to_string(archive_of(&path)).unwrap();
         let active_text = std::fs::read_to_string(&path).unwrap();
-        // Archive holds the rotated-away older events; active holds the newest.
+        // 归档保存被轮转走的较旧事件；活动文件保存最新事件。
         let active_seqs: Vec<u64> = active_text
             .lines()
             .filter_map(|l| serde_json::from_str::<AppEvent>(l).ok())
             .map(|e| e.seq)
             .collect();
         assert!(active_seqs.contains(&3), "newest event in active file");
-        let _ = archive_text; // archive non-empty
+        let _ = archive_text; // 归档非空
         assert!(!archive_text.is_empty());
     }
 
@@ -311,7 +305,7 @@ mod tests {
 
         let all = read_recent_from_path(&path, &TypeFilter::default(), 100, None);
         assert_eq!(all.len(), 3);
-        assert_eq!(all[0].seq, 3); // newest first
+        assert_eq!(all[0].seq, 3); // 最新在前
 
         let feed_only = read_recent_from_path(&path, &TypeFilter::parse(Some("feed")), 100, None);
         assert_eq!(feed_only.len(), 2);
@@ -360,7 +354,7 @@ mod tests {
         assert_eq!(archive_of(p), PathBuf::from("/tmp/events.jsonl.1"));
     }
 
-    // ---- drain_once unit tests (read path, no wait loop) ----
+    // ---- drain_once 单元测试（读路径，无等待循环）----
 
     fn open_at_eof(path: &Path) -> (std::fs::File, u64, u64) {
         let mut file = std::fs::File::open(path).unwrap();
@@ -381,7 +375,7 @@ mod tests {
         let filter = TypeFilter::default();
         let mut seen = Vec::new();
 
-        // At EOF → nothing new → no progress, no emits.
+        // 位于 EOF → 没有新内容 → 无进展、无发出。
         assert!(!drain_once(
             &path,
             &mut file,
@@ -393,7 +387,7 @@ mod tests {
         ));
         assert!(seen.is_empty());
 
-        // Append two → both drained on the next pass.
+        // 追加两条 → 下一趟两件都排空。
         append_to_path(&path, &ev(2, Category::App, "app.b"));
         append_to_path(&path, &ev(3, Category::App, "app.c"));
         assert!(drain_once(
@@ -413,19 +407,19 @@ mod tests {
         use std::io::Write;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("events.jsonl");
-        std::fs::write(&path, b"").unwrap(); // empty; cursor at 0 == EOF
+        std::fs::write(&path, b"").unwrap(); // 空文件;游标在 0 即等于 EOF
         let (mut file, mut last_pos, mut inode) = open_at_eof(&path);
         let mut leftover = Vec::new();
         let filter = TypeFilter::default();
         let mut seen = Vec::new();
 
-        // Append a full JSON line with NO trailing newline yet.
+        // 追加一条完整 JSON 行，但末尾尚无换行符。
         let serialized = serde_json::to_string(&ev(7, Category::Feed, "feed.x")).unwrap();
         {
             let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
             f.write_all(serialized.as_bytes()).unwrap();
         }
-        // Drain reads the partial line, buffers it, progress, 0 emits.
+        // 排空时读到残缺行，将其暂存，有进展、0 条发出。
         assert!(drain_once(
             &path,
             &mut file,
@@ -438,7 +432,7 @@ mod tests {
         assert!(seen.is_empty());
         assert!(!leftover.is_empty());
 
-        // Append the newline → the buffered line now emits.
+        // 追加换行符 → 暂存的行现在可以发出了。
         {
             let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
             f.write_all(b"\n").unwrap();
@@ -466,12 +460,11 @@ mod tests {
         let filter = TypeFilter::default();
         let mut seen = Vec::new();
 
-        // Rotate: rename active → .1, create a fresh active with a new event.
+        // 轮转：把活动文件重命名为 .1，再创建带新事件的全新活动文件。
         let _ = std::fs::rename(&path, archive_of(&path));
         append_to_path(&path, &ev(2, Category::App, "app.b"));
 
-        // Detects rotation (inode change), reopens from start, emits the new
-        // event from the fresh file.
+        // 检测到轮转（inode 变化），从头重新打开，从新文件中发出新事件。
         assert!(drain_once(
             &path,
             &mut file,
@@ -484,12 +477,12 @@ mod tests {
         assert_eq!(seen, vec![2], "after rotation, drains fresh file from start");
     }
 
-    // ---- integration: tail_follow end-to-end (poll-driven) ----
+    // ---- 集成测试：tail_follow 端到端（轮询驱动）----
     //
-    // tail_follow is `-> !` (infinite), so these spawn it on a detached thread
-    // that dies when the `cargo test` process exits. The 500ms bound is well
-    // above the TAIL_FALLBACK_MS poll interval (150ms) plus scheduler jitter,
-    // so it fails loudly if the poll loop or drain path regresses.
+    // tail_follow 是 `-> !`(无限循环),因此这些测试把它放到分离线程上运行,
+    // 随 `cargo test` 进程退出而终止。500ms 上限远高于
+    // TAIL_FALLBACK_MS 轮询间隔(150ms)加调度抖动,
+    // 因此轮询循环或排空路径回退时会明确失败。
 
     #[test]
     fn tail_follow_delivers_appended_event() {
@@ -497,7 +490,7 @@ mod tests {
         use std::thread;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("events.jsonl");
-        std::fs::write(&path, b"").unwrap(); // pre-create so wait-for-file exits
+        std::fs::write(&path, b"").unwrap(); // 预创建,使 wait-for-file 能够退出
 
         let seen: Arc<Mutex<Vec<u64>>> = Arc::new(Mutex::new(Vec::new()));
         let seen_clone = seen.clone();
@@ -509,13 +502,13 @@ mod tests {
             });
         });
 
-        // Let the tailer reach its poll loop before we append.
+        // 先让 tail 线程进入轮询循环,再追加内容。
         thread::sleep(Duration::from_millis(200));
 
         append_to_path(&path, &ev(42, Category::App, "app.test"));
 
-        // The poll interval bounds delivery to ~TAIL_FALLBACK_MS; allow generous
-        // headroom for jitter. Fails if the poll/drain path breaks.
+        // 轮询间隔把投递延迟限定在 ~TAIL_FALLBACK_MS 内;留出充足
+        // 抖动余量。若轮询/排空路径损坏则测试失败。
         let mut delivered = false;
         for _ in 0..50 {
             thread::sleep(Duration::from_millis(10));
@@ -529,7 +522,7 @@ mod tests {
             "tail_follow did not deliver the appended event within 500ms — \
              poll/drain path is broken"
         );
-        // _handle dropped (detached); the -> ! thread dies with the process.
+        // _handle 被丢弃(分离);`-> !` 线程随进程消亡。
     }
 
     #[test]
@@ -551,13 +544,13 @@ mod tests {
         });
         thread::sleep(Duration::from_millis(200));
 
-        // First append under a tiny threshold; the second trips rotation
-        // (active file ≥ 4 bytes → renamed to .1, fresh file created).
+        // 在极小阈值下第一次追加;第二次写入触发轮转
+        // (活动文件 ≥ 4 字节 → 重命名为 .1,并创建新文件)。
         append_with_threshold(&path, &ev(100, Category::App, "app.a"), 4);
         append_with_threshold(&path, &ev(200, Category::App, "app.b"), 4);
 
-        // The post-rotation event (200) must still arrive — drain_once has to
-        // detect the inode change and re-read the fresh file from the start.
+        // 轮转后的事件(200)仍必须到达——drain_once 必须
+        // 检测 inode 变化并从新文件开头重新读取。
         let mut got_b = false;
         for _ in 0..50 {
             thread::sleep(Duration::from_millis(10));

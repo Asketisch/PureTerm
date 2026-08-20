@@ -1,6 +1,6 @@
 use std::thread::{Builder, JoinHandle};
 
-/// Like `thread::spawn`, but with a `name` argument.
+/// 类似 `thread::spawn`,但带 `name` 参数。
 pub fn spawn_named<F, T, S>(name: S, f: F) -> JoinHandle<T>
 where
     F: FnOnce() -> T + Send + 'static,

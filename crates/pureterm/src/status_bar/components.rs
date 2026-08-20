@@ -1,16 +1,15 @@
-//! GAP-24: concrete `StatusBarComponent` implementations.
+//! GAP-24:具体的 `StatusBarComponent` 实现。
 //!
-//! Every segment renders as a "chip" (rounded translucent container) tinted
-//! by its [`BarGroup`]. See [`crate::status_bar::chip`] for the renderer and
-//! the color derivation. The color we hand a chip — either the group default
-//! (via [`crate::status_bar::chip::chip`]) or a semantic color (via
-//! [`crate::status_bar::chip::chip_with_color`]) — is the only per-segment
-//! styling left over from the pre-chip era; the rest of the styling
-//! (background, border, padding, inter-group spacing) is centralized.
+//! 每个片段渲染成由 [`BarGroup`] 着色的「chip」(圆角半透明容器)。
+//! 渲染器与颜色推导见 [`crate::status_bar::chip`]。我们交给 chip 的颜色
+//! —— 要么是组默认色(经 [`crate::status_bar::chip::chip`]),要么是语义色
+//! (经 [`crate::status_bar::chip::chip_with_color`])—— 是 pre-chip 时代
+//! 遗留的唯一按片段样式;其余样式(背景、边框、内边距、组间间距)全部
+//! 集中处理。
 //!
-//! Stat-holding segments (Cpu/Memory/Network/Battery) cache the last snapshot
-//! received via `apply_stats`; the publisher's ring buffer is the single source
-//! of truth, so a config-rebuild only blanks the graph for ≤1 sample.
+//! 持有统计数据的片段(Cpu/Memory/Network/Battery)缓存最近一次
+//! `apply_stats` 收到的快照;发布者的环形缓冲区是唯一事实来源,因此
+//! 配置重建最多只会让图表空白 ≤1 个样本。
 
 use iced::widget::{canvas, row, text};
 use iced::{Color, Length};
@@ -20,7 +19,7 @@ use super::component::{BarData, BarElement, BarGroup, StatusBarComponent};
 use super::sparkline::SparklineProgram;
 use super::stats::StatSnapshot;
 
-/// Compact sparkline element (36×12) with a translucent fill.
+/// 紧凑 sparkline 元素(36×12),带半透明填充。
 fn sparkline(samples: &[f32], color: Color) -> BarElement<'static> {
     let fill = Color { a: 0.18, ..color };
     canvas(SparklineProgram {
@@ -33,7 +32,7 @@ fn sparkline(samples: &[f32], color: Color) -> BarElement<'static> {
     .into()
 }
 
-/// Human-readable byte count (B / K / M / G).
+/// 人类可读的字节数(B / K / M / G)。
 fn human_bytes(b: u64) -> String {
     let f = b as f64;
     if f >= 1e9 {
@@ -47,7 +46,7 @@ fn human_bytes(b: u64) -> String {
     }
 }
 
-// ── Existing segments ──────────────────────────────────────────────────
+// ── 既有片段 ──────────────────────────────────────────────────
 
 pub struct Cwd;
 impl StatusBarComponent for Cwd {
@@ -58,21 +57,19 @@ impl StatusBarComponent for Cwd {
         BarGroup::Context
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
-        // Theme is carried per-call so the chip's text color follows the
-        // active palette. Today only `Theme::Dark` is exercised by the app;
-        // see `view_bottom_bar` for the resolution path.
+        // 主题随调用传入,让 chip 的文本颜色跟随当前调色板。目前应用只用
+        // `Theme::Dark`;解析路径见 `view_bottom_bar`。
         chip(format!("\u{1f4c1} {}", data.cwd.unwrap_or("~")), self.group(),
              data.theme_for_view)
     }
 }
 
-/// Build the base status-bar label for a git segment: branch + ahead/behind +
-/// per-category counts. Pure + unit-tested; the coloured op/PR suffixes are
-/// added as separate widgets in [`Git::view`]. Format:
-/// `[br] main ↑2↓1 ●2 ~1 +3 !1` (segments with a 0 count are omitted). The
-/// leading `[br]` marker replaces the old Nerd Font PUA branch glyph
-/// (U+E0A0) so the label stays readable when the user doesn't have Nerd
-/// Fonts installed.
+/// 构建 git 片段的基础状态栏标签:分支 + 领先/落后 + 各类计数。纯函数
+/// 且有单测;带颜色的 op/PR 后缀作为独立组件在 [`Git::view`] 中添加。
+/// 格式:
+/// `[br] main ↑2↓1 ●2 ~1 +3 !1`(计数为 0 的片段省略)。开头的
+/// `[br]` 标记取代旧版 Nerd Font PUA 分支字形(U+E0A0),使用户未安装
+/// Nerd Fonts 时标签依然可读。
 fn git_bar_label(branch: &str, g: Option<&super::git::GitStatus>) -> String {
     let mut label = format!("[br] {}", branch);
     if let Some(g) = g {
@@ -87,7 +84,7 @@ fn git_bar_label(branch: &str, g: Option<&super::git::GitStatus>) -> String {
             }
         }
         if g.staged > 0 {
-            label.push_str(&format!(" \u{25cf}{}", g.staged)); // ● (Unicode, no PUA)
+            label.push_str(&format!(" \u{25cf}{}", g.staged)); // ●(Unicode,非 PUA)
         }
         if g.unstaged > 0 {
             label.push_str(&format!(" ~{}", g.unstaged));
@@ -111,7 +108,7 @@ impl StatusBarComponent for Git {
         BarGroup::Context
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
-        // Prefer the enriched porcelain status; fall back to the pure-FS branch.
+        // 优先用富化的 porcelain 状态;回退到纯文件系统的分支。
         let branch = data
             .git_status
             .and_then(|g| g.branch.clone())
@@ -124,13 +121,12 @@ impl StatusBarComponent for Git {
         let group = self.group();
         let label = git_bar_label(&branch, data.git_status);
 
-        // Build the base chip (group-tinted text).
+        // 构建基础 chip(组着色文本)。
         let mut r = row![chip(label, group, theme)].spacing(4);
 
-        // Optional suffixes: in-progress op + linked PR. We render them as
-        // sibling small text widgets rather than chips so their semantic
-        // colors (amber for in-progress, state-colored for PR) stay distinct
-        // from the base Context chip.
+        // 可选后缀:进行中的操作 + 关联的 PR。我们把它们渲染成兄弟小文本组件
+        // 而非 chip,使它们的语义色(进行中为琥珀色,PR 按状态着色)与基础
+        // Context chip 保持区分。
         let g = data.git_status;
         let amber = Color::from_rgba(0.95, 0.75, 0.3, 1.0);
         let green = Color::from_rgba(0.5, 0.8, 0.55, 1.0);
@@ -229,7 +225,7 @@ impl StatusBarComponent for Agent {
     }
 }
 
-/// GAP-03: codebase indexing progress (optional; hidden unless `codeindex_percent` is set).
+/// GAP-03:代码库索引进度(可选;除非设置了 `codeindex_percent`,否则隐藏)。
 pub struct CodeIndex;
 impl StatusBarComponent for CodeIndex {
     fn id(&self) -> &'static str {
@@ -247,7 +243,7 @@ impl StatusBarComponent for CodeIndex {
     }
 }
 
-/// GAP-35: LSP diagnostic summary (errors / warnings).
+/// GAP-35:LSP 诊断汇总(errors / warnings)。
 pub struct Lsp;
 impl StatusBarComponent for Lsp {
     fn id(&self) -> &'static str {
@@ -270,8 +266,8 @@ impl StatusBarComponent for Lsp {
     }
 }
 
-/// GAP-09: unread-notification count. Renders "🔔 N" when there are unread
-/// notifications, nothing otherwise (empty text mirrors Agent/Process).
+/// GAP-09:未读通知数。有未读时渲染 "🔔 N",否则不渲染任何内容
+/// (空文本与 Agent/Process 一致)。
 pub struct Notifications;
 impl StatusBarComponent for Notifications {
     fn id(&self) -> &'static str {
@@ -283,7 +279,7 @@ impl StatusBarComponent for Notifications {
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let n = data.notifications.map(|s| s.total_unread).unwrap_or(0);
         if n > 0 {
-            // Amber to match the attention ring.
+            // 琥珀色,与注意力光环一致。
             chip_with_color(
                 format!("\u{1f514} {n}"),
                 self.group(),
@@ -296,7 +292,7 @@ impl StatusBarComponent for Notifications {
     }
 }
 
-/// GAP-10: global trigger hit counter (from `trigger_hit_total` atomic).
+/// GAP-10:全局触发器命中计数(来自 `trigger_hit_total` 原子)。
 pub struct TriggerCount {
     hits: std::sync::Arc<std::sync::atomic::AtomicU64>,
 }
@@ -336,11 +332,10 @@ impl StatusBarComponent for Cursor {
         true
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
-        // Pin emoji (📍 U+1F4CD) — Unicode emoji, not Nerd Font PUA; renders
-        // through the system emoji fallback chain. Without a color-emoji
-        // font the pin shows as `?`; the `Ln N, Col M` text after the colon
-        // is always readable so the meaning ("cursor") survives any
-        // font-fallback path.
+        // 图钉 emoji(📍 U+1F4CD)—— Unicode emoji,而非 Nerd Font PUA;走系统
+        // emoji 回退链渲染。没有彩色 emoji 字体时,图钉显示为 `?`;冒号后的
+        // `Ln N, Col M` 文本始终可读,因此 "cursor" 的含义在任何字体回退
+        // 路径下都得以保留。
         let (r, c) = data.cursor;
         chip(
             format!("\u{1f4cd} {}:{}", r + 1, c + 1),
@@ -350,7 +345,7 @@ impl StatusBarComponent for Cursor {
     }
 }
 
-// ── Meta / new segments ────────────────────────────────────────────────
+// ── Meta / 新片段 ──────────────────────────────────────────────
 
 pub struct Clock;
 impl StatusBarComponent for Clock {
@@ -365,10 +360,9 @@ impl StatusBarComponent for Clock {
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let now = chrono::Local::now();
-        // If show_seconds is off, strip `%S` / `%s` tokens from the format so
-        // users don't have to author two config strings. We own the resulting
-        // String because the lifetime of the slice variant would be borrowed
-        // from `data` and survive into `format!` below.
+        // 若关闭 show_seconds,则从格式中剔除 `%S` / `%s` 标记,使用户无需编写
+        // 两份配置字符串。我们持有结果 String,因为切片变体的生命周期会被
+        // `data` 借用而存活到下面的 `format!`。
         let fmt_owned: String;
         let fmt_slice: &str = if data.clock_cfg.show_seconds {
             data.clock_cfg.format.as_ref()
@@ -495,7 +489,7 @@ impl StatusBarComponent for Network {
     fn apply_stats(&mut self, snap: &StatSnapshot) {
         self.up_bps = snap.net_up_bps;
         self.down_bps = snap.net_down_bps;
-        // Sum up+down for a single throughput sparkline.
+        // 合并 up+down 为单条吞吐量 sparkline。
         self.history = snap
             .net_up_history
             .iter()
@@ -525,9 +519,9 @@ impl StatusBarComponent for Battery {
         match self.pct {
             Some(pct) => {
                 let icon = match self.charging {
-                    Some(true) => "\u{1f50c}", // 🔌 charging
-                    _ if pct <= 15.0 => "\u{26a0}\u{fe0f}", // ⚠️ low-battery hint
-                    _ => "\u{1f50b}",          // 🔋
+                    Some(true) => "\u{1f50c}", // 充电中
+                    _ if pct <= 15.0 => "\u{26a0}\u{fe0f}", // 低电量提示
+                    _ => "\u{1f50b}",          // 电池
                 };
                 let color = if pct <= 15.0 {
                     Color::from_rgba(0.95, 0.4, 0.4, 1.0)
@@ -541,7 +535,7 @@ impl StatusBarComponent for Battery {
                     data.theme_for_view,
                 )
             }
-            // No battery (desktop): render nothing.
+            // 无电池(台式机):不渲染任何内容。
             None => empty_chip(),
         }
     }
@@ -595,7 +589,7 @@ mod tests {
 
     #[test]
     fn git_bar_label_no_status_uses_branch_only() {
-        // Branch known but porcelain not yet resolved → branch-only label.
+        // 分支已知但 porcelain 尚未解析 → 仅分支标签。
         assert_eq!(git_bar_label("dev", None), "[br] dev");
     }
 }

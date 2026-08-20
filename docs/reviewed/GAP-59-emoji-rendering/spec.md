@@ -1,6 +1,6 @@
 ---
 gap: GAP-59
-title: Emoji Rendering
+title: emoji 渲染
 category: 视觉
 plan_type: enhance
 priority: P4

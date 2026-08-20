@@ -1,9 +1,9 @@
-//! `pureterm daemon install|uninstall|status` — manage the persistent `puretermd`
-//! daemon and its login autostart (GAP-5.1 M4).
+//! `pureterm daemon install|uninstall|status` — 管理常驻的 `puretermd`
+//! 守护进程及其登录自启(GAP-5.1 M4)。
 //!
-//! Unlike the other CLI groups these commands do NOT go through the running
-//! GUI's IPC socket: `install`/`uninstall` touch the OS service definition
-//! directly, and `status` talks to the daemon's own control socket.
+//! 与其它 CLI 组不同,这些命令不经过运行中的
+//! GUI 的 IPC socket:`install`/`uninstall` 直接改动 OS 服务定义,
+//! 而 `status` 与守护进程自身的控制 socket 通信。
 
 use crate::cli::DaemonSub;
 

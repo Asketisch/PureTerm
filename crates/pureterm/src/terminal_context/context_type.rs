@@ -9,11 +9,11 @@ use super::internal::LocalCtx;
 #[cfg(unix)]
 use super::internal::SshCtx;
 
-/// P2 of GAP-5.7/5.8/5.9: TerminalContext is now an enum with two
-/// variants. The public API surface is preserved so call sites in
-/// `iced_app.rs` and `terminal_shader.rs` only need to be retargeted at
-/// the new `new_local` / `new_ssh` constructors; method semantics on
-/// the enum are the same.
+/// GAP-5.7/5.8/5.9 的第二阶段:TerminalContext 改为拥有两个变体的枚举。
+/// 公共 API 表面保持不变,因此 `iced_app.rs` 与
+/// `terminal_shader.rs` 中的调用点只需重新指向
+/// 新的 `new_local` / `new_ssh` 构造器;枚举上的
+/// 各方法语义不变。
 pub enum TerminalContext {
     Local(LocalCtx),
     #[cfg(unix)]

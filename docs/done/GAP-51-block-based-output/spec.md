@@ -1,6 +1,6 @@
 ---
 gap: GAP-51
-title: Block-based Output
+title: 块式输出
 category: 集成
 plan_type: arch
 priority: P2
@@ -59,7 +59,7 @@ Block-based Output 是 block 输出模型的差异化功能，但需要重构终
 7. Rich Content：Block 内嵌 AI 视图、markdown 渲染
 8. 与 Shell Integration（15）联动：prompt 检测是 Block 分割的基础
 
-## Future Work（v2/v3）
+## 后续工作（v2/v3）
 
 - Fuzzy search（`nucleo_matcher` 复用 palette 模板）
 - 时间范围过滤 / inline 子串高亮（`rich_text` 复用 markdown）

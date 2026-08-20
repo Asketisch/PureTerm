@@ -1,6 +1,6 @@
 ---
 gap: GAP-53
-title: Notebooks
+title: 笔记本
 category: 集成
 plan_type: feature
 priority: P4

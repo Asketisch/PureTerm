@@ -42,12 +42,12 @@ pub fn load_document(path: &Path) -> Result<DocumentMut, ConfigError> {
     Ok(doc)
 }
 
-/// Legacy entrypoint: writes `doc` verbatim. Kept for callers that already
-/// hold a fully-resolved `DocumentMut` they intend to commit as-is.
+/// 旧入口:原样写入 `doc`。保留给那些已持有
+/// 完全解析好、打算整体提交的 `DocumentMut` 的调用方。
 ///
-/// New code should prefer `mutate_config`, which reloads the latest on-disk
-/// document and applies a section-scoped patch under an advisory file lock
-/// — see the section-scoped config plan.
+/// 新代码应优先使用 `mutate_config`:它在建议性文件锁下
+/// 重新加载最新的磁盘文档并应用分节补丁
+///——见分节配置方案。
 pub fn save_document(path: &Path, doc: &DocumentMut) -> Result<(), ConfigError> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -58,24 +58,24 @@ pub fn save_document(path: &Path, doc: &DocumentMut) -> Result<(), ConfigError> 
     Ok(())
 }
 
-/// Section-scoped write — apply a patch closure to the *current* on-disk
-/// document under an advisory file lock, then atomically replace the file.
+/// 分节写入——在建议性文件锁下把补丁闭包应用到**当前**磁盘
+/// 文档,然后原子替换文件。
 ///
-/// Why this exists:
-/// 1. PureTerm's config file is shared by the main process (SSH panel writes)
-///    and the embedded/standalone settings UI. Holding an in-memory copy and
-///    later writing it back is racy: a snapshot taken at window-open time
-///    will overwrite anything the other writer added in the meantime.
-/// 2. `mutate_config` enforces "reload → patch → write" on every save, so
-///    each writer only touches the sections it actually changed and leaves
-///    everything else (including format / comments / blank lines) intact.
-/// 3. The advisory lock (`fs2::FileExt::try_lock_exclusive`) ensures the
-///    reload-patch-write cycle is serialized across processes that go
-///    through this helper. The lock is acquired on the *config file itself*
-///    so concurrent writers block here, not on a separate sentinel.
+/// 为什么需要它:
+/// 1. PureTerm 的配置文件由主进程(SSH 面板写入)
+///    与内嵌/独立设置 UI 共享。持有内存副本
+///    再稍后写回是有竞态的:开窗时拍的快照
+///    会覆盖另一个写入者在此期间添加的任何内容。
+/// 2. `mutate_config` 在每次保存时强制“重载 → 补丁 → 写入”,
+///    使每个写入者只触碰其实际改动的节,其余
+///    一切(含格式 / 注释 / 空行)保持原样。
+/// 3. 建议性锁(`fs2::FileExt::try_lock_exclusive`)确保
+///    重载-补丁-写入循环在所有经过此助手的进程间
+///    串行化。锁加在**配置文件本身**上,
+///    使并发写入者在此阻塞,而非在独立的哨兵文件上。
 ///
-/// Returns the new file's mtime so callers can record a "self-just-wrote"
-/// window and suppress notify-triggered self-reloads (see PureTermApp
+/// 返回新文件的 mtime,使调用方能记录“自己刚写过”
+/// 的窗口并抑制 notify 触发的自重载(见 PureTermApp
 /// `last_self_write`).
 pub fn mutate_config<F>(path: &Path, mutate: F) -> Result<SystemTime, ConfigError>
 where
@@ -85,10 +85,10 @@ where
         fs::create_dir_all(parent)?;
     }
 
-    // Open (or create) the file so we have a handle to lock. We open it for
-    // read+write but never read through this handle — the actual document
-    // load happens via `load_document` below. Creating it if missing means
-    // first-run writes from settings also benefit from the lock.
+    // 打开(或创建)文件,获得可加锁的句柄。以
+    // 读+写方式打开但从不经此句柄读——实际文档
+    // 加载由下面的 `load_document` 完成。缺失时创建,
+    // 意味着设置的首轮写入也能享受锁保护。
     let lock_file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -96,9 +96,9 @@ where
         .truncate(false)
         .open(path)?;
 
-    // Take an exclusive advisory lock. `lock_exclusive` blocks until the
-    // lock is available; on the same process this still serializes calls
-    // from different threads. Released when `lock_file` is dropped.
+    // 获取排他建议锁。`lock_exclusive` 阻塞直到
+    // 锁可用;同进程内不同线程的调用仍会被串行化。
+    // `lock_file` 丢弃时释放。
     lock_file.lock_exclusive()?;
 
     let mut doc = load_document(path)?;
@@ -108,14 +108,14 @@ where
     fs::write(tmp.path(), doc.to_string())?;
     tmp.persist(path)?;
 
-    // Read back the mtime so callers can detect their own writes when notify
-    // fires the watcher. We do this *while still holding the lock* so a
-    // concurrent writer can't slip in between persist and the metadata call.
+    // 回读 mtime,使 notify 触发监视器时调用方能识别自己的写入。
+    // 我们在**仍持锁**时做这件事,防止并发
+    // 写入者挤进持久化与元数据调用之间。
     let mtime = fs::metadata(path)
         .and_then(|m| m.modified())
         .unwrap_or_else(|_| SystemTime::now());
 
-    // lock_file drops here, releasing the advisory lock.
+    // lock_file 在此丢弃,释放建议锁。
     Ok(mtime)
 }
 
@@ -183,9 +183,9 @@ pub fn set_bool(doc: &mut DocumentMut, table_path: &[&str], key: &str, value: bo
     table.insert(key, Item::Value(Value::from(value)));
 }
 
-/// Remove a key from a nested table if it exists. No-op if the table or
-/// key is missing. Used by page `apply()` to clear settings whose
-/// in-memory value is "absent" (e.g. empty string in General).
+/// 从嵌套表中移除一个键(若存在)。表或键缺失时为空操作。
+/// 供页面 `apply()` 用来清除内存值为“缺失”的设置
+///(如 General 中的空字符串)。
 pub fn remove_key(doc: &mut DocumentMut, table_path: &[&str], key: &str) {
     let mut table_opt: Option<&mut Table> = Some(doc.as_table_mut());
     for &segment in table_path {
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn mutate_config_preserves_unrelated_sections() {
-        // Set up a tmp config with two unrelated sections.
+        // 准备一个含两个无关节的临时配置。
         let tmp_dir = tempfile::tempdir().unwrap();
         let path = tmp_dir.path().join("pureterm.toml");
         let initial = r#"# top comment
@@ -257,7 +257,7 @@ shortcut = "Ctrl+1"
 "#;
         fs::write(&path, initial).unwrap();
 
-        // Mutate only [font].size — analogous to changing font in settings UI.
+        // 只改 [font].size——相当于在设置 UI 中改字体大小。
         let mtime = mutate_config(&path, |doc| {
             set_float(doc, &["font"], "size", 14.5);
             Ok(())

@@ -1,13 +1,13 @@
-//! T-core-tmux-cc: integration tests verifying that mirror events
-//! from `tmux -CC` envelopes leave `split_tree` in the state the
-//! renderer expects (no regressions to the existing 11 tests).
+//! T-core-tmux-cc:集成测试,验证来自 `tmux -CC` 信封的
+//! mirror 事件让 `split_tree` 处于渲染器预期的状态
+//! (不回归现有 11 个测试)。
 //!
-//! These tests don't simulate the full mirror dispatch loop (that
-//! lives in v3 with the EventedPty integration); instead they
-//! verify the *parser* side of the contract — given a tmux
-//! layout string + a `%window-add` envelope sequence, the parser
-//! produces a `SplitNode` tree that round-trips through
-//! `pane_ids()` and `pane_count()` cleanly.
+//! 这些测试不模拟完整的 mirror 分发循环(那
+//! 属于 v3 中与 EventedPty 集成的部分);而是
+//! 验证契约的*解析器*一侧——给定 tmux
+//! 布局字符串 + 一组 `%window-add` 信封序列,解析器
+//! 产出的 `SplitNode` 树能经
+//! `pane_ids()` 与 `pane_count()` 干净地往返。
 
 use super::*;
 use crate::tmux_cc::mirror::{parse_layout, MirrorEvent};
@@ -17,7 +17,7 @@ fn single_leaf_layout_yields_one_pane() {
     let layout = parse_layout("83x24,0,0,0");
     assert_eq!(layout, crate::tmux_cc::mirror::Layout::Leaf);
     let tree = SplitNode::single(PaneId(1));
-    // Single-leaf trees always have exactly one pane.
+    // 单叶子树永远恰好只有一个窗格。
     assert_eq!(tree.pane_count(), 1);
     assert_eq!(tree.pane_ids(), vec![PaneId(1)]);
 }
@@ -27,13 +27,13 @@ fn horizontal_split_layout_keeps_both_children() {
     let layout = parse_layout("168x24,0,0[83x24,0,0,0,84x24,0,83,0]");
     match layout {
         crate::tmux_cc::mirror::Layout::Split { dir, children, .. } => {
-            // `dir` is private in mirror.rs; verify via Debug.
+            // `dir` 在 mirror.rs 中是私有的;通过 Debug 输出验证。
             assert_eq!(format!("{:?}", dir), "Horizontal");
             assert_eq!(children.len(), 2);
         },
         _ => panic!("expected split layout"),
     }
-    // The split tree's own split() produces the same shape.
+    // split_tree 自身的 split() 会产出相同的形态。
     let mut tree = SplitNode::single(PaneId(10));
     let ok = tree.split(PaneId(10), PaneId(11), SplitDirection::Horizontal);
     assert!(ok, "horizontal split must succeed");
@@ -45,7 +45,7 @@ fn nested_split_layout_round_trips_through_split_tree() {
     let layout = parse_layout(
         "168x48,0,0[83x48,0,0[42x48,0,0,0,40x48,0,42,0],84x48,0,83,0]",
     );
-    // The parsed layout has 3 leaves total.
+    // 解析后的布局总共有 3 个叶子。
     let mut leaf_count = 0;
     fn walk(l: &crate::tmux_cc::mirror::Layout, n: &mut usize) {
         match l {
@@ -60,7 +60,7 @@ fn nested_split_layout_round_trips_through_split_tree() {
     walk(&layout, &mut leaf_count);
     assert_eq!(leaf_count, 3);
 
-    // Build a matching tree manually and check pane_count.
+    // 手工构建一棵匹配的树并检查 pane_count。
     let mut tree = SplitNode::single(PaneId(1));
     let _ = tree.split(PaneId(1), PaneId(2), SplitDirection::Horizontal);
     let right = tree.pane_ids()[1];
@@ -70,14 +70,14 @@ fn nested_split_layout_round_trips_through_split_tree() {
 
 #[test]
 fn mirror_event_window_add_does_not_panic_on_empty_map() {
-    // Empty map is a valid `%windows 0` response from tmux (no
-    // windows yet). Round-tripping it through MirrorEvent should
-    // not panic; the GUI is expected to seed the tree from a
-    // subsequent `%window-add` rather than from this empty
-    // snapshot.
+    // 空映射是 tmux 返回的合法 `%windows 0` 响应(尚无
+    // 任何窗口)。经 MirrorEvent 往返不应
+    // 崩溃;GUI 预期从后续的 `%window-add`
+    // 事件种子化树,而不是用这份空
+    // 快照。
     let m = std::collections::HashMap::<String, u32>::new();
     let ev = MirrorEvent::WindowList(m);
-    // Just verify Debug/PartialEq work (the existing
-    // mirror_event_window_list_round_trip test covers this).
+    // 仅验证 Debug/PartialEq 工作(现有的
+    // mirror_event_window_list_round_trip 测试已覆盖)。
     let _ = format!("{:?}", ev);
 }

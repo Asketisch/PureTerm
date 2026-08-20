@@ -1,6 +1,6 @@
 ---
 gap: GAP-50
-title: Cloud Sync
+title: 云同步
 category: 集成
 plan_type: integration
 priority: P4
@@ -43,4 +43,4 @@ Cloud Sync 是便利性功能，可通过 dotfiles 管理（git repo）替代。
 2. 同步内容：`alacritty.toml` + SSH profiles + 快捷键绑定
 3. 冲突解决：last-write-wins 或手动选择
 4. 配置：`cloud_sync.enabled = true`, `cloud_sync.gist_id = "..."`
-5. CLI：`pureterm sync push` / `pureterm sync pull`
+5. 命令行：`pureterm sync push` / `pureterm sync pull`

@@ -9,11 +9,11 @@ use crate::serde_replace;
 pub fn derive_deserialize(ident: Ident, generics: Generics, data_enum: DataEnum) -> TokenStream {
     let visitor = format_ident!("{}Visitor", ident);
 
-    // Create match arm streams and get a list with all available values.
+    // 创建 match 臂流并取得所有可用值的列表。
     let mut match_arms_stream = TokenStream2::new();
     let mut available_values = String::from("one of ");
     for variant in data_enum.variants.iter().filter(|variant| {
-        // Skip deserialization for `#[config(skip)]` fields.
+        // 跳过 `#[config(skip)]` 字段的反序列化。
         variant.attrs.iter().all(|attr| {
             let is_skip = |meta: ParseNestedMeta| {
                 if meta.path.is_ident("skip") { Ok(()) } else { Err(meta.error("not skip")) }
@@ -32,10 +32,10 @@ pub fn derive_deserialize(ident: Ident, generics: Generics, data_enum: DataEnum)
         });
     }
 
-    // Remove trailing `, ` from the last enum variant.
+    // 移除最后一个枚举变体尾部的 `, `。
     available_values.truncate(available_values.len().saturating_sub(2));
 
-    // Generate deserialization impl.
+    // 生成反序列化实现。
     let mut tokens = quote! {
         struct #visitor;
         impl<'de> serde::de::Visitor<'de> for #visitor {
@@ -68,7 +68,7 @@ pub fn derive_deserialize(ident: Ident, generics: Generics, data_enum: DataEnum)
         }
     };
 
-    // Automatically implement [`alacritty_config::SerdeReplace`].
+    // 自动实现 [`alacritty_config::SerdeReplace`]。
     tokens.extend(serde_replace::derive_direct(ident, generics));
 
     tokens.into()

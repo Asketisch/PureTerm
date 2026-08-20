@@ -1,58 +1,56 @@
-# Changelog
+# 更新日志
 
-All notable changes to alacritty_terminal are documented in this file. The
-sections should follow the order `Added`, `Changed`, `Deprecated`, `Fixed` and
-`Removed`.
+本终端内核 crate 的所有重要变更记录于此。各小节按 `Added`(新增)、
+`Changed`(变更)、`Deprecated`(废弃)、`Fixed`(修复)、`Removed`(移除)
+顺序排列。
 
-**Breaking changes are written in bold style.**
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
+**破坏性变更以粗体标注。**
 
 ## 0.26.1-dev
 
 ## 0.26.0
 
-### Added
+### 新增
 
-- New `escape_args` field on `tty::Options` for Windows shell argument escaping control
+- `tty::Options` 新增 `escape_args` 字段,用于控制 Windows shell 参数转义
 
-### Changed
+### 变更
 
-- Pass `-q` to `login` on macOS if `~/.hushlogin` is present
-- **`ChildEvent::Exited` and `Event::ChildExit` now contain `ExitStatus` instead of `i32`**
+- macOS 上若存在 `~/.hushlogin`,向 `login` 传入 `-q`
+- **`ChildEvent::Exited` 与 `Event::ChildExit` 现在携带 `ExitStatus` 而非 `i32`**
 
 ## 0.25.0
 
-### Changed
+### 变更
 
-- Replaced `Options::hold` with `Options::drain_on_exit`
+- `Options::hold` 替换为 `Options::drain_on_exit`
 
 ## 0.24.2
 
-### Added
+### 新增
 
-- Escape sequence to move cursor forward tabs ( CSI Ps I )
+- 光标前进制表位的转义序列(CSI Ps I)
 
 ## 0.24.1
 
-### Changed
+### 变更
 
-- Shell RCs are no longer sourced on macOs
+- macOS 上不再加载 shell RC 文件
 
-### Fixed
+### 修复
 
-- Semantic search handling of fullwidth characters
-- Inline search ignoring line wrapping flag
-- Clearing of `XDG_ACTIVATION_TOKEN` and `DESKTOP_STARTUP_ID` in the main process
-- FD leaks when closing PTYs on Unix
-- Crash when ConPTY creation failed
+- 语义搜索对全角字符的处理
+- 行内搜索忽略换行标志的问题
+- 主进程清理 `XDG_ACTIVATION_TOKEN` 与 `DESKTOP_STARTUP_ID`
+- Unix 上关闭 PTY 时的 FD 泄漏
+- ConPTY 创建失败时的崩溃
 
 ## 0.24.0
 
-### Added
+### 新增
 
-- `tty::unix::from_fd()` to create a TTY from a pre-opened PTY's file-descriptors
+- `tty::unix::from_fd()`:从已打开的 PTY 文件描述符创建 TTY
 
-### Changed
+### 变更
 
-- **`Term` is not focused by default anymore**
+- **`Term` 默认不再处于聚焦状态**

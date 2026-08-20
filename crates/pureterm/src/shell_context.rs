@@ -1,15 +1,15 @@
-//! GAP-15: build an AI-facing shell context from a pane's [`ShellState`] + cwd.
+//! GAP-15:根据窗格的 [`ShellState`] 与 cwd 构建面向 AI 的 shell 上下文。
 //!
-//! [`build_for_pane`] is the single source used by both the MCP
-//! `get_shell_context` tool and (later) the GAP-01 AI chat panel's context
-//! injection. It is pure (takes refs, returns an owned serializable summary) so
-//! it has no dependency on the GUI app, the `Term`, or `ai_chat` (which is
-//! library-only and not yet wired in).
+//! [`build_for_pane`] 是唯一的数据来源,同时服务于 MCP
+//! `get_shell_context` 工具以及(后续)GAP-01 AI 聊天面板的上下文
+//! 注入。它是纯函数(接收引用、返回自有的可序列化摘要),因此
+//! 不依赖 GUI 应用、`Term` 或 `ai_chat`(后者目前
+//! 仅作为库存在,尚未接入)。
 
 use crate::shell_state::{FinishedCommand, ShellState};
 
-/// One command in a [`ShellContextSummary`] (a serde-friendly projection of
-/// [`FinishedCommand`] — drops the grid row, which is GUI-internal).
+/// [`ShellContextSummary`] 中的一条命令(对 [`FinishedCommand`] 的
+/// serde 友好投影——丢弃网格行,那是 GUI 内部数据)。
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
 pub struct CommandSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -26,8 +26,8 @@ impl From<&FinishedCommand> for CommandSummary {
     }
 }
 
-/// Serializable shell context for one pane. `integrated=false` (no OSC 133 marks
-/// ever received — e.g. SSH/fish) yields `last_command: None`, empty recent.
+/// 单个窗格的可序列化 shell 上下文。`integrated=false`(从未收到 OSC 133
+/// 标记——如 SSH/fish)时,`last_command` 为 None,最近列表为空。
 #[derive(Clone, Debug, PartialEq, Eq, Default, serde::Serialize)]
 pub struct ShellContextSummary {
     pub integrated: bool,
@@ -38,9 +38,9 @@ pub struct ShellContextSummary {
     pub recent_commands: Vec<CommandSummary>,
 }
 
-/// Build a pane's shell context. `shell_state=None` → a non-integrated summary
-/// (still reports `cwd` if known). `recent_limit` bounds `recent_commands`
-/// (newest-first); `last_command` is always the single most recent command.
+/// 构建窗格的 shell 上下文。`shell_state=None` → 非集成摘要
+/// (已知时仍报告 `cwd`)。`recent_limit` 限制 `recent_commands`
+/// 的数量(最新在前);`last_command` 始终是最近的一条命令。
 pub fn build_for_pane(
     shell_state: Option<&ShellState>,
     cwd: Option<&str>,
@@ -50,7 +50,7 @@ pub fn build_for_pane(
     let Some(st) = shell_state else {
         return ShellContextSummary { integrated: false, cwd, last_command: None, recent_commands: vec![] };
     };
-    // history is newest-last; reverse for newest-first recent list.
+    // 历史是新的在后;反转得到最新的在前的最近列表。
     let recent: Vec<CommandSummary> =
         st.history.iter().rev().take(recent_limit).map(CommandSummary::from).collect();
     let last_command = st.history.last().map(CommandSummary::from);
@@ -58,7 +58,7 @@ pub fn build_for_pane(
 }
 
 impl ShellContextSummary {
-    /// Human-readable one-shot summary for AI context injection / debug logs.
+    /// 面向 AI 上下文注入 / 调试日志的可读一次性摘要。
     pub fn to_prompt_string(&self) -> String {
         if !self.integrated {
             return match &self.cwd {
@@ -129,10 +129,10 @@ mod tests {
         let s = build_for_pane(Some(&st), Some("/work"), 10);
         assert!(s.integrated);
         assert_eq!(s.cwd.as_deref(), Some("/work"));
-        // last = newest = "echo ok".
+        // last 是最新的,即 "echo ok"。
         assert_eq!(s.last_command.as_ref().unwrap().text.as_deref(), Some("echo ok"));
         assert_eq!(s.last_command.as_ref().unwrap().exit_code, Some(0));
-        // recent newest-first.
+        // recent 最新的在前。
         assert_eq!(s.recent_commands.len(), 3);
         assert_eq!(s.recent_commands[0].text.as_deref(), Some("echo ok"));
         assert_eq!(s.recent_commands[2].text.as_deref(), Some("ls"));
@@ -147,7 +147,7 @@ mod tests {
         }
         let s = build_for_pane(Some(&st), None, 2);
         assert_eq!(s.recent_commands.len(), 2);
-        // last is still the true most recent, unconstrained by the limit.
+        // last 仍是最新的一条,不受 limit 限制。
         assert_eq!(s.last_command.as_ref().unwrap().text.as_deref(), Some("c4"));
         assert_eq!(s.recent_commands[0].text.as_deref(), Some("c4"));
         assert_eq!(s.recent_commands[1].text.as_deref(), Some("c3"));

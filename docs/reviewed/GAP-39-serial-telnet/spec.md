@@ -1,6 +1,6 @@
 ---
 gap: GAP-39
-title: Serial & Telnet
+title: 串口与 Telnet
 category: SSH/网络
 plan_type: feature
 priority: P3

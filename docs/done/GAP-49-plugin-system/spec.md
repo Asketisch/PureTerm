@@ -1,6 +1,6 @@
 ---
 gap: GAP-49
-title: Plugin System
+title: 插件系统
 category: 集成
 plan_type: arch
 priority: P4

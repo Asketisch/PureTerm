@@ -6,11 +6,11 @@ use objc2::{ffi, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSApplication, NSMenu, NSMenuItem};
 use objc2_foundation::NSString;
 
-/// Set to `true` when macOS Edit → Paste is triggered.
+/// 当 macOS 编辑菜单 → 粘贴被触发时置为 `true`。
 static PASTE_REQUESTED: AtomicBool = AtomicBool::new(false);
-/// Set to `true` when macOS Edit → Copy is triggered.
+/// 当 macOS 编辑菜单 → 拷贝被触发时置为 `true`。
 static COPY_REQUESTED: AtomicBool = AtomicBool::new(false);
-/// Set to `true` when macOS Edit → Select All is triggered.
+/// 当 macOS 编辑菜单 → 全选被触发时置为 `true`。
 static SELECT_ALL_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "C" fn handle_paste(
@@ -37,17 +37,17 @@ unsafe extern "C" fn handle_select_all(
     SELECT_ALL_REQUESTED.store(true, Ordering::SeqCst);
 }
 
-/// Install a minimal macOS menu bar with an Edit submenu (Paste / Copy / Select All).
+/// 安装一个含编辑子菜单(粘贴 / 拷贝 / 全选)的精简 macOS 菜单栏。
 ///
-/// This must be called on the main thread, **after** winit has set up its
-/// `WinitApplicationDelegate`. The menu-item selectors are added to that
-/// delegate class so they fire through the standard responder chain.
+/// 必须在主线程调用,**在** winit 已设置好它的
+/// `WinitApplicationDelegate` **之后**。菜单项选择器被添加到该
+/// 委托类上,从而沿标准响应链触发。
 pub fn install_edit_menu() {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
 
-    // Add paste:/copy:/selectAll: methods to winit's delegate class.
+    // 向 winit 的委托类添加 paste:/copy:/selectAll: 方法。
     if let Some(class) = AnyClass::get(c"WinitApplicationDelegate") {
         let types = b"v@:@\0";
 
@@ -79,10 +79,10 @@ pub fn install_edit_menu() {
 
     let app = NSApplication::sharedApplication(mtm);
 
-    // ── Menu bar ──────────────────────────────────────────────
+    // ── 菜单栏 ───────────────────────────────────────────────────────
     let menubar = NSMenu::new(mtm);
 
-    // ── Application menu (required for every macOS app) ──────
+    // ── 应用菜单(每个 macOS 应用都需要) ─────────────────────────────────────
     let app_menu_title = NSString::from_str("PureTerm");
     let app_menu = unsafe {
         NSMenu::initWithTitle(NSMenu::alloc(mtm), &app_menu_title)
@@ -90,7 +90,7 @@ pub fn install_edit_menu() {
     let app_menu_item = NSMenuItem::new(mtm);
     app_menu_item.setSubmenu(Some(&app_menu));
 
-    // Hide PureTerm  ⌘H
+    // 隐藏 PureTerm  ⌘H
     let hide = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
@@ -101,7 +101,7 @@ pub fn install_edit_menu() {
     };
     app_menu.addItem(&hide);
 
-    // Quit PureTerm  ⌘Q
+    // 退出 PureTerm  ⌘Q
     let quit = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
@@ -112,7 +112,7 @@ pub fn install_edit_menu() {
     };
     app_menu.addItem(&quit);
 
-    // ── Edit menu ────────────────────────────────────────────
+    // ── 编辑菜单 ─────────────────────────────────────────────────────
     let edit_menu_title = NSString::from_str("Edit");
     let edit_menu = unsafe {
         NSMenu::initWithTitle(NSMenu::alloc(mtm), &edit_menu_title)
@@ -121,7 +121,7 @@ pub fn install_edit_menu() {
     edit_menu_item.setTitle(&NSString::from_str("Edit"));
     edit_menu_item.setSubmenu(Some(&edit_menu));
 
-    // Paste  ⌘V
+    // 粘贴  ⌘V
     let paste = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
@@ -132,7 +132,7 @@ pub fn install_edit_menu() {
     };
     edit_menu.addItem(&paste);
 
-    // Copy  ⌘C
+    // 拷贝  ⌘C
     let copy = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
@@ -143,7 +143,7 @@ pub fn install_edit_menu() {
     };
     edit_menu.addItem(&copy);
 
-    // Select All  ⌘A
+    // 全选  ⌘A
     let select_all = unsafe {
         NSMenuItem::initWithTitle_action_keyEquivalent(
             NSMenuItem::alloc(mtm),
@@ -160,17 +160,17 @@ pub fn install_edit_menu() {
     app.setMainMenu(Some(&menubar));
 }
 
-/// Check whether Edit → Paste was triggered, consuming the flag.
+/// 检查编辑 → 粘贴是否被触发,并消费该标志。
 pub fn consume_paste() -> bool {
     PASTE_REQUESTED.swap(false, Ordering::SeqCst)
 }
 
-/// Check whether Edit → Copy was triggered, consuming the flag.
+/// 检查编辑 → 拷贝是否被触发,并消费该标志。
 pub fn consume_copy() -> bool {
     COPY_REQUESTED.swap(false, Ordering::SeqCst)
 }
 
-/// Check whether Edit → Select All was triggered, consuming the flag.
+/// 检查编辑 → 全选是否被触发,并消费该标志。
 pub fn consume_select_all() -> bool {
     SELECT_ALL_REQUESTED.swap(false, Ordering::SeqCst)
 }

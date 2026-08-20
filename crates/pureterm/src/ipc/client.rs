@@ -1,20 +1,20 @@
-//! CLI client for PureTerm Socket API.
+//! PureTerm Socket API 的 CLI 客户端。
 //!
-//! Connects to a running PureTerm instance's Unix socket, sends a JSON-RPC
-//! request, and returns the parsed response.
+//! 连接到运行中的 PureTerm 实例的 Unix socket,发送一条 JSON-RPC
+//! 请求,并返回解析后的响应。
 
 use std::io::{BufRead, BufReader, Write};
 
 use super::listener::find_socket;
 use super::protocol::{JsonRpcRequest, JsonRpcResponse};
 
-/// Send a JSON-RPC request to a running PureTerm instance.
+/// 向运行中的 PureTerm 实例发送一条 JSON-RPC 请求。
 ///
-/// Returns the parsed `result` value on success (or `None` if the response
-/// carried no result field), or an `Err` message on failure. The caller owns
-/// presentation (compact vs. pretty via `--json`) and exit handling — GAP-6.2
-/// moved both out of the socket bridge so the CLI command groups can format
-/// output uniformly.
+/// 成功时返回解析出的 `result` 值(若响应里无该字段则返回 `None`),
+/// 失败时返回 `Err` 消息。展示(经 `--json` 紧凑或美观)与
+/// 退出处理由调用方负责——GAP-6.2 把两者移出 socket 桥,
+/// 以便各 CLI 命令组统一格式化
+/// 输出。
 pub fn send_rpc(
     method: &str,
     params: Option<serde_json::Value>,
@@ -22,7 +22,7 @@ pub fn send_rpc(
 ) -> Result<Option<serde_json::Value>, String> {
     let stream = find_socket(socket_override).map_err(|e| format!("Cannot connect to PureTerm: {e}"))?;
 
-    // Build request with a simple sequential ID.
+    // 用简单的递增 ID 构建请求。
     static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let request = if let Some(p) = params {
@@ -31,7 +31,7 @@ pub fn send_rpc(
         JsonRpcRequest::new(id, method)
     };
 
-    // Serialize and send.
+    // 序列化并发送。
     let mut json = serde_json::to_string(&request).map_err(|e| format!("Serialize error: {e}"))?;
     json.push('\n');
 
@@ -39,7 +39,7 @@ pub fn send_rpc(
     stream.write_all(json.as_bytes()).map_err(|e| format!("Write error: {e}"))?;
     stream.shutdown(std::net::Shutdown::Write).map_err(|e| format!("Shutdown error: {e}"))?;
 
-    // Read response.
+    // 读取响应。
     let mut buffer = String::new();
     let mut reader = BufReader::new(&stream);
     reader.read_line(&mut buffer).map_err(|e| format!("Read error: {e}"))?;

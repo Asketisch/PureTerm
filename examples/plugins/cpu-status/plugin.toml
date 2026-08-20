@@ -1,16 +1,16 @@
-# Example plugin 1: CPU status bar component.
+# 示例插件 1:CPU 状态栏组件。
 #
-# This plugin registers a `StatusBarComponent` Provides capability. The
-# host calls the plugin's `render` export every status-bar refresh tick;
-# the plugin returns a JSON widget description the host translates into
-# an iced widget.
+# 本插件注册 `StatusBarComponent` Provides 能力。宿主
+# 在每次状态栏刷新 tick 时调用插件的 `render` 导出;
+# 插件返回 JSON 组件描述,由宿主翻译为
+# iced 组件。
 #
-# Build (requires `wasm32-wasip1` target + the `wasm-runtime` feature):
+# 构建(需要 `wasm32-wasip1` target + `wasm-runtime` feature):
 #   cd examples/plugins/cpu-status
 #   cargo build --release --target wasm32-wasip1
 #   cp ../../../target/wasm32-wasip1/release/cpu_status.wasm .
 #
-# Install:
+# 安装:
 #   pureterm plugin install ./cpu_status.wasm
 
 [plugin]
@@ -24,8 +24,8 @@ abi_version = 1
 status_bar_component = "render"
 
 [plugin.config_schema]
-# Optional: declare the config keys the plugin reads. The host validates
-# the user's `[[plugins.config]]` block against this schema before
-# instantiating the plugin.
+# 可选:声明插件读取的配置键。宿主在实例化插件前
+# 会用此 schema 校验用户的 `[[plugins.config]]` 块,
+# 校验通过才实例化。
 refresh_interval_ms = { type = "integer", default = 1000, min = 100, max = 60000 }
 color = { type = "string", default = "#58c4dc" }

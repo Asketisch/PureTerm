@@ -1,21 +1,21 @@
-//! SSH agent socket (`$SSH_AUTH_SOCK`) resolution — GAP-5.4.
+//! SSH agent socket(`$SSH_AUTH_SOCK`)解析——GAP-5.4。
 //!
-//! PureTerm is often GUI-launched (Finder/Dock), so the launching shell's
-//! `SSH_AUTH_SOCK` is usually absent from the process environment. To make
-//! agent forwarding work nonetheless, resolution tries, in order:
-//!   1. an explicit config override (`ssh.agent_sock`),
-//!   2. the inherited `$SSH_AUTH_SOCK` environment variable,
-//!   3. on macOS, `launchctl getenv SSH_AUTH_SOCK` (the standard GUI-app fix).
+//! PureTerm 常由 GUI 启动(Finder/Dock),启动它的 shell 的
+//! `SSH_AUTH_SOCK` 通常不在进程环境里。为了让
+//! agent 转发仍能工作,解析按以下顺序尝试:
+//!   1. 显式配置覆盖(`ssh.agent_sock`),
+//!   2. 继承的 `$SSH_AUTH_SOCK` 环境变量,
+//!   3. macOS 上,`launchctl getenv SSH_AUTH_SOCK`(GUI 应用的标准修法)。
 //!
-//! The precedence logic lives in [`resolve_pure`] (pure, unit-tested); the
-//! thin [`resolve_agent_sock`] wrapper reads the real environment.
+//! 优先级逻辑位于 [`resolve_pure`](纯函数,带单元测试);
+//! 薄封装 [`resolve_agent_sock`] 读取真实环境。
 
 use std::path::{Path, PathBuf};
 
-/// Pure precedence logic (no environment access) — unit-tested.
+/// 纯优先级逻辑(不访问环境)——带单元测试。
 ///
-/// Order: explicit `config_override` → inherited `env` → `launchctl` fallback.
-/// Empty strings / empty paths are treated as absent and fall through.
+/// 顺序:显式 `config_override` → 继承的 `env` → `launchctl` 回退。
+/// 空字符串 / 空路径视为缺失,落入下一级。
 pub(crate) fn resolve_pure(
     env: Option<&str>,
     launchctl: Option<String>,
@@ -30,19 +30,19 @@ pub(crate) fn resolve_pure(
     launchctl.filter(|s| !s.is_empty()).map(PathBuf::from)
 }
 
-/// Resolve the SSH agent socket for the current process.
+/// 为当前进程解析 SSH agent socket。
 ///
-/// Pass an explicit config override path (`ssh.agent_sock`) to force a
-/// specific socket; otherwise the inherited `$SSH_AUTH_SOCK` is used, with a
-/// `launchctl getenv` fallback on macOS for GUI-launched processes.
+/// 传入显式配置覆盖路径(`ssh.agent_sock`)可强制指定
+/// socket;否则使用继承的 `$SSH_AUTH_SOCK`,macOS 上对 GUI
+/// 启动的进程再回退到 `launchctl getenv`。
 pub fn resolve_agent_sock(config_override: Option<&Path>) -> Option<PathBuf> {
     let env = std::env::var("SSH_AUTH_SOCK").ok();
     let launchctl = launchctl_getenv();
     resolve_pure(env.as_deref(), launchctl, config_override)
 }
 
-/// On macOS, read `SSH_AUTH_SOCK` from `launchctl getenv` (GUI apps don't
-/// inherit the launching shell's environment). Returns `None` elsewhere.
+/// macOS 上,从 `launchctl getenv` 读取 `SSH_AUTH_SOCK`(GUI 应用
+/// 不继承启动 shell 的环境)。其它平台返回 `None`。
 #[cfg(target_os = "macos")]
 fn launchctl_getenv() -> Option<String> {
     std::process::Command::new("launchctl")

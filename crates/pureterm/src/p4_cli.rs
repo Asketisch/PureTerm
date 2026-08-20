@@ -1,4 +1,4 @@
-//! P4 GAP CLI dispatch — plugin, sync, share, update, workflow, notebook, capture.
+//! P4 GAP CLI 命令分发:plugin、sync、share、update、workflow、notebook、capture。
 
 use std::path::PathBuf;
 
@@ -8,24 +8,24 @@ use crate::app_config::AppConfig;
 
 #[derive(Subcommand, Clone)]
 pub enum PluginSub {
-    /// List installed plugins (`~/.config/pureterm/plugins/`).
+    /// 列出已安装的插件(`~/.config/pureterm/plugins/`)。
     List,
-    /// Create a stub plugin directory + manifest.
+    /// 创建插件桩目录 + 清单文件。
     Install {
         name: String,
     },
-    /// Remove a plugin directory (refuses non-plugin folders).
+    /// 删除插件目录(拒绝非插件目录)。
     Uninstall {
         name: String,
     },
-    /// T-core-plugin-runtime v2: enable a previously-installed plugin
-    /// (writes `enabled = true` to its manifest; the GUI re-scans on
-    /// the next start).
+    /// T-core-plugin-runtime v2:启用已安装的插件
+    /// (向清单写入 `enabled = true`;GUI 会在
+    /// 下次启动时重新扫描)。
     Enable {
         name: String,
     },
-    /// T-core-plugin-runtime v2: disable a plugin without removing it
-    /// from disk (writes `enabled = false` to its manifest).
+    /// T-core-plugin-runtime v2:禁用插件,但不从磁盘删除
+    /// (向清单写入 `enabled = false`)。
     Disable {
         name: String,
     },
@@ -33,18 +33,18 @@ pub enum PluginSub {
 
 #[derive(Subcommand, Clone)]
 pub enum SyncSub {
-    /// Export config to local sync bundle. With `--remote`, also pushes
-    /// the bundle to GitHub Gist (creates a new private Gist if
-    /// `[cloud_sync].gist_id` is empty, and prints the new ID).
+    /// 将配置导出到本地同步包。带 `--remote` 时,同时推送到
+    /// GitHub Gist(若 `[cloud_sync].gist_id` 为空,
+    /// 则创建新的私有 Gist,并打印新 ID)。
     Push {
-        /// Also push to GitHub Gist (requires PURETERM_GIST_TOKEN).
+        /// 同时推送到 GitHub Gist(需要 PURETERM_GIST_TOKEN)。
         #[arg(long)]
         remote: bool,
     },
-    /// Restore config from local sync bundle. With `--remote`, pulls
-    /// from the configured Gist instead of the local file.
+    /// 从本地同步包恢复配置。带 `--remote` 时,从
+    /// 配置的 Gist 拉取,而不是本地文件。
     Pull {
-        /// Pull from GitHub Gist instead of the local bundle.
+        /// 从 GitHub Gist 拉取,而不是本地同步包。
         #[arg(long)]
         remote: bool,
     },
@@ -52,21 +52,21 @@ pub enum SyncSub {
 
 #[derive(Subcommand, Clone)]
 pub enum ShareSub {
-    /// Print share invite URL (WebSocket server stub).
+    /// 打印共享邀请 URL(WebSocket 服务器桩实现)。
     Invite {
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
     },
-    /// Start shared session server (stub).
+    /// 启动共享会话服务器(桩实现)。
     Serve,
 }
 
 #[derive(Subcommand, Clone)]
 pub enum UpdateSub {
-    /// Check for updates. With `--remote`, hits the configured feed URL
-    /// (default: GitHub Releases) over HTTPS via reqwest.
+    /// 检查更新。带 `--remote` 时,通过 HTTPS(reqwest)
+    /// 访问配置的源 URL(默认:GitHub Releases)。
     Check {
-        /// Query the remote feed instead of the env-var fast path.
+        /// 查询远程源,而不是环境变量的快速路径。
         #[arg(long)]
         remote: bool,
     },
@@ -74,9 +74,9 @@ pub enum UpdateSub {
 
 #[derive(Subcommand, Clone)]
 pub enum WorkflowSub {
-    /// List workflows from config TOML.
+    /// 从配置 TOML 列出 workflow。
     List,
-    /// Render workflow steps with `--param key=value`.
+    /// 用 `--param key=value` 渲染 workflow 步骤。
     Run {
         name: String,
         #[arg(long = "param", value_parser = parse_kv)]
@@ -86,18 +86,18 @@ pub enum WorkflowSub {
 
 #[derive(Subcommand, Clone)]
 pub enum NotebookSub {
-    /// Print notebook JSON cells.
+    /// 打印 notebook 的 JSON 单元格。
     Show {
         path: PathBuf,
     },
-    /// Create a new empty notebook file at the given path.
+    /// 在指定路径创建新的空 notebook 文件。
     New {
         path: PathBuf,
         #[arg(long, default_value = "Untitled")]
         title: String,
     },
-    /// Execute the code cell at INDEX (0-based) and print the captured
-    /// stdout/stderr. The notebook is not modified.
+    /// 执行 INDEX(从 0 开始)处的代码单元格,并打印捕获的
+    /// stdout/stderr。不修改 notebook 文件。
     Run {
         path: PathBuf,
         index: usize,
@@ -106,7 +106,7 @@ pub enum NotebookSub {
 
 #[derive(Subcommand, Clone)]
 pub enum CaptureSub {
-    /// Export pane snapshot text via Socket API (`surface.snapshot`).
+    /// 通过 Socket API(`surface.snapshot`)导出面板快照文本。
     Export {
         #[arg(long)]
         output: PathBuf,
@@ -330,7 +330,7 @@ pub fn dispatch_workflow(cmd: WorkflowSub) {
                 eprintln!("workflow not found: {name}");
                 std::process::exit(1);
             };
-            // Refuse to run when declared params are missing.
+            // 当声明的参数缺失时,拒绝执行。
             let missing = wf.missing_params(&params);
             if !missing.is_empty() {
                 eprintln!(

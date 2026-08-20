@@ -1,8 +1,8 @@
-//! GAP-21: macOS Dock right-click menu — recent workspaces list.
+//! GAP-21:macOS Dock 右键菜单——最近工作区列表。
 //!
-//! Mirrors `macos_reopen.rs` / `macos_menu.rs`: hooks into winit's
-//! `WinitApplicationDelegate` via `class_addMethod`. Workspace picks are
-//! queued atomically and consumed on the iced `TerminalWakeup` tick.
+//! 与 `macos_reopen.rs` / `macos_menu.rs` 类似:经 `class_addMethod`
+//! 挂钩 winit 的 `WinitApplicationDelegate`。工作区选择被
+//! 原子地排队,并在 iced 的 `TerminalWakeup` 节拍上消费。
 
 use std::mem::transmute;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,14 +14,14 @@ use objc2::{ffi, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSMenu, NSMenuItem};
 use objc2_foundation::NSString;
 
-/// Sentinel: no pending workspace switch.
+/// 哨兵值:没有待处理的工作区切换。
 const NO_PENDING: u64 = u64::MAX;
 
 static WORKSPACE_ENTRIES: Mutex<Vec<(u64, String)>> = Mutex::new(Vec::new());
 static PENDING_WORKSPACE_ID: AtomicU64 = AtomicU64::new(NO_PENDING);
 
-/// Replace the workspace entries shown in the Dock menu (most recent first).
-/// Skips work when the list is unchanged.
+/// 替换 Dock 菜单中显示的工作区条目(最近在前)。
+/// 列表未变化时跳过操作。
 pub fn set_workspace_entries(entries: Vec<(u64, String)>) {
     let mut guard = WORKSPACE_ENTRIES.lock().unwrap();
     if *guard == entries {
@@ -30,7 +30,7 @@ pub fn set_workspace_entries(entries: Vec<(u64, String)>) {
     *guard = entries;
 }
 
-/// Take a pending workspace switch requested from the Dock menu, if any.
+/// 取出从 Dock 菜单请求的待处理工作区切换(若有)。
 pub fn consume_workspace_switch() -> Option<u64> {
     let id = PENDING_WORKSPACE_ID.swap(NO_PENDING, Ordering::SeqCst);
     if id == NO_PENDING {
@@ -84,8 +84,8 @@ unsafe extern "C" fn handle_dock_menu(
     Retained::into_raw(menu) as *mut AnyObject
 }
 
-/// Add `applicationDockMenu:` + `puretermDockWorkspace:` to winit's delegate class.
-/// Must be called on the main thread, AFTER winit has set its delegate.
+/// 把 `applicationDockMenu:` + `puretermDockWorkspace:` 添加到 winit 的委托类。
+/// 必须在主线程、winit 设置好委托之后调用。
 pub fn add_dock_menu_methods() {
     let Some(_mtm) = MainThreadMarker::new() else {
         return;

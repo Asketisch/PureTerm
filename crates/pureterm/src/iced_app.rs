@@ -8,9 +8,9 @@ use iced::widget::{
     button, column, container, mouse_area, opaque, pin, row, scrollable, space, stack, text,
     text_input, Id, Shader,
 };
-// `iced::advanced::widget` re-exports the operation system and the
-// `Task::widget` free function (as `operate`). Used to programmatically
-// snap the Command Palette scrollable to the selected entry.
+// `iced::advanced::widget` 再导出操作器系统与
+// `Task::widget` 自由函数(即 `operate`)。用于以编程方式
+// 把命令面板的 scrollable 吸附到选中条目。
 use iced::advanced::widget::operation::scrollable::{
     snap_to as scroll_snap_to, RelativeOffset as ScrollRelativeOffset,
 };
@@ -44,9 +44,9 @@ use pureterm_settings::i18n::I18n;
 // PureTerm: 屏幕吸管拦截用到 ColorsMsg（OpenScreenPicker / ColorPickerResult / ScreenPickerCancelled）。
 use pureterm_settings::pages::colors::ColorsMsg;
 
-/// GAP-09: current epoch millis (wall clock for notification timestamps + bell
-/// throttle windows). Falls back to 0 if the clock is before UNIX_EPOCH (only
-/// possible on misconfigured systems).
+/// GAP-09:当前的纪元毫秒(通知时间戳 + 响铃
+/// 节流窗口的墙上时钟)。时钟早于 UNIX_EPOCH 时回退为 0(仅
+/// 在配置错误的系统上可能)。
 fn now_epoch_millis() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -54,15 +54,15 @@ fn now_epoch_millis() -> u64 {
         .unwrap_or(0)
 }
 
-/// GAP-21: sum notification unread + Feed pending for Dock badge display.
+/// GAP-21:通知未读 + Feed 待处理之和,供 Dock 徽标显示。
 fn dock_badge_total(unread: u32, feed_pending: usize) -> u32 {
     ((unread as u64) + (feed_pending as u64)).min(u32::MAX as u64) as u32
 }
 
-/// GAP-09 / GAP-21: refresh the Dock badge (macOS only, gated by
-/// `[notification].dock_badge`). Takes specific field references so it is
-/// callable from the terminal-event loop, where `self.windows` is borrowed
-/// (a `&self` method would conflict with that borrow).
+/// GAP-09 / GAP-21:刷新 Dock 徽标(仅 macOS,由
+/// `[notification].dock_badge` 门控)。取具体字段引用,使其在
+/// 终端事件循环中可调用——那里 `self.windows` 正被借用
+///(`&self` 方法会与该借用冲突)。
 fn refresh_dock_badge(
     cfg: &crate::app_config::NotificationConfig,
     store: &crate::notification_store::NotificationStore,
@@ -79,7 +79,7 @@ fn refresh_dock_badge(
     }
 }
 
-/// GAP-21: MRU list for the macOS Dock workspace menu (most recent first).
+/// GAP-21:macOS Dock 工作区菜单的 MRU 列表(最近者在前)。
 pub(crate) fn touch_recent_workspace(list: &mut Vec<WorkspaceId>, id: WorkspaceId) {
     const MAX_RECENT: usize = 10;
     list.retain(|&x| x != id);
@@ -87,19 +87,19 @@ pub(crate) fn touch_recent_workspace(list: &mut Vec<WorkspaceId>, id: WorkspaceI
     list.truncate(MAX_RECENT);
 }
 
-/// GAP-2.1 review (BUG-C): decide whether to clear the layout-dirty flag after
-/// a debounced flush. Clears only when no layout change landed during the
-/// capture/write (the timestamp is unchanged); otherwise keeps dirty so the
-/// next tick re-flushes the newer state. Pure (no `&self`) so it is unit-testable.
+/// GAP-2.1 评审(BUG-C):决定去抖冲刷后是否清除 layout-dirty 标志。
+/// 仅当捕获/写入期间没有新的布局变更(时间戳未变)时清除;
+/// 否则保持 dirty,让下一个 tick 重新冲刷更新的
+/// 状态。纯函数(无 `&self`),可单元测试。
 fn dirty_should_clear(changed_at_before: Option<Instant>, changed_at_after: Option<Instant>) -> bool {
     changed_at_before == changed_at_after
 }
 
-/// GAP-09: gate the intrusive OS toast (vs. the always-on ring + status count +
-/// Dock badge). `pane_visible` = the emitting pane is the active pane in the
-/// focused window's active tab; `app_focused` = a PureTerm window holds OS
-/// focus. `Always`/`Invisible`/Bell toast only when the pane is not visible;
-/// `Unfocused` toasts only when the app is not focused (the gentlest occasion).
+/// GAP-09:门控侵入式 OS 通知(对立于始终开启的圆点 + 状态计数 +
+/// Dock 徽标)。`pane_visible` = 发声窗格是聚焦窗口活动标签页
+/// 的活动窗格;`app_focused` = 某个 PureTerm 窗口持有 OS
+/// 焦点。`Always`/`Invisible`/Bell 仅在窗格不可见时通知;
+/// `Unfocused` 仅在应用未聚焦时通知(最温和的时机)。
 fn should_toast(
     occasion: alacritty_terminal::event::NotifyOccasion,
     pane_visible: bool,
@@ -112,10 +112,10 @@ fn should_toast(
     }
 }
 
-/// GAP-09: post a macOS desktop toast when the config + focus/visibility gating
-/// permit it (no-op on non-macOS). Pure field-reference signature so it's
-/// callable from the terminal-event loop, where `self.windows` is borrowed. The
-/// toast never suppresses the in-app ring/status count/Dock badge.
+/// GAP-09:当配置 + 焦点/可见性门控允许时弹出 macOS 桌面通知
+///(非 macOS 上为空操作)。纯字段引用签名,使其在
+/// 终端事件循环中可调用——那里 `self.windows` 正被借用。
+/// 该通知绝不抑制应用内圆点/状态计数/Dock 徽标。
 fn fire_toast(
     cfg: &crate::app_config::NotificationConfig,
     n: &alacritty_terminal::event::Notification,
@@ -148,7 +148,7 @@ pub struct Tab {
     pub(crate) split_tree: SplitNode,
     pub(crate) active_pane: PaneId,
     pub(crate) tab_color: Option<Color>,
-    /// Creation timestamp — used for SSH grace period detection.
+    /// 创建时间戳——用于 SSH 宽限期检测。
     pub(crate) created_at: Instant,
     /// GAP-2.2 Zoom 状态:
     /// - `None` = 正常态。
@@ -157,12 +157,12 @@ pub struct Tab {
     /// 不变量:任何修改 `split_tree` 的入口(split/close/swap/equalize/detach)
     /// 必须先调 `restore_zoom_if_any()` 还原。
     pub(crate) zoom_state: Option<SplitNode>,
-    /// GAP-4.1 Vi/Copy mode sub-mode for the active pane.
-    /// `None` = vi mode not active. `Some(ViSubMode)` = vi mode is on.
+    /// GAP-4.1:活动窗格的 Vi/复制 模式子模式。
+    /// `None` = vi 模式未激活。`Some(ViSubMode)` = vi 模式开启。
     pub(crate) vi_sub_mode: Option<crate::vi_mode_handler::ViSubMode>,
-    /// GAP-4.1 Vi registers (`"a-z`).
+    /// GAP-4.1:Vi 寄存器(`"a-z`)。
     pub(crate) vi_registers: crate::vi_mode_handler::ViRegisters,
-    /// Pending register name before a yank/delete operator completes.
+    /// yank/delete 操作符完成前待定的寄存器名。
     pub(crate) vi_pending_register: Option<char>,
 }
 
@@ -234,8 +234,8 @@ pub(crate) struct Window {
     pub(crate) active_workspace: WorkspaceId,
     pub(crate) is_main: bool,
     pub(crate) show_tab_bar: bool,
-    /// GAP-19: per-window dual-sidebar state (visibility + right mode + widths).
-    /// Per-window so toggling/resizing in one window does not affect others.
+    /// GAP-19:每窗口双栏状态(可见性 + 右栏模式 + 宽度)。
+    /// 每窗口独立,一处的切换/缩放不影响其它窗口。
     pub(crate) sidebar: crate::sidebar::SidebarState,
     next_workspace_id: u64,
 }
@@ -313,7 +313,7 @@ impl Window {
         }
     }
 
-    /// GAP-25: secondary window — full tab bar + workspaces, not the main instance.
+    /// GAP-25:次级窗口——完整标签栏 + 工作区,而非主实例。
     pub(crate) fn new_secondary(window_id: window::Id) -> Self {
         Self {
             window_id,
@@ -347,9 +347,9 @@ impl Window {
 
 pub struct PureTermApp {
     main_window: Option<window::Id>,
-    /// Cold-launch bootstrap gate: `false` until `DaemonReady` creates the
-    /// first terminal. While `false`, `view()` paints an instant placeholder
-    /// and `update()` short-circuits messages that assume a live tab exists.
+    /// 冷启动引导闸门:`DaemonReady` 创建第一个
+    /// 终端之前为 `false`。为 `false` 时 `view()` 立即绘制占位符,
+    /// `update()` 短路那些假定存在活动标签页的消息。
     booted: bool,
     next_tab_id: u64,
     /// GAP-2.1 Phase 4:窗口的唯一真源。windows[0] = 主窗(is_main=true);
@@ -357,28 +357,28 @@ pub struct PureTermApp {
     windows: Vec<Window>,
     /// 焦点路由:当前活跃窗口的 window::Id(初值 = 主窗)。
     active_window_id: window::Id,
-    /// GAP-21: MRU workspace ids for macOS Dock right-click menu (most recent first).
+    /// GAP-21:macOS Dock 右键菜单的 MRU 工作区 id(最近者在前)。
     recent_workspace_ids: Vec<WorkspaceId>,
     hovered_tab: Option<TabId>,
     glyph_state: Arc<RefCell<GlyphState>>,
     config: AppConfig,
     config_path: PathBuf,
     keymap: Keymap,
-    /// GAP-6.4: user-defined `[[commands]]`. Searchable in the command
-    /// palette; those with a `key` are also registered as shortcuts.
+    /// GAP-6.4:用户自定义的 `[[commands]]`。可在命令
+    /// 面板中搜索;带 `key` 的还会注册为快捷键。
     custom_commands: Vec<crate::keymap::CustomCommand>,
     settings_state: Option<SettingsState>,
     settings_window: Option<window::Id>,
-    /// Pending window resize: set by `WindowResized`, applied (grid resize
-    /// + PTY notify) on the next `TerminalWakeup` tick (base 50ms safety
-    /// net as of Fix 1). Coalesces a drag's burst of resize events into
-    /// ≤20Hz grid resizes while guaranteeing the *final* size is always
-    /// applied (the old time-based debounce dropped it entirely within
-    /// the tick window).
+    /// 待处理的窗口缩放:由 `WindowResized` 设置,在下一个
+    /// `TerminalWakeup` tick 应用(网格 resize + PTY 通知,
+    /// 自 Fix 1 起有 50ms 基础安全网)。把拖拽产生的一连串
+    /// resize 事件合并为 ≤20Hz 的网格 resize,同时保证*最终*
+    /// 尺寸总会被应用(旧的基于时间的去抖会在 tick 窗口内
+    /// 完全丢弃它)。
     resize_pending: bool,
-    /// GAP-5.6: layout snapshot has changed since the last flush to disk.
+    /// GAP-5.6:布局快照自上次落盘后已变更。
     layout_dirty: bool,
-    /// GAP-5.6: instant of the most recent layout change (debounce reference).
+    /// GAP-5.6:最近一次布局变更的时刻(去抖基准)。
     last_layout_change_at: Option<Instant>,
     #[cfg(target_os = "macos")]
     metal_layer_configured: bool,
@@ -386,7 +386,7 @@ pub struct PureTermApp {
     delegate_installed: bool,
     // i18n
     i18n: I18n,
-    // Context menu
+    // 右键菜单
     context_menu: Option<ContextMenuState>,
     last_cursor_pos: Point,
     /// 鼠标的绝对（窗口内容）坐标，来自全局 `Event::Mouse(CursorMoved)`。
@@ -394,20 +394,20 @@ pub struct PureTermApp {
     /// 而选区起点 / 鼠标上报（MOUSE_MODE）按 widget-local 坐标使用。
     last_global_cursor_pos: Point,
     viewport_size: Size,
-    /// Device pixel ratio (2.0 on Retina). Used to rasterize glyphs at native resolution.
+    /// 设备像素比(Retina 上为 2.0)。用于以原生分辨率光栅化字形。
     scale_factor: f32,
-    /// Shared atomic for the actual viewport scale factor, bridging
-    /// prepare() → draw() across frames.
+    /// 实际视口缩放因子的共享原子量,跨帧桥接
+    /// prepare() 到 draw() 的传递。
     viewport_scale_factor: Arc<std::sync::atomic::AtomicU32>,
-    /// True while the OS IME is actively composing text (e.g. Chinese pinyin input).
+    /// OS IME 正在组合文本(如中文拼音输入)时为真。
     ime_composing: bool,
-    // Rename
+    // 重命名
     renaming_tab: Option<RenamingState>,
-    // Tab color picker
+    // 标签页颜色选择器
     color_picker_tab: Option<TabId>,
-    // Tab list (command palette)
+    // 标签页列表(命令面板)
     tab_list: Option<TabListState>,
-    // SSH dialog (P3 GAP-5.7)
+    // SSH 对话框(P3 GAP-5.7)
     #[cfg(unix)]
     ssh_dialog: Option<SshDialogState>,
     #[cfg(unix)]
@@ -416,178 +416,178 @@ pub struct PureTermApp {
     ssh_global: SshSettings,
     #[cfg(unix)]
     ssh_manager: Option<Arc<SshSessionManager>>,
-    /// GAP-5.6: reconnect/disconnect hub. Eagerly initialized (cheap: just
-    /// channels + empty maps). Workers are spawned only on reconnect. Held
-    /// in an `Arc` so the iced `Subscription` id (`ReconnectKey`) is stable
-    /// across subscription re-evaluations.
+    /// GAP-5.6:重连/断线中心。急切初始化(廉价:只是
+    /// 通道 + 空映射)。工作线程仅在重连时派发。以
+    /// `Arc` 持有,使 iced `Subscription` id(`ReconnectKey`)在
+    /// 订阅重求值之间保持稳定。
     #[cfg(unix)]
     reconnect_hub: Arc<crate::ssh::reconnect::ReconnectHub>,
-    // SSH settings panel (P4 GAP-5.8)
+    // SSH 设置面板(P4 GAP-5.8)
     #[cfg(unix)]
     ssh_settings: Option<SshSettingsPanelState>,
     // GAP-7.4 Feed 审批面板。始终 live(记忆常驻);可见性 = focused.is_some()。
     #[cfg(unix)]
     feed_panel: Box<crate::feed_panel::FeedPanelState>,
-    /// GAP-7.3: hibernation confirmation overlay (idle agent → SIGSTOP).
+    /// GAP-7.3:休眠确认浮层(空闲 agent → SIGSTOP)。
     #[cfg(unix)]
     hibernate_panel: Box<crate::hibernate_panel::HibernationPanelState>,
-    /// GAP-7.3: `[agent.hibernation]` config (idle thresholds, max live, etc.).
+    /// GAP-7.3:`[agent.hibernation]` 配置(空闲阈值、最大存活数等)。
     #[cfg(unix)]
     hibernation_cfg: crate::app_config::AgentHibernationConfig,
-    /// GAP-7.5: `[[vault.agents]]` entries (resume_command templates).
+    /// GAP-7.5:`[[vault.agents]]` 条目(resume_command 模板)。
     #[cfg(unix)]
     vault_agents: Vec<crate::app_config::VaultAgentEntry>,
-    /// GAP-7.6: detect-resume prompt panel state (external agent → resume hint).
+    /// GAP-7.6:探测-恢复提示面板状态(外部 agent → 恢复提示)。
     #[cfg(unix)]
     detect_panel: Box<crate::detect_panel::DetectPanelState>,
-    /// GAP-7.6: `[agent.detect]` config (enabled / scan interval / startup).
+    /// GAP-7.6:`[agent.detect]` 配置(启用 / 扫描间隔 / 启动时)。
     #[cfg(unix)]
     detect_cfg: crate::app_config::AgentDetectConfig,
-    /// GAP-7.6: most recent daemon `list_sessions` snapshot, cached by
-    /// `hibernation_scan` so `view_bottom_bar` can show ❄ hibernated state
-    /// without an extra IPC round-trip per frame.
+    /// GAP-7.6:最近的守护进程 `list_sessions` 快照,由
+    /// `hibernation_scan` 缓存,使 `view_bottom_bar` 无需每帧
+    /// 额外 IPC 往返即可显示 ❄ 休眠状态。
     #[cfg(unix)]
     last_session_list: Vec<serde_json::Value>,
     #[cfg(unix)]
     ssh_credential_store: Option<crate::ssh::credential::CredentialStore>,
-    // Command palette (P5 GAP-5.9)
+    // 命令面板(P5 GAP-5.9)
     command_palette: Option<CommandPaletteState>,
-    // Split pane drag state
+    // 拆分窗格拖拽状态
     drag_state: Option<DragState>,
-    /// GAP-19: sidebar divider drag (Left/Right). Motion is driven by
-    /// `GlobalCursorMoved`; cleared on `GlobalMouseRelease`.
+    /// GAP-19:侧边栏分隔条拖拽(左/右)。移动由
+    /// `GlobalCursorMoved` 驱动;`GlobalMouseRelease` 时清除。
     sidebar_drag: Option<crate::sidebar::SidebarSide>,
     /// 文本选择拖动状态：按下时开启，松手时清。`term.selection` 本身保留。
     selection_drag: Option<SelectionDragState>,
     /// 多击连击跟踪（单击 = Simple, 双击 = Semantic, 三击 = Lines）。
     click_tracker: Option<ClickTracker>,
-    /// Most recent mtime this process wrote to `config_path` (via
-    /// `persist_ssh_profiles` or via the embedded settings window's Save).
-    /// The notify-based `config_watcher` always fires after our own writes,
-    /// and reloading then would either be wasted work or actively wrong
-    /// (overwriting our just-applied in-memory state with the disk values
-    /// we just produced). `Message::ConfigReloaded` checks the on-disk
-    /// mtime against this; if they match within ~200ms the reload is
+    /// 本进程最近一次写入 `config_path` 的 mtime(经
+    /// `persist_ssh_profiles` 或内嵌设置窗口的 Save)。
+    /// 基于 notify 的 `config_watcher` 总会在我们自己的写入后触发,
+    /// 那时重载要么是浪费,要么 actively
+    /// 错误(用我们刚产出的磁盘值覆盖刚应用的内存
+    /// 状态)。`Message::ConfigReloaded` 会检查磁盘
+    /// mtime 与此比对;若在约 200ms 内匹配则该次重载是
     /// suppressed. See section-scoped config plan §改动 5.
     last_self_write: Option<std::time::SystemTime>,
-    // Status bar (GAP-3.4)
+    // 状态栏(GAP-3.4)
     status_bar_cwd: Option<String>,
-    /// Last-known cwd per pane, reported via OSC 7. Drives cwd inheritance
-    /// for new tabs/panes and status-bar restoration on tab/pane switch.
+    /// 每窗格最近已知的 cwd,经 OSC 7 上报。驱动新
+    /// 标签页/窗格的 cwd 继承与切换时的状态栏恢复。
     pane_cwds: HashMap<PaneId, String>,
-    /// GAP-15: per-pane shell-integration state (OSC 133 A/B/C/D state machine).
-    /// Drives `shell.*` EventBus events + the `get_shell_context` MCP tool.
+    /// GAP-15:每窗格的 shell 集成状态(OSC 133 A/B/C/D 状态机)。
+    /// 驱动 `shell.*` EventBus 事件 + `get_shell_context` MCP 工具。
     pane_shell_state: HashMap<PaneId, crate::shell_state::ShellState>,
-    /// GAP-1.3: OSC-set window title per pane. A program sets it via OSC 0/2
-    /// (`\e]0;title\a`), and CSI 22t/23t push/pop also flow through the same
-    /// upstream `Term::set_title` → `Event::Title`. Presence (non-empty) means
-    /// the program set a title and it takes precedence over the derived tab
-    /// title; `ResetTitle`/absence falls back. Mirrors the `pane_cwds` side-map
-    /// pattern so the event loop can mutate it without touching `Pane`.
+    /// GAP-1.3:每窗格的 OSC 窗口标题。程序经 OSC 0/2
+    /// (`\e]0;title\a`)设置;CSI 22t/23t 的压栈/弹栈也走同一条
+    /// 上游 `Term::set_title` → `Event::Title` 路径。存在(非空)即表示
+    /// 程序设置过标题,它优先于派生的标签页
+    /// 标题;`ResetTitle`/缺失则回退。镜像 `pane_cwds` 侧表
+    /// 模式,使事件循环无需触碰 `Pane` 即可修改它。
     pane_osc_title: HashMap<PaneId, String>,
-    /// GAP-7.5: agent session id + kind per pane, learned from the agent's
-    /// SessionStart hook (`agent.session_started`). `capture_layout` reads this
-    /// to persist `PaneSnapshot.agent_session_id` for cold resume
-    /// (`claude --resume <id>`). Keyed by PaneId; an entry goes stale when its
-    /// pane closes (harmless).
+    /// GAP-7.5:每窗格的 agent 会话 id + 类型,从 agent 的
+    /// SessionStart 钩子(`agent.session_started`)获知。`capture_layout` 读取它
+    /// 以持久化 `PaneSnapshot.agent_session_id`,供冷恢复
+    ///(`claude --resume <id>`)使用。以 PaneId 为键;条目在其
+    /// 窗格关闭后过期(无害)。
     agent_sessions: HashMap<PaneId, (String, String)>,
     status_bar_git_branch: Option<String>,
     status_bar_process_name: Option<String>,
     status_bar_last_poll: Instant,
-    // GAP-24: Enhanced Status Bar — config + ordered component registry +
-    // enriched git status (branch/dirty/ahead-behind) resolved async by tick.
+    // GAP-24:增强状态栏——配置 + 有序组件注册表 +
+    // 异步按 tick 解析的丰富 git 状态(分支/脏/前后差)。
     status_bar_cfg: crate::app_config::StatusBarConfig,
     status_bar_registry: Vec<Box<dyn crate::status_bar::StatusBarComponent>>,
     status_bar_git_status: Option<crate::status_bar::GitStatus>,
-    // GAP-32: Git Integration — config (`[git]`) + overlay panel state.
+    // GAP-32:Git 集成——配置(`[git]`)+ 浮层面板状态。
     git_cfg: crate::app_config::GitConfig,
-    /// GAP-19: `[sidebar]` config (launch defaults); runtime state is per-`Window`.
+    /// GAP-19:`[sidebar]` 配置(启动默认);运行时状态按 `Window` 区分。
     sidebar_cfg: crate::app_config::SidebarConfig,
     git_panel: crate::git_panel::GitPanelState,
-    // GAP-09: Notifications overlay panel state (reads the store live).
+    // GAP-09:通知浮层面板状态(实时读取存储)。
     notification_panel: crate::notification_panel::NotificationPanelState,
-    // GAP-15: Shell Integration — per-pane command/exit state + `[shell_integration]` config.
+    // GAP-15:Shell 集成——每窗格命令/退出状态 + `[shell_integration]` 配置。
     shell_integration_cfg: crate::app_config::ShellIntegrationConfig,
-    // GAP-10: Triggers — compiled `[[triggers]]` rules + per-pane scan/highlight state.
+    // GAP-10:触发器——已编译的 `[[triggers]]` 规则 + 每窗格扫描/高亮状态。
     triggers_cfg: Vec<crate::triggers::CompiledTrigger>,
     pane_trigger_state: HashMap<PaneId, crate::triggers::TriggerPaneState>,
-    /// Shared highlight regions for the active pane; cloned into each frame's
-    /// `TerminalProgram` (mirrors `cached_search` / `vi_search_pattern`).
+    /// 活动窗格的共享高亮区域;克隆进每帧的
+    /// `TerminalProgram`(镜像 `cached_search` / `vi_search_pattern`)。
     trigger_highlights: std::sync::Arc<std::sync::Mutex<Vec<crate::triggers::HighlightRegion>>>,
-    /// GAP-10: shared fold regions for the active pane renderer.
+    /// GAP-10:活动窗格渲染器的共享折叠区域。
     trigger_folds: std::sync::Arc<std::sync::Mutex<Vec<crate::triggers::FoldRegion>>>,
-    /// GAP-10: global trigger hit counter (status-bar `trigger_count`).
+    /// GAP-10:全局触发器命中计数(状态栏 `trigger_count`)。
     trigger_hit_total: std::sync::Arc<std::sync::atomic::AtomicU64>,
-    /// GAP-54: shared, decoded background image (RGBA8) for the terminal
-    /// shader. The `signature` is a caller-side content hash; the renderer
-    /// re-uploads the GPU texture only when it changes. `mode` and `opacity`
-    /// are applied at draw time, so toggling them is a constant-time update.
+    /// GAP-54:终端 shader 共享的已解码背景图(RGBA8)。
+    /// `signature` 是调用方侧的内容哈希;仅当它变化时渲染器
+    /// 才重传 GPU 纹理。`mode` 与 `opacity`
+    /// 在绘制时应用,因此切换它们是常数时间更新。
     background_image: std::sync::Arc<std::sync::Mutex<Option<crate::background_image::DecodedBackground>>>,
     background_image_mode: crate::background_image::BackgroundMode,
     background_image_opacity: f32,
     background_image_signature: u64,
-    /// T-core-graphics v3: shared image quad state. `image_quad_state`
-    /// owns the CPU-side RGBA atlas (LRU + dirty-region tracking); the
-    /// `TerminalProgram::draw` reads it to populate per-frame
-    /// `image_quad_draws`, which the render thread then converts to
-    /// vertex/index buffers.
+    /// T-core-graphics v3:共享的图像 quad 状态。`image_quad_state`
+    /// 持有 CPU 侧 RGBA 图集(LRU + 脏区域跟踪);
+    /// `TerminalProgram::draw` 读取它以填充每帧的
+    /// `image_quad_draws`,渲染线程再把它们转换成
+    /// 顶点/索引缓冲。
     image_quad_state: std::sync::Arc<std::sync::Mutex<crate::terminal_shader::ImageQuadState>>,
-    /// T-core-graphics v3: per-frame draw list for the image quad pass.
-    /// Cleared + repopulated each frame in `TerminalProgram::draw` from
-    /// the visible portion of `p4.image_store`.
+    /// T-core-graphics v3:image quad pass 的每帧绘制列表。
+    /// 在 `TerminalProgram::draw` 中从 `p4.image_store` 的可见部分
+    /// 清空并重新填充。
     image_quad_draws: std::sync::Arc<std::sync::Mutex<Vec<crate::terminal_shader::ImageQuadDraw>>>,
-    /// T-core-graphics v3: alias to `p4.image_decode_rx` for cloning into
-    /// each `TerminalProgram`. The renderer drains it on every `prepare()`
-    /// to push freshly decoded images into `image_quad_state`.
+    /// T-core-graphics v3:`p4.image_decode_rx` 的别名,供克隆进
+    /// 每个 `TerminalProgram`。渲染器在每次 `prepare()` 时排空它,
+    /// 把新解码的图像推入 `image_quad_state`。
     decode_rx: std::sync::Arc<std::sync::Mutex<std::sync::mpsc::Receiver<crate::image_decode_worker::DecodedImage>>>,
-    /// GAP-56: focus-follows-mouse state (X11-style hover focus).
+    /// GAP-56:鼠标跟随聚焦状态(类 X11 悬停聚焦)。
     focus_follows_mouse_cfg: crate::focus_follows_mouse::FocusFollowsMouseConfig,
     focus_follows_mouse_state: crate::focus_follows_mouse::FocusFollowsMouseState,
-    /// GAP-56: pane id currently under the cursor (set on CursorMoved).
+    /// GAP-56:光标下方的窗格 id(CursorMoved 时设置)。
     last_hovered_pane: Option<PaneId>,
-    /// GAP-10: opt-in flag allowing `exec` / cross-pane `send_text` to fire when
-    /// the match originated from an SSH/remote pane (default `false`).
+    /// GAP-10:可选标志,允许 `exec` / 跨窗格 `send_text` 在匹配
+    /// 源自 SSH/远程窗格时触发(默认 `false`)。
     allow_exec_on_remote: bool,
-    // GAP-09: Notification System — `[notification]` config + in-memory store.
+    // GAP-09:通知系统——`[notification]` 配置 + 内存存储。
     notification_cfg: crate::app_config::NotificationConfig,
-    /// GAP-48: `pureterm://` URL scheme handler config.
+    /// GAP-48:`pureterm://` URL scheme 处理器配置。
     url_scheme_cfg: crate::app_config::UrlSchemeConfig,
     notification_store: crate::notification_store::NotificationStore,
-    /// GAP-02: Error Recovery — config + inline card state + in-flight cancel.
+    /// GAP-02:错误恢复——配置 + 内联卡片状态 + 进行中的取消。
     error_recovery_cfg: crate::app_config::ErrorRecoveryConfig,
     error_recovery: crate::error_recovery::ErrorRecoveryState,
     error_recovery_cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
-    /// GAP-08: Natural language commands — `# description` → shell command card.
+    /// GAP-08:自然语言命令——`# 描述` → shell 命令卡片。
     natural_language_cfg: crate::app_config::NaturalLanguageConfig,
     natural_language: crate::natural_language::NaturalLanguageState,
     natural_language_cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
-    /// GAP-07: Soul System — personality files injected into AI Chat system prompt.
+    /// GAP-07:灵魂系统——注入 AI Chat 系统提示词的人格文件。
     soul_cfg: crate::app_config::SoulConfig,
     soul_prompt: String,
-    /// GAP-4.2: Smart Selection hover preview — tooltip + semantic context menu.
+    /// GAP-4.2:智能选区悬停预览——提示气泡 + 语义右键菜单。
     hover_preview: crate::hover_preview::HoverPreviewState,
-    /// GAP-36: Cmd-click file:line → editor.
+    /// GAP-36:Cmd 点按 file:line → 编辑器。
     semantic_history_cfg: crate::app_config::SemanticHistoryConfig,
-    /// GAP-34: Cmd+Y file preview config.
+    /// GAP-34:Cmd+Y 文件预览配置。
     file_preview_cfg: crate::file_preview::FilePreviewConfig,
-    /// GAP-51: block-based output scaffold — records block boundaries on
-    /// `shell.command_finished` when enabled.
+    /// GAP-51:基于块的输出脚手架——启用时在
+    /// `shell.command_finished` 上记录块边界。
     block_output_cfg: crate::app_config::BlockOutputConfig,
     pane_block_stores: HashMap<PaneId, crate::output_blocks::PaneBlockStore>,
     block_output_filter: crate::output_blocks::BlockExitFilter,
     block_output_search: String,
-    /// GAP-51 v1: per-pane Blocks sidebar page index (for paging past
-    /// `PAGE_SIZE` when many blocks accumulate). 0 = newest page.
+    /// GAP-51 v1:每窗格的 Blocks 侧栏页索引(块很多时
+    /// 用于翻过 `PAGE_SIZE`)。0 = 最新页。
     block_output_page: HashMap<PaneId, usize>,
-    /// GAP-51 v1: a default empty store for the Blocks tab when there's no
-    /// active pane — avoids creating temporaries that can't be borrowed.
+    /// GAP-51 v1:无活动窗格时 Blocks 页的默认空存储——
+    /// 避免创建无法借用的临时值。
     default_block_store: crate::output_blocks::PaneBlockStore,
-    /// GAP-33: Port scanner sidebar tab.
+    /// GAP-33:端口扫描器侧栏页。
     port_scanner_cfg: crate::app_config::PortScannerConfig,
     port_scanner_entries: Vec<crate::port_scanner::ListeningPort>,
-    /// GAP-43: remote file browse sidebar tab.
+    /// GAP-43:远程文件浏览侧栏页。
     remote_files: crate::remote_files::RemoteFilesState,
-    /// GAP-06 / GAP-13 / GAP-18 / GAP-26 / GAP-30 / GAP-31 P3 MVPs.
+    /// GAP-06 / GAP-13 / GAP-18 / GAP-26 / GAP-30 / GAP-31 的 P3 MVP。
     ambient_agents_cfg: crate::ambient_agents::AmbientAgentsConfig,
     ambient_agents: crate::ambient_agents::AmbientAgentsState,
     broadcast_cfg: crate::broadcast_input::BroadcastConfig,
@@ -598,77 +598,77 @@ pub struct PureTermApp {
     toolbelt: crate::toolbelt::ToolbeltState,
     quake_cfg: crate::quake_dock::QuakeDockConfig,
     quake: crate::quake_dock::QuakeDockState,
-    /// GAP P4: voice, graphics, visual, platform MVPs (bundled).
+    /// GAP P4:语音、图形、视觉、平台类 MVP(打包)。
     p4: crate::p4_runtime::P4Features,
-    /// GAP-11: Instant Replay scrub viewer.
+    /// GAP-11:即时回放拖动查看器。
     replay_viewer: crate::instant_replay::ReplayViewer,
-    /// GAP-12: per-pane grid marks + line annotations.
+    /// GAP-12:每窗格网格标记 + 行注释。
     pane_marks: HashMap<PaneId, crate::annotations::PaneMarks>,
-    /// GAP-3.2: programmable sidebar DSL state (EventBus-driven).
+    /// GAP-3.2:可编程侧边栏 DSL 状态(EventBus 驱动)。
     sidebar_dsl: crate::sidebar_dsl::SidebarDslState,
-    /// Last-known keyboard modifiers (for Cmd-click semantic history).
+    /// 最近已知的键盘修饰键(供 Cmd 点按语义历史使用)。
     keyboard_modifiers: iced::keyboard::Modifiers,
-    /// GAP-01: AI Chat Panel — config + panel state + in-flight cancel.
+    /// GAP-01:AI 聊天面板——配置 + 面板状态 + 进行中的取消。
     ai_chat_cfg: crate::app_config::AiChatConfig,
     ai_chat_panel: crate::ai_chat::panel::ChatPanelState,
     ai_chat_cancel: Option<std::sync::Arc<tokio::sync::Notify>>,
-    /// Shared HTTP client (connection pool + TLS session) reused across all
-    /// LLM turns (GAP-01 chat + GAP-02 error recovery + GAP-08 natural language)
-    /// instead of building a fresh `reqwest::Client` per message. Cloning is
-    /// cheap — the client is an `Arc` internally.
+    /// 共享 HTTP 客户端(连接池 + TLS 会话),由全部
+    /// LLM 轮次复用(GAP-01 聊天 + GAP-02 错误恢复 + GAP-08 自然语言),
+    /// 而非每条消息新建 `reqwest::Client`。克隆很
+    /// 便宜——客户端内部是 `Arc`。
     http_client: reqwest::Client,
-    /// GAP-35: LSP client (rust-analyzer MVP).
+    /// GAP-35:LSP 客户端(rust-analyzer MVP)。
     lsp_cfg: crate::app_config::LspConfig,
     lsp: crate::lsp::LspState,
-    /// Workspace root the running LSP server was spawned with (BUG-1): kept in
-    /// sync with the active pane's project root so diagnostics target the right
-    /// project instead of the (often `/`) process launch cwd.
+    /// 运行中的 LSP 服务器的启动工作区根(BUG-1):与
+    /// 活动窗格的项目根保持同步,使诊断对准正确的
+    /// 项目,而非(常为 `/` 的)进程启动 cwd。
     lsp_workspace_root: PathBuf,
-    /// GAP-09: whether a PureTerm window holds OS focus. Drives the toast gate
-    /// (`should_toast`): true on launch + `WindowFocused`, false on
+    /// GAP-09:某个 PureTerm 窗口是否持有 OS 焦点。驱动通知门控
+    /// (`should_toast`):启动 + `WindowFocused` 时为 true,
     /// `WindowUnfocused`.
     app_focused: bool,
-    /// GAP-32 EventBus: last-emitted branch per pane, deduping
-    /// `git.branch_changed` (the status path refreshes git every tick; we emit
-    /// only on a real change — never per-tick).
+    /// GAP-32 EventBus:每窗格最近发出的分支,对
+    /// `git.branch_changed` 去重(状态路径每 tick 都刷新 git;仅在
+    /// 真实变化时发出——绝不逐 tick)。
     last_git_branch: HashMap<PaneId, String>,
-    /// GAP-32: transient toast `(message, shown_at)`. None ⇒ no toast.
+    /// GAP-32:临时 toast `(message, shown_at)`。None ⇒ 无 toast。
     toast: Option<(String, Instant)>,
-    // GAP-4.1 Vi search
+    // GAP-4.1 Vi 搜索
     vi_search: Option<ViSearchState>,
-    /// GAP-3.8 / GAP-4.3: standalone ⌘F surface-search overlay state.
-    /// `None` = overlay closed. When `Some`, the renderer highlights matches
-    /// via the shared `vi_search_pattern` (the overlay writes its transformed
-    /// pattern there so it reuses the cached `RegexSearch` from Phase 0).
+    /// GAP-3.8 / GAP-4.3:独立的 ⌘F surface 搜索浮层状态。
+    /// `None` = 浮层关闭。为 `Some` 时,渲染器经共享的
+    /// `vi_search_pattern` 高亮匹配(浮层把变换后的
+    /// 模式写入那里,从而复用 Phase 0 缓存的 `RegexSearch`)。
     surface_search: Option<SearchState>,
-    /// GAP-3.5: ⌘L Browser address-bar overlay state. `None` = closed.
+    /// GAP-3.5:⌘L 浏览器地址栏浮层状态。`None` = 关闭。
     address_bar: Option<AddressBarState>,
-    /// GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay state.
+    /// GAP-3.8:⌘⇧F 工作目录(ripgrep)搜索浮层状态。
     dir_search: Option<DirectorySearchState>,
-    /// Shared search pattern between app and GPU shader.
-    /// The shader reads this during draw() for match highlighting.
+    /// 应用与 GPU shader 之间的共享搜索模式。
+    /// shader 在 draw() 期间读取它做匹配高亮。
     vi_search_pattern: std::sync::Arc<std::sync::Mutex<Option<String>>>,
-    /// GAP-3.8/4.3: Renderer-side cache of the built `RegexSearch`, keyed on
-    /// the pattern string. Owned here so it survives the per-frame
-    /// `TerminalProgram` rebuild; the renderer reads it during `draw()`.
+    /// GAP-3.8/4.3:渲染器侧已构建 `RegexSearch` 的缓存,以
+    /// 模式串为键。持有在此,使其跨每帧
+    /// `TerminalProgram` 重建存活;渲染器在 `draw()` 期间读取。
     cached_search: std::sync::Arc<
         std::sync::Mutex<
             Option<(String, alacritty_terminal::term::search::RegexSearch)>,
         >,
     >,
-    // GAP-2.3 Socket API IPC
+    // GAP-2.3 Socket API 的 IPC 通道
     ipc_router: std::sync::Arc<crate::ipc::SocketRouter>,
     ipc_handle: Option<crate::ipc::IpcHandle>,
-    /// Shared channel state between subscription() and the stream builder.
+    /// subscription() 与流构建器之间的共享通道状态。
     ipc_channel_state: std::sync::Arc<IpcChannelState>,
-    /// GAP-6.7: in-process event hub. Every state transition calls
-    /// `self.events.emit(...)`; the bus persists to `events.jsonl` (16 MiB
-    /// rotation) and broadcasts to subscribers. The GUI is the sole writer.
+    /// GAP-6.7:进程内事件中心。每次状态转换都调用
+    /// `self.events.emit(...)`;总线持久化到 `events.jsonl`(16 MiB
+    /// 轮转)并广播给订阅者。GUI 是唯一写者。
     events: std::sync::Arc<crate::events_bus::EventBus>,
 }
 
-/// P3 of GAP-5.7: state for the SSH connection dialog shown by ⌘⇧S or
-/// the tab-bar "New SSH Tab" menu item.
+/// GAP-5.7 的 P3:⌘⇧S 或标签栏 “新建 SSH 标签页”菜单项
+/// 弹出的 SSH 连接对话框状态。
 #[cfg(unix)]
 #[derive(Debug, Clone)]
 struct SshDialogState {
@@ -676,24 +676,24 @@ struct SshDialogState {
     error: Option<String>,
 }
 
-/// P4 of GAP-5.8: state for the right-side SSH settings panel. The
-/// panel is opened via `Message::ToggleSshSettingsPanel` and is
-/// independent of the per-Pane SSH connection dialog.
+/// GAP-5.8 的 P4:右侧 SSH 设置面板的状态。面板经
+/// `Message::ToggleSshSettingsPanel` 打开,与每窗格的
+/// SSH 连接对话框相互独立。
 #[cfg(unix)]
 struct SshSettingsPanelState {
-    /// Editable drafts. Index 0..N maps to the current profile list.
+    /// 可编辑草稿。索引 0..N 对应当前配置档列表。
     drafts: Vec<SshProfile>,
-    /// Currently-edited profile (index into `drafts`).
+    /// 当前编辑中的配置档(指向 `drafts` 的索引)。
     editing: Option<usize>,
-    /// Whether the credential store is currently unlocked.
+    /// 凭据库当前是否已解锁。
     master_unlocked: bool,
-    /// Status of the master-password section. PureTerm GAP-5.8: was a
-    /// `String` matched on with `starts_with("Unlock failed")` — that
-    /// broke under i18n. Now an enum rendered via `I18n` on demand.
+    /// 主密码区的状态。PureTerm GAP-5.8:此前是
+    /// 用 `starts_with("Unlock failed")` 匹配的 `String`——在
+    /// i18n 下会失效。现在是按需经 `I18n` 渲染的枚举。
     master_status: MasterStatus,
-    /// Draft text for the master password input. Held in state (not
-    /// thread_local) so the input field survives re-renders. The
-    /// `Unlock`/`Setup` button reads this and clears it on submit.
+    /// 主密码输入框的草稿文本。放在状态里(而非
+    /// thread_local),使输入框在重渲染后仍存活。
+    /// `Unlock`/`Setup` 按钮读取它并在提交时清空。
     master_pw_draft: String,
 }
 
@@ -741,7 +741,7 @@ pub enum ContextMenuItem {
     ShowAllTabs,
     RenameTab,
     ChangeTabColor,
-    // Split pane
+    // 拆分窗格
     SplitHorizontal,
     SplitVertical,
     ClosePane,
@@ -751,7 +751,7 @@ pub enum ContextMenuItem {
     ToggleZoom,
     MovePaneToNewTab,
     MovePaneToNewWindow,
-    // SSH (P3 GAP-5.7)
+    // SSH 对话框(P3 GAP-5.7)
     #[cfg(unix)]
     NewSshTab,
 }
@@ -776,9 +776,9 @@ impl ContextMenuItem {
         ContextMenuItem::MovePaneToNewWindow,
     ];
 
-    /// All entries including cfg-gated ones; used by label() and the
-    /// context-menu renderer. On non-unix targets the SSH entry is
-    /// absent.
+    /// 全部条目(含 cfg 门控的);供 label() 与
+    /// 右键菜单渲染器使用。非 Unix 目标上 SSH 条目
+    /// 不存在。
     #[cfg(unix)]
     const ALL_PLUS_SSH: [ContextMenuItem; 17] = {
         let mut out = [ContextMenuItem::ClosePane; 17];
@@ -829,27 +829,27 @@ struct TabListState {
 const TAB_BAR_HEIGHT: f32 = 32.0;
 
 /// 终端内容可用高度 = 视口高度 - 标签栏 - 状态栏。
-/// `status_bar_height` is the runtime effective bar height (configurable via
-/// `[statusbar]`; auto-grows to ≥28px when sparklines are on).
+/// `status_bar_height` 是运行时生效的栏高(经 `[statusbar]`
+/// 配置;sparkline 开启时自动增长到 ≥28px)。
 #[inline]
 fn terminal_content_height(viewport_height: f32, status_bar_height: f32) -> f32 {
     (viewport_height - TAB_BAR_HEIGHT - status_bar_height).max(0.0)
 }
 
-/// GAP-19: middle-row height for terminal + sidebars (between top/bottom bars).
+/// GAP-19:终端 + 侧边栏的中排高度(介于上下栏之间)。
 #[inline]
 fn sidebar_content_height(viewport_height: f32, status_bar_height: f32) -> f32 {
     terminal_content_height(viewport_height, status_bar_height)
 }
 
-/// GAP-7.6: status-bar agent indicator. Returns the label + color to render,
-/// or `None` when the pane has no agent AND no feed is pending. Pure, tested.
+/// GAP-7.6:状态栏 agent 指示器。返回要渲染的标签 + 颜色,
+/// 窗格无 agent 且无待处理 feed 时返回 `None`。纯函数,已测试。
 ///
-/// - `⚡ <kind>` (active, warm amber) / `💤 <kind> (sleep)` (hibernated, cool blue)
-/// - `⏳ <N>` feed-pending badge appended when N > 0 (warning amber); shown on
-///   its own when the pane has no agent but approvals are queued elsewhere.
-///   The `(sleep)` text suffix replaced the original `❄` glyph because the
-///   snowflake reads as "frozen pane" rather than "agent session sleeping".
+/// - `⚡ <kind>`(活动,暖琥珀)/ `💤 <kind> (sleep)`(休眠,冷蓝)
+/// - N > 0 时追加 `⏳ <N>` 待处理 feed 徽标(警示琥珀);窗格
+/// 无 agent 但别处有排队审批时单独显示。`(sleep)` 文本后缀
+/// 取代了原本的 `❄` 字形——雪花会被读作“窗格冻结”而非
+/// “agent 会话休眠”。
 fn agent_indicator(kind: &str, hibernated: bool, feed_pending: usize) -> Option<(String, Color)> {
     let amber = Color::from_rgba(0.85, 0.65, 0.3, 1.0);
     let cool = Color::from_rgba(0.45, 0.6, 0.85, 1.0);
@@ -912,72 +912,72 @@ struct ClickTracker {
 #[derive(Debug, Clone)]
 pub enum Message {
     MainWindowOpened(window::Id),
-    /// Cold-launch bootstrap complete (daemon ensured off-thread). `true` if
-    /// the daemon is reachable; `false` falls back to a direct local PTY.
+    /// 冷启动引导完成(守护进程已在离线程确保)。守护进程
+    /// 可达时为 `true`;`false` 回退到直连本地 PTY。
     DaemonReady(bool),
     TerminalWakeup,
-    /// GAP-5.6: periodic tick (~4 Hz) from a `time::every` subscription that
-    /// flushes the layout snapshot to disk if it has been dirty for ≥500 ms
-    /// (debounced on-change persistence — crash-safe).
+    /// GAP-5.6:来自 `time::every` 订阅的周期 tick(约 4 Hz),
+    /// 布局快照脏了 ≥500 ms 时冲刷到磁盘
+    ///(变更即持久化的去抖——崩溃安全)。
     LayoutSaveTick,
     Keyboard(iced::keyboard::Event),
-    /// IME event (Chinese/Japanese/Korean input method composition & commit).
+    /// IME 事件(中日韩输入法的组合与提交)。
     InputMethod(iced::advanced::input_method::Event),
     WindowResized(window::Id, Size),
     WindowClosed(window::Id),
-    /// GAP-2.1: a window gained OS focus. Drives per-window keyboard routing —
-    /// the handler points `active_window_id` at it so keystrokes/IME land in
-    /// that window's active terminal (detached windows are no longer input-dead).
+    /// GAP-2.1:某窗口获得 OS 焦点。驱动每窗口键盘路由——
+    /// 处理器把 `active_window_id` 指向它,使按键/IME 落进
+    /// 该窗口的活动终端(detached 窗口不再无输入)。
     WindowFocused(window::Id),
-    /// GAP-09: a PureTerm window lost OS focus — flips `app_focused` so the
-    /// desktop-toast gate (`should_toast`) lets notifications fire.
+    /// GAP-09:某个 PureTerm 窗口失去 OS 焦点——翻转 `app_focused`,
+    /// 使桌面通知门控(`should_toast`)放行通知。
     WindowUnfocused(window::Id),
-    /// Device pixel ratio changed (e.g. dragging window between Retina and 1× displays).
+    /// 设备像素比变化(如把窗口在 Retina 与 1× 显示器间拖动)。
     ScaleFactorChanged(window::Id, f32),
-    /// File/directory dropped onto the window via OS drag-and-drop.
+    /// 经 OS 拖放落到窗口上的文件/目录。
     FileDropped(PathBuf),
     OpenSettings,
     Settings(SettingsMessage),
     SettingsWindowOpened(window::Id),
     ConfigReloaded,
-    /// GAP-24: status-bar periodic tick — refresh process name + fire the
-    /// async git-status upgrade (off the GUI thread).
+    /// GAP-24:状态栏周期 tick——刷新进程名并触发
+    /// 异步 git 状态升级(离开 GUI 线程)。
     StatusBarTick,
-    /// GAP-24: system-stat snapshot from the shared publisher (CPU/Memory/
-    /// Network/Battery). Fanned out to the stat-holding registry components.
+    /// GAP-24:来自共享发布者的系统统计快照(CPU/内存/
+    /// 网络/电池)。扇出给持有统计的注册表组件。
     StatusBarStats(crate::status_bar::StatSnapshot),
-    /// GAP-24: async git-status upgrade result `(cwd, status)`.
+    /// GAP-24:异步 git 状态升级结果 `(cwd, status)`。
     GitStatusResult(String, crate::status_bar::GitStatus),
-    /// GAP-32: Git overlay panel — toggle/close/manual-refresh (legacy; Git lives in sidebar).
+    /// GAP-32:Git 浮层面板——切换/关闭/手动刷新(遗留;Git 在侧边栏)。
     ToggleGitPanel,
-    /// GAP-19: toggle left sidebar (⌘B).
+    /// GAP-19:切换左侧边栏(⌘B)。
     ToggleLeftSidebar,
-    /// GAP-19: toggle right sidebar (⌘⇧B).
+    /// GAP-19:切换右侧边栏(⌘⇧B)。
     ToggleRightSidebar,
-    /// GAP-19: switch right-sidebar tab.
+    /// GAP-19:切换右侧边栏页。
     SidebarRightMode(crate::sidebar::RightMode),
-    /// GAP-19: started dragging a sidebar divider (drag-to-resize). Motion is
-    /// driven by the existing `GlobalCursorMoved`/`GlobalMouseRelease` flow.
+    /// GAP-19:开始拖拽侧边栏分隔条(拖动缩放)。移动由
+    /// 既有的 `GlobalCursorMoved`/`GlobalMouseRelease` 流程驱动。
     SidebarDividerPress(crate::sidebar::SidebarSide),
     CloseGitPanel,
     RefreshGitPanel,
-    /// GAP-32: recent-commits result `(cwd, [(short_sha, subject), …])`.
+    /// GAP-32:最近提交结果 `(cwd, [(short_sha, subject), …])`。
     GitPanelLogResult(String, Vec<(String, String)>),
-    /// GAP-32: `gh pr view` result `(cwd, pr, banner)`.
+    /// GAP-32:`gh pr view` 结果 `(cwd, pr, banner)`。
     GhPrResult(String, Option<crate::gh_pr::PrInfo>, Option<String>),
-    /// GAP-32: a quick git action from the panel button row → write to the PTY.
+    /// GAP-32:面板按钮行的 git 快捷操作 → 写入 PTY。
     GitQuickAction(crate::git_panel::GitQuickAction),
-    /// GAP-09: Notifications overlay panel — toggle / focus a pane from a history
-    /// entry / dismiss all.
+    /// GAP-09:通知浮层面板——切换 / 从历史条目聚焦窗格 /
+    /// 全部清除。
     ToggleNotificationsPanel,
     FocusNotificationPane(PaneId),
     DismissAllNotifications,
-    /// GAP-32: lightweight transient toast (e.g. "lazygit not installed").
+    /// GAP-32:轻量临时 toast(如 “lazygit 未安装”)。
     Toast(String),
     ToastDismissed,
-    /// GAP-02: error-recovery card — start LLM analysis for a failure context.
+    /// GAP-02:错误恢复卡片——对一个失败上下文启动 LLM 分析。
     ErrorRecoveryTrigger(crate::error_recovery::FailureContext),
-    /// GAP-02: streaming LLM chunk (tagged by generation id).
+    /// GAP-02:流式 LLM 分块(以生成 id 标记)。
     ErrorRecoveryChunk {
         gen: u64,
         event: crate::ai_chat::types::ChatEvent,
@@ -986,7 +986,7 @@ pub enum Message {
     ErrorRecoveryApply,
     ErrorRecoveryStop,
     ErrorRecoveryToggle,
-    /// GAP-08: natural-language command card — start LLM command generation.
+    /// GAP-08:自然语言命令卡片——启动 LLM 命令生成。
     NaturalLanguageTrigger(crate::natural_language::NlContext),
     NaturalLanguageChunk {
         gen: u64,
@@ -995,7 +995,7 @@ pub enum Message {
     NaturalLanguageDismiss,
     NaturalLanguageApply,
     NaturalLanguageStop,
-    /// GAP-4.2: hover preview — debounce tick, async preview, semantic menu.
+    /// GAP-4.2:悬停预览——去抖 tick、异步预览、语义菜单。
     HoverPreviewDebounced {
         gen: u64,
     },
@@ -1008,15 +1008,15 @@ pub enum Message {
     HoverPreviewMenuAction(crate::hover_preview::HoverPreviewMenuItem),
     HoverPreviewMenuHover(Option<crate::hover_preview::HoverPreviewMenuItem>),
     OpenHoverTarget,
-    /// GAP-36: open semantic file location in editor (⌘-click or action).
+    /// GAP-36:在编辑器中打开语义文件位置(⌘ 点按或动作)。
     OpenSemanticInEditor,
-    /// GAP-34: preview the file under the cursor / selection (Cmd+Y).
+    /// GAP-34:预览光标/选区下的文件(Cmd+Y)。
     PreviewFile,
-    /// GAP-33: port scanner poll result.
+    /// GAP-33:端口扫描器轮询结果。
     PortScannerUpdated(Vec<crate::port_scanner::ListeningPort>),
     PortScannerCopy(u16),
     PortScannerOpen(u16),
-    /// GAP-43: remote file browse sidebar tab.
+    /// GAP-43:远程文件浏览侧栏页。
     RemoteFilesRefresh,
     RemoteFilesEnterDir(String),
     RemoteFilesGoUp,
@@ -1048,17 +1048,17 @@ pub enum Message {
         path: String,
         result: Result<(), String>,
     },
-    /// GAP-51: Blocks sidebar — jump / filter / search.
+    /// GAP-51:Blocks 侧栏——跳转 / 过滤 / 搜索。
     BlockOutputJumpToRow(usize),
     BlockOutputCycleFilter,
     BlockOutputSearchChanged(String),
-    /// GAP-51 v1: turn to next/previous page of the Blocks sidebar (per-pane).
+    /// GAP-51 v1:翻到 Blocks 侧栏的下一/上一页(每窗格)。
     BlockOutputPageChanged { pane: u64, delta: i32 },
-    /// GAP-51 v1: result of an off-main `capture_row_range_async` call. The
-    /// iced loop dispatches this once the spawn_blocking task resolves, at
-    /// which point the block is appended to the per-pane store.
+    /// GAP-51 v1:离主线程的 `capture_row_range_async` 调用结果。
+    /// spawn_blocking 任务完成时 iced 循环派发它,
+    /// 到时把该块追加进每窗格存储。
     BlockCaptured(crate::output_blocks::BlockCaptureRequest),
-    /// GAP-01: AI Chat panel — toggle / input / send / stream chunks.
+    /// GAP-01:AI 聊天面板——切换 / 输入 / 发送 / 流式分块。
     ToggleAiChatPanel,
     AiChatInputChanged(String),
     AiChatSend,
@@ -1067,14 +1067,14 @@ pub enum Message {
         gen: u64,
         event: crate::ai_chat::types::ChatEvent,
     },
-    /// GAP-10: a trigger fired a cross-pane `send_text`. Deferred out of the
-    /// explicit target pane id (cross-pane `send_text` only).
+    /// GAP-10:某触发器发起了跨窗格 `send_text`。从显式
+    /// 目标窗格 id 中延迟出来(仅跨窗格 `send_text`)。
     TriggerSendText { pane_id: u64, text: String },
-    /// GAP-10: an `exec` trigger's subprocess finished; route stdout per `route`.
-    /// `Err` = spawn failure / timeout; `Ok` = stdout (or a `[trigger exec failed]
-    /// …` payload when the command exited non-zero — surfaced, not dropped).
-    /// `pane_id` is the pane whose output matched, so `ExecRoute::Pane` routes
-    /// back to it rather than to whatever pane is focused when this lands.
+    /// GAP-10:`exec` 触发器的子进程结束;按 `route` 路由 stdout。
+    /// `Err` = 拉起失败 / 超时;`Ok` = stdout(或命令非零退出时的
+    /// `[trigger exec failed] …` 载荷——浮出而非丢弃)。
+    /// `pane_id` 是输出匹配的窗格,使 `ExecRoute::Pane` 路由回
+    /// 它,而非消息落地时恰好聚焦的窗格。
     TriggerExecResult {
         pane_id: u64,
         route: crate::triggers::ExecRoute,
@@ -1086,7 +1086,7 @@ pub enum Message {
     NextTab,
     PrevTab,
     ActivateTabByIndex(usize),
-    // GAP-2.1 Workspace(hybrid flat-active + background-swap)。
+    // GAP-2.1 工作区(混合的扁平活动 + 后台切换)。
     NewWorkspace,
     NextWorkspace,
     PrevWorkspace,
@@ -1094,36 +1094,36 @@ pub enum Message {
     ActivateWorkspaceById(WorkspaceId),
     TabHoverEnter(TabId),
     TabHoverExit(TabId),
-    // Context menu
+    // 右键菜单
     TabRightClick(TabId),
     CursorMoved(Point),
     MouseScroll(iced::mouse::ScrollDelta),
     DismissContextMenu,
     ContextMenuAction(ContextMenuItem),
     ContextMenuHovered(Option<ContextMenuItem>),
-    /// P3+ (Bug #2 fix): close the context menu only if the click was
-    /// outside the menu's rect. Without this, the full-screen
-    /// `opaque(mouse_area.on_press(DismissContextMenu))` overlay in
+    /// P3+(Bug #2 修复):仅当点击在菜单矩形
+    /// 之外时才关闭右键菜单。否则 `view` 中的全屏
+    /// `opaque(mouse_area.on_press(DismissContextMenu))` 浮层会拦截
     /// `view()` swallows clicks on inner items (e.g. "新建 SSH Tab…")
-    /// because the dismiss `on_press` fires for every viewport click
-    /// and clears the menu before the inner `on_press` can run.
+    /// 内层控件的点击——dismiss `on_press` 对每次视口点击都触发,
+    /// 在内层 `on_press` 运行之前就清掉了菜单。
     DismissContextMenuIfOutside(Point),
-    // Rename
+    // 重命名
     RenameInputChanged(String),
     RenameConfirmed,
-    // Tab color
+    // 标签页颜色
     TabColorPicked(Color),
     ClearTabColor,
-    // Tab list (command palette)
+    // 标签页列表(命令面板)
     TabListQueryChanged(String),
     TabListSelected(TabId),
     ClipboardPaste(String),
     ClipboardCopy,
     SelectAll,
-    // PTY lifecycle
+    // PTY 生命周期
     PtyExited(TabId),
     PtyExitedPane(TabId, PaneId),
-    // Split pane
+    // 拆分窗格
     SplitHorizontal,
     SplitVertical,
     ClosePane,
@@ -1150,10 +1150,10 @@ pub enum Message {
     MovePaneToNewTab,
     /// Move-to-new-Window(Pane 级,同上)。
     MovePaneToNewWindow,
-    // Global mouse events for drag tracking
+    // 用于拖拽跟踪的全局鼠标事件
     GlobalCursorMoved(Point),
     GlobalMouseRelease,
-    // SSH (P3 GAP-5.7)
+    // SSH 对话框(P3 GAP-5.7)
     #[cfg(unix)]
     OpenSshDialog,
     #[cfg(unix)]
@@ -1162,7 +1162,7 @@ pub enum Message {
     SshDialogSelect(usize),
     #[cfg(unix)]
     SshConnect(usize),
-    // SSH settings panel (P4 GAP-5.8)
+    // SSH 设置面板(P4 GAP-5.8)
     #[cfg(unix)]
     ToggleSshSettingsPanel,
     #[cfg(unix)]
@@ -1176,10 +1176,10 @@ pub enum Message {
     #[cfg(unix)]
     SshSettingsAddProfile,
     /// P3+ (Bug #3 顺带 fix): close the SSH dialog AND open the
-    /// settings panel in one message. The previous "Open SSH Settings"
-    /// button used two `.on_press()` calls, but iced's builder pattern
-    /// makes the second call REPLACE the first, so `CloseSshDialog`
-    /// was silently dropped and the dialog stayed open.
+    /// 一条消息里同时关闭对话框并打开 SSH
+    /// 设置面板。之前的 “打开 SSH 设置”按钮用了两次
+    /// `.on_press()`,但 iced 的 builder 模式使第二次
+    /// 对话框保持打开。(改用单条复合消息修复。)
     #[cfg(unix)]
     SshSettingsRequested,
     #[cfg(unix)]
@@ -1188,11 +1188,11 @@ pub enum Message {
     SshSettingsUnlockMaster(String),
     #[cfg(unix)]
     SshSettingsSetupMaster(String),
-    /// P3+: Close SSH dialog only if the click was outside the dialog's
-    /// pinned rect. Without this, the full-screen `dismiss_overlay` in
-    /// `view_ssh_dialog` intercepts clicks on inner widgets (e.g. the
-    /// Connect button) and the dialog silently closes before the inner
-    /// `on_press` fires.
+    /// P3+:仅当点击在对话框固定矩形
+    /// 之外时才关闭 SSH 对话框。否则 `view_ssh_dialog` 中的全屏
+    /// `dismiss_overlay` 会拦截内部控件的点击(如
+    /// 连接按钮),在内层 `on_press` 触发前静默关闭
+    /// 对话框。
     #[cfg(unix)]
     CloseSshDialogIfOutside(Point),
     // GAP-7.4 Feed 审批面板
@@ -1207,51 +1207,51 @@ pub enum Message {
     FeedTick,
     #[cfg(unix)]
     FeedClearSession { session_id: String },
-    /// GAP-7.3: periodic idle scan → may raise a hibernation confirmation.
+    /// GAP-7.3:周期空闲扫描 → 可能弹出休眠确认。
     #[cfg(unix)]
     HibernationScanTick,
-    /// GAP-7.3: 1Hz countdown refresh + auto-confirm on timeout.
+    /// GAP-7.3:1Hz 倒计时刷新 + 超时自动确认。
     #[cfg(unix)]
     HibernationCountdownTick,
-    /// GAP-7.3: user confirmed hibernation of the pending session.
+    /// GAP-7.3:用户确认了待处理会话的休眠。
     #[cfg(unix)]
     HibernationConfirm,
-    /// GAP-7.3: user cancelled the pending hibernation.
+    /// GAP-7.3:用户取消了待处理的休眠。
     #[cfg(unix)]
     HibernationCancel,
-    /// GAP-7.3: user clicked a hibernated pane's ❄ to resume (SIGCONT).
+    /// GAP-7.3:用户点击休眠窗格的 ❄ 恢复(SIGCONT)。
     #[cfg(unix)]
     HibernationResume { session_id: String },
-    /// GAP-7.6: periodic external-agent process detect scan.
+    /// GAP-7.6:周期性外部 agent 进程探测扫描。
     #[cfg(unix)]
     DetectScanTick,
-    /// GAP-7.6: user clicked one entry's Resume.
+    /// GAP-7.6:用户点击了某条目的恢复。
     #[cfg(unix)]
     DetectResumeOne { session_id: String },
-    /// GAP-7.6: user clicked "resume all".
+    /// GAP-7.6:用户点击了“全部恢复”。
     #[cfg(unix)]
     DetectResumeAll,
     /// GAP-7.6: user dismissed the batch ("稍后" / ×).
     #[cfg(unix)]
     DetectDismiss,
-    // Command palette (P5 GAP-5.9)
+    // 命令面板(P5 GAP-5.9)
     OpenCommandPalette,
     CloseCommandPalette,
-    /// P5+: close command palette only if the click was outside the
-    /// palette's pinned rect. Same rationale as `CloseSshDialogIfOutside`.
+    /// P5+:仅当点击在面板固定矩形
+    /// 之外时才关闭命令面板。理由同 `CloseSshDialogIfOutside`。
     CloseCommandPaletteIfOutside(Point),
     CommandPaletteQuery(String),
     CommandPaletteSelect(usize),
     CommandPaletteEnter,
     CommandPaletteUp,
     CommandPaletteDown,
-    // GAP-4.1 Vi / Copy mode
+    // GAP-4.1 Vi / 复制模式
     ToggleViMode,
-    // GAP-4.1 Vi search bar
+    // GAP-4.1 Vi 搜索栏
     ViSearchQuery(String),
     ViSearchConfirm,
     ViSearchClose,
-    // GAP-3.8 / GAP-4.3: standalone ⌘F surface-search overlay
+    // GAP-3.8 / GAP-4.3:独立的 ⌘F surface 搜索浮层
     SurfaceSearchOpen,
     SurfaceSearchQuery(String),
     SurfaceSearchConfirm,
@@ -1262,47 +1262,47 @@ pub enum Message {
     SurfaceSearchToggleRegex,
     SurfaceSearchToggleWholeWord,
     SurfaceSearchToggleFollow,
-    // GAP-3.5: ⌘L Browser address-bar overlay
+    // GAP-3.5:⌘L 浏览器地址栏浮层
     AddressBarOpen,
     AddressBarQuery(String),
     AddressBarConfirm,
     AddressBarClose,
-    // GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay
+    // GAP-3.8:⌘⇧F 工作目录(ripgrep)搜索浮层
     DirSearchOpen,
     DirSearchQuery(String),
-    /// `query` is echoed back so we can drop stale results from an older query.
+    /// 回显 `query`,使我们能丢弃旧查询的过期结果。
     DirSearchResultReady {
         query: String,
         result: Result<Vec<crate::search::RgMatch>, String>,
     },
     DirSearchSelect(usize),
     DirSearchClose,
-    // GAP-2.3 Socket API IPC
+    // GAP-2.3 Socket API 的 IPC 通道
     Ipc(crate::ipc::IpcRequest),
-    // GAP-7.8: a `browser.*` op finished (JS callback or timeout resolved).
-    // Carries the deferred JSON-RPC reply + the EventBus payload to emit.
+    // GAP-7.8:某个 `browser.*` 操作完成(JS 回调或超时解决)。
+    // 携带延迟的 JSON-RPC 应答 + 要发出的 EventBus 载荷。
     BrowserOpResolved(crate::browser::BrowserResolved),
-    // GAP-7.9: a deferred `surface.snapshot` (capture-pane) finished off-main.
-    // Carries the built response; the main loop forwards it to the deferred
-    // IPC reply handle (first-wins via Mutex-take).
+    // GAP-7.9:延迟的 `surface.snapshot`(capture-pane)在离主线完成后返回。
+    // 携带构建好的响应;主循环把它转发给延迟的
+    // IPC 应答句柄(经 Mutex-take 的先到先得)。
     #[cfg(unix)]
     SurfaceSnapshotResolved(crate::surface_snapshot::SurfaceSnapshotResolved),
-    // GAP-5.6 SSH reconnect worker → main loop
+    // GAP-5.6 SSH 重连工作线程 → 主循环
     #[cfg(unix)]
     SshReconnect(crate::ssh::reconnect::ReconnectUpdate),
-    // GAP-6.7: in-process event bus → sidebar DSL + future consumers.
+    // GAP-6.7:进程内事件总线 → 侧边栏 DSL 及未来的消费者。
     Event(crate::events::AppEvent),
-    /// GAP-11: toggle instant replay overlay.
+    /// GAP-11:切换即时回放浮层。
     ToggleInstantReplay,
     ReplayScrub(i32),
-    /// GAP-12: jump to prev/next shell mark row.
+    /// GAP-12:跳到上一个/下一个 shell 标记行。
     PrevMark,
     NextMark,
-    /// GAP-25: open a new independent window.
+    /// GAP-25:打开新的独立窗口。
     NewWindow,
 }
 
-/// P4: which `SshProfile` field is being edited in the panel.
+/// P4:面板中正在编辑哪个 `SshProfile` 字段。
 #[cfg(unix)]
 #[derive(Debug, Clone, Copy)]
 enum SshField {
@@ -1314,19 +1314,19 @@ enum SshField {
     Password,
 }
 
-/// P5 GAP-5.9: the command palette replaces the tab-list-only "tab
-/// switcher" with a fuzzy-search palette that can route to any
-/// registered action (open SSH dialog, toggle settings, jump to
-/// profile, etc.). The `Mode` field picks between the action list
-/// (default) and a profile list (when the user picked an SSH action
-/// that needs a target).
+/// P5 GAP-5.9:命令面板把仅有标签页列表的“标签页
+/// 切换器”升级为可模糊搜索的面板,能路由到任何
+/// 已注册动作(打开 SSH 对话框、切换设置、跳转
+/// 配置档等)。`Mode` 字段在动作列表
+///(默认)与配置档列表(用户选择了需要
+/// 目标的 SSH 动作时)之间切换。
 struct CommandPaletteState {
     query: String,
     mode: PaletteMode,
     selected: usize,
-    /// All registered actions, fuzzy-filtered on every keystroke.
+    /// 全部已注册动作,每次击键做模糊过滤。
     visible_actions: Vec<CommandEntry>,
-    /// Snapshot of SSH profiles; populated on first open and on
+    /// SSH 配置档快照;首次打开及后续刷新时填充,
     /// `Message::SshSettingsAddProfile` / `Delete`.
     #[cfg(unix)]
     profiles: Vec<SshProfile>,
@@ -1348,34 +1348,34 @@ enum CommandEntry {
     SshOpenSettings,
     #[cfg(unix)]
     SshListProfiles,
-    /// GAP-6.4: a user-defined `[[commands]]` entry, searchable by title.
+    /// GAP-6.4:一条用户自定义的 `[[commands]]` 条目,可按标题搜索。
     Custom { id: String, title: String },
 }
 
-/// GAP-4.1: State for the vi mode search bar (activated by `/` or `?`).
+/// GAP-4.1:vi 模式搜索栏的状态(经 `/` 或 `?` 激活)。
 struct ViSearchState {
     query: String,
     direction: alacritty_terminal::index::Direction,
 }
 
-/// GAP-3.8 / GAP-4.3: State for the standalone ⌘F surface-search overlay.
+/// GAP-3.8 / GAP-4.3:独立 ⌘F surface 搜索浮层的状态。
 ///
-/// Unlike [`ViSearchState`] (which is entered from vi copy-mode and reuses the
-/// vi cursor as its anchor), this overlay is independent of vi mode and drives
-/// the shared cached `RegexSearch` via the user-facing [`SearchFlags`] (case /
-/// whole-word / regex). `follow_tail` + `anchor` power tail-find (GAP-4.3).
+/// 与 [`ViSearchState`](从 vi 复制模式进入、以 vi
+/// 光标为锚)不同,本浮层独立于 vi 模式,经面向用户的
+/// [`SearchFlags`](大小写 / 整词 / 正则)驱动共享的缓存
+/// `RegexSearch`。`follow_tail` + `anchor` 支撑尾部查找(GAP-4.3)。
 struct SearchState {
     query: String,
     direction: alacritty_terminal::index::Direction,
     flags: crate::search::SearchFlags,
-    /// GAP-4.3: when true, new PTY output re-anchors the current match and
-    /// scrolls to follow it. Cleared on manual user scroll.
+    /// GAP-4.3:为 true 时,新的 PTY 输出会重新锚定当前匹配
+    /// 并滚动跟随。用户手动滚动时清除。
     follow_tail: bool,
-    /// Rotation-safe current-match anchor (see `search::SearchAnchor`).
+    /// 旋转安全的当前匹配锚点(见 `search::SearchAnchor`)。
     anchor: crate::search::SearchAnchor,
-    /// GAP-4.3: bottom-most grid line observed on the last tail-follow tick.
-    /// Used to detect that new output arrived (so we only re-anchor on growth,
-    /// not scan pre-existing matches).
+    /// GAP-4.3:上一次尾部跟随 tick 观察到的最底网格行。
+    /// 用于检测新输出到达(因此只在增长时重新锚定,
+    /// 而不扫描既有匹配)。
     last_tail_bottom: Option<alacritty_terminal::index::Line>,
 }
 
@@ -1385,7 +1385,7 @@ impl SearchState {
             query: String::new(),
             direction,
             flags: crate::search::SearchFlags::default(),
-            // Arm follow only if the viewport was already pinned to live output.
+            // 仅当视口已钉在实时输出上时才布防跟随。
             follow_tail: at_bottom,
             anchor: crate::search::SearchAnchor::None,
             last_tail_bottom: None,
@@ -1393,37 +1393,37 @@ impl SearchState {
     }
 }
 
-/// GAP-3.5: State for the ⌘L Browser address-bar overlay.
+/// GAP-3.5:⌘L 浏览器地址栏浮层的状态。
 ///
-/// `target` is the Web pane the typed URL will navigate:
-/// - `Some(id)` — load the URL into that existing Web pane (prefilled with
-///   its current URL when the overlay opened).
-/// - `None` — no Web pane was focused/open; confirm spawns a new Web pane
-///   beside the active pane (mirrors ⌘⇧L `SplitWeb`).
+/// `target` 是输入的 URL 将导航到的 Web 窗格:
+/// - `Some(id)` —— 把 URL 载入该既有 Web 窗格(浮层打开时
+///   以其当前 URL 预填)。
+/// - `None` —— 没有聚焦/打开的 Web 窗格;确认时在活动窗格旁
+///   生成新 Web 窗格(镜像 ⌘⇧L `SplitWeb`)。
 struct AddressBarState {
     query: String,
     target: Option<PaneId>,
 }
 
-/// GAP-3.5: what `Message::AddressBarConfirm` should do, derived purely from
-/// the captured target, whether that pane still exists, and the normalized url.
+/// GAP-3.5:`Message::AddressBarConfirm` 该做什么,纯由捕获的
+/// 目标、该窗格是否仍存在以及规范化 url 推导。
 ///
-/// Extracted so the decision is unit-testable headlessly (no `PureTermApp`):
-/// a stale target (pane closed between ⌘L-open and Enter) falls back to
-/// `Spawn` so the typed URL still loads instead of being silently dropped.
+/// 抽出来使决策可以无头单测(无需 `PureTermApp`):
+/// 过期目标(⌘L 打开到回车之间窗格被关)回退到
+/// `Spawn`,使输入的 URL 仍能载入而非被静默丢弃。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AddressBarAction {
-    /// Load the URL into the existing target Web pane.
+    /// 把 URL 载入既有的目标 Web 窗格。
     Navigate(PaneId),
-    /// No usable target — spawn a fresh Web pane (mirrors ⌘⇧L `SplitWeb`).
+    /// 无可用目标——生成新的 Web 窗格(镜像 ⌘⇧L `SplitWeb`)。
     Spawn,
-    /// Empty input — do nothing, emit no event.
+    /// 空输入——什么都不做,不发事件。
     Drop,
 }
 
-/// Pure decision for `AddressBarConfirm`. `target_alive` is resolved by the
-/// caller (via `pane_browser_ctx(target).is_some()`) before invoking this —
-/// keeping this fn free of `&self` so the harness can test it directly.
+/// `AddressBarConfirm` 的纯决策。`target_alive` 由
+/// 调用方(经 `pane_browser_ctx(target).is_some()`)在调用前解析——
+/// 使本函数不含 `&self`,测试架可直接测它。
 pub(crate) fn address_bar_confirm_action(
     target: Option<PaneId>,
     target_alive: bool,
@@ -1434,19 +1434,19 @@ pub(crate) fn address_bar_confirm_action(
     }
     match target {
         Some(id) if target_alive => AddressBarAction::Navigate(id),
-        // target was Some but the pane is gone (closed mid-overlay), or no
-        // target was captured at open → spawn a new pane so the URL loads.
+        // 目标曾是 Some 但窗格已没了(浮层期间被关),或打开时
+        // 未捕获到目标 → 生成新窗格,使 URL 仍能载入。
         _ => AddressBarAction::Spawn,
     }
 }
 
-/// GAP-3.5: Normalize a raw address-bar input into a loadable URL.
+/// GAP-3.5:把原始地址栏输入规范化为可载入的 URL。
 ///
-/// Delegates the URL-detection branches to [`crate::browser::url::loadable_url`]
-/// (shared with the GAP-7.8 agent `browser.navigate` / `pane.split_web` paths).
-/// The address-bar-only policy layered on top: input that isn't a URL falls
-/// back to a Google search (a human UX convenience the agent paths deliberately
-/// do NOT inherit — they error instead). Empty input stays empty.
+/// URL 判定分支委托给 [`crate::browser::url::loadable_url`]
+///(与 GAP-7.8 agent 的 `browser.navigate` / `pane.split_web` 路径共用)。
+/// 在其上叠加地址栏专属策略:不是 URL 的输入回退
+/// 到 Google 搜索(agent 路径有意不继承这一
+/// 人性化便利——它们直接报错)。空输入保持为空。
 pub(crate) fn normalize_url_input(input: &str) -> String {
     match crate::browser::url::loadable_url(input) {
         Some(url) => url,
@@ -1455,7 +1455,7 @@ pub(crate) fn normalize_url_input(input: &str) -> String {
             if s.is_empty() {
                 String::new()
             } else {
-                // Fall back to a web search.
+                // 回退到网页搜索。
                 let encoded = percent_encode_query(s);
                 format!("https://www.google.com/search?q={encoded}")
             }
@@ -1463,8 +1463,8 @@ pub(crate) fn normalize_url_input(input: &str) -> String {
     }
 }
 
-/// Minimal percent-encoding for the search-query fallback (unreserved chars
-/// pass through; everything else becomes `%XX`). Avoids pulling in a crate.
+/// 搜索查询回退用的极简百分号编码(非保留字符
+/// 原样通过;其余变成 `%XX`)。避免引入 crate。
 fn percent_encode_query(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for &b in s.as_bytes() {
@@ -1479,7 +1479,7 @@ fn percent_encode_query(s: &str) -> String {
     out
 }
 
-/// GAP-3.8: State for the ⌘⇧F working-directory (ripgrep) search overlay.
+/// GAP-3.8:⌘⇧F 工作目录(ripgrep)搜索浮层的状态。
 struct DirectorySearchState {
     query: String,
     flags: crate::search::SearchFlags,
@@ -1490,10 +1490,10 @@ struct DirectorySearchState {
     error: Option<String>,
 }
 
-/// GAP-3.8: run `rg --json <query> .` in `cwd`, returning parsed matches or an
-/// error string (e.g. "ripgrep not found"). Bounded with `--max-count`/
-/// `--max-filesize` so huge repos don't drown the result list. Blocking —
-/// always called from `spawn_blocking` (see `spawn_ripgrep`).
+/// GAP-3.8:在 `cwd` 中运行 `rg --json <query> .`,返回解析后的匹配或
+/// 错误串(如 “未找到 ripgrep”)。用 `--max-count`/
+/// `--max-filesize` 限界,防止巨型仓库淹没结果列表。阻塞——
+/// 总是从 `spawn_blocking` 调用(见 `spawn_ripgrep`)。
 fn run_ripgrep(
     cwd: &std::path::Path,
     query: &str,
@@ -1522,7 +1522,7 @@ fn run_ripgrep(
     cmd.arg(query).arg(".");
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = cmd.output().map_err(|e| format!("ripgrep not available: {e}"))?;
-    // rg exits 1 for "no matches" (stdout empty) — treat as success.
+    // rg 对“无匹配”退出码为 1(stdout 为空)——视为成功。
     if !output.status.success() && output.stdout.is_empty() {
         if output.status.code() == Some(1) {
             return Ok(Vec::new());
@@ -1534,9 +1534,9 @@ fn run_ripgrep(
     Ok(crate::search::parse_rg_json(&stdout))
 }
 
-/// GAP-3.8: spawn ripgrep off the main thread; results land as
-/// `DirSearchResultReady`. `query` is echoed back so stale results from an
-/// older query can be dropped.
+/// GAP-3.8:在主线程之外拉起 ripgrep;结果以
+/// `DirSearchResultReady` 落地。回显 `query`,使旧查询的
+/// 过期结果可被丢弃。
 fn spawn_ripgrep(
     cwd: std::path::PathBuf,
     query: String,
@@ -1555,10 +1555,10 @@ fn spawn_ripgrep(
     )
 }
 
-/// Cold-launch bootstrap: ensure `puretermd` is reachable on a background
-/// thread so the GUI main thread (and window paint) never blocks on the
-/// spawn-poll. The first terminal is then created on the GUI thread in
-/// `DaemonReady` (warm path, ms-scale RPCs). Modeled on `spawn_ripgrep`.
+/// 冷启动引导:在后台线程确保 `puretermd` 可达,使 GUI
+/// 主线程(及窗口绘制)绝不被 spawn 轮询阻塞。第一个
+/// 终端随后在 `DaemonReady` 时于 GUI 线程创建(热路径,毫秒级
+/// RPC)。仿照 `spawn_ripgrep`。
 fn spawn_daemon_ready() -> Task<Message> {
     Task::perform(
         async move {
@@ -1599,7 +1599,7 @@ fn spawn_hover_preview_fetch(
     )
 }
 
-/// GAP-08: stream LLM shell commands into `NaturalLanguageChunk` messages.
+/// GAP-08:把 LLM shell 命令流式送入 `NaturalLanguageChunk` 消息。
 fn spawn_natural_language_stream(
     ai_cfg: crate::app_config::AiChatConfig,
     nl_cfg: crate::app_config::NaturalLanguageConfig,
@@ -1642,7 +1642,7 @@ fn spawn_natural_language_stream(
     )
 }
 
-/// GAP-02: stream LLM fix suggestions into `ErrorRecoveryChunk` messages.
+/// GAP-02:把 LLM 修复建议流式送入 `ErrorRecoveryChunk` 消息。
 fn spawn_error_recovery_stream(
     cfg: crate::app_config::ErrorRecoveryConfig,
     client: reqwest::Client,
@@ -1684,11 +1684,11 @@ fn spawn_error_recovery_stream(
     )
 }
 
-/// GAP-01: scrollable id for the chat message list. Auto-scroll to bottom on
-/// send + each streamed `TextDelta` so the newest content stays in view.
+/// GAP-01:聊天消息列表的 scrollable id。发送 + 每个流式
+/// `TextDelta` 时自动滚到底,使最新内容保持在视野内。
 const AI_CHAT_SCROLL: Id = Id::new("ai_chat_messages");
 
-/// GAP-01: stream assistant replies into `AiChatChunk` messages.
+/// GAP-01:把助手回复流式送入 `AiChatChunk` 消息。
 fn spawn_ai_chat_stream(
     cfg: crate::app_config::AiChatConfig,
     client: reqwest::Client,
@@ -1725,11 +1725,11 @@ fn spawn_ai_chat_stream(
                     break;
                 }
             }
-            // Early EOF: the provider stream ended without a terminal Done/Error
-            // (dropped connection, truncated response). Synthesize one so the
-            // panel doesn't sit in "streaming" forever with a spinner. On
-            // cancel/supersede the panel has already cleared `inflight_gen`, so
-            // this synthetic chunk is dropped by `apply_chunk`'s gen guard.
+            // 提前 EOF:provider 流在没有终止 Done/Error 的情况下结束
+            //(连接断开、响应截断)。合成一个,使面板
+            // 不会带着转圈永远停在“流式传输中”。
+            // 取消/被取代时面板已清空 `inflight_gen`,
+            // 该合成分块会被 `apply_chunk` 的代际守卫丢弃。
             if !saw_terminal {
                 let _ = output.try_send(Message::AiChatChunk {
                     gen,
@@ -1743,9 +1743,9 @@ fn spawn_ai_chat_stream(
     )
 }
 
-/// GAP-3.8: open a file:line in the user's `$EDITOR` (default `vim`), detached
-/// so the GUI never blocks. TUI editors without a controlling terminal won't
-/// display — this respects the user's configured EDITOR as-is.
+/// GAP-3.8:在用户的 `$EDITOR`(默认 `vim`)中打开 file:line,detach
+/// 运行使 GUI 绝不阻塞。没有控制终端的 TUI 编辑器无法
+/// 显示——这里原样尊重用户配置的 EDITOR。
 fn open_in_editor(path: &std::path::Path, line: u64) {
     let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".into());
     let line_arg = format!("+{line}");
@@ -1759,22 +1759,22 @@ fn open_in_editor(path: &std::path::Path, line: u64) {
     }
 }
 
-// GAP-2.3: IPC stream builder.
+// GAP-2.3:IPC 流构建器。
 //
-// The challenge: Subscription::run requires a function pointer (fn() -> Stream),
-// but we need to share a tokio mpsc channel between the stream (consumer) and
-// the IPC listener task (producer). Solution: use Subscription::run_with with
-// an Arc<IpcChannelState> as the shared data. The builder function creates the
-// channel pair, stores the sender in the Arc for the listener to clone, and
-// keeps the receiver in the stream.
+// 难点:Subscription::run 需要函数指针(fn() -> Stream),
+// 但我们要在流(消费者)与 IPC 监听任务(生产者)之间共享
+// tokio mpsc 通道。方案:用 Subscription::run_with,以
+// Arc<IpcChannelState> 作为共享数据。构建函数创建通道对,
+// 把 sender 存进 Arc 供监听器克隆,
+// receiver 留在流里。
 
-/// Shared state between the subscription stream and the IPC listener.
+/// 订阅流与 IPC 监听器之间的共享状态。
 struct IpcChannelState {
     tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<crate::ipc::IpcRequest>>>,
 }
 
-/// Wrapper to make IpcChannelState hashable for Subscription::run_with.
-/// Hashes by pointer address so each instance is unique.
+/// 让 IpcChannelState 可哈希的包装(供 Subscription::run_with)。
+/// 按指针地址哈希,使每个实例唯一。
 #[derive(Clone)]
 struct IpcKey(std::sync::Arc<IpcChannelState>);
 
@@ -1784,19 +1784,19 @@ impl std::hash::Hash for IpcKey {
     }
 }
 
-/// Builder function for Subscription::run_with.
-/// Creates the mpsc channel, stores tx in the shared state, and returns a
-/// stream that forwards IpcRequests as Messages.
+/// Subscription::run_with 的构建函数。
+/// 创建 mpsc 通道,把 tx 存进共享状态,返回一个
+/// 把 IpcRequests 转发为 Messages 的流。
 fn ipc_stream_builder(
     key: &IpcKey,
 ) -> impl iced::futures::Stream<Item = Message> {
-    // Create the channel pair.
+    // 创建通道对。
     let (tx, mut rx) = tokio::sync::mpsc::channel::<crate::ipc::IpcRequest>(32);
 
-    // Store the sender so MainWindowOpened can clone it for the listener.
+    // 存储 sender,使 MainWindowOpened 能为监听器克隆它。
     *key.0.tx.lock().unwrap() = Some(tx);
 
-    // Return a stream that forwards IpcRequests as Messages.
+    // 返回一个把 IpcRequests 转发为 Messages 的流。
     iced::stream::channel(32, |mut sender: iced::futures::channel::mpsc::Sender<Message>| async move {
         while let Some(req) = rx.recv().await {
             if sender.try_send(Message::Ipc(req)).is_err() {
@@ -1806,10 +1806,10 @@ fn ipc_stream_builder(
     })
 }
 
-// ── GAP-5.6 SSH reconnect subscription ─────────────────────────────────────
-// Mirrors the IpcKey/ipc_stream_builder pattern: a stable subscription id
-// (ReconnectKey, hashed by Arc pointer) and a builder that claims the hub's
-// updates receiver once and forwards ReconnectUpdates as Messages.
+// ── GAP-5.6 SSH 重连订阅 ───────────────────────────────────────────────────────
+// 镜像 IpcKey/ipc_stream_builder 模式:稳定的订阅 id
+//(ReconnectKey,按 Arc 指针哈希)+ 一次性认领 hub 的
+// updates 接收端并转发 ReconnectUpdate 为 Messages 的构建器。
 
 #[cfg(unix)]
 struct ReconnectKey(std::sync::Arc<crate::ssh::reconnect::ReconnectHub>);
@@ -1838,8 +1838,8 @@ impl Clone for ReconnectKey {
     }
 }
 
-/// Builder for `Subscription::run_with`: claims the hub's updates receiver
-/// (once) and forwards `ReconnectUpdate`s as `Message::SshReconnect`.
+/// `Subscription::run_with` 的构建器:一次性认领 hub 的
+/// updates 接收端,把 `ReconnectUpdate` 转发为 `Message::SshReconnect`。
 #[cfg(unix)]
 fn reconnect_stream_builder(
     key: &ReconnectKey,
@@ -1848,9 +1848,9 @@ fn reconnect_stream_builder(
     iced::stream::channel(
         32,
         move |mut sender: iced::futures::channel::mpsc::Sender<Message>| async move {
-            // The receiver is claimed once. If the subscription is
-            // re-evaluated, rx is None — skip the loop and stay idle (pending
-            // forever) rather than killing the existing stream.
+            // 接收端只被认领一次。若订阅被重新
+            // 求值,rx 为 None——跳过循环保持空闲(永久
+            // pending)而非杀死既有流。
             if let Some(mut rx) = rx {
                 while let Some(update) = rx.recv().await {
                     if sender.try_send(Message::SshReconnect(update)).is_err() {
@@ -1858,16 +1858,16 @@ fn reconnect_stream_builder(
                     }
                 }
             }
-            // Keep the stream alive indefinitely once it has nothing more to do.
+            // 一旦无事可做,让流无限存活。
             std::future::pending::<()>().await;
         },
     )
 }
 
-// ── GAP-6.7 event subscription ────────────────────────────────────────────
-// Mirrors IpcKey/ipc_stream_builder: a stable id (hashed by Arc pointer) so
-// the subscription survives update() re-evaluations, and a builder that
-// subscribes to the bus's broadcast channel and forwards events as Messages.
+// ── GAP-6.7 事件订阅 ──────────────────────────────────────────────────────────
+// 镜像 IpcKey/ipc_stream_builder:稳定的 id(按 Arc 指针哈希),
+// 使订阅在 update() 重求值后存活;构建器订阅
+// 总线的广播通道并把事件转发为 Messages。
 
 #[derive(Clone)]
 struct EventsKey(std::sync::Arc<crate::events_bus::EventBus>);
@@ -1878,10 +1878,10 @@ impl std::hash::Hash for EventsKey {
     }
 }
 
-/// Builder for `Subscription::run_with`: subscribes to the event bus and
-/// forwards each [`crate::events::AppEvent`] as `Message::Event`. A lagging
-/// receiver (events produced faster than consumed, past the 4096 buffer) is
-/// tolerated by skipping — the JSONL log is the source of truth.
+/// `Subscription::run_with` 的构建器:订阅事件总线,
+/// 把每个 [`crate::events::AppEvent`] 转发为 `Message::Event`。
+/// 滞后的接收端(产出快于消费、越过 4096 缓冲)
+/// 以跳过容错——JSONL 日志才是事实源。
 fn events_stream_builder(key: &EventsKey) -> impl iced::futures::Stream<Item = Message> {
     let mut rx = key.0.subscribe();
     iced::stream::channel(
@@ -1907,27 +1907,27 @@ impl PureTermApp {
     pub fn new() -> (Self, Task<Message>) {
         let config_path = AppConfig::config_path();
         let config = AppConfig::load(&config_path);
-        // Load SSH profiles from `[[ssh.profiles]]` BEFORE we move
-        // `config_path` into `self` (the PathBuf isn't Copy).
+        // 在把 `config_path` move 进 `self` 之前从 `[[ssh.profiles]]`
+        // 加载 SSH 配置档(PathBuf 不是 Copy)。
         #[cfg(unix)]
         let ssh_profiles = AppConfig::load_ssh_profiles(&config_path);
         #[cfg(unix)]
         let ssh_global = crate::ssh::config::load_ssh_settings(&config_path);
-        // GAP-6.4: load user-defined [[commands]] before building the keymap.
+        // GAP-6.4:构建键位表之前加载用户自定义 [[commands]]。
         let custom_commands = AppConfig::load_custom_commands(&config_path);
 
-        // GAP-24: status-bar config + component registry. Computed before the
-        // struct literal so the registry can borrow the cfg.
+        // GAP-24:状态栏配置 + 组件注册表。在结构体
+        // 字面量之前计算,使注册表能借用 cfg。
         let status_bar_cfg = AppConfig::load_statusbar(&config_path);
         let trigger_hit_total = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
         let status_bar_registry =
             crate::status_bar::build_registry(&status_bar_cfg, Some(trigger_hit_total.clone()));
 
-        // GAP-32: Git Integration config (panel toggle, PR refresh, lazygit cmd).
+        // GAP-32:Git 集成配置(面板切换、PR 刷新、lazygit 命令)。
         let git_cfg = AppConfig::load_git(&config_path);
 
-        // GAP-19: Dual Sidebar config (widths, default-open) — launch defaults
-        // for the main window's per-window sidebar state.
+        // GAP-19:双栏侧边栏配置(宽度、默认开启)——主窗口
+        // 每窗口侧边栏状态的启动默认。
         let sidebar_cfg = AppConfig::load_sidebar(&config_path);
         let main_sidebar = crate::sidebar::SidebarState {
             left_open: sidebar_cfg.left_default_open,
@@ -1936,19 +1936,19 @@ impl PureTermApp {
             ..Default::default()
         };
 
-        // GAP-15: Shell Integration config (master switch, per-shell inject, command-text privacy).
+        // GAP-15:Shell 集成配置(总开关、每 shell 注入、命令文本隐私)。
         let shell_integration_cfg = AppConfig::load_shell_integration(&config_path);
 
-        // GAP-10: pattern-match triggers (`[[triggers]]`).
+        // GAP-10:模式匹配触发器(`[[triggers]]`)。
         let triggers_cfg = AppConfig::load_triggers(&config_path);
-        // GAP-10: opt-in `allow_exec_on_remote` (default false → remote-origin
-        // exec / cross-pane send_text blocked; see `should_block_remote_action`).
+        // GAP-10:可选的 `allow_exec_on_remote`(默认 false → 拦截
+        // 远端来源的 exec / 跨窗格 send_text;见 `should_block_remote_action`)。
         let allow_exec_on_remote = AppConfig::load_allow_exec_on_remote(&config_path);
 
-        // GAP-09: Notification System config (desktop toasts, dock badge, ring, bell throttle).
+        // GAP-09:通知系统配置(桌面通知、Dock 徽标、圆点、响铃节流)。
         let notification_cfg = AppConfig::load_notification(&config_path);
         let url_scheme_cfg = AppConfig::load_url_scheme(&config_path);
-        // GAP-02: Error Recovery config.
+        // GAP-02:错误恢复配置。
         let error_recovery_cfg = AppConfig::load_error_recovery(&config_path);
         let ai_chat_cfg = AppConfig::load_ai_chat(&config_path);
         let soul_cfg = AppConfig::load_soul(&config_path);
@@ -1970,21 +1970,21 @@ impl PureTermApp {
         let toolbelt_cfg = AppConfig::load_toolbelt(&config_path);
         let quake_cfg = AppConfig::load_quake(&config_path);
         let p4 = crate::p4_runtime::P4Features::load(&config_path);
-        // GAP-54: snapshot the background config *before* `apply_platform_effects`
-        // (which moves `p4`), so we can decode the image below.
+        // GAP-54:在 `apply_platform_effects`(它会
+        // move 掉 `p4`)*之前*快照背景配置,以便下方解码图像。
         let bg_cfg_snapshot = p4.background_cfg.clone();
-        // GAP-56: snapshot focus-follows-mouse config too.
+        // GAP-56:同时快照鼠标跟随聚焦配置。
         let ffm_cfg_snapshot = p4.focus_follows_cfg.clone();
         p4.apply_platform_effects();
 
-        // GAP-54: load + decode the configured background image. Failures
-        // are logged but never fatal — an invalid path just leaves the
-        // background disabled (consistent with the resolved_path() contract).
+        // GAP-54:加载并解码配置的背景图。失败
+        // 仅记录日志、绝不致命——无效路径只是让背景
+        // 保持禁用(与 resolved_path() 契约一致)。
         let bg_signature = if let Some(decoded) = crate::background_image::load_decoded(&bg_cfg_snapshot).unwrap_or_else(|e| {
             log::warn!("background image load failed: {e}");
             None
         }) {
-            // FNV-1a over the RGBA bytes (cheap content hash).
+            // 对 RGBA 字节做 FNV-1a(廉价内容哈希)。
             let mut h: u64 = 0xcbf29ce484222325;
             for &b in &decoded.data {
                 h ^= b as u64;
@@ -1997,8 +1997,8 @@ impl PureTermApp {
         let sidebar_dsl = crate::sidebar_dsl::SidebarDslState::load_from_dir(
             &crate::sidebar_dsl::sidebars_config_dir(),
         );
-        // Request macOS notification authorization early (best-effort, async —
-        // toasts posted before it resolves are dropped, acceptable).
+        // 尽早请求 macOS 通知授权(尽力而为、异步——
+        // 授权解决前发出的通知会被丢弃,可接受)。
         #[cfg(target_os = "macos")]
         if notification_cfg.enabled && notification_cfg.desktop_notifications {
             crate::macos_notifications::request_authorization();
@@ -2010,9 +2010,9 @@ impl PureTermApp {
             }
         }
 
-        // GAP-5.6: peek the saved layout so the window reopens at its last
-        // size (unix-only — recovery depends on the daemon path). The same
-        // snapshot is passed to `try_restore_layout` below (single disk read).
+        // GAP-5.6:窥视已存布局,使窗口以上次的
+        // 尺寸重开(仅 unix——恢复依赖守护路径)。同一份
+        // 快照也传给下面的 `try_restore_layout`(单次磁盘读)。
         #[cfg(unix)]
         let saved_layout = crate::session_restore::load();
         let win_size = {
@@ -2119,10 +2119,10 @@ impl PureTermApp {
             last_global_cursor_pos: Point::default(),
             viewport_size: win_size,
             scale_factor: 1.0,
-            // Initialize atomic to 1.0 (not 0) so that the first frame's
-            // draw() reads a valid scale factor and the atlas reconfigures
-            // correctly even before prepare() runs. 0 was a sentinel that
-            // caused first-frame blurriness on Retina displays.
+            // 把原子量初始化为 1.0(而非 0),使第一帧的
+            // draw() 读到合法缩放因子,图集即使
+            // 在 prepare() 运行前也能正确重配。0 曾是哨兵值,
+            // 导致 Retina 显示器上首帧模糊。
             viewport_scale_factor: Arc::new(std::sync::atomic::AtomicU32::new(1.0f32.to_bits())),
             ime_composing: false,
             renaming_tab: None,
@@ -2134,16 +2134,16 @@ impl PureTermApp {
             click_tracker: None,
             command_palette: None,
             last_self_write: None,
-            // Status bar (GAP-3.4 / GAP-24)
+            // 状态栏(GAP-3.4 / GAP-24)
             status_bar_cwd: None,
             status_bar_cfg,
             status_bar_registry,
             status_bar_git_status: None,
-            // GAP-32: Git Integration config + overlay panel state.
+            // GAP-32:Git 集成配置 + 浮层面板状态。
             git_cfg,
             sidebar_cfg,
             git_panel: crate::git_panel::GitPanelState::new(),
-            // GAP-09: Notifications overlay panel + store + config.
+            // GAP-09:通知浮层面板 + 存储 + 配置。
             notification_panel: crate::notification_panel::NotificationPanelState::new(),
             notification_cfg,
             url_scheme_cfg,
@@ -2180,9 +2180,9 @@ impl PureTermApp {
             toolbelt: crate::toolbelt::ToolbeltState::default(),
             quake_cfg,
             quake: crate::quake_dock::QuakeDockState::default(),
-            // T-core-graphics v3: capture the decode channel BEFORE moving
-            // `p4` into `Self`. `P4Features: Clone` so we can clone the field
-            // first, then move the whole struct in below.
+            // T-core-graphics v3:在 move `p4` 进 `Self` 之前捕获
+            // 解码通道。`P4Features: Clone`,先克隆该字段,
+            // 再在下方 move 整个结构体。
             decode_rx: p4.image_decode_rx.clone(),
             p4,
             replay_viewer: crate::instant_replay::ReplayViewer::default(),
@@ -2198,7 +2198,7 @@ impl PureTermApp {
             lsp_workspace_root: lsp_workspace,
             app_focused: true,
             last_git_branch: HashMap::new(),
-            // GAP-15: Shell Integration.
+            // GAP-15:Shell 集成。
             shell_integration_cfg,
             triggers_cfg,
             allow_exec_on_remote,
@@ -2206,8 +2206,8 @@ impl PureTermApp {
             trigger_highlights: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             trigger_folds: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             background_image: {
-                // Decode once at startup; failures stay None and the
-                // background is simply not drawn.
+                // 启动时解码一次;失败保持 None,
+                // 背景干脆不绘制。
                 let arc = std::sync::Arc::new(std::sync::Mutex::new(None));
                 if let Ok(Some(decoded)) = crate::background_image::load_decoded(&bg_cfg_snapshot) {
                     *arc.lock().unwrap() = Some(decoded);
@@ -2217,9 +2217,9 @@ impl PureTermApp {
             background_image_mode: bg_cfg_snapshot.mode,
             background_image_opacity: bg_cfg_snapshot.opacity,
             background_image_signature: bg_signature,
-            // T-core-graphics v3: shared image quad state. The `p4.image_decode_rx`
-            // was created by `P4Features::load` (see `image_decode_worker::spawn`).
-            // We alias it here so it can be cloned into every `TerminalProgram`.
+            // T-core-graphics v3:共享的图像 quad 状态。
+            // `p4.image_decode_rx` 由 `P4Features::load` 创建
+            //(见 `image_decode_worker::spawn`)。在此建别名,使其可克隆进每个 `TerminalProgram`。
             image_quad_state: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::terminal_shader::ImageQuadState::new(),
             )),
@@ -2242,7 +2242,7 @@ impl PureTermApp {
             dir_search: None,
             vi_search_pattern: std::sync::Arc::new(std::sync::Mutex::new(None)),
             cached_search: std::sync::Arc::new(std::sync::Mutex::new(None)),
-            // GAP-2.3: IPC router is Arc so it can be shared with the async listener task.
+            // GAP-2.3:IPC 路由器是 Arc,可与异步监听任务共享。
             ipc_router: crate::ipc::SocketRouter::new(),
             ipc_handle: None,
             ipc_channel_state: std::sync::Arc::new(IpcChannelState {
@@ -2251,13 +2251,13 @@ impl PureTermApp {
             events: crate::events_bus::EventBus::new(crate::events_log::events_path()),
         };
 
-        // Cold-launch bootstrap: daemon attach + first-terminal creation used
-        // to run here synchronously, blocking the window paint ~5s on a cold
-        // daemon (ensure_daemon spawn-poll). It now runs off-thread —
-        // MainWindowOpened kicks `spawn_daemon_ready` (ensure_daemon on a
-        // background thread), and `DaemonReady` creates the tab/terminal on the
-        // GUI thread once the daemon is up. The window paints a placeholder
-        // instantly in the meantime (see `view` + the `booted` gate in update).
+        // 冷启动引导:守护 attach + 首终端创建过去
+        // 在此同步执行,冷守护下(ensure_daemon 的
+        // spawn 轮询)阻塞窗口绘制约 5 秒。现在移到线程外——
+        // MainWindowOpened 触发 `spawn_daemon_ready`(后台线程
+        // 跑 ensure_daemon),守护就绪后 `DaemonReady` 在 GUI
+        // 线程创建标签页/终端。期间窗口立即绘制
+        // 占位符(见 `view` + update 中的 `booted` 闸门)。
         (app, task.map(Message::MainWindowOpened))
     }
 
@@ -2266,11 +2266,11 @@ impl PureTermApp {
         self.next_tab_id += 1;
 
         let pane_id = PaneId::next();
-        // Inherit the active pane's cwd so the new tab opens in the directory
-        // the user is currently working in.
+        // 继承活动窗格的 cwd,使新标签页打开在用户
+        // 当前工作的目录。
         let cwd = self.active_pane_cwd();
-        // GAP-5.1 M1: route through persistent daemon; falls back to a direct
-        // local PTY when puretermd is unavailable.
+        // GAP-5.1 M1:经常驻守护进程路由;puretermd
+        // 不可用时回退到直连本地 PTY。
         let terminal_ctx = Arc::new(TerminalContext::new_local_auto(
             cwd.as_deref(),
             self.shell_integration_opts(),
@@ -2320,7 +2320,7 @@ impl PureTermApp {
             .and_then(|w| w.active_workspace_mut())
             .expect("active workspace missing")
             .push_tab(tab);
-        // GAP-6.7: a new tab = a new local PTY session.
+        // GAP-6.7:新标签页 = 新的本地 PTY 会话。
         self.events.emit(
             crate::events::Category::Surface,
             "tab.created",
@@ -2337,11 +2337,11 @@ impl PureTermApp {
         id
     }
 
-    /// GAP-7.7: spawn a resume binding's interpolated argv as a new local tab
-    /// via the daemon (mirrors `create_tab`, but the PTY runs `argv` instead of
-    /// the user's shell — e.g. `tmux attach -t work`). Called from the Feed
-    /// panel after a resume binding is authorized (token or user Always).
-    /// Returns the new TabId, or `None` on daemon/attach failure (logged).
+    /// GAP-7.7:把 resume 绑定插值后的 argv 作为新本地标签页,
+    /// 经守护进程拉起(镜像 `create_tab`,但 PTY 跑的是 `argv` 而非
+    /// 用户的 shell——如 `tmux attach -t work`)。resume 绑定
+    /// 获得授权(令牌或用户选 Always)后由 Feed 面板调用。
+    /// 返回新 TabId;守护/挂接失败返回 `None`(已记录)。
     #[cfg(unix)]
     fn create_resume_tab(&mut self, argv: &[String], kind: &str) -> Option<TabId> {
         use alacritty_terminal::term::test::TermSize;
@@ -2429,12 +2429,12 @@ impl PureTermApp {
         Some(id)
     }
 
-    /// GAP-5.6: re-attach to daemon sessions that survived the previous GUI run
-    /// and rebuild the tab/pane layout. Returns `true` if at least one tab was
-    /// restored (so `new()` skips the default fresh-tab creation). Scrollback is
-    /// replayed by the daemon on attach, so each pane's grid rebuilds itself.
-    /// `snapshot` is the layout already loaded at the top of `new()` (also used
-    /// to size the window).
+    /// GAP-5.6:重新挂接在上次 GUI 运行中幸存的守护会话,
+    /// 重建标签页/窗格布局。至少恢复出一个标签页时返回
+    /// `true`(使 `new()` 跳过默认的新建标签页)。回滚由
+    /// 守护在挂接时重放,每个窗格的网格自行重建。
+    /// `snapshot` 是 `new()` 顶部已加载的布局(也用于
+    /// 确定窗口尺寸)。
     #[cfg(unix)]
     fn try_restore_layout(
         &mut self,
@@ -2442,10 +2442,10 @@ impl PureTermApp {
     ) -> bool {
         use crate::session_restore::{LayoutSnapshot, ViewportSnapshot, SNAPSHOT_VERSION};
 
-        // No persisted layout — still try to recover orphan daemon sessions
-        // (e.g. sessions from before this feature shipped, or after the state
-        // file was deleted). An empty snapshot makes `restore` skip the tab
-        // loop and attach every alive session as a fresh single-pane tab.
+        // 无持久化布局——仍尝试回收孤儿守护会话
+        //(如该功能上线前的会话,或状态
+        // 文件被删后)。空快照使 `restore` 跳过标签页
+        // 循环,把每个存活会话挂接为全新的单窗格标签页。
         let snapshot = snapshot.unwrap_or_else(|| LayoutSnapshot {
             version: SNAPSHOT_VERSION,
             viewport: ViewportSnapshot { w: 0.0, h: 0.0 },
@@ -2505,8 +2505,8 @@ impl PureTermApp {
             vi_pending_register: None,
                 });
                 has_tab = true;
-                // GAP-6.7: reattaching to a surviving daemon session (distinct from
-                // a fresh spawn, so the audit log isn't flooded on every launch).
+                // GAP-6.7:重新挂接幸存的守护会话(区别于
+                // 全新生成,避免每次启动刷爆审计日志)。
                 self.events.emit(
                     crate::events::Category::Session,
                     "session.reattached",
@@ -2536,10 +2536,10 @@ impl PureTermApp {
             main.next_workspace_id = max_ws_id + 1;
         }
 
-        // Resize every restored pane to the real window geometry. The daemon
-        // PTY was attached at a placeholder 80×24; resize now so the live shell
-        // draws at the correct size instead of waiting for the first
-        // WindowResized event.
+        // 把每个恢复的窗格 resize 到真实窗口几何。守护
+        // PTY 挂接时用的是占位的 80×24;现在 resize,使活
+        // shell 以正确尺寸绘制,而不是等待第一个
+        // WindowResized 事件。
         let cw = self.glyph_state.borrow().cell_width as u16;
         let ch = self.glyph_state.borrow().cell_height as u16;
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
@@ -2577,7 +2577,7 @@ impl PureTermApp {
         use crate::session_restore::PaneSnapshot;
         let (session_id, kind, ssh_profile, title, agent_session_id, agent_kind, url) = match pane {
             Some(p) => {
-                // GAP-3.5: terminal pane → local/ssh; web pane → "web"
+                // GAP-3.5:终端窗格 → local/ssh;web 窗格 → "web"
                 // (无 session_id,持久化 url 供重启重建)。
                 let (sid, kind, prof, url) = match p.terminal() {
                     Some(ctx) => {
@@ -2592,8 +2592,8 @@ impl PureTermApp {
                         (None, "web".to_string(), None, url)
                     }
                 };
-                // GAP-7.5: agent session id + kind learned from the agent's
-                // SessionStart hook (see handle_agent_session_started)。
+                // GAP-7.5:从 agent 的 SessionStart 钩子获知的
+                // agent 会话 id + 类型(见 handle_agent_session_started)。
                 let (a_sid, a_kind) = agent_sessions
                     .get(&pid)
                     .cloned()
@@ -2669,9 +2669,9 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-5.6: snapshot the current window/workspace/tab layout for cross-restart
-    /// recovery. Panes whose terminal context has no daemon `session_id` (direct
-    /// PTY fallback) are recorded with `session_id = None` and pruned on restore
+    /// GAP-5.6:快照当前窗口/工作区/标签页布局,供跨重启
+    /// 恢复。终端上下文没有守护 `session_id` 的窗格(直连
+    /// PTY 回退)以 `session_id = None` 记录,恢复时被裁剪。
     /// (they cannot survive a GUI restart). GAP-2.1: 走完整 windows 树(见
     /// `build_layout_snapshot`)。
     #[cfg(unix)]
@@ -2686,8 +2686,8 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-5.6: mark the layout as changed; the debounced `LayoutSaveTick`
-    /// handler flushes it to disk after ~500 ms of inactivity.
+    /// GAP-5.6:标记布局已变更;去抖的 `LayoutSaveTick`
+    /// 处理器会在约 500 ms 无活动后把它冲刷到磁盘。
     fn mark_layout_dirty(&mut self) {
         self.layout_dirty = true;
         self.last_layout_change_at = Some(Instant::now());
@@ -2696,8 +2696,8 @@ impl PureTermApp {
         self.reposition_web_panes();
     }
 
-    /// GAP-5.6: called from the `LayoutSaveTick` handler. Writes the snapshot
-    /// only if it has been dirty for ≥500 ms, then clears the dirty flag.
+    /// GAP-5.6:由 `LayoutSaveTick` 处理器调用。仅当快照
+    /// 已脏 ≥500 ms 时写入,随后清除脏标志。
     #[cfg(unix)]
     fn flush_layout_if_dirty(&mut self) {
         if !self.layout_dirty {
@@ -2713,21 +2713,21 @@ impl PureTermApp {
         let change_at_before = self.last_layout_change_at;
         let snapshot = self.capture_layout();
         crate::session_restore::save_atomic(&snapshot);
-        // GAP-2.1 review (BUG-C): only clear dirty if no layout change landed
-        // during capture/write; otherwise keep dirty so the next tick re-flushes
-        // the newer state. Defensive — iced `update()` is single-threaded and
-        // `capture_layout` does not mutate `last_layout_change_at`, so this is
-        // not triggerable today, but hardens against any future async path.
+        // GAP-2.1 评审(BUG-C):仅当捕获/写入期间没有布局变更
+        // 落地时才清除 dirty;否则保持 dirty,让下一个 tick 重刷
+        // 更新的状态。防御性——iced `update()` 单线程且
+        // `capture_layout` 不会修改 `last_layout_change_at`,今天
+        // 触发不到,但可抵御未来的异步路径。
         if dirty_should_clear(change_at_before, self.last_layout_change_at) {
             self.layout_dirty = false;
         }
     }
 
-    /// GAP-5.6: end the daemon session backing a pane on a user-initiated
-    /// tab/pane close, so it is NOT restored on the next launch. (App quit /
-    /// window close deliberately does NOT call this — quitting preserves
-    /// sessions for recovery.) Best-effort; non-daemon (direct PTY) panes have
-    /// `session_id == None` and are skipped (they die with the GUI pane).
+    /// GAP-5.6:用户主动关闭标签页/窗格时结束其背后的守护会话,
+    /// 使下次启动不再恢复它。(应用退出/
+    /// 关窗有意不调用——退出时保留会话供恢复。)
+    /// 尽力而为;非守护(直连 PTY)窗格的
+    /// `session_id == None`,直接跳过(它们随 GUI 窗格消亡)。
     #[cfg(unix)]
     fn kill_pane_session(&self, ctx: &TerminalContext) {
         let Some(sid) = ctx.session_id() else {
@@ -2737,8 +2737,8 @@ impl PureTermApp {
         match crate::daemon_client::kill_session(&socket, sid) {
             Ok(true) => {
                 log::debug!("GAP-5.6: killed daemon session {sid} on close");
-                // GAP-6.7: user/system killed a daemon session (distinct from
-                // a natural PTY EOF → session.exited).
+                // GAP-6.7:用户/系统杀掉了守护会话(区别于
+                // 自然的 PTY EOF → session.exited)。
                 self.events.emit(
                     crate::events::Category::Session,
                     "session.killed",
@@ -2764,7 +2764,7 @@ impl PureTermApp {
     fn window_for_mut(&mut self, id: window::Id) -> Option<&mut Window> {
         self.windows.iter_mut().find(|w| w.window_id == id)
     }
-    /// GAP-19: active window's per-window sidebar state (read).
+    /// GAP-19:活动窗口的每窗口侧边栏状态(读)。
     fn active_sidebar(&self) -> Option<&crate::sidebar::SidebarState> {
         self.active_window().map(|w| &w.sidebar)
     }
@@ -2797,14 +2797,14 @@ impl PureTermApp {
         self.active_ws_mut()?.active_tab_mut()
     }
 
-    /// GAP-19: terminal column width after open sidebars (active window).
+    /// GAP-19:侧边栏打开后(活动窗口)的终端列宽。
     fn terminal_viewport_width(&self) -> f32 {
         self.active_sidebar()
             .map(|s| s.terminal_width(self.viewport_size.width))
             .unwrap_or(self.viewport_size.width)
     }
 
-    /// GAP-19: open the right sidebar on a mode (optionally refresh Git data).
+    /// GAP-19:按某模式打开右侧边栏(可选刷新 Git 数据)。
     fn open_right_sidebar(&mut self, mode: crate::sidebar::RightMode) -> Task<Message> {
         if let Some(w) = self.active_window_mut() {
             w.sidebar.right_open = true;
@@ -2819,7 +2819,7 @@ impl PureTermApp {
         Task::none()
     }
 
-    /// GAP-43: refresh the Files tab for the active pane's daemon session.
+    /// GAP-43:为活动窗格的守护会话刷新 Files 页。
     fn open_remote_files_tab(&mut self) -> Task<Message> {
         let Some(ctx) = self.active_terminal_ctx() else {
             self.remote_files.clear();
@@ -2862,7 +2862,7 @@ impl PureTermApp {
         crate::remote_files::spawn_find(session_id, base, query, gen)
     }
 
-    /// GAP-19: populate git panel state and spawn refresh tasks for the Git tab.
+    /// GAP-19:填充 git 面板状态并为 Git 页派发刷新任务。
     fn open_git_sidebar_tab(&mut self) -> Task<Message> {
         if !self.git_cfg.panel_enabled {
             return Task::none();
@@ -2891,7 +2891,7 @@ impl PureTermApp {
         Task::batch(tasks)
     }
 
-    /// GAP-19: when Feed focuses a request, show it in the right sidebar.
+    /// GAP-19:Feed 聚焦某请求时,在右侧边栏展示它。
     #[cfg(unix)]
     fn sidebar_show_feed(&mut self) {
         if let Some(w) = self.active_window_mut() {
@@ -2900,13 +2900,13 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-19: resize terminal panes after sidebar toggle/width change.
+    /// GAP-19:侧边栏切换/宽度变化后 resize 终端窗格。
     fn sidebar_layout_changed(&mut self) -> Task<Message> {
         self.resize_active_tab_panes();
         Task::none()
     }
 
-    /// GAP-10: publish trigger highlight + fold regions into shared renderer Arcs.
+    /// GAP-10:把触发器高亮 + 折叠区域发布进共享的渲染器 Arc。
     fn publish_trigger_overlay_for_view(&self, pane_id: PaneId, publish: bool) {
         if publish {
             let state = self.pane_trigger_state.get(&pane_id);
@@ -2930,7 +2930,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-10: publish highlight regions for the pane being drawn this frame.
+    /// GAP-10:为本帧正在绘制的窗格发布高亮区域。
     fn publish_trigger_highlights_for_view(&self, pane_id: PaneId, publish: bool) {
         self.publish_trigger_overlay_for_view(pane_id, publish);
     }
@@ -2958,7 +2958,7 @@ impl PureTermApp {
             .unwrap_or(WorkspaceId(0))
     }
 
-    /// GAP-21: refresh Dock badge from notification store + Feed pending count.
+    /// GAP-21:从通知存储 + Feed 待处理计数刷新 Dock 徽标。
     fn refresh_dock_badge_from_state(&self) {
         #[cfg(unix)]
         let feed_pending = self.feed_panel.pending_count();
@@ -2967,7 +2967,7 @@ impl PureTermApp {
         refresh_dock_badge(&self.notification_cfg, &self.notification_store, feed_pending);
     }
 
-    /// GAP-21: sync recent workspace names to the macOS Dock menu + consume picks.
+    /// GAP-21:把最近工作区名同步到 macOS Dock 菜单并消费选择。
     #[cfg(target_os = "macos")]
     fn sync_dock_workspace_menu(&self) -> Option<WorkspaceId> {
         let entries: Vec<(u64, String)> = self
@@ -2988,7 +2988,7 @@ impl PureTermApp {
         None
     }
 
-    /// GAP-21: record a workspace visit for the Dock MRU menu.
+    /// GAP-21:为 Dock MRU 菜单记录一次工作区访问。
     fn touch_recent_workspace(&mut self, id: WorkspaceId) {
         touch_recent_workspace(&mut self.recent_workspace_ids, id);
     }
@@ -3011,7 +3011,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-25: switch workspace in every open window (by name or index).
+    /// GAP-25:在每个打开的窗口中切换工作区(按名称或索引)。
     fn apply_workspace_switch_all_windows(
         &mut self,
         id: Option<u64>,
@@ -3085,7 +3085,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-12: jump to previous (`prev=true`) or next shell mark.
+    /// GAP-12:跳到上一个(`prev=true`)或下一个 shell 标记。
     fn jump_shell_mark(&mut self, prev: bool) {
         let pane_id = self.active_tab_ref().map(|t| t.active_pane);
         let cursor_row = self
@@ -3109,7 +3109,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-25: spawn a secondary window with tab bar + default workspace.
+    /// GAP-25:生成带标签栏 + 默认工作区的次级窗口。
     fn open_new_window(&mut self) -> Task<Message> {
         let settings = window::Settings {
             size: Size::new(1024.0, 768.0),
@@ -3124,9 +3124,9 @@ impl PureTermApp {
         let cw = gs.cell_width;
         let ch = gs.cell_height;
         drop(gs);
-        // GAP-19: secondary window gets its own sidebar seeded from the config
-        // defaults (left_default_open + clamped widths), independent of the
-        // main window's runtime sidebar state.
+        // GAP-19:次级窗口拥有自己的侧边栏,种子来自配置
+        // 默认(left_default_open + 钳制宽度),独立于
+        // 主窗口的运行时侧边栏状态。
         let mut secondary = Window::new_secondary(win_id);
         secondary.sidebar = crate::sidebar::SidebarState {
             left_open: self.sidebar_cfg.left_default_open,
@@ -3156,10 +3156,10 @@ impl PureTermApp {
             .and_then(|pane| pane.terminal().cloned())
     }
 
-    /// GAP-5.6: like [`active_terminal_ctx`](Self::active_terminal_ctx) but also
-    /// returns the pane id, so callers that need to address the pane (e.g. emit
-    /// a per-pane `ssh.state_changed` event on user-initiated disconnect) don't
-    /// have to re-resolve it separately.
+    /// GAP-5.6:类似 [`active_terminal_ctx`](Self::active_terminal_ctx),但同时
+    /// 返回窗格 id,使需要定位窗格的调用方(如用户主动断开时发
+    /// 每窗格的 `ssh.state_changed` 事件)不必
+    /// 再单独解析一次。
     fn active_terminal_ctx_and_id(&self) -> Option<(PaneId, Arc<TerminalContext>)> {
         let tab = self.active_tab_ref()?;
         let pane_id = tab.active_pane;
@@ -3167,15 +3167,15 @@ impl PureTermApp {
         Some((pane_id, ctx))
     }
 
-    /// The cwd to inherit when spawning a new local tab/pane: the active
-    /// tab's active pane cwd, provided that pane is local (an SSH pane's
-    /// remote cwd is unusable for a local shell) and the path still exists.
+    /// 拉起新本地标签页/窗格时要继承的 cwd:活动
+    /// 标签页的活动窗格 cwd,前提是该窗格是本地的(SSH 窗格的
+    /// 远端 cwd 对本地 shell 不可用)且路径仍存在。
     fn active_pane_cwd(&self) -> Option<PathBuf> {
         let tab = self.active_tab_ref()?;
         let pane_id = tab.active_pane;
         let pane = tab.panes.get(&pane_id)?;
-        // Local terminal only: SSH panes expose a remote cwd (unusable for a
-        // local shell), and web panes (GAP-3.5) have no cwd at all.
+        // 仅限本地终端:SSH 窗格暴露的是远端 cwd(对本地
+        // shell 不可用),web 窗格(GAP-3.5)则完全没有 cwd。
         if pane.terminal().map_or(true, |c| c.is_ssh()) {
             return None;
         }
@@ -3183,13 +3183,13 @@ impl PureTermApp {
         if path.is_dir() { Some(path) } else { None }
     }
 
-    /// GAP-15: resolve the `[shell_integration]` config into the injector opts
-    /// for the direct (non-daemon) PTY path. `enabled=false` collapses to all
-    /// off (pure OSC 7). Honored only on the fallback path; the daemon path
-    /// is always full integration (no config access there). T-core-shell-integ
-    /// adds the per-shell opt-in map: absent keys default to true (matches
-    /// pre-t-core-closure "everything on"), the legacy `inject_zsh` /
-    /// `inject_bash` keys still short-circuit those two.
+    /// GAP-15:把 `[shell_integration]` 配置解析为直连(非守护)
+    /// PTY 路径的注入选项。`enabled=false` 收缩为全关
+    ///(纯 OSC 7)。仅回退路径遵守;守护路径
+    /// 恒为完整集成(那里读不到配置)。t-core-shell-integ
+    /// 增加了每 shell 的开关映射:缺失键默认开启(与
+    /// t-core 收尾前的“全开”一致),遗留的 `inject_zsh` /
+    /// `inject_bash` 键仍可短路这两个 shell。
     fn shell_integration_opts(&self) -> pureterm_daemon::shell_integration::ShellIntegrationOpts {
         use pureterm_daemon::shell_integration::Shell;
         let c = &self.shell_integration_cfg;
@@ -3198,14 +3198,14 @@ impl PureTermApp {
             shells.clear();
             return pureterm_daemon::shell_integration::ShellIntegrationOpts { shells };
         }
-        // Legacy `inject_zsh`/`inject_bash` keys — false ⇒ drop.
+        // 遗留的 `inject_zsh`/`inject_bash` 键——false ⇒ 关闭。
         if !c.inject_zsh {
             shells.remove(&Shell::Zsh);
         }
         if !c.inject_bash {
             shells.remove(&Shell::Bash);
         }
-        // Per-shell opt-in. Absent keys stay on (the `all_on()` default).
+        // 每 shell 的可选开关。缺失键保持开启(`all_on()` 默认)。
         for (name, &on) in &c.per_shell {
             if let Ok(s) = name.parse::<Shell>() {
                 if !on {
@@ -3216,9 +3216,9 @@ impl PureTermApp {
         pureterm_daemon::shell_integration::ShellIntegrationOpts { shells }
     }
 
-    /// Re-derive the status-bar cwd (and git branch) from the now-active
-    /// pane. Call after switching tabs/panes or closing a pane so the status
-    /// bar doesn't show a stale directory until the next OSC 7 arrives.
+    /// 从现在的活动窗格重新推导状态栏的 cwd(及 git 分支)。
+    /// 切换标签页/窗格或关闭窗格后调用,使状态栏
+    /// 不会在下一条 OSC 7 到来前显示过期目录。
     fn refresh_status_bar_cwd(&mut self) {
         match self.active_pane_cwd() {
             Some(path) => {
@@ -3232,13 +3232,13 @@ impl PureTermApp {
         }
     }
 
-    // ── GAP-3.8 / GAP-4.3: surface search helpers ───────────────────────
+    // ── GAP-3.8 / GAP-4.3:surface 搜索辅助 ──────────────────────────────
 
-    /// Push the surface-search pattern (query transformed by `SearchFlags`)
-    /// into the shared `vi_search_pattern` slot. The renderer reads that slot
-    /// and the Phase-0 cache rebuilds the `RegexSearch` only when the string
-    /// changes — so this is the single write point for both highlight + the
-    /// cache. Empty query clears the slot (no highlights).
+    /// 把 surface 搜索模式(经 `SearchFlags` 变换的查询)
+    /// 推入共享的 `vi_search_pattern` 槽。渲染器读取该槽,
+    /// Phase-0 缓存只在字符串变化时重建 `RegexSearch`——
+    /// 因此这里是高亮与缓存的唯一写入点。
+    /// 空查询清空该槽(无高亮)。
     fn refresh_surface_search_pattern(&self) {
         let new_pattern = self
             .surface_search
@@ -3249,7 +3249,7 @@ impl PureTermApp {
         }
     }
 
-    /// Close the surface-search overlay and clear the shared highlight slot.
+    /// 关闭 surface 搜索浮层并清空共享高亮槽。
     fn close_surface_search(&mut self) {
         if let Ok(mut pat) = self.vi_search_pattern.lock() {
             *pat = None;
@@ -3257,14 +3257,14 @@ impl PureTermApp {
         self.surface_search = None;
     }
 
-    /// Run `search_next` from the current anchor, scroll the match into view,
-    /// and record a rotation-safe anchor so the next invocation advances.
+    /// 从当前锚点运行 `search_next`,把匹配滚进视野,
+    /// 并记录旋转安全的锚点,使下一次调用前进。
     ///
-    /// Origin policy: if no match has been found yet (`anchor == None`), start
-    /// from the top of the scrollback so the first forward search lands on the
-    /// earliest match; otherwise advance from the last match (tracked via the
-    /// vi cursor, which `vi_goto_point` moved onto it — rotation-safe, exactly
-    /// like the vi-search path at `Message::ViSearchConfirm`).
+    /// 起点策略:尚未找到过匹配(`anchor == None`)时从
+    /// 回滚顶部开始,使第一次正向搜索命中最早的
+    /// 匹配;否则从上一个匹配前进(经 vi
+    /// 光标跟踪,`vi_goto_point` 已把它移到匹配上——旋转安全,与
+    /// `Message::ViSearchConfirm` 处的 vi 搜索路径完全一致)。
     fn surface_search_step(&mut self, direction: alacritty_terminal::index::Direction) {
         let (query, flags, had_match) = match &self.surface_search {
             Some(s) if !s.query.is_empty() => {
@@ -3296,12 +3296,12 @@ impl PureTermApp {
                 alacritty_terminal::index::Direction::Right => *mat.end(),
                 alacritty_terminal::index::Direction::Left => *mat.start(),
             };
-            // Move the vi cursor onto the match + scroll it into view. This is
-            // the rotation-safe anchor reused for the next search.
+            // 把 vi 光标移到匹配上并滚进视野。这就是
+            // 下次搜索复用的旋转安全锚点。
             term.vi_goto_point(target);
             if let Some(ref mut s) = self.surface_search {
-                // Mark "matched" so the next search advances from the cursor.
-                // (Phase 2 fills in real text/offset for the emphasis quad.)
+                // 标记为“已匹配”,使下次搜索从光标前进。
+                //(Phase 2 为强调 quad 填入真实 text/offset。)
                 if matches!(s.anchor, crate::search::SearchAnchor::None) {
                     s.anchor = crate::search::SearchAnchor::Current(String::new(), 0);
                 }
@@ -3309,12 +3309,12 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-4.3: tail-find re-anchor. Called on a periodic tick. When
-    /// `follow_tail` is armed, the viewport is at the live bottom, and new
-    /// output has arrived since the last tick (detected via the bottom-most
-    /// grid line moving), search forward from the *previous* bottom for any
-    /// match in the newly-arrived output and scroll to it. This follows the
-    /// stream of new matches without scanning pre-existing ones.
+    /// GAP-4.3:尾部查找的重新锚定。由周期 tick 调用。
+    /// `follow_tail` 已布防、视口位于实时底部、且自上个
+    /// tick 以来有新输出(经最底网格行的移动检测)时,
+    /// 从*上一个*底部向前搜索新到达输出中的任何
+    /// 匹配并滚动到它。跟随新匹配的
+    /// 流,而不扫描既有匹配。
     fn surface_search_tail_follow(&mut self) {
         use alacritty_terminal::grid::Dimensions;
 
@@ -3328,14 +3328,14 @@ impl PureTermApp {
             return;
         };
         let mut term = ctx.terminal().lock();
-        // Only follow when the viewport is pinned to live output. If the user
-        // scrolled up (follow_tail would already be cleared, but double-guard),
-        // do nothing.
+        // 仅当视口钉在实时输出上才跟随。用户上滚时
+        //(follow_tail 应已被清除,但双重防守)
+        // 什么都不做。
         if term.grid().display_offset() != 0 {
             return;
         }
         let cur_bottom = term.bottommost_line();
-        // First tick after arming seeds the baseline without jumping.
+        // 布防后的第一个 tick 只播种基线,不跳动。
         let prev_bottom = match prev_bottom {
             Some(b) => b,
             None => {
@@ -3348,8 +3348,8 @@ impl PureTermApp {
         if cur_bottom == prev_bottom {
             return; // no new output
         }
-        // New output arrived. Search forward from the previous bottom line for
-        // a match inside the freshly-added region.
+        // 新输出到达。从上一个底行向前搜索
+        // 新增区域内的匹配。
         let Some(pattern) = crate::search::build_search_pattern(&query, &flags) else {
             return;
         };
@@ -3369,24 +3369,24 @@ impl PureTermApp {
         ) {
             term.vi_goto_point(*mat.end());
         }
-        // Advance the baseline regardless of whether a match was found.
+        // 无论是否找到匹配都推进基线。
         if let Some(ref mut s) = self.surface_search {
             s.last_tail_bottom = Some(term.bottommost_line());
         }
     }
 
-    /// GAP-5.6: find a pane's terminal context by id, searching all tabs.
-    /// Returns a cloned `Arc` (like `active_terminal_ctx`) so callers can
-    /// mutate the context through interior mutability without holding a
-    /// borrow of `self`.
+    /// GAP-5.6:按 id 查找窗格的终端上下文,搜索全部标签页。
+    /// 返回克隆的 `Arc`(同 `active_terminal_ctx`),使调用方
+    /// 能经内部可变性修改上下文而不持有 `self` 的
+    /// 借用。
     #[cfg(unix)]
-    /// GAP-56: find the pane id under a cursor point. Returns `None` when
-    /// the cursor is over a non-pane region, when focus-follows-mouse is
-    /// disabled, or when the active window has no split tree.
-    /// Coordinates are passed as window-content logical pixels; the
-    /// viewport is treated as a single large rect (0, 0, +inf, +inf) so a
-    /// point inside it always hits. Multi-window split resolution is left
-    /// for the dedicated layout work tracked separately.
+    /// GAP-56:查找光标点下的窗格 id。光标位于非窗格区域、
+    /// 鼠标跟随聚焦被禁用、或活动窗口没有拆分树时返回 `None`。
+    /// 禁用、或活动窗口没有拆分树时返回 `None`。
+    /// 坐标以窗口内容的逻辑像素传入;视口按单一
+    /// 大矩形 (0, 0, +inf, +inf) 处理,落在其中必命中。
+    /// 多窗口拆分解析留给单独跟踪的布局
+    /// 工作。
     fn pane_under_point(&self, pos: Point) -> Option<PaneId> {
         if !self.focus_follows_mouse_cfg.enabled {
             return None;
@@ -3416,7 +3416,7 @@ impl PureTermApp {
             .find_map(|tab| tab.panes.get(&pane_id).and_then(|p| p.web().cloned()))
     }
 
-    /// GAP-4.1: Check if vi mode is active on the current active pane.
+    /// GAP-4.1:检查当前活动窗格是否激活了 vi 模式。
     fn is_vi_mode_active(&self) -> bool {
         self.active_tab_ref()
             .map(|tab| tab.vi_sub_mode.is_some())
@@ -3473,17 +3473,17 @@ impl PureTermApp {
         Some((TermPoint::new(line, col), side))
     }
 
-    /// P3 GAP-5.7: synchronously spawn an SSH PTY and create a new Tab
-    /// for it. Synchronous (not async) for the P3 milestone — the
-    /// ssh_manager handles ControlMaster pooling so the wall-clock cost
-    /// is bounded; a real async path will arrive with the persistent
-    /// PTY daemon (GAP-5.1).
+    /// P3 GAP-5.7:同步拉起 SSH PTY 并为其创建新标签页。
+    /// P3 里程碑选择同步(而非异步)——
+    /// ssh_manager 处理 ControlMaster 池化,墙上时钟成本
+    /// 有界;真正的异步路径将随常驻 PTY
+    /// 守护(GAP-5.1)到来。
     ///
-    /// On any error path, if `self.ssh_dialog` is `None` (e.g. the
-    /// user reached `SshConnect` via the command palette without ever
-    /// opening the dialog), we open the dialog with the error so the
-    /// user has feedback. This prevents the "connect failed, UI
-    /// disappeared silently" UX bug.
+    /// 任何错误路径上,若 `self.ssh_dialog` 为 `None`(如用户
+    /// 从命令面板直达 `SshConnect` 而从未打开对话框),
+    /// 我们带错误打开对话框,使用户有
+    /// 反馈。这避免“连接失败,UI 却无声
+    /// 消失”的体验缺陷。
     #[cfg(unix)]
     fn connect_ssh_tab(&mut self, profile_idx: usize) {
         let Some(profile) = self.ssh_profiles.get(profile_idx).cloned() else {
@@ -3496,7 +3496,7 @@ impl PureTermApp {
         self.connect_ssh_with_profile(profile);
     }
 
-    /// GAP-47/48: connect using an ephemeral or configured SSH profile.
+    /// GAP-47/48:用临时或已配置的 SSH 配置档连接。
     #[cfg(unix)]
     fn connect_ssh_with_profile(&mut self, profile: crate::ssh::config::SshProfile) {
         let host = profile.host.clone();
@@ -3509,7 +3509,7 @@ impl PureTermApp {
         let login_on_error =
             crate::login_scripts::LoginErrorPolicy::parse(&profile.login_on_error);
 
-        // GAP-39: non-SSH profiles — MVP uses external CLI when available.
+        // GAP-39:非 SSH 配置档——MVP 在可用时使用外部 CLI。
         match profile.session_type() {
             crate::serial_telnet::SessionType::Telnet | crate::serial_telnet::SessionType::Serial => {
                 let argv = crate::serial_telnet::spawn_argv(
@@ -3531,8 +3531,8 @@ impl PureTermApp {
             crate::serial_telnet::SessionType::Ssh => {}
         }
 
-        // Retrieve password for auto-fill.
-        // Priority: CredentialStore > password manager > TOML plaintext.
+        // 取回密码用于自动填充。
+        // 优先级:CredentialStore > 密码管理器 > TOML 明文。
         let pm_src = crate::password_manager::PasswordManagerSource::parse(
             &self.ssh_global.password_manager,
         );
@@ -3566,9 +3566,9 @@ impl PureTermApp {
             })
             .or(profile.password.clone());
 
-        // GAP-5.1 M3: prefer the persistent daemon so the SSH session survives
-        // GUI restart. On any failure (daemon missing / unreachable / spawn
-        // error) fall through to the direct in-process spawn below.
+        // GAP-5.1 M3:优先常驻守护,使 SSH 会话在 GUI
+        // 重启后存活。任何失败(守护缺失/不可达/拉起
+        // 错误)都贯穿到下面的进程内直连拉起。
         match TerminalContext::new_ssh_via_daemon(&profile, password.clone()) {
             Ok(ctx) => {
                 let id = self.push_ssh_tab(profile_name.clone(), ctx);
@@ -3584,7 +3584,7 @@ impl PureTermApp {
                        );
                    }
                }
-               // GAP-6.7: SSH tab + daemon session created.
+               // GAP-6.7:SSH 标签页 + 守护会话已创建。
                 self.events.emit(
                     crate::events::Category::Surface,
                     "tab.created",
@@ -3604,15 +3604,15 @@ impl PureTermApp {
             ),
         }
 
-        // Fallback: direct in-process spawn (requires the session manager).
+        // 回退:进程内直连拉起(需要会话管理器)。
         let Some(manager) = self.ssh_manager.clone() else {
             self.show_ssh_error(self.i18n.t("ssh.error.manager_not_init"));
             return;
         };
 
-        // P3: do the spawn on the calling thread. This is OK for the
-        // first connection (cheap). P5 will move this to a worker thread
-        // and pipe results back via a crossbeam channel.
+        // P3:在调用线程上拉起。首次连接可以
+        // 接受(廉价)。P5 会移到工作线程,
+        // 经 crossbeam 通道回传结果。
         let spawn_result = manager.spawn_pty(
             &host,
             user.as_deref(),
@@ -3628,10 +3628,10 @@ impl PureTermApp {
 
         match spawn_result {
             Ok((ssh_pty, socket_path, stderr)) => {
-                // socket_path already obtained from spawn_pty's internal
-                // get_or_create — no need to call it again.
-                // Pass the resolved password through so GAP-5.6 reconnect can
-                // replay it without re-querying the CredentialStore.
+                // socket_path 已在 spawn_pty 内部的
+                // get_or_create 中取得——无需再调一次。
+                // 传递已解析的密码,使 GAP-5.6 重连能重放它,
+                // 而不必重新查询 CredentialStore。
                 match TerminalContext::new_ssh(&profile, ssh_pty, socket_path, password.clone(), stderr) {
                     Ok(ctx) => {
                         let id = self.push_ssh_tab(profile_name.clone(), ctx);
@@ -3665,7 +3665,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-48: resolve workspace switch target from id / name / index.
+    /// GAP-48:从 id / 名称 / 索引解析工作区切换目标。
     fn resolve_workspace_target(
         &self,
         id: Option<u64>,
@@ -3690,7 +3690,7 @@ impl PureTermApp {
         None
     }
 
-    /// GAP-48: execute a parsed `pureterm://` action inside the GUI loop.
+    /// GAP-48:在 GUI 循环内执行已解析的 `pureterm://` 动作。
     fn execute_automation_action(
         &mut self,
         action: crate::automation::AutomationAction,
@@ -3719,10 +3719,10 @@ impl PureTermApp {
         }
     }
 
-    /// Helper: surface an SSH error to the user. If the dialog is
-    /// already open, set the error in-place. Otherwise open the
-    /// dialog so the user sees the failure. Either way, the user
-    /// always gets feedback.
+    /// 辅助:向用户呈现 SSH 错误。对话框已打开则原地
+    /// 设置错误;否则打开对话框让用户看到
+    /// 失败。无论哪种方式,用户
+    /// 总能得到反馈。
     #[cfg(unix)]
     fn show_ssh_error(&mut self, message: String) {
         if let Some(ref mut dialog) = self.ssh_dialog {
@@ -3735,28 +3735,28 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-5.6: kick off background reconnect for an SSH pane whose
-    /// connection dropped. Transitions the pane to `Reconnecting` and spawns
-    /// the hub worker; the worker's `ReconnectUpdate`s come back via
+    /// GAP-5.6:为连接掉线的 SSH 窗格启动后台重连。
+    /// 把窗格转入 `Reconnecting` 并派发 hub 工作线程;其
+    /// `ReconnectUpdate` 经订阅返回。
     /// [`Message::SshReconnect`].
     ///
-    /// Anti-hammer (GAP-5.6 follow-up): if the pane has tripped the flap cap
-    /// (`FLAP_WINDOW` / `MAX_FLAPS`) — a connect-then-die host that would
-    /// otherwise reconnect forever at ~min-backoff, hammering the host — the
-    /// hub refuses to spawn and we instead mark the pane `Failed(flapping)`
-    /// synchronously so the user can reconnect manually once the host is
-    /// stable.
+    /// 反敲打(GAP-5.6 后续):窗格已触发抖动上限
+    ///(`FLAP_WINDOW` / `MAX_FLAPS`)——连接即死的主机否则会以
+    /// 约最小退避永久重连、敲打主机——hub 拒绝派发,
+    /// 我们同步把窗格标记为 `Failed(flapping)`,
+    /// 用户可在主机稳定后手动
+    /// 重连。
     #[cfg(unix)]
     fn trigger_ssh_reconnect(&mut self, tab_id: TabId, pane_id: PaneId) {
         use crate::ssh::reconnect::{SpawnDecision, SshFailureKind};
-        // Gather the pane's reconnect params (limits the immutable borrow of
-        // self to this block so the ssh_manager mutation below is clean).
+        // 收集窗格的重连参数(把对 self 的不可变借用
+        // 限制在此块内,使下方 ssh_manager 的变更干净)。
         let params = {
             let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) else {
                 return;
             };
             let Some(pane) = tab.panes.get(&pane_id) else { return };
-            // Web panes have no SSH session to reconnect.
+            // Web 窗格没有可重连的 SSH 会话。
             let Some(ctx) = pane.terminal() else { return };
             let Some(params) = ctx.ssh_reconnect_params() else {
                 return;
@@ -3764,8 +3764,8 @@ impl PureTermApp {
             params
         };
 
-        // ssh_manager is guaranteed Some (the pane is SSH → a prior connect
-        // lazy-inited it), but guard anyway.
+        // ssh_manager 必为 Some(该窗格是 SSH → 此前的连接已惰性
+        // 初始化它),但仍做守卫。
         if self.ssh_manager.is_none() {
             let socket_dir = std::env::temp_dir().join("pureterm-ssh");
             let _ = std::fs::create_dir_all(&socket_dir);
@@ -3789,10 +3789,10 @@ impl PureTermApp {
                 log::info!("GAP-5.6: SSH pane {:?} dropped → reconnecting", pane_id);
             }
             SpawnDecision::Flapping => {
-                // Refused by the anti-hammer cap: stop hammering the host and
-                // surface a typed failure. The status bar / event consumers
-                // see `Failed`, and a manual reconnect (new pane id) starts
-                // with a fresh flap history.
+                // 被反敲打上限拒绝:停止敲打主机并
+                // 呈现带类型的失败。状态栏 / 事件消费者
+                // 看到 `Failed`,手动重连(新窗格 id)则从全新的
+                /// 抖动历史开始。
                 if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
                     ctx.set_ssh_state(crate::ssh::reconnect::SshState::Failed {
                         kind: SshFailureKind::Unknown,
@@ -3815,11 +3815,11 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-5.6: emit a `ssh.state_changed` event on the EventBus for external
-    /// consumers (`pureterm events tail --type session`, MCP, GAP-6.8 sidebar).
-    /// The GUI itself reads `ssh_state_snapshot()` directly; this event is the
-    /// "Socket API event SshStateChanged" surface. Reuses `Category::Session`
-    /// so all SSH lifecycle events live alongside `session.spawned/exited`.
+    /// GAP-5.6:在 EventBus 上发出 `ssh.state_changed` 事件,供外部
+    /// 消费者(`pureterm events tail --type session`、MCP、GAP-6.8 侧边栏)使用。
+    /// GUI 自身直接读 `ssh_state_snapshot()`;该事件是
+    /// “Socket API 事件 SshStateChanged”的表面。复用 `Category::Session`,
+    /// 使全部 SSH 生命周期事件与 `session.spawned/exited` 同列。
     #[cfg(unix)]
     fn emit_ssh_state_changed(
         &self,
@@ -3846,10 +3846,10 @@ impl PureTermApp {
         );
     }
 
-    /// GAP-5.6: read a pane's SSH exit flags under a short immutable borrow, so
-    /// the exit-dispatch loop can release `self` before any `&mut` call (e.g.
-    /// [`Self::trigger_ssh_reconnect`]). Returns `(is_ssh, is_user_initiated_close)`;
-    /// `(false, true)` if the tab/pane/terminal is already gone.
+    /// GAP-5.6:在短暂不可变借用下读取窗格的 SSH 退出标志,
+    /// 使退出分派循环能在任何 `&mut` 调用(如
+    /// [`Self::trigger_ssh_reconnect`])前释放 `self`。返回
+    /// 返回 `(is_ssh, is_user_initiated_close)`;标签页/窗格/终端已不存在时返回 `(false, true)`。
     #[cfg(unix)]
     fn ssh_exit_flags(&self, tab_id: TabId, pane_id: PaneId) -> (bool, bool) {
         let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) else {
@@ -3861,15 +3861,15 @@ impl PureTermApp {
         (ctx.is_ssh(), ctx.is_user_initiated_close())
     }
 
-    /// GAP-5.6: handle a single-pane SSH tab that exited within the 5s grace
-    /// period — the connection almost certainly failed. Classify ssh stderr
-    /// ([`crate::ssh::reconnect::classify_ssh_failure`]) for a typed dialog
-    /// message + a `ssh.state_changed → failed` event, release the connection
-    /// pool entry, remove the tab, and surface the error in the SSH dialog.
+    /// GAP-5.6:处理 5 秒宽限期内退出的单窗格 SSH 标签页——
+    /// 连接几乎必然失败了。分类 ssh stderr
+    ///(`crate::ssh::reconnect::classify_ssh_failure`)得到带类型的对话框
+    /// 消息 + `ssh.state_changed → failed` 事件,释放连接
+    /// 池条目,移除标签页,并在 SSH 对话框呈现错误。
     #[cfg(unix)]
     fn handle_ssh_quick_exit(&mut self, tab_id: TabId, pane_id: PaneId) {
-        // Collect everything needed from the pane under an immutable borrow,
-        // then release it before the `&mut` tab removal below.
+        // 在不可变借用下从窗格收集所需的一切,
+        // 然后在下方 `&mut` 移除标签页之前释放它。
         let (stderr_msg, release_key, session_id) = {
             let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) else {
                 return;
@@ -3900,14 +3900,14 @@ impl PureTermApp {
             None => "SSH connection failed. Check host, port, and credentials.".to_string(),
         };
 
-        // Release the SSH connection-pool entry.
+        // 释放 SSH 连接池条目。
         if let Some((host, user, port)) = release_key {
             if let Some(ref manager) = self.ssh_manager {
                 manager.release(&host, user.as_deref(), port);
             }
         }
 
-        // GAP-5.6 ssh.state_changed → failed (typed), for the event stream / MCP.
+        // GAP-5.6 ssh.state_changed → failed(带类型),供事件流 / MCP。
         self.events.emit(
             crate::events::Category::Session,
             "ssh.state_changed",
@@ -3919,8 +3919,8 @@ impl PureTermApp {
             }),
         );
 
-        // Remove the failed tab and re-seat the active tab if it was active.
-        // GAP-1.3 review: tear down per-pane state for the failed tab's panes.
+        // 移除失败的标签页;若它是活动页则重设活动页。
+        // GAP-1.3 评审:为失败标签页的窗格拆除每窗格状态。
         let doomed: Vec<PaneId> = self
             .tabs()
             .iter()
@@ -3938,7 +3938,7 @@ impl PureTermApp {
         self.show_ssh_error(error_msg);
     }
 
-    /// P3: create a new Tab wrapping an already-constructed SSH context.
+    /// P3:创建包装已构造好的 SSH 上下文的新标签页。
     #[cfg(unix)]
     fn push_ssh_tab(&mut self, profile_name: String, ctx: TerminalContext) -> TabId {
         let id = TabId(self.next_tab_id);
@@ -3946,7 +3946,7 @@ impl PureTermApp {
         let pane_id = PaneId::next();
         let terminal_ctx = Arc::new(ctx);
 
-        // Apply initial size
+        // 应用初始尺寸
         let gs = self.glyph_state.borrow();
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let cols = (self.terminal_viewport_width() / gs.cell_width).floor().max(1.0) as usize;
@@ -4004,30 +4004,30 @@ impl PureTermApp {
         id
     }
 
-    /// P4: persist the current `ssh_profiles` to the user's toml config.
+    /// P4:把当前 `ssh_profiles` 持久化到用户 toml 配置。
     ///
-    /// Goes through `pureterm_settings::config_io::mutate_config`, which:
-    ///   1. Acquires an exclusive advisory lock on the config file so a
-    ///      concurrent settings save (embedded window OR external
-    ///      pureterm-settings binary) blocks until we're done.
-    ///   2. Re-loads the latest on-disk document inside the lock —
-    ///      anything settings just wrote (font/colors/window/...) stays.
-    ///   3. Replaces only `doc["ssh"]["profiles"]` with the full 7-field
-    ///      view of `self.ssh_profiles`. Main process is the source of
-    ///      truth for the SSH schema (name/host/user/port/password/
-    ///      key_path/shortcut) so a clean replace here is intentional and
-    ///      lossless — note `password` is the ENCRYPTED blob, the
-    ///      plaintext only lives inside `CredentialStore` while unlocked
-    ///      and never touches any persistence path.
-    ///   4. Atomically replaces the file via `NamedTempFile::persist`.
-    ///   5. Returns the new mtime so we can drop it into
-    ///      `last_self_write` and skip the notify-watcher self-reload
-    ///      this write triggers.
+    /// 经 `pureterm_settings::config_io::mutate_config` 完成,它:
+    ///   1. 对配置文件取排他建议锁,使并发的设置保存
+    ///(内嵌窗口或外部 pureterm-settings
+    ///      二进制)阻塞到我们完成。
+    ///   2. 锁内重载最新的磁盘文档——
+    ///      设置刚写入的一切(字体/颜色/窗口/…)得以保留。
+    ///   3. 只用 `self.ssh_profiles` 的完整 7 字段
+    ///      视图替换 `doc["ssh"]["profiles"]`。主进程是事实
+    ///      SSH schema(name/host/user/port/password/ 字段)的事实源,
+    ///      key_path/shortcut)的事实源,此处整体替换是有意的、
+    ///      无损的——注意 `password` 是加密后的 blob,明文
+    ///      只在解锁期间存活于 `CredentialStore` 内,
+    ///      绝不触碰任何持久化路径。
+    ///   4. 经 `NamedTempFile::persist` 原子替换文件。
+    ///   5. 返回新 mtime,使我们能把它放进
+    ///      `last_self_write`,跳过这次写入触发的
+    ///      notify 监视器自重载。
     ///
-    /// Replaces the prior hand-rolled line-by-line state machine that
-    /// did `std::fs::write` non-atomically and depended on a hardcoded
-    /// `profile_field_prefixes` whitelist (which would silently truncate
-    /// a profile the moment we added an unknown field).
+    /// 取代了此前手写的逐行状态机——它非原子地
+    /// `std::fs::write`,且依赖硬编码的
+    /// `profile_field_prefixes` 白名单(一旦我们新增未知字段,它就会
+    /// 静默截断该配置档)。
     #[cfg(unix)]
     fn persist_ssh_profiles(&mut self) {
         use pureterm_settings::config_io;
@@ -4059,9 +4059,9 @@ impl PureTermApp {
                 }
                 if let Some(pw) = &p.password {
                     if !pw.is_empty() {
-                        // NOTE: This is the encrypted blob from CredentialStore,
-                        // never the plaintext password. See crates/pureterm/src/
-                        // ssh/credential.rs for the AES-256-GCM + Argon2id flow.
+                        // 注意:这是 CredentialStore 的加密 blob,
+                        // 绝不是明文密码。AES-256-GCM + Argon2id 流程
+                        // 见 crates/pureterm/src/ssh/credential.rs。
                         t.insert("password", Item::Value(pw.clone().into()));
                     }
                 }
@@ -4091,8 +4091,8 @@ impl PureTermApp {
         }
     }
 
-    /// P4: try to unlock the credential store; if no store exists yet,
-    /// create one with the supplied master password.
+    /// P4:尝试解锁凭据库;若尚无库,
+    /// 用提供的主密码创建一个。
     #[cfg(unix)]
     fn try_unlock_or_setup_master(&mut self, master: &str) {
         let creds_dir = dirs::config_dir()
@@ -4125,9 +4125,9 @@ impl PureTermApp {
         } else {
             match store.setup_master(master) {
                 Ok(()) => {
-                    // setup_master doesn't keep the key in memory; user
-                    // must unlock again to use the store. We pretend
-                    // success by asking them to unlock on next attempt.
+                    // setup_master 不会把密钥留在内存;用户
+                    // 下次使用须重新解锁。我们假装成功——
+                    // 提示他们在下次尝试时解锁。
                     if let Some(ref mut s) = self.ssh_settings {
                         s.master_status = MasterStatus::SetAwaitingUnlock;
                         s.master_pw_draft.clear();
@@ -4142,13 +4142,13 @@ impl PureTermApp {
         }
     }
 
-    /// P4: convenience wrapper to set up master password.
+    /// P4:设置主密码的便捷封装。
     #[cfg(unix)]
     fn setup_master_password(&mut self, master: &str) {
         self.try_unlock_or_setup_master(master);
     }
 
-    /// P5: open the command palette and seed it with the full action list.
+    /// P5:打开命令面板并预填完整动作列表。
     fn open_command_palette(&mut self) {
         let mut state = CommandPaletteState {
             query: String::new(),
@@ -4162,19 +4162,19 @@ impl PureTermApp {
         self.command_palette = Some(state);
     }
 
-    /// P5: re-evaluate the fuzzy match against the current query and
-    /// update `visible_actions`. Cheap enough to run on every keystroke
-    /// given the small action set.
+    /// P5:用当前查询重新评估模糊匹配并
+    /// 更新 `visible_actions`。动作集很小,
+    /// 每次击键都跑也足够便宜。
     fn refresh_palette_matches(&mut self) {
         let Some(state) = self.command_palette.as_mut() else { return };
         Self::refresh_palette_matches_inner(state, &self.i18n, &self.custom_commands);
     }
 
-    /// PureTerm GAP-5.9 follow-up: snap the Command Palette's
-    /// `Scrollable` so the currently selected entry stays inside the
-    /// 220px viewport. Returns `Task::none()` when there's nothing to
-    /// scroll. Called from any handler that mutates `state.selected`
-    /// (Up/Down/Query/Select/RunEntry on mode change).
+    /// PureTerm GAP-5.9 后续:吸附命令面板的
+    /// `Scrollable`,使当前选中条目保持在 220px
+    /// 视口内。无可滚动时返回
+    /// `Task::none()`。任何修改 `state.selected` 的处理器
+    ///(模式切换时的 Up/Down/Query/Select/RunEntry)都会调用它。
     fn scroll_palette_to_selected(state: &CommandPaletteState) -> Task<Message> {
         let len = match state.mode {
             PaletteMode::Actions => state.visible_actions.len(),
@@ -4184,9 +4184,9 @@ impl PureTermApp {
         if len == 0 {
             return Task::none();
         }
-        // 0.0 = top, 1.0 = bottom. `snap_to` clamps internally; passing
-        // a fraction rather than absolute pixels means we don't need to
-        // know the row height (which depends on theme / font size).
+        // 0.0 = 顶部,1.0 = 底部。`snap_to` 内部会钳制;传
+        // 比例而非绝对像素意味着无需知道行高
+        //(行高取决于主题/字号)。
         let frac = if len <= 1 {
             0.0
         } else {
@@ -4207,11 +4207,11 @@ impl PureTermApp {
         use nucleo_matcher::{Config, Matcher, Utf32Str};
 
         let mut all_entries: Vec<(CommandEntry, String)> = Vec::new();
-        // Builtins — `id` is the dispatch key (kept English for
-        // `run_palette_entry` matching); `label`/`hint`/`search` go
-        // through `I18n` so the user sees their language and the
+        // 内置条目——`id` 是分派键(保持英文,供
+        // `run_palette_entry` 匹配);`label`/`hint`/`search` 走
+        // `I18n`,使用户看到自己的语言,
         // fuzzy match targets localized keywords (e.g. "新建 标签页"
-        // for Chinese users).
+        // 中文用户。
         let push_builtin = |id: &str, label_key: &str, hint_key: &str, search_key: &str,
                             all_entries: &mut Vec<(CommandEntry, String)>| {
             all_entries.push((
@@ -4245,7 +4245,7 @@ impl PureTermApp {
         push_builtin("workspace.next", "palette.action.workspace_next.label", "palette.action.workspace_next.hint", "palette.action.workspace_next.search", &mut all_entries);
         push_builtin("workspace.prev", "palette.action.workspace_prev.label", "palette.action.workspace_prev.hint", "palette.action.workspace_prev.search", &mut all_entries);
         push_builtin("settings", "palette.action.settings.label", "palette.action.settings.hint", "palette.action.settings.search", &mut all_entries);
-        // GAP-4.1: Vi/Copy mode toggle in command palette
+        // GAP-4.1:命令面板中的 Vi/复制模式切换
         push_builtin("toggle_vi_mode", "palette.action.toggle_vi_mode.label", "palette.action.toggle_vi_mode.hint", "palette.action.toggle_vi_mode.search", &mut all_entries);
         #[cfg(unix)]
         {
@@ -4263,7 +4263,7 @@ impl PureTermApp {
             ));
         }
 
-        // GAP-6.4: user-defined [[commands]] — searchable by title + id.
+        // GAP-6.4:用户自定义 [[commands]]——可按标题 + id 搜索。
         for c in custom_commands {
             let mut haystack = c.title.clone();
             haystack.push(' ');
@@ -4305,11 +4305,11 @@ impl PureTermApp {
         state.selected = state.selected.min(state.visible_actions.len().saturating_sub(1));
     }
 
-    /// P5: dispatch the highlighted command entry.
-    /// Run the action the user picked from the command palette.
-    /// Called by Enter (`Message::CommandPaletteEnter`) and by
-    /// clicking an action item (`Message::CommandPaletteSelect` in
-    /// Action mode).
+    /// P5:分派高亮的命令条目。
+    /// 运行用户从命令面板选中的动作。
+    /// 由回车(`Message::CommandPaletteEnter`)与
+    /// 点击动作条目(Action 模式下的
+    /// `Message::CommandPaletteSelect`)调用。
     fn run_palette_selected(&mut self) -> Task<Message> {
         let action = {
             let Some(state) = self.command_palette.as_ref() else { return Task::none() };
@@ -4322,19 +4322,19 @@ impl PureTermApp {
         self.run_palette_entry(action)
     }
 
-    /// Dispatch a single command-palette entry. Used by both
-    /// `run_palette_selected` (Enter key) and the click handler
-    /// (`Message::CommandPaletteSelect`) so the two paths share
-    /// exactly the same behavior.
+    /// 分派单个命令面板条目。`run_palette_selected`(回车)
+    /// 与点击处理器(`Message::CommandPaletteSelect`)
+    /// 共用它,使两条路径的行为
+    /// 完全一致。
     fn run_palette_entry(&mut self, action: CommandEntry) -> Task<Message> {
         match action {
             CommandEntry::Builtin { id, .. } => {
                 self.command_palette = None;
-                // GAP-3.7: Try unified Action dispatch first
+                // GAP-3.7:先尝试统一的 Action 分派
                 if let Some(action) = crate::keymap::action_from_palette_id(&id) {
                     return self.dispatch_action(action);
                 }
-                // Palette-only entries that don't map to keyboard Actions
+                // 仅面板可用、不映射到键盘 Action 的条目
                 match id.as_str() {
                     "settings" => {
                         return self.update(Message::OpenSettings);
@@ -4345,7 +4345,7 @@ impl PureTermApp {
             },
             #[cfg(unix)]
             CommandEntry::SshConnect | CommandEntry::SshListProfiles => {
-                // Switch to Profile list mode — user picks a profile to connect.
+                // 切到 Profile 列表模式——用户选择要连接的配置档。
                 if let Some(ref mut state) = self.command_palette {
                     state.mode = PaletteMode::Profiles;
                     state.query.clear();
@@ -4360,8 +4360,8 @@ impl PureTermApp {
                 self.command_palette = None;
                 self.update(Message::ToggleSshSettingsPanel)
             },
-            // GAP-6.4: dispatch the user-defined command via the unified
-            // Action path (same as a keyboard shortcut would).
+            // GAP-6.4:经统一的 Action 路径分派用户自定义命令
+            //(与键盘快捷键相同)。
             CommandEntry::Custom { id, .. } => {
                 self.command_palette = None;
                 self.dispatch_action(crate::keymap::Action::CustomCommand(id))
@@ -4390,8 +4390,8 @@ impl PureTermApp {
     fn close_active_tab(&mut self) {
         let active = self.active_tab_id();
         if let Some(pos) = self.tabs().iter().position(|t| t.id == active) {
-            // GAP-1.3 review: tear down per-pane state for the closed tab's panes
-            // (ids are never reused → would leak for the session otherwise).
+            // GAP-1.3 评审:为被关标签页的窗格拆除每窗格状态
+            //(id 绝不复用 → 否则整个会话期间泄漏)。
             let doomed: Vec<PaneId> = self.tabs()[pos].panes.keys().copied().collect();
             self.tabs_mut().remove(pos);
             for id in doomed {
@@ -4404,13 +4404,13 @@ impl PureTermApp {
         }
     }
 
-    /// Drop all per-pane runtime state for `pane_id` (cwd, OSC title, trigger /
-    /// shell / block state). Call at EVERY site that destroys a pane — tab close,
-    /// window close, tab-range context ops. The two single-pane close paths
-    /// (`PtyExitedPane`, `close_active_pane`) call `teardown_pane_state_maps`
-    /// directly via disjoint field refs instead, because they hold a `&mut Tab`
-    /// borrow that blocks a `&mut self` method. Pane ids are never reused, so a
-    /// site that skips this leaks the entries for the whole session.
+    /// 丢弃 `pane_id` 的全部每窗格运行时状态(cwd、OSC 标题、触发器 /
+    /// shell / 块状态)。在**每个**销毁窗格的位置调用——关标签页、
+    /// 关窗口、标签页范围的右键操作。两条单窗格关闭路径
+    ///(`PtyExitedPane`、`close_active_pane`)则经互斥字段引用直接调
+    /// `teardown_pane_state_maps`,因为它们持有的 `&mut Tab`
+    /// 借用挡住了 `&mut self` 方法。窗格 id 绝不复用,因此
+    /// 漏掉此调用的位置会让条目泄漏整个会话。
     fn teardown_pane_state(&mut self, pane_id: PaneId) {
         teardown_pane_state_maps(
             &mut self.pane_cwds,
@@ -4455,15 +4455,15 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-1.3: title shown for a tab — the OSC-set title of the active pane
-    /// wins, else the derived `tab.title`. GAP-32: when `[git].tab_title_branch`
-    /// is on, the current branch is appended to the *derived* title only (an OSC
-    /// program-set title keeps precedence). See [`tab_title_with_branch`].
+    /// GAP-1.3:标签页显示的标题——活动窗格经 OSC 设置的标题
+    /// 优先,否则用派生的 `tab.title`。GAP-32:开启
+    /// `[git].tab_title_branch` 时,当前分支只追加到*派生*标题
+    ///(OSC 程序设置的标题保持优先)。见 [`tab_title_with_branch`]。
     fn tab_display_title(&self, tab: &Tab) -> String {
         let osc = self.pane_osc_title.get(&tab.active_pane).map(String::as_str);
-        // Pure-FS branch read (instant, no subprocess) for the active pane's
-        // cwd. Only read when the feature is opted in — off by default, so the
-        // common path stays a pure hashmap lookup.
+        // 活动窗格 cwd 的纯文件系统分支读取(瞬时,无子进程)。
+        // 仅在功能开启时读取——默认关闭,使
+        // 常规路径保持纯哈希表查找。
         let branch = if self.git_cfg.tab_title_branch {
             self.pane_cwds
                 .get(&tab.active_pane)
@@ -4477,11 +4477,11 @@ impl PureTermApp {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        // Cold-launch guard: until DaemonReady creates the first terminal, the
-        // app has zero tabs/panes. Short-circuit messages that would touch a
-        // terminal (and hit `.expect("active tab")` / `.unwrap()` on empty
-        // state). Allow only lifecycle/window/tick messages that are safe — or
-        // required — pre-boot. Dropped ticks are harmless (periodic).
+        // 冷启动守卫:DaemonReady 创建第一个终端之前,应用
+        // 没有任何标签页/窗格。短路会触碰
+        // 终端(并在空状态上命中 `.expect("active tab")` / `.unwrap()`)的消息。
+        /// 只放行启动前安全——或必需——的生命周期/窗口/tick 消息。
+        // 丢弃的 tick 无害(周期性)。
         if !self.booted
             && !matches!(
                 message,
@@ -4499,7 +4499,7 @@ impl PureTermApp {
         match message {
             Message::MainWindowOpened(id) => {
                 self.main_window = Some(id);
-                // GAP-6.7: app/window lifecycle.
+                // GAP-6.7:应用/窗口生命周期。
                 self.events.emit(
                     crate::events::Category::App,
                     "app.started",
@@ -4512,11 +4512,11 @@ impl PureTermApp {
                     None,
                     serde_json::json!({}),
                 );
-                // GAP-2.3: Spawn IPC listener now that the app is running.
+                // GAP-2.3:应用已运行,拉起 IPC 监听器。
                 if self.ipc_handle.is_none() {
                     let socket_path = crate::ipc::listener::default_socket_path();
-                    // Try to get the sender from the shared channel state.
-                    // The subscription() call creates the channel and stores tx here.
+                    // 尝试从共享通道状态取 sender。
+                    // subscription() 调用创建通道并把 tx 存在这里。
                     let ipc_tx = self.ipc_channel_state.tx.lock().unwrap().clone();
                     match ipc_tx {
                         Some(tx) => {
@@ -4548,30 +4548,30 @@ impl PureTermApp {
                 drop(gs);
                 // GAP-3.5: 窗口已开 → content NSView 可用 → realize 恢复的 web pane。
                 self.reposition_web_panes();
-                // Cold-launch: kick the daemon bootstrap off the main thread so
-                // the window stays responsive. DaemonReady finishes first-tab
-                // creation on the GUI thread once the daemon is reachable.
+                // 冷启动:把守护引导移出主线程,使
+                // 窗口保持响应。守护可达后 DaemonReady 在 GUI
+                // 线程完成首标签页创建。
                 let resize = window::set_resize_increments(id, Some(Size::new(cw, ch)));
                 return Task::batch([resize, spawn_daemon_ready()]);
             }
             Message::DaemonReady(daemon_ok) => {
-                // Daemon ensured off-thread (or confirmed unreachable). Now
-                // create the first terminal on the GUI thread — the work that
-                // used to block `new()` and stall the window paint. On failure
-                // create_tab's new_local_auto falls back to a direct local PTY.
+                // 守护已在线程外确保(或确认不可达)。现在
+                // 在 GUI 线程创建第一个终端——过去这些工作
+                // 阻塞 `new()`、拖住窗口绘制。失败时
+                // create_tab 的 new_local_auto 回退到直连本地 PTY。
                 if !daemon_ok {
                     log::warn!("daemon unreachable on bootstrap; falling back to direct PTY");
                 }
                 #[cfg(unix)]
                 {
-                    // Wrap the restore/create path in `catch_unwind`: iced 0.14
-                    // freezes the last frame on an `update()` panic, so a panic
-                    // anywhere below (e.g. `create_tab`'s workspace `expect`, or
-                    // attaching to a stale/wedged daemon during restore) would
-                    // otherwise leave the window on "Starting PureTerm…"
-                    // forever. On panic we fall back to a best-effort direct-PTY
-                    // tab. `booted` is set unconditionally afterward (after both
-                    // cfg blocks) so the placeholder always clears.
+                    // 把恢复/创建路径包进 `catch_unwind`:iced 0.14 在
+                    // `update()` panic 时冻结最后一帧,因此下方任何
+                    // panic(如 `create_tab` 的 workspace `expect`,或
+                    // 恢复期间挂接失效/僵死的守护)都会让
+                    // 窗口永远停在 “Starting PureTerm…”。
+                    // panic 时回退到尽力而为的直连 PTY
+                    /// 标签页。之后(两个 cfg 块之后)无条件设置 `booted`,
+                    // 占位符总能清除。
                     let boot = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         let saved_layout = crate::session_restore::load();
                         let restored = self.try_restore_layout(saved_layout);
@@ -4580,8 +4580,8 @@ impl PureTermApp {
                                 .create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                             self.set_active_tab(first_id);
                         }
-                        // GAP-7.6: startup scan for external agent processes
-                        // (`ps` ~10-30ms, unix-only); periodic re-scan is separate.
+                        // GAP-7.6:启动时扫描外部 agent 进程
+                        //(`ps` 约 10-30ms,仅 unix);周期性重扫是独立订阅。
                         if self.detect_cfg.enabled
                             && self.detect_cfg.scan_on_startup
                             && !self.vault_agents.is_empty()
@@ -4601,9 +4601,9 @@ impl PureTermApp {
                             "boot: restore/create_tab panicked ({msg}); falling back to a \
                              direct-PTY tab so the window isn't stuck on the placeholder"
                         );
-                        // Best-effort fallback: ensure at least one tab exists.
-                        // Wrapped again in case the workspace state that caused
-                        // the first panic also breaks `create_tab`.
+                        // 尽力而为的兜底:确保至少存在一个标签页。
+                        // 再次包裹,防止导致第一次 panic 的 workspace 状态
+                        // 也弄坏 `create_tab`。
                         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                             let first_id = self
                                 .create_tab(self.terminal_viewport_width(), self.viewport_size.height);
@@ -4617,14 +4617,14 @@ impl PureTermApp {
                         self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                     self.set_active_tab(first_id);
                 }
-                // ALWAYS flip the boot gate — even if the restore path panicked
-                // above — so "Starting PureTerm…" can never get stuck on screen.
+                // 总是翻转启动闸门——即使上面的恢复路径
+                // panic 了——“Starting PureTerm…”绝不能卡在屏幕上。
                 self.booted = true;
                 return Task::none();
             }
             Message::TerminalWakeup => {
-                // GAP-56: focus-follows-mouse tick — if the hover timer
-                // has elapsed, switch focus to the hovered pane.
+                // GAP-56:鼠标跟随聚焦 tick——悬停计时
+                // 到期就把焦点切到悬停的窗格。
                 if self.focus_follows_mouse_cfg.enabled {
                     if let Some(pane_id_raw) = self.focus_follows_mouse_state.pane_to_focus(&self.focus_follows_mouse_cfg) {
                         let new_pane = PaneId(pane_id_raw);
@@ -4647,7 +4647,7 @@ impl PureTermApp {
                         crate::macos_url_scheme::add_open_urls_method();
                         self.delegate_installed = true;
                     }
-                    // Handle menu-bar triggered clipboard actions.
+                    // 处理菜单栏触发的剪贴板动作。
                     if crate::macos_menu::consume_paste() {
                         let text = std::panic::catch_unwind(|| {
                             arboard::Clipboard::new()
@@ -4756,8 +4756,8 @@ impl PureTermApp {
                                             }
                                         }
                                     }
-                                    // GAP-10: scan new output lines for `[[triggers]]` matches.
-                                    // Inlined (borrow disjoint from the loop's `windows` borrow).
+                                    // GAP-10:扫描新输出行匹配 `[[triggers]]`。
+                                    // 内联(借用与循环的 `windows` 借用互斥)。
                                     if !self.triggers_cfg.is_empty() {
                                         use crate::triggers::{
                                             DEFAULT_HIGHLIGHT_COLOR, HighlightRegion, FoldRegion,
@@ -4844,20 +4844,20 @@ impl PureTermApp {
                                                         "line": m.line,
                                                         "col_start": m.col_start,
                                                         "matched_text": m.matched_text,
-                                                        // scan_lines already truncated each capture
-                                                        // to MATCHED_TEXT_MAX; emit directly.
+                                                        // scan_lines 已把每次捕获截断到
+                                                        // MATCHED_TEXT_MAX;直接发出。
                                                         "captures": &m.captures,
                                                     }),
                                                 );
 
-                                                // GAP-10 security: block exec / cross-pane
-                                                // send_text when the match originated from a
-                                                // remote (SSH) pane and the user hasn't opted in
-                                                // via `allow_exec_on_remote`. Same-pane
-                                                // send_text (reply-sudo) and read-only actions
-                                                // are never blocked. The match itself (and its
-                                                // trigger.matched event / hit counter) still
-                                                // stand — only the action is suppressed.
+                                                // GAP-10 安全:匹配源自远程(SSH)
+                                                // 窗格且用户未通过 `allow_exec_on_remote`
+                                                /// 选项开启时,拦截 exec / 跨窗格
+                                                // send_text。同窗格
+                                                // send_text(reply-sudo)与只读动作
+                                                // 绝不被拦截。匹配本身(及其
+                                                // trigger.matched 事件/命中计数)依然
+                                                // 有效——只有动作被抑制。
                                                 if crate::triggers::should_block_remote_action(
                                                     &cfg.action,
                                                     is_ssh,
@@ -4978,24 +4978,24 @@ impl PureTermApp {
                                     exited_panes.push((tab.id, *pane_id, tab.created_at, tab.panes.len()));
                                 }
                                 TerminalEvent::CwdChanged(path) => {
-                                    // Record every pane's cwd so it can be inherited
-                                    // by new tabs/panes and restored when this pane
-                                    // becomes active again.
+                                    // 记录每个窗格的 cwd,使其可被新标签页/窗格
+                                    // 继承,并在该窗格重新变为
+                                    // 活动时恢复。
                                     self.pane_cwds.insert(*pane_id, path.clone());
                                     if *pane_id == tab.active_pane && tab.id == self.active_tab_id() {
                                         self.status_bar_cwd = Some(path);
-                                        // Immediately refresh git branch on CWD change.
+                                        // CWD 变化时立即刷新 git 分支。
                                         if let Some(ref cwd) = self.status_bar_cwd {
                                             self.status_bar_git_branch =
                                                 crate::status_bar::read_git_branch(
                                                     std::path::Path::new(cwd),
                                                 );
                                         }
-                                        // BUG-1: keep the LSP workspace root in sync
-                                        // with the active pane's project, re-spawning
-                                        // the language server only when the project
-                                        // root actually changes (so it targets the
-                                        // right project, not the launch cwd).
+                                        // BUG-1:让 LSP 工作区根与活动窗格的
+                                        // 项目保持同步,仅当项目根
+                                        // 真正变化时才重启语言服务器
+                                        //(使其对准正确的
+                                        // 项目而非启动 cwd)。
                                         if let Some(cwd) = self.status_bar_cwd.as_ref() {
                                             let new_root = crate::lsp::project_root_for(
                                                 std::path::Path::new(cwd),
@@ -5012,23 +5012,23 @@ impl PureTermApp {
                                         }
                                     }
                                 }
-                                // GAP-1.3: program (OSC 0/2) or 23t-pop set the
-                                // window title — remember it so the tab/window
-                                // title can display it. iced re-runs `title()`
-                                // after each update, so no explicit refresh is
-                                // needed (mirrors how CwdChanged updates state).
+                                // GAP-1.3:程序(OSC 0/2)或 23t 弹栈设置了
+                                // 窗口标题——记住它,使标签页/窗口
+                                // 标题能显示。iced 在每次 update 后重跑 `title()`,
+                                // 因此无需显式刷新
+                                //(镜像 CwdChanged 的状态更新方式)。
                                 TerminalEvent::Title(title) => {
                                     self.pane_osc_title.insert(*pane_id, title);
                                 }
-                                // GAP-1.3: title cleared — drop back to derived.
+                                // GAP-1.3:标题被清除——回落到派生标题。
                                 TerminalEvent::ResetTitle => {
                                     self.pane_osc_title.remove(pane_id);
                                 }
-                                // GAP-15: OSC 133 shell-integration mark — advance the
-                                // per-pane state machine and emit a `shell.*` event.
-                                // Inlined (not a method) so it borrows only
+                                // GAP-15:OSC 133 shell 集成标记——推进每窗格
+                                // 状态机并发出 `shell.*` 事件。
+                                // 内联(非方法),使其只借用
                                 // `pane_shell_state`/`shell_integration_cfg`/`events`,
-                                // staying disjoint from the loop's `windows` borrow.
+                                // 与循环的 `windows` 借用互斥的字段。
                                 TerminalEvent::ShellMark(mark) => {
                                     use crate::output_blocks::BlockCaptureRequest;
                                     use crate::shell_state::{shell_mark_kind_str, FinishedCommand};
@@ -5037,9 +5037,9 @@ impl PureTermApp {
                                         self.shell_integration_cfg.include_command_text;
                                     let session_id = ctx.session_id().map(|s| s.to_string());
 
-                                    // Command text comes from the shell-sent
-                                    // `mark.command` (no grid read — see
-                                    // shell_state::ShellState::apply_mark).
+                                    // 命令文本来自 shell 发送的
+                                    // `mark.command`(不读网格——见
+                                    // shell_state::ShellState::apply_mark 中的说明)。
                                     let finalized: Option<FinishedCommand> = self
                                         .pane_shell_state
                                         .entry(*pane_id)
@@ -5072,12 +5072,12 @@ impl PureTermApp {
                                         data,
                                     );
 
-                                    // GAP-51: record block boundary on command finish.
-                                    // v1: defer the grid slice to `spawn_blocking` so a
-                                    // long output can't stutter the GUI thread (same
-                                    // pattern as `surface.snapshot`). The result lands
-                                    // as `Message::BlockCaptured` below and is appended
-                                    // to `PaneBlockStore` in a single dispatch.
+                                    // GAP-51:命令结束时记录块边界。
+                                    // v1:把网格切片推迟到 `spawn_blocking`,使超长
+                                    // 输出不会卡顿 GUI 线程(与
+                                    // `surface.snapshot` 同一模式)。结果落地为
+                                    // 下方的 `Message::BlockCaptured`,单次分派中
+                                    // 追加进 `PaneBlockStore`。
                                     if self.block_output_cfg.enabled
                                         && mark.kind
                                             == alacritty_terminal::event::ShellMarkKind::OutputEnd
@@ -5089,9 +5089,9 @@ impl PureTermApp {
                                                 .and_then(|s| s.last_output_start_row());
                                             let start_row = output_start
                                                 .unwrap_or_else(|| cmd.pane_row_at_b.saturating_add(1));
-                                            // Clone the `Term` arc so the closure owns it;
-                                            // `Arc::clone` is cheap and the lock is only
-                                            // held for the `bounds_to_string` walk.
+                                            // 克隆 `Term` 的 arc 使闭包持有它;
+                                            // `Arc::clone` 廉价,锁只在
+                                            // `bounds_to_string` 遍历期间持有。
                                             if let Some(arc_ctx) = self.pane_terminal_ctx(*pane_id) {
                                                 let term_arc = Arc::clone(arc_ctx.terminal());
                                                 let cmd_for_task = cmd.clone();
@@ -5128,7 +5128,7 @@ impl PureTermApp {
                                         }
                                     }
 
-                                    // GAP-02: auto-analyze on non-zero exit (Shell Integration).
+                                    // GAP-02:非零退出时自动分析(Shell 集成)。
                                     if mark.kind
                                         == alacritty_terminal::event::ShellMarkKind::OutputEnd
                                     {
@@ -5179,11 +5179,11 @@ impl PureTermApp {
                                         }
                                     }
                                 }
-                                // GAP-09: OSC 9/99/777 desktop notification —
-                                // record in the in-memory store (status-bar
-                                // count + attention ring + Dock badge), fire a
-                                // gated desktop toast, and emit a
-                                // `notification.posted` audit event.
+                                // GAP-09:OSC 9/99/777 桌面通知——
+                                // 记入内存存储(状态栏计数 + 注意力圆点 +
+                                // Dock 徽标),触发受门控的桌面
+                                // 通知,并发出
+                                // `notification.posted` 审计事件。
                                 TerminalEvent::Notification(n) => {
                                     if self.notification_cfg.enabled {
                                         let now_ms = now_epoch_millis();
@@ -5251,11 +5251,11 @@ impl PureTermApp {
                                         if let Some(id) = &n.id {
                                             data["id"] = serde_json::json!(id);
                                         }
-                                        // GAP-09 BUG-1 fix: gate the toast + audit event on
-                                        // `post()`'s bool. OSC sources aren't throttled today
-                                        // (always true), but this keeps the contract consistent
-                                        // with the Bell handler and future-proofs any throttle
-                                        // extension.
+                                        // GAP-09 BUG-1 修复:通知与审计事件以 `post()`
+                                        // 的返回值门控。OSC 来源今天不受节流
+                                        //(恒为 true),但这保持契约与 Bell
+                                        // 处理器一致,并为任何节流
+                                        // 扩展预留。
                                         if posted {
                                             fire_toast(
                                                 &self.notification_cfg,
@@ -5272,9 +5272,9 @@ impl PureTermApp {
                                         }
                                     }
                                 }
-                                // GAP-09: bell (0x07) — surface as an attention
-                                // signal (throttled per pane) when bell
-                                // passthrough is enabled.
+                                // GAP-09:响铃(0x07)——在响铃
+                                // 直通开启时,作为(每窗格节流的)注意力
+                                // 信号呈现。
                                 TerminalEvent::Bell => {
                                     if self.notification_cfg.enabled
                                         && self.notification_cfg.bell_passthrough
@@ -5316,10 +5316,10 @@ impl PureTermApp {
                                                 }
                                             },
                                         );
-                                        // GAP-09 BUG-1 fix: honor `post()`'s contract — a
-                                        // bell suppressed by the per-pane throttle returns
-                                        // false, so skip the desktop toast + audit event (the
-                                        // store entry / dock badge are already correct).
+                                        // GAP-09 BUG-1 修复:遵守 `post()` 的契约——被
+                                        // 每窗格节流抑制的响铃返回
+                                        // false,跳过桌面通知 + 审计事件(存储条目 /
+                                        // Dock 徽标已正确)。
                                         if posted {
                                             fire_toast(
                                                 &self.notification_cfg,
@@ -5342,12 +5342,12 @@ impl PureTermApp {
                                         }
                                     }
                                 }
-                                // T-core-graphics: route decoded images into
-                                // the live image store. v1 only logs at debug
-                                // (the GPU blit path is wired in v2); the
-                                // store is the source of truth for the
-                                // chunked-graphics reassembler and the
-                                // scrollback-prune pass.
+                                // T-core-graphics:把解码后的图像路由进
+                                // 活动图像存储。v1 仅 debug 日志
+                                //(GPU blit 路径在 v2 接线);存储是
+                                // 分块图形重组器与回滚
+                                // 清理 pass 的事实源。
+                                // 回滚清理 pass 的事实源。
                                 TerminalEvent::GraphicsImage(img) => {
                                     if self.p4.terminal_graphics_cfg.enabled {
                                         let _ = self.p4.image_store.insert(img.clone());
@@ -5366,7 +5366,7 @@ impl PureTermApp {
                         }
                     }
                 }
-                // GAP-6.7: a PTY reached EOF — emit one session.exited per pane.
+                // GAP-6.7:某 PTY 到达 EOF——每窗格发一个 session.exited。
                 for (tab_id, pane_id, _, _) in &exited_panes {
                     self.events.emit(
                         crate::events::Category::Session,
@@ -5460,12 +5460,12 @@ impl PureTermApp {
                     return Task::batch(trigger_batch);
                 }
 
-                // GAP-24: status-bar refresh moved to the dedicated
-                // `Message::StatusBarTick` subscription (configurable cadence).
+                // GAP-24:状态栏刷新已移至专门的
+                // `Message::StatusBarTick` 订阅(节奏可配置)。
             }
             Message::StatusBarTick => {
-                // GAP-24: periodic refresh — process name (cheap, sync) + the
-                // enriched git-status subprocess (off the GUI thread via Task).
+                // GAP-24:周期刷新——进程名(廉价、同步)+
+                // 丰富的 git 状态子进程(经 Task 离开 GUI 线程)。
                 self.status_bar_last_poll = Instant::now();
                 self.status_bar_process_name = self
                     .active_terminal_ctx()
@@ -5475,11 +5475,11 @@ impl PureTermApp {
                     return Task::none();
                 };
                 let mut tasks = vec![crate::status_bar::spawn_git_status(cwd.clone())];
-                // GAP-32: keep the open panel pointed at the focused repo, and
-                // throttle `gh pr view` (slow/networked) against this tick.
+                // GAP-32:让打开的面板对准聚焦的仓库,并按此 tick
+                // 节流 `gh pr view`(慢、走网络)。
                 if self.git_panel.open && self.git_cfg.panel_enabled {
                     if self.git_panel.cwd.as_deref() != Some(cwd.as_str()) {
-                        // Focused pane moved to a different repo → repoint + refresh.
+                        // 聚焦窗格移到了别的仓库 → 重定向 + 刷新。
                         self.git_panel.open_for(&cwd);
                         self.git_panel.pr_refreshing = self.git_cfg.show_pr;
                         tasks.push(crate::gh_pr::spawn_git_log(cwd.clone()));
@@ -5495,7 +5495,7 @@ impl PureTermApp {
                         }
                     }
                 }
-                // Auto-expire a stale toast (>4s) as a safety net.
+                // 过期 toast(>4s)自动到期,作为安全网。
                 if let Some((_, at)) = self.toast {
                     if Instant::now().duration_since(at) > Duration::from_secs(4) {
                         self.toast = None;
@@ -5504,30 +5504,30 @@ impl PureTermApp {
                 return Task::batch(tasks);
             }
             Message::StatusBarStats(snap) => {
-                // GAP-24: fan the system-stat snapshot out to the registry.
+                // GAP-24:把系统统计快照扇出给注册表。
                 crate::status_bar::apply_stats(&mut self.status_bar_registry, &snap);
             }
             Message::GitStatusResult(cwd, status) => {
-                // GAP-24: apply only if still the active pane's cwd (the pane
-                // may have switched while the subprocess was in flight).
+                // GAP-24:仅当仍是活动窗格的 cwd 时应用(子进程
+                // 在途期间窗格可能已切换)。
                 if self.status_bar_cwd.as_deref() == Some(cwd.as_str()) {
-                    // GAP-32: porcelain always yields `pr: None`, so preserve the
-                    // last PR resolved by `GhPrResult` to avoid a flickering pill.
+                    // GAP-32:porcelain 总是给出 `pr: None`,保留
+                    // `GhPrResult` 最近解析的 PR,避免药丸闪烁。
                     let mut status = status;
                     if status.pr.is_none() {
                         if let Some(existing) = &self.status_bar_git_status {
                             status.pr = existing.pr.clone();
                         }
                     }
-                    // Active pane id for branch-change dedup (computed before the
-                    // mutable field borrows below to keep the borrow checker happy).
+                    // 分支变化去重用的活动窗格 id(在下方可变
+                    // 字段借用之前计算,让借用检查器满意)。
                     let pane_id = self.active_tab_ref().map(|t| t.active_pane);
                     self.status_bar_git_status = Some(status.clone());
                     if self.git_panel.open && self.git_panel.cwd.as_deref() == Some(cwd.as_str()) {
                         self.git_panel.status = Some(status.clone());
                     }
-                    // GAP-32 EventBus: emit `git.branch_changed` only on a real
-                    // change (deduped per pane), never per-tick.
+                    // GAP-32 EventBus:仅真实变化时发出 `git.branch_changed`
+                    //(每窗格去重),绝不逐 tick。
                     if let Some(branch) = status.branch.as_deref() {
                         let changed = {
                             let prev = pane_id
@@ -5553,7 +5553,7 @@ impl PureTermApp {
                     }
                 }
             }
-            // GAP-09: Notifications overlay panel — toggle open/closed.
+            // GAP-09:通知浮层面板——切换开/关。
             Message::ToggleNotificationsPanel => {
                 if !self.notification_cfg.enabled {
                     return Task::none();
@@ -5572,15 +5572,15 @@ impl PureTermApp {
                 );
                 return Task::none();
             }
-            // GAP-09: a history entry was clicked — clear that pane's unread
-            // count + refresh the Dock badge. (Cross-tab focus wiring is a
-            // follow-up; v1 clears the indicator, which is the visible effect.)
+            // GAP-09:点击了历史条目——清除该窗格的未读
+            // 计数并刷新 Dock 徽标。(跨标签页聚焦接线是后续
+            /// 工作;v1 只清指示器,即用户可见的效果。)
             Message::FocusNotificationPane(pane_id) => {
                 self.notification_store.clear_unread(pane_id);
                 self.refresh_dock_badge_from_state();
                 return Task::none();
             }
-            // GAP-09: "Dismiss all" — clear the store + Dock badge.
+            // GAP-09:“全部清除”——清空存储 + Dock 徽标。
             Message::DismissAllNotifications => {
                 self.notification_store.clear_all();
                 self.refresh_dock_badge_from_state();
@@ -5607,7 +5607,7 @@ impl PureTermApp {
                 return self.sidebar_layout_changed();
             }
             Message::ToggleRightSidebar => {
-                // GAP-19 per-window: flip the active window's right sidebar.
+                // GAP-19 每窗口:翻转活动窗口的右侧边栏。
                 let (now_open, mode) = match self.active_window_mut() {
                     Some(w) => {
                         w.sidebar.right_open = !w.sidebar.right_open;
@@ -5615,8 +5615,8 @@ impl PureTermApp {
                     }
                     None => return Task::none(),
                 };
-                // Review BUG-1: emit the sidebar visibility event for EVERY
-                // toggle — the Git-mode reopen early-return used to skip it.
+                // 评审 BUG-1:**每次**切换都发出侧边栏可见性事件——
+                // Git 模式重开的早退曾跳过它。
                 self.events.emit(
                     crate::events::Category::Sidebar,
                     crate::sidebar::right_sidebar_event(now_open),
@@ -5625,9 +5625,9 @@ impl PureTermApp {
                 );
                 if !now_open {
                     self.git_panel.close();
-                    // Review BUG-2: pair the close with `git.panel_closed` when
-                    // on the Git tab, mirroring `open_git_sidebar_tab`'s
-                    // `git.panel_opened` (only `ToggleGitPanel` emitted it before).
+                    // 评审 BUG-2:关闭时若正处 Git 页则配对 `git.panel_closed`,
+                    // 镜像 `open_git_sidebar_tab` 的
+                    // `git.panel_opened`(此前只有 `ToggleGitPanel` 发出)。
                     if mode == crate::sidebar::RightMode::Git {
                         self.events.emit(
                             crate::events::Category::Git,
@@ -5666,7 +5666,7 @@ impl PureTermApp {
                 return self.sidebar_layout_changed();
             }
             Message::ToggleGitPanel => {
-                // Legacy alias: open/close Git tab in the right sidebar.
+                // 遗留别名:开/关右侧边栏的 Git 页。
                 if !self.git_cfg.panel_enabled {
                     return Task::none();
                 }
@@ -5721,7 +5721,7 @@ impl PureTermApp {
                 }
             }
             Message::GitPanelLogResult(cwd, log) => {
-                // Staleness guard: only the panel's current repo's log applies.
+                // 过期守卫:只应用面板当前仓库的日志。
                 if self.git_panel.open && self.git_panel.cwd.as_deref() == Some(cwd.as_str()) {
                     self.git_panel.last_log = log;
                 }
@@ -5735,15 +5735,15 @@ impl PureTermApp {
                     self.git_panel.pr_error = err.clone();
                     self.git_panel.pr_refreshing = false;
                 }
-                // Drive the status-bar PR pill from the single source of truth
+                // 状态栏 PR 药丸由单一事实源驱动
                 // (`status_bar_git_status.pr`).
                 if matches_bar {
                     if let Some(g) = self.status_bar_git_status.as_mut() {
                         g.pr = pr.clone();
                     }
                 }
-                // GAP-32 EventBus: PR refresh completed. Already throttled to
-                // every `pr_refresh_ticks`, so this stays low-frequency.
+                // GAP-32 EventBus:PR 刷新完成。已被节流到每
+                // `pr_refresh_ticks` 一次,保持低频。
                 if matches_bar || matches_panel {
                     let data = match &pr {
                         Some(p) => serde_json::json!({
@@ -5770,7 +5770,7 @@ impl PureTermApp {
             }
             Message::Toast(msg) => {
                 self.toast = Some((msg, Instant::now()));
-                // Auto-dismiss after 3.5s (plus a 4s safety net on StatusBarTick).
+                // 3.5 秒后自动消失(StatusBarTick 上另有 4 秒安全网)。
                 return Task::perform(
                     async {
                         tokio::time::sleep(Duration::from_millis(3500)).await;
@@ -5823,11 +5823,11 @@ impl PureTermApp {
                     self.error_recovery.suggested_command.clone(),
                     self.error_recovery.pane_id,
                 ) {
-                    // GAP-02 review: only audit + dismiss when the write actually
-                    // reached a live pane. A dead-pane Apply (the failing pane was
-                    // closed while the card was open) used to silently no-op the
-                    // PTY write yet still emit a false `error_recovery.applied`
-                    // audit, so the emit + dismiss now live inside this branch.
+                    // GAP-02 评审:仅当写入真正到达存活窗格时才审计 + 关闭。
+                    // 卡片打开期间失败窗格被关掉时,死窗格的 Apply 过去会
+                    // 静默空转 PTY 写入,却仍发出虚假的
+                    // `error_recovery.applied` 审计;因此事件发出 + 关闭现在都在
+                    // 这个分支内。
                     if let Some(ctx) = self.pane_terminal_ctx(PaneId(pane_id)) {
                         let mut bytes = cmd.into_bytes();
                         bytes.push(b'\n');
@@ -6056,9 +6056,9 @@ impl PureTermApp {
                 }
             }
             Message::PreviewFile => {
-                // GAP-34: Cmd+Y — preview the file under the cursor or in the
-                // active selection, resolving via the same path as semantic
-                // history so both share the hover/selection fallback chain.
+                // GAP-34:Cmd+Y——预览光标下或活动选区中的
+                // 文件,解析路径与语义历史相同,
+                // 两者共享悬停/选区的回退链。
                 let pane_id = self.active_tab_ref().map(|t| t.active_pane);
                 let target = self
                     .hover_preview
@@ -6259,10 +6259,10 @@ impl PureTermApp {
                 }
             }
             Message::BlockCaptured(req) => {
-                // The off-main `capture_row_range_async` finished — append the
-                // block now and emit `block.finished` (was `shell.block_finished`
-                // pre-v1; the latter name was never consumed externally, so this
-                // is a straight rename, not a deprecation cycle).
+                // 离主线的 `capture_row_range_async` 完成——现在追加
+                // 该块并发出 `block.finished`(v1 之前叫
+                // `shell.block_finished`;旧名从未被外部消费,这是一次
+                // 直接改名,而非弃用周期)。
                 let store = self
                     .pane_block_stores
                     .entry(crate::split_tree::PaneId(req.pane_id))
@@ -6307,7 +6307,7 @@ impl PureTermApp {
             }
             Message::AiChatSend => {
                 let send = self.send_ai_chat_message();
-                // Auto-scroll the message list to the bottom on send.
+                // 发送时把消息列表自动滚到底。
                 return Task::batch([
                     send,
                     task_widget(scroll_snap_to(
@@ -6318,16 +6318,16 @@ impl PureTermApp {
             }
             Message::AiChatStop => {
                 if self.ai_chat_panel.is_streaming() {
-                    // mark_stopped writes "(stopped)" for an empty placeholder or
-                    // appends "\n[stopped]" after partial text, so the abort is
-                    // visible either way.
+                    // mark_stopped 对空占位写 “(stopped)”,或
+                    // 在部分文本后追加 "\n[stopped]",两种情况下
+                    // 中止都可见。
                     self.ai_chat_panel.mark_stopped();
                 }
                 self.abort_inflight_chat();
             }
             Message::AiChatChunk { gen, event } => {
                 self.ai_chat_panel.apply_chunk(gen, &event);
-                // Follow the stream: keep the newest content in view as it arrives.
+                // 跟随流:新内容到达时保持在视野内。
                 if matches!(event, crate::ai_chat::types::ChatEvent::TextDelta(_)) {
                     return task_widget(scroll_snap_to(
                         AI_CHAT_SCROLL,
@@ -6336,22 +6336,22 @@ impl PureTermApp {
                 }
             }
             Message::TriggerSendText { pane_id, text } => {
-                // GAP-10: deferred cross-pane send_text — runs outside the Wakeup
-                // loop so `pane_terminal_ctx` can borrow `self.windows`.
+                // GAP-10:延迟的跨窗格 send_text——在 Wakeup 循环
+                // 之外运行,使 `pane_terminal_ctx` 能借用 `self.windows`。
                 if let Some(ctx) = self.pane_terminal_ctx(PaneId(pane_id)) {
                     ctx.write_to_pty(text.as_bytes());
                 }
             }
             Message::TriggerExecResult { pane_id, route, result } => {
-                // GAP-10: route exec stdout. Reuse the Toast path for display
-                // (it owns the dismiss timer) via `Task::done(Message::Toast)`.
+                // GAP-10:路由 exec stdout。复用 Toast 路径展示
+                //(它持有消失计时器),经 `Task::done(Message::Toast)`。
                 match result {
                     Err(e) => {
                         return Task::done(Message::Toast(format!("Trigger exec failed: {e}")));
                     },
                     Ok(stdout) => match route {
                         crate::triggers::ExecRoute::Toast => {
-                            // First non-empty line as a compact toast.
+                            // 取首个非空行作为紧凑 toast。
                             let line = stdout
                                 .lines()
                                 .find(|l| !l.trim().is_empty())
@@ -6360,9 +6360,9 @@ impl PureTermApp {
                             return Task::done(Message::Toast(line));
                         },
                         crate::triggers::ExecRoute::Pane => {
-                            // Write full stdout (+newline) to the originating
-                            // pane (the one whose output matched), not whatever
-                            // pane happens to be focused when this lands.
+                            // 把完整 stdout(+换行)写入产生匹配的
+                            // 源窗格,而非消息落地时恰好
+                            // 聚焦的窗格。
                             if let Some(ctx) = self.pane_terminal_ctx(PaneId(pane_id)) {
                                 let mut bytes = stdout.into_bytes();
                                 bytes.push(b'\n');
@@ -6373,10 +6373,10 @@ impl PureTermApp {
                 }
             }
             Message::LayoutSaveTick => {
-                // GAP-4.3: tail-find re-anchor on new output (~4 Hz cadence).
+                // GAP-4.3:新输出时尾部查找重新锚定(约 4 Hz 节奏)。
                 self.surface_search_tail_follow();
-                // GAP-5.6: debounced on-change persistence — flush the layout
-                // snapshot to disk if it has been dirty for ≥500 ms.
+                // GAP-5.6:变更即持久化的去抖——布局脏了
+                // ≥500 ms 就冲刷到磁盘。
                 #[cfg(unix)]
                 self.flush_layout_if_dirty();
             }
@@ -6479,16 +6479,16 @@ impl PureTermApp {
                 if self.window_for(win_id).is_some() {
                     self.active_window_id = win_id;
                 }
-                // GAP-09: a window gained OS focus → toasts gate off while the
-                // user is looking at PureTerm.
+                // GAP-09:某窗口获得 OS 焦点 → 用户正看着
+                // PureTerm,关闭通知门。
                 self.app_focused = true;
                 return Task::none();
             }
             Message::WindowUnfocused(_win_id) => {
-                // GAP-09: lost OS focus → allow desktop toasts. We track a
-                // single coarse `app_focused` flag (good enough for the toast
-                // gate; precise per-window focus is handled by
-                // `active_window_id` elsewhere).
+                // GAP-09:失去 OS 焦点 → 允许桌面通知。我们只跟踪
+                // 一个粗粒度 `app_focused` 标志(对通知门控足够;
+                // 精确的每窗口聚焦由别处的
+                // `active_window_id` 处理)。
                 self.app_focused = false;
                 return Task::none();
             }
@@ -6500,9 +6500,9 @@ impl PureTermApp {
                 }
                 let is_main = self.window_for(win_id).map_or(false, |w| w.is_main);
                 if is_main {
-                    // GAP-5.6: persist the layout before tearing down so the
-                    // next launch recovers the very last state (the debounced
-                    // tick may not have fired for the most recent change).
+                    // GAP-5.6:拆除前持久化布局,使下次启动恢复
+                    // 最后的状态(去抖 tick 可能还没为最近的
+                    // 变更触发)。
                     #[cfg(unix)]
                     {
                         let snapshot = self.capture_layout();
@@ -6511,7 +6511,7 @@ impl PureTermApp {
                     self.main_window = None;
                     // 主窗的 tab 随下面 retain 从 windows 移除而销毁,无需 clear
                     // (合并后 active_window_id=主窗,clear 会 panic)。
-                    // GAP-6.7: main window closed.
+                    // GAP-6.7:主窗口已关闭。
                     self.events.emit(
                         crate::events::Category::Window,
                         "window.closed",
@@ -6519,9 +6519,9 @@ impl PureTermApp {
                         serde_json::json!({}),
                     );
                 }
-                // GAP-1.3 review: collect every pane in the closed window (across
-                // all its workspaces) so per-pane state can be torn down — pane ids
-                // are never reused, so missing this leaks for the session.
+                // GAP-1.3 评审:收集被关窗口(跨其全部
+                // 工作区)的每个窗格,以便拆除每窗格状态——窗格 id
+                // 绝不复用,漏掉会泄漏整个会话。
                 let doomed: Vec<PaneId> = self
                     .windows
                     .iter()
@@ -6563,7 +6563,7 @@ impl PureTermApp {
                     && self.settings_window.is_none()
                     && self.windows.is_empty()
                 {
-                    // GAP-6.7: the app is quitting.
+                    // GAP-6.7:应用正在退出。
                     self.events.emit(
                         crate::events::Category::App,
                         "app.quit",
@@ -6575,10 +6575,10 @@ impl PureTermApp {
                 }
             }
             Message::ConfigReloaded => {
-                // Suppress notify-watcher self-feedback: if the file's
-                // current mtime is within ~200ms of `last_self_write`,
-                // this event was almost certainly triggered by our own
-                // recent write (persist_ssh_profiles or settings Save).
+                // 抑制 notify 监视器的自反馈:若文件当前
+                // mtime 距 `last_self_write` 在约 200ms 内,
+                // 该事件几乎必然由我们自己的近期
+                // 写入触发(persist_ssh_profiles 或设置 Save)。
                 if let Some(self_t) = self.last_self_write {
                     if let Ok(disk_t) = std::fs::metadata(&self.config_path)
                         .and_then(|m| m.modified())
@@ -6655,13 +6655,13 @@ impl PureTermApp {
                     );
                 }
 
-                // Intercept SavedAt for notify-watcher debounce (kept as
-                // fallback: the standalone settings daemon still relies on it,
-                // and the mtime is needed to suppress the redundant
-                // ConfigReloaded from the file watcher).
+                // 拦截 SavedAt 做 notify 监视器去抖(保留为
+                // 回退:独立设置守护仍依赖它,
+                // 且 mtime 用于抑制文件监视器多余的 ConfigReloaded
+                // 事件)。
                 if let SettingsMessage::SavedAt(mtime) = &msg {
                     self.last_self_write = Some(*mtime);
-                    // Secondary reload — harmless if Part-1 already ran.
+                    // 二次重载——Part-1 已跑过也无害。
                     self.apply_config_reload();
                 }
 
@@ -6669,13 +6669,13 @@ impl PureTermApp {
                     let task = state.update(msg);
 
                     if is_save {
-                        // state.update(Save) has synchronously written the
-                        // config to disk via mutate_config().  Reload
-                        // immediately so colors/fonts take effect on the
-                        // very next frame, without waiting for SavedAt
-                        // (which may be delayed by the Iced redraw loop:
-                        // it arrives as a Task output after messages are
-                        // drained, so the loop's break-condition skips it).
+                        // state.update(Save) 已同步经 mutate_config() 把配置
+                        // 写到磁盘。立即重载,使颜色/字体在下一帧
+                        // 生效,不等 SavedAt
+                        //(它可能被 Iced 重绘循环延迟:
+                        // 作为 Task 输出在消息排空后到达,循环的
+                        // break 条件会跳过它)。
+                        // break 条件会跳过它)。
                         self.apply_config_reload();
                         self.last_self_write = std::fs::metadata(
                             &self.config_path,
@@ -6697,10 +6697,10 @@ impl PureTermApp {
                         return window::close(win_id);
                     }
                 } else {
-                    // GAP-5.6: a user-initiated tab close ENDS the daemon
-                    // sessions of its panes so they are NOT restored on the
-                    // next launch (only an app quit / window close preserves
-                    // sessions). Kill before we drop the GUI handles.
+                    // GAP-5.6:用户主动关标签页会**结束**其窗格的守护
+                    // 会话,使下次启动不再恢复(只有应用退出/
+                    // 关窗保留会话)。先于丢弃 GUI 句柄执行 Kill。
+                    // (先 kill 再丢弃 GUI 句柄。)
                     #[cfg(unix)]
                     if let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) {
                         for pane in tab.panes.values() {
@@ -6709,15 +6709,15 @@ impl PureTermApp {
                             }
                         }
                     }
-                    // SSH cleanup: release pool entries for all panes in the tab
+                    // SSH 清理:释放该标签页全部窗格的池条目
                     #[cfg(unix)]
                     if let Some(manager) = self.ssh_manager.as_ref() {
                         if let Some(tab) = self.tabs().iter().find(|t| t.id == tab_id) {
                             for pane in tab.panes.values() {
                                 let Some(ctx) = pane.terminal() else { continue };
-                                // GAP-5.6: this is a user-initiated close —
-                                // flag it so the exit handler doesn't auto-
-                                // reconnect, and cancel any in-flight worker.
+                                // GAP-5.6:这是用户主动关闭——
+                                /// 打上标志,使退出处理器不自动重连,并取消在途
+                                // 工作线程。
                                 ctx.mark_user_initiated_close();
                                 self.reconnect_hub.cancel(pane.id);
                                 if let Some((host, user, port)) = ctx.ssh_release_key() {
@@ -6727,8 +6727,8 @@ impl PureTermApp {
                         }
                     }
 
-                    // GAP-1.3 review: collect doomed panes before retain so their
-                    // per-pane state can be torn down (ids are never reused).
+                    // GAP-1.3 评审:retain 之前收集待销毁窗格,以便拆除
+                    // 其每窗格状态(id 绝不复用)。
                     let doomed: Vec<PaneId> = self
                         .tabs()
                         .iter()
@@ -6802,7 +6802,7 @@ impl PureTermApp {
                     self.reposition_web_panes();
                 }
             }
-            // ── GAP-2.1 Workspace(hybrid flat-active + background-swap)────────
+            // ── GAP-2.1 工作区(混合的扁平活动 + 后台切换)────────────────────────────────
             Message::NewWorkspace => {
                 // GAP-2.1 review (BUG-E): active_window_id 应恒指向存活窗口;防御性早退,
                 // 避免下方无条件 create_tab() 在 active_ws() 为 None 时撞 .expect() panic
@@ -6899,7 +6899,7 @@ impl PureTermApp {
                     term.selection = Some(sel);
                 }
             }
-            // GAP-4.1: Toggle Vi (copy) mode on the active pane's terminal.
+            // GAP-4.1:切换活动窗格终端的 Vi(复制)模式。
             Message::ToggleViMode => {
                 if let Some(ctx) = self.active_terminal_ctx() {
                     let mut term = ctx.terminal().lock();
@@ -6914,11 +6914,11 @@ impl PureTermApp {
                     }
                 }
             }
-            // GAP-4.1: Vi search bar messages
+            // GAP-4.1:Vi 搜索栏消息
             Message::ViSearchQuery(query) => {
                 if let Some(ref mut search) = self.vi_search {
                     search.query = query.clone();
-                    // Update shared pattern for shader highlighting
+                    // 更新共享模式供 shader 高亮
                     if let Ok(mut pat) = self.vi_search_pattern.lock() {
                         *pat = if query.is_empty() { None } else { Some(query) };
                     }
@@ -6935,7 +6935,7 @@ impl PureTermApp {
                                 let vi_point = term.vi_mode_cursor.point;
                                 let side = alacritty_terminal::index::Side::Right;
                                 if let Some(_mat) = term.search_next(&mut regex, vi_point, direction, side, None) {
-                                    // Move vi cursor to the match start/end based on direction
+                                    // 按方向把 vi 光标移到匹配起点/终点
                                     let target = match direction {
                                         alacritty_terminal::index::Direction::Right => *_mat.end(),
                                         alacritty_terminal::index::Direction::Left => *_mat.start(),
@@ -6948,15 +6948,15 @@ impl PureTermApp {
                 }
             }
             Message::ViSearchClose => {
-                // Clear shared pattern
+                // 清空共享模式
                 if let Ok(mut pat) = self.vi_search_pattern.lock() {
                     *pat = None;
                 }
                 self.vi_search = None;
             }
-            // GAP-3.8 / GAP-4.3: surface search overlay
+            // GAP-3.8 / GAP-4.3:surface 搜索浮层
             Message::SurfaceSearchOpen => {
-                // ⌘F toggles: if already open, close (mainstream editor behavior).
+                // ⌘F 切换:已打开则关闭(主流编辑器行为)。
                 if self.surface_search.is_some() {
                     self.close_surface_search();
                     return Task::none();
@@ -6977,7 +6977,7 @@ impl PureTermApp {
             Message::SurfaceSearchQuery(q) => {
                 if let Some(ref mut s) = self.surface_search {
                     s.query = q;
-                    // A new query invalidates the current match.
+                    // 新查询使当前匹配失效。
                     s.anchor = crate::search::SearchAnchor::None;
                     self.refresh_surface_search_pattern();
                 }
@@ -6994,17 +6994,17 @@ impl PureTermApp {
             Message::SurfaceSearchClose => {
                 self.close_surface_search();
             }
-            // GAP-3.5: ⌘L Browser address-bar overlay
+            // GAP-3.5:⌘L 浏览器地址栏浮层
             Message::AddressBarOpen => {
-                // ⌘L toggles: if already open, close (mirrors ⌘F).
+                // ⌘L 切换:已打开则关闭(镜像 ⌘F)。
                 if self.address_bar.is_some() {
                     self.address_bar = None;
                     return Task::none();
                 }
-                // Resolve target: active pane if it's a Web pane; else the
-                // first Web pane in the active tab; else None (confirm will
-                // spawn a new Web pane, like ⌘⇧L). Prefill with the target's
-                // current URL so ⌘L acts like a browser's "edit current URL".
+                // 解析目标:活动窗格若是 Web 窗格则取它;否则取
+                // 活动标签页中第一个 Web 窗格;否则 None(确认时
+                // 生成新 Web 窗格,如 ⌘⇧L)。用目标的当前 URL
+                // 预填,使 ⌘L 像浏览器的“编辑当前 URL”。
                 let (target, prefill) = self
                     .active_tab_ref()
                     .and_then(|tab| {
@@ -7030,13 +7030,13 @@ impl PureTermApp {
                 }
             }
             Message::AddressBarConfirm => {
-                // `take()` so the overlay closes regardless of outcome.
+                // `take()` 使浮层无论结果如何都关闭。
                 if let Some(state) = self.address_bar.take() {
                     let url = normalize_url_input(&state.query);
-                    // Resolve liveness here (the decision fn takes it as a bool
-                    // so it stays headless-testable). A stale target — pane
-                    // closed between ⌘L-open and Enter — falls back to Spawn so
-                    // the typed URL still loads (B2).
+                    // 在这里解析存活(决策函数以 bool 接收它,
+                    // 保持可无头测试)。过期目标——⌘L 打开到
+                    // 回车之间窗格被关——回退到 Spawn,使
+                    // 输入的 URL 仍能载入(B2)。
                     let target_alive = state
                         .target
                         .map(|id| self.pane_browser_ctx(id).is_some())
@@ -7055,8 +7055,8 @@ impl PureTermApp {
                         }
                         AddressBarAction::Drop => {}
                     }
-                    // B3: only emit when something actually happened (empty
-                    // input → Drop, no noise event).
+                    // B3:只在确有动作时发出(空输入 → Drop,
+                    // 无噪音事件)。
                     if !matches!(action, AddressBarAction::Drop) {
                         self.events.emit(
                             crate::events::Category::Browser,
@@ -7091,14 +7091,14 @@ impl PureTermApp {
             Message::SurfaceSearchToggleFollow => {
                 if let Some(ref mut s) = self.surface_search {
                     s.follow_tail = !s.follow_tail;
-                    // Re-seed the tail baseline so the next tick detects growth
-                    // from the arming moment, not a stale earlier bottom.
+                    // 重播种尾部基线,使下一个 tick 从布防时刻
+                    // 检测增长,而非过期的更早底部。
                     s.last_tail_bottom = None;
                 }
             }
-            // GAP-3.8: ⌘⇧F working-directory (ripgrep) search
+            // GAP-3.8:⌘⇧F 工作目录(ripgrep)搜索
             Message::DirSearchOpen => {
-                // Toggle: if already open, close.
+                // 切换:已打开则关闭。
                 if self.dir_search.is_some() {
                     self.dir_search = None;
                     return Task::none();
@@ -7147,7 +7147,7 @@ impl PureTermApp {
             }
             Message::DirSearchResultReady { query, result } => {
                 if let Some(state) = self.dir_search.as_mut() {
-                    // Drop stale results from an older query.
+                    // 丢弃旧查询的过期结果。
                     if state.query == query {
                         state.running = false;
                         match result {
@@ -7179,7 +7179,7 @@ impl PureTermApp {
             Message::DirSearchClose => {
                 self.dir_search = None;
             }
-            // GAP-2.3 / GAP-6.1: Dispatch IPC request from the socket listener.
+            // GAP-2.3 / GAP-6.1:分派来自 socket 监听器的 IPC 请求。
             Message::Ipc(ipc_req) => {
                 // GAP-7.4: `feed.request_approval` 用 DEFERRED reply —— 不立即
                 // 回复,把 reply 句柄暂存,等人在 Feed 面板点按钮(或 120s 超时)
@@ -7190,24 +7190,24 @@ impl PureTermApp {
                 {
                     return self.handle_feed_request_approval(ipc_req);
                 }
-                // GAP-7.8: `browser.*` drives a web pane. The op runs async
-                // (JS eval via wry); the JSON-RPC reply is deferred until the
-                // callback / timeout resolves. Intercepted before `dispatch`
-                // (same deferred-reply pattern as feed.request_approval) since
-                // the router's sync handlers can't await an async result.
+                // GAP-7.8:`browser.*` 驱动 web 窗格。操作异步运行
+                //(经 wry 的 JS eval);JSON-RPC 应答延迟到
+                // 回调/超时解决。在 `dispatch` 之前拦截
+                //(与 feed.request_approval 相同的延迟应答模式),因为
+                // 路由器的同步处理器无法 await 异步结果。
                 if ipc_req.method.starts_with("browser.") {
                     return self.handle_browser_request(ipc_req);
                 }
-                // GAP-7.9: `surface.snapshot` (capture-pane) reads the term grid.
-                // Deferred like `browser.*`/`feed.*`: the sync router handlers
-                // only see `AppSnapshot` (titles/cwds), not the `Term` grid, so
-                // capture must run from here (which has `&mut self`) and off the
-                // main thread; the reply is sent when the task resolves.
+                // GAP-7.9:`surface.snapshot`(capture-pane)读 term 网格。
+                // 像 `browser.*`/`feed.*` 一样延迟:同步路由处理器
+                // 只能看到 `AppSnapshot`(标题/cwd),看不到 `Term` 网格,
+                // 因此捕获必须从这里(持有 `&mut self` 的地方)且在主
+                // 线程之外运行;任务解决时发送应答。
                 #[cfg(unix)]
                 if ipc_req.method == "surface.snapshot" {
                     return self.handle_surface_snapshot(ipc_req);
                 }
-                // Build a rich snapshot from live app state.
+                // 从活动应用状态构建丰富快照。
                 let snap = crate::ipc::methods::AppSnapshot {
                     window_count: if self.main_window.is_some() { 1 } else { 0 },
                     tab_titles: self.tabs().iter().map(|t| self.tab_display_title(t)).collect(),
@@ -7223,10 +7223,10 @@ impl PureTermApp {
                     },
                     config_path: Some(self.config_path.to_string_lossy().into_owned()),
                     tab_cwds: self.tabs().iter().map(|t| {
-                        // CWD is tracked per-active-pane via OSC 7. The status bar
-                        // reflects the currently focused tab's surface; report that
-                        // for the active tab and None for others until per-tab CWD
-                        // tracking is added.
+                        // CWD 经 OSC 7 按活动窗格跟踪。状态栏反映
+                        // 当前聚焦标签页的 surface;对活动标签页报告它,
+                        // 其余报 None,直到加入每标签页的 CWD
+                        // 跟踪。
                         if t.id == self.active_tab_id() {
                             self.status_bar_cwd.clone()
                         } else {
@@ -7234,8 +7234,8 @@ impl PureTermApp {
                         }
                     }).collect(),
                     active_pane_ids: self.tabs().iter().map(|t| t.active_pane.0).collect(),
-                    // GAP-6.6: every pane's stable id per tab (DFS order) —
-                    // drives tmux `%N` targeting + `list-panes`.
+                    // GAP-6.6:每标签页内全部窗格的稳定 id(DFS 序)——
+                    // 驱动 tmux 的 `%N` 定位 + `list-panes`。
                     pane_ids: self
                         .tabs()
                         .iter()
@@ -7243,7 +7243,7 @@ impl PureTermApp {
                             t.split_tree.pane_ids().into_iter().map(|p| p.0).collect()
                         })
                         .collect(),
-                    // GAP-5.6: per-SSH-pane connection state for `ssh.state`.
+                    // GAP-5.6:每 SSH 窗格的连接状态,供 `ssh.state`。
                     ssh_pane_states: {
                         #[cfg(unix)]
                         {
@@ -7286,10 +7286,10 @@ impl PureTermApp {
                         #[cfg(not(unix))]
                         { Vec::new() }
                     },
-                    // GAP-15: per-pane shell context for the `shell.context`
-                    // Socket API / MCP `get_shell_context`. Built for every pane
-                    // (integrated or not) so SSH/fish panes resolve to a
-                    // non-integrated summary with cwd if known.
+                    // GAP-15:供 `shell.context` Socket API / MCP
+                    // `get_shell_context` 的每窗格 shell 上下文。为每个窗格构建
+                    //(无论是否集成),使 SSH/fish 窗格解析为
+                    // 带已知 cwd 的未集成摘要。
                     pane_shell_contexts: {
                         use crate::shell_context::build_for_pane;
                         let mut map = std::collections::HashMap::new();
@@ -7336,12 +7336,12 @@ impl PureTermApp {
                     ipc_req.id, &ipc_req.method, ipc_req.params, &snap,
                 );
 
-                // Send response back through the oneshot channel.
+                // 经 oneshot 通道回送响应。
                 if let Some(reply_tx) = crate::ipc::take_reply_sender(&ipc_req.reply_tx) {
                     let _ = reply_tx.send(resp);
                 }
 
-                // Execute side effect (write operation) after responding.
+                // 响应之后执行副作用(写操作)。
                 if let Some(fx) = side_effect {
                     return self.execute_ipc_side_effect(fx);
                 }
@@ -7349,7 +7349,7 @@ impl PureTermApp {
             // ── GAP-7.4 Feed 审批面板 ──────────────────────────────────────
             #[cfg(unix)]
             Message::FeedResolve { id, choice } => {
-                // GAP-6.7 / GAP-7.7: capture fields before resolve drains pending.
+                // GAP-6.7 / GAP-7.7:在 resolve 排空 pending 之前捕获字段。
                 let captured = self
                     .feed_panel
                     .pending
@@ -7364,7 +7364,7 @@ impl PureTermApp {
                     session_id,
                     serde_json::json!({ "choice": choice.as_str(), "source": "user" }),
                 );
-                // GAP-7.7: on an allow choice, spawn the resume binding as a new tab.
+                // GAP-7.7:选择放行时,把 resume 绑定作为新标签页拉起。
                 if let Some(r) = resume {
                     if choice.is_allow() {
                         let cwd = self
@@ -7391,7 +7391,7 @@ impl PureTermApp {
             Message::FeedTick => {
                 // 120s 软超时 → 自动 Deny。
                 for id in self.feed_panel.expire_timeouts() {
-                    // GAP-6.7: capture session_id before resolve drains it.
+                    // GAP-6.7:在 resolve 排空之前捕获 session_id。
                     let session_id = self
                         .feed_panel
                         .pending
@@ -7418,7 +7418,7 @@ impl PureTermApp {
             }
             #[cfg(unix)]
             Message::HibernationCountdownTick => {
-                // Auto-confirm on timeout (60s default).
+                // 超时自动确认(默认 60 秒)。
                 if let Some(sid) = self.hibernate_panel.expire_timeout() {
                     self.do_hibernate(&sid);
                 }
@@ -7466,8 +7466,8 @@ impl PureTermApp {
                         attempt,
                         next_retry_in,
                     } => {
-                        // Update the pane's state so the status bar reflects
-                        // the retry. `next_retry` is approximate (now + delay).
+                        // 更新窗格状态,使状态栏反映
+                        // 重试。`next_retry` 是近似值(now + delay)。
                         if let Some(ctx) = self.pane_terminal_ctx(pane_id) {
                             ctx.set_ssh_state(
                                 crate::ssh::reconnect::SshState::Reconnecting {
@@ -7483,28 +7483,28 @@ impl PureTermApp {
                         }
                     }
                     ReconnectUpdate::Spawned { pane_id } => {
-                        // Claim the spawned PTY and reattach. If the pane is
-                        // gone (closed meanwhile), the hub already drained it.
+                        // 认领已拉起的 PTY 并重新挂接。窗格若
+                        //(期间)已被关,hub 已排空它。
                         let claimed = self.reconnect_hub.take_success(pane_id);
                         let Some((ssh_pty, stderr)) = claimed else {
-                            // Already drained by cancel(); nothing to do.
+                            // 已被 cancel() 排空;无事可做。
                             return Task::none();
                         };
                         let Some(ctx) = self.pane_terminal_ctx(pane_id) else {
-                            // Pane closed after success: balance the pool and
-                            // drop the child. Derive release key from params
-                            // captured in the PTY's own session is not
-                            // available here; rely on idle cleanup instead.
+                            // 成功后窗格被关:平衡连接池并
+                            // 丢弃子进程。释放键从参数推导——PTY 自身
+                            // 会话捕获的信息此处不可
+                            /// 用;依赖空闲清理兜底。
                             drop(ssh_pty);
                             return Task::none();
                         };
                         match ctx.reattach(*ssh_pty, stderr) {
                             Ok(()) => {
-                                // GAP-5.6: reattach to the freshly-spawned PTY, then mark
-                                // Authenticating — the ssh child is forked but auth/first
-                                // remote byte is still pending. The Wakeup handler in the
-                                // poll loop flips this to Connected + stamps the separator
-                                // line on the first remote byte.
+                                // GAP-5.6:重新挂接新拉起的 PTY,随后标记
+                                // Authenticating——ssh 子进程已 fork,但认证/首个
+                                // 远端字节仍未到。轮询循环中的 Wakeup 处理器在
+                                // 首个远端字节时翻转为 Connected 并盖分隔线
+                                // 时间戳。
                                 ctx.set_ssh_state(
                                     crate::ssh::reconnect::SshState::Authenticating,
                                 );
@@ -7513,7 +7513,7 @@ impl PureTermApp {
                                     &ctx,
                                     crate::ssh::reconnect::SshStateSnapshot::Authenticating,
                                 );
-                                // Re-apply the current pane size to the fresh PTY.
+                                // 把当前窗格尺寸重新应用到新 PTY。
                                 let gs = self.glyph_state.borrow();
                                 let terminal_height =
                                     terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
@@ -7555,9 +7555,9 @@ impl PureTermApp {
                     }
                 }
             }
-            // GAP-7.8: a `browser.*` op finished (JS callback or timeout
-            // resolved). Send the deferred JSON-RPC reply (first-wins via the
-            // Mutex-take), then emit the outcome as a `browser.<verb>` event.
+            // GAP-7.8:某 `browser.*` 操作完成(JS 回调或超时
+            // 解决)。发送延迟的 JSON-RPC 应答(经 Mutex-take 的
+            // 先到先得),随后把结果作为 `browser.<verb>` 事件发出。
             Message::BrowserOpResolved(resolved) => {
                 use crate::browser::BrowserReply;
                 let crate::browser::BrowserResolved {
@@ -7576,11 +7576,11 @@ impl PureTermApp {
                             Some(e),
                         ),
                     };
-                // Mutex-take: a late timeout can't double-reply.
+                // Mutex-take:迟到的超时无法双重应答。
                 if let Some(s) = crate::ipc::take_reply_sender(&reply_tx) {
                     let _ = s.send(resp);
                 }
-                // Tag the op payload with the outcome, then emit.
+                // 给操作载荷打上结果标签,然后发出。
                 let mut payload = ev_payload;
                 if let Some(obj) = payload.as_object_mut() {
                     obj.insert("ok".into(), serde_json::json!(ok));
@@ -7591,9 +7591,9 @@ impl PureTermApp {
                 self.events
                     .emit(crate::events::Category::Browser, ev_kind, None, payload);
             }
-            // GAP-7.9: a deferred `surface.snapshot` finished — forward the
-            // built response to the deferred IPC reply (first-wins via
-            // Mutex-take), then emit a `surface.snapshot` audit event.
+            // GAP-7.9:延迟的 `surface.snapshot` 完成——把构建好的
+            // 响应转发给延迟的 IPC 应答(经 Mutex-take 的
+            // 先到先得),随后发出 `surface.snapshot` 审计事件。
             #[cfg(unix)]
             Message::SurfaceSnapshotResolved(resolved) => {
                 let crate::surface_snapshot::SurfaceSnapshotResolved {
@@ -7611,9 +7611,9 @@ impl PureTermApp {
                     serde_json::json!({ "ipc_id": ipc_id }),
                 );
             }
-            // GAP-6.7: in-process event bus subscriber. v1 has no consumer —
-            // events are persisted in `emit()` and consumed via the JSONL log /
-            // `pureterm events tail`. This arm is the hook for GAP-6.8.
+            // GAP-6.7:进程内事件总线订阅者。v1 没有消费者——
+            // 事件在 `emit()` 中持久化,经 JSONL 日志 /
+            // `pureterm events tail` 消费。此分支是 GAP-6.8 的钩子。
             Message::Event(event) => {
                 self.sidebar_dsl.on_event(&event);
                 #[cfg(debug_assertions)]
@@ -7652,7 +7652,7 @@ impl PureTermApp {
                     self.hovered_tab = None;
                 }
             }
-            // Context menu
+            // 右键菜单
             Message::TabRightClick(tab_id) => {
                 self.context_menu = Some(ContextMenuState {
                     tab_id,
@@ -7665,9 +7665,9 @@ impl PureTermApp {
             }
             Message::CursorMoved(pos) => {
                 self.last_cursor_pos = pos;
-                // GAP-56: focus-follows-mouse — record the pane under the
-                // cursor and reset the hover timer. The actual focus switch
-                // happens after `delay_ms` elapses (see TerminalWakeup).
+                // GAP-56:鼠标跟随聚焦——记录光标下的窗格并
+                // 重置悬停计时。实际的焦点切换发生在
+                // `delay_ms` 到期后(见 TerminalWakeup)。
                 if self.focus_follows_mouse_cfg.enabled {
                     if let Some(pane_id) = self.pane_under_point(pos) {
                         if self.last_hovered_pane != Some(pane_id) {
@@ -7687,12 +7687,12 @@ impl PureTermApp {
                 self.tab_list = None;
             }
             Message::DismissContextMenuIfOutside(point) => {
-                // Bug #2 fix: only dismiss if the click is OUTSIDE the
-                // active context menu's rect. The context menu is
-                // `pin`-positioned at `menu.position` with fixed
-                // 200px width and 30px * item_count height. The item
-                // count matches `ContextMenuItem::ALL_PLUS_SSH` (unix)
-                // or `ALL` (other platforms).
+                // Bug #2 修复:仅当点击在活动右键菜单
+                // 矩形**之外**时才关闭。右键菜单以
+                // `pin` 定位在 `menu.position`,固定 200px
+                // 宽、30px × 条目数高。条目数
+                // 与 `ContextMenuItem::ALL_PLUS_SSH`(unix)或
+                // `ALL`(其它平台)一致。
                 if let Some(menu) = &self.context_menu {
                     #[cfg(unix)]
                     let item_count = ContextMenuItem::ALL_PLUS_SSH.len();
@@ -7730,22 +7730,22 @@ impl PureTermApp {
                 };
                 let tab_idx = self.tabs().iter().position(|t| t.id == menu.tab_id);
 
-                // GAP-3.7: Pane-level items — convert to Action and dispatch.
-                // These first set active_tab to the menu's target tab, then
-                // go through the unified dispatch path.
+                // GAP-3.7:窗格级条目——转换为 Action 并分派。
+                // 这些先让 active_tab 指向菜单的目标标签页,然后
+                // 经统一分派路径处理。
                 if let Some(action) = crate::keymap::action_from_context_menu(item) {
                     self.set_active_tab(menu.tab_id);
                     return self.dispatch_action(action);
                 }
 
-                // Tab-level items — need tab_id context, not convertible to Action.
+                // 标签页级条目——需要 tab_id 上下文,无法转换为 Action。
                 match item {
                     ContextMenuItem::CloseTab => {
                         return Task::done(Message::CloseTab(menu.tab_id));
                     }
                     ContextMenuItem::CloseOtherTabs => {
                         let keep_id = menu.tab_id;
-                        // GAP-1.3 review: tear down per-pane state for the dropped tabs.
+                        // GAP-1.3 评审:为被丢弃的标签页拆除每窗格状态。
                         let doomed: Vec<PaneId> = self
                             .tabs()
                             .iter()
@@ -7760,7 +7760,7 @@ impl PureTermApp {
                     }
                     ContextMenuItem::CloseTabsToLeft => {
                         if let Some(idx) = tab_idx {
-                            // GAP-1.3 review: tear down per-pane state for the dropped tabs.
+                            // GAP-1.3 评审:为被丢弃的标签页拆除每窗格状态。
                             let doomed: Vec<PaneId> = self
                                 .tabs()
                                 .iter()
@@ -7778,7 +7778,7 @@ impl PureTermApp {
                     }
                     ContextMenuItem::CloseTabsToRight => {
                         if let Some(idx) = tab_idx {
-                            // GAP-1.3 review: tear down per-pane state for the dropped tabs.
+                            // GAP-1.3 评审:为被丢弃的标签页拆除每窗格状态。
                             let doomed: Vec<PaneId> = self
                                 .tabs()
                                 .iter()
@@ -7867,8 +7867,8 @@ impl PureTermApp {
                     ContextMenuItem::ChangeTabColor => {
                         self.color_picker_tab = Some(menu.tab_id);
                     }
-                    // Remaining items are handled by action_from_context_menu above.
-                    // This arm is unreachable but required by the exhaustive match.
+                    // 其余条目已由上方的 action_from_context_menu 处理。
+                    // 此分支不可达,但穷尽匹配要求它存在。
                     _ => {}
                 }
             }
@@ -7877,7 +7877,7 @@ impl PureTermApp {
                     menu.hovered_item = item;
                 }
             }
-            // Rename
+            // 重命名
             Message::RenameInputChanged(text) => {
                 if let Some(ref mut state) = self.renaming_tab {
                     state.draft = text;
@@ -7892,7 +7892,7 @@ impl PureTermApp {
                     }
                 }
             }
-            // Tab color
+            // 标签页颜色
             Message::TabColorPicked(color) => {
                 if let Some(tab_id) = self.color_picker_tab.take() {
                     if let Some(tab) = self.tabs_mut().iter_mut().find(|t| t.id == tab_id) {
@@ -7907,7 +7907,7 @@ impl PureTermApp {
                     }
                 }
             }
-            // Tab list (command palette)
+            // 标签页列表(命令面板)
             Message::TabListQueryChanged(query) => {
                 if let Some(ref mut state) = self.tab_list {
                     state.query = query;
@@ -7919,7 +7919,7 @@ impl PureTermApp {
                     self.set_active_tab(tab_id);
                 }
             }
-            // Split pane messages
+            // 拆分窗格消息
             Message::SplitHorizontal => {
                 self.split_pane(SplitDirection::Horizontal);
             }
@@ -8061,15 +8061,15 @@ impl PureTermApp {
                         }
                     }
                 }
-                // Active pane changed; refresh the status bar. zsh only
-                // reports cwd on `cd` (not every prompt), so switching panes
-                // wouldn't otherwise update the cwd/branch shown.
+                // 活动窗格变化;刷新状态栏。zsh 只在 `cd` 时
+                // 上报 cwd(并非每个提示符),因此切换窗格
+                // 否则不会更新显示的 cwd/分支。
                 self.refresh_status_bar_cwd();
-                // GAP-09: focusing a pane clears its unread notifications +
-                // refreshes the Dock badge (the user has now seen them).
+                // GAP-09:聚焦窗格会清除其未读通知并
+                // 刷新 Dock 徽标(用户已经看过它们了)。
                 self.notification_store.clear_unread(pane_id);
                 self.refresh_dock_badge_from_state();
-                // GAP-6.7: focus moved to another pane.
+                // GAP-6.7:焦点移到了另一个窗格。
                 self.events.emit(
                     crate::events::Category::Pane,
                     "pane.focus_changed",
@@ -8078,7 +8078,7 @@ impl PureTermApp {
                 );
             }
             Message::PaneMousePressed(pane_id) => {
-                // GAP-36: Cmd-click semantic history — open file:line in editor.
+                // GAP-36:Cmd 点按语义历史——在编辑器中打开 file:line。
                 if self.semantic_history_cfg.enabled && self.keyboard_modifiers.command() {
                     if let Some(target) = self.semantic_target_at_pane(pane_id) {
                         let cwd = self
@@ -8110,7 +8110,7 @@ impl PureTermApp {
                         tab.active_pane = pane_id;
                     }
                 }
-                // Active pane changed; refresh the status bar (see PaneFocused).
+                // 活动窗格变化;刷新状态栏(见 PaneFocused)。
                 self.refresh_status_bar_cwd();
                 // 2) 拿到 pane 的 TerminalContext。
                 let ctx = self
@@ -8170,7 +8170,7 @@ impl PureTermApp {
             }
             Message::PaneCursorMoved(pane_id, pos) => {
                 self.last_cursor_pos = pos;
-                // Also update active pane on click/move
+                // 点击/移动时也更新活动窗格
                 // T2b-1:field-path 直访 self.windows → 活跃 workspace。
                 let aw = self.active_window_id;
                 let ws_tabs: Option<&mut Workspace> = self
@@ -8213,7 +8213,7 @@ impl PureTermApp {
                 }
             }
             Message::PaneRightClick(pane_id) => {
-                // GAP-4.2: semantic target under cursor → hover preview menu.
+                // GAP-4.2:光标下的语义目标 → 悬停预览菜单。
                 if let Some(target) = self.hover_target_at_pane(pane_id) {
                     if let Some((tab_id, _)) = self.tabs().iter()
                         .find(|t| t.panes.contains_key(&pane_id))
@@ -8260,8 +8260,8 @@ impl PureTermApp {
             #[cfg(unix)]
             Message::OpenSshDialog => {
                 if self.ssh_manager.is_none() {
-                    // Initialize the manager on first use, using a default
-                    // socket directory under the user's runtime dir.
+                    // 首次使用时初始化管理器,socket 目录
+                    // 取用户运行时目录下的默认位置。
                     let socket_dir = std::env::temp_dir().join("pureterm-ssh");
                     let _ = std::fs::create_dir_all(&socket_dir);
                     self.ssh_manager = Some(Arc::new(SshSessionManager::new(socket_dir, 30)));
@@ -8284,9 +8284,9 @@ impl PureTermApp {
             }
             #[cfg(unix)]
             Message::CloseSshDialogIfOutside(point) => {
-                // Bug #3 fix: only dismiss if the click is OUTSIDE the
-                // SSH dialog's pinned center rect. The dialog is 420
-                // wide x 360 tall, centered on the viewport.
+                // Bug #3 修复:仅当点击在 SSH 对话框固定
+                // 中心矩形**之外**时才关闭。对话框 420 宽
+                // × 360 高,居中于视口。
                 if self.ssh_dialog.is_some() {
                     const DIALOG_W: f32 = 420.0;
                     const DIALOG_H: f32 = 360.0;
@@ -8313,13 +8313,13 @@ impl PureTermApp {
             }
             #[cfg(unix)]
             Message::SshConnect(idx) => {
-                // Defensive: ensure the ssh_manager is initialized
-                // (mirrors Message::OpenSshDialog's lazy init). Without
-                // this, if the user reaches SshConnect without first
-                // triggering OpenSshDialog (e.g. via a future shortcut
-                // or restored session), the manager would be None and
-                // connect_ssh_tab would silently bail with a dialog
-                // error.
+                // 防御性:确保 ssh_manager 已初始化
+                //(镜像 Message::OpenSshDialog 的惰性初始化)。否则,
+                /// 若用户未先触发 OpenSshDialog 就到达 SshConnect
+                //(如经未来的快捷键或恢复的会话),管理器会是 None,
+                // connect_ssh_tab 会带着对话框
+                // 错误静默退出。
+                // 错误。
                 if self.ssh_manager.is_none() {
                     let socket_dir = std::env::temp_dir().join("pureterm-ssh");
                     let _ = std::fs::create_dir_all(&socket_dir);
@@ -8381,7 +8381,7 @@ impl PureTermApp {
                     if idx < s.drafts.len() {
                         let profile = s.drafts[idx].clone();
 
-                        // Store password in CredentialStore if present and store is unlocked.
+                        // 若存在凭据库且已解锁,把密码存入 CredentialStore。
                         if let (Some(ref mut store), Some(ref pw)) =
                             (&mut self.ssh_credential_store, &profile.password)
                         {
@@ -8404,7 +8404,7 @@ impl PureTermApp {
                             self.ssh_profiles.push(profile);
                         }
                         s.editing = None;
-                        // Persist to disk
+                        // 持久化到磁盘
                         self.persist_ssh_profiles();
                     }
                 }
@@ -8424,11 +8424,11 @@ impl PureTermApp {
             }
             #[cfg(unix)]
             Message::SshSettingsRequested => {
-                // Close the SSH dialog if it's open.
+                // SSH 对话框若开着则关闭。
                 self.ssh_dialog = None;
-                // Open the settings panel (mirrors ToggleSshSettingsPanel
-                // when it was None, but we also clear the dialog state
-                // above to avoid leaving it set).
+                // 打开设置面板(等价于 ToggleSshSettingsPanel
+                // 在 None 时的行为,但我们也清掉上方的对话框
+                // 状态,避免遗留)。
                 if self.ssh_settings.is_none() {
                     let drafts = self.ssh_profiles.clone();
                     let unlocked = self
@@ -8469,13 +8469,13 @@ impl PureTermApp {
             Message::SshSettingsMasterPwChanged(pw) => {
                 if let Some(ref mut s) = self.ssh_settings {
                     s.master_pw_draft = pw;
-                    // PureTerm: once the user starts typing, clear the
-                    // previous failure / awaiting-unlock hint so the
-                    // status row resets to the stable Locked/Unlocked
-                    // indicator. Enum match replaces the old
-                    // `starts_with("Unlock failed")` / `starts_with(
-                    // "Master password set")` string check, which broke
-                    // when status text became localized.
+                    // PureTerm:用户一旦开始输入,就清掉先前的
+                    // 失败/待解锁提示,使状态行复位到稳定的
+                    // Locked/Unlocked 指示。枚举匹配取代了旧的字符串
+                    // `starts_with` 检查——状态文本
+                    // 本地化后旧检查会失效。
+                    // (旧字符串前缀检查在本地化后会失效。)
+                    // (状态文本本地化后失效的旧检查已移除。)
                     match s.master_status {
                         MasterStatus::UnlockFailed(_)
                         | MasterStatus::SetAwaitingUnlock => {
@@ -8504,9 +8504,9 @@ impl PureTermApp {
                 self.command_palette = None;
             }
             Message::CloseCommandPaletteIfOutside(point) => {
-                // Bug #3 (command palette) fix: only dismiss if the
-                // click is OUTSIDE the palette's pinned center rect.
-                // The palette is 520 wide x 360 tall, centered.
+                // Bug #3(命令面板)修复:仅当点击在面板
+                // 固定中心矩形**之外**时才关闭。
+                // 面板 520 宽 × 360 高,居中。
                 if self.command_palette.is_some() {
                     const PALETTE_W: f32 = 520.0;
                     const PALETTE_H: f32 = 360.0;
@@ -8526,10 +8526,10 @@ impl PureTermApp {
                 if let Some(ref mut state) = self.command_palette {
                     state.query = q;
                 }
-                // Refresh the visible entries, then re-borrow the
-                // state to emit a scroll-to-selected task. We can't
-                // hold a `&mut self.command_palette` borrow across the
-                // `refresh_palette_matches` call (it re-borrows `self`).
+                // 刷新可见条目,再重新借用状态以发出
+                // 滚动到选中条目的任务。无法跨
+                // `refresh_palette_matches` 调用持有 `&mut self.command_palette`
+                // 借用(它会重新借用 `self`)。
                 if self.command_palette.is_some() {
                     self.refresh_palette_matches();
                     let task = Self::scroll_palette_to_selected(
@@ -8539,17 +8539,17 @@ impl PureTermApp {
                 }
             }
             Message::CommandPaletteSelect(idx) => {
-                // Bug C fix: in Action mode, clicking an item now
-                // EXECUTES the action (just like pressing Enter). The
-                // previous behavior — only updating `state.selected`
-                // and waiting for Enter — was inconsistent with Profile
-                // mode (where click directly connects) and unintuitive
-                // (users expected a click to "run the highlighted
-                // action").
+                // Bug C 修复:Action 模式下点击条目现在会
+                // **执行**动作(与回车一致)。旧
+                // 行为——只更新 `state.selected` 并等待
+                // 回车——与 Profile 模式(点击直接连接)
+                // 不一致,也不直观
+                //(用户期望点击即“运行高亮的
+                // 动作”)。
                 //
-                // We still update `state.selected` first so keyboard
-                // navigation remains in sync if the user later arrows
-                // away.
+                // 仍先更新 `state.selected`,使用户之后
+                // 用方向键导航时保持
+                // 同步。
                 let mode = self.command_palette.as_ref().map(|s| s.mode);
                 match mode {
                     Some(PaletteMode::Profiles) => {
@@ -8565,10 +8565,10 @@ impl PureTermApp {
                         }
                     },
                     Some(PaletteMode::Actions) | None => {
-                        // Snapshot the entry to dispatch (we need to
-                        // release the borrow on `self.command_palette`
-                        // before calling `run_palette_entry`, which
-                        // mutably borrows self).
+                        // 快照要分派的条目(调用
+                        // `run_palette_entry` 前需要释放
+                        // `self.command_palette` 上的借用,
+                        // 因为它会可变借用 self)。
                         let entry = {
                             let Some(state) = self.command_palette.as_ref() else {
                                 return Task::none();
@@ -8578,9 +8578,9 @@ impl PureTermApp {
                             }
                             state.visible_actions[idx].clone()
                         };
-                        // Also keep `selected` in sync so an
-                        // immediately-following Enter hits the same
-                        // entry.
+                        // 同时同步 `selected`,使紧随其后的
+                        // 回车命中同一条
+                        // 目。
                         if let Some(ref mut state) = self.command_palette {
                             state.selected = idx;
                         }
@@ -8601,11 +8601,11 @@ impl PureTermApp {
             }
             Message::CommandPaletteDown => {
                 if let Some(ref mut state) = self.command_palette {
-                    // Bug fix: the previous bound only checked
-                    // `visible_actions.len()`, which is empty in
-                    // `Profiles` mode — Down would silently no-op.
-                    // Use the mode-aware length so both modes can
-                    // navigate.
+                    // 缺陷修复:旧边界只检查
+                    // `visible_actions.len()`,`Profiles` 模式下它为空——
+                    // Down 会静默空转。改用感知模式的
+                    // 长度,两种模式都能
+                    // 导航。
                     let len = match state.mode {
                         PaletteMode::Actions => state.visible_actions.len(),
                         #[cfg(unix)]
@@ -8688,9 +8688,9 @@ impl PureTermApp {
                         Self::resize_workspace_panes(ws, viewport_w, terminal_height, cw, ch, ssh_smallest);
                     }
                 }
-                // GAP-19: sidebar divider drag-to-resize. `pos` is window-content
-                // absolute coords, so the left divider tracks pos.x and the right
-                // divider tracks (viewport_w - pos.x). Widths are clamped 120–480.
+                // GAP-19:侧边栏分隔条拖动缩放。`pos` 是窗口内容的
+                // 绝对坐标,因此左分隔条跟随 pos.x,右分隔条跟随
+                // (viewport_w - pos.x)。宽度钳制在 120–480。
                 if let Some(side) = self.sidebar_drag {
                     let viewport_w = self.viewport_size.width;
                     let new_width = match side {
@@ -8713,7 +8713,7 @@ impl PureTermApp {
             Message::GlobalMouseRelease => {
                 // 结束选区拖动:清掉 drag 标志,但保留 term.selection 让 Cmd+C 仍能拷。
                 self.selection_drag = None;
-                // GAP-19: end a sidebar divider drag (if any).
+                // GAP-19:结束侧边栏分隔条拖拽(若有)。
                 self.sidebar_drag = None;
                 if let Some(drag) = self.drag_state.take() {
                     let aw = self.active_window_id;
@@ -8746,23 +8746,23 @@ impl PureTermApp {
                 self.drag_state = None;
             }
             Message::SidebarDividerPress(side) => {
-                // GAP-19: begin a sidebar divider drag. Clicking the divider
-                // focuses its window first, so active_window is the target; the
-                // live drag is driven by GlobalCursorMoved above.
+                // GAP-19:开始侧边栏分隔条拖拽。点击分隔条
+                // 会先聚焦其窗口,active_window 即目标;
+                // 实时拖拽由上方的 GlobalCursorMoved 驱动。
                 self.sidebar_drag = Some(side);
             }
             Message::PtyExitedPane(tab_id, pane_id) => {
-                // Close specific pane, keep tab alive if other panes exist
+                // 关闭特定窗格;若还有其它窗格则保留标签页
                 let pane_count = self.tabs().iter()
                     .find(|t| t.id == tab_id)
                     .map(|t| t.panes.len())
                     .unwrap_or(0);
                 if pane_count <= 1 {
-                    // Last pane, close entire tab
+                    // 最后一个窗格,关闭整个标签页
                     return Task::done(Message::CloseTab(tab_id));
                 }
                 // T2b-1:field-path 直访 self.windows → 活跃 workspace;后续
-                // self.ssh_manager / reconnect_hub / pane_cwds / viewport_size /
+                // self.ssh_manager / reconnect_hub / pane_cwds 等每窗格状态在此清理:
                 // glyph_state 均与 self.windows disjoint,可同借。
                 let aw = self.active_window_id;
                 let new_active = {
@@ -8785,12 +8785,12 @@ impl PureTermApp {
                         .and_then(|w| w.active_workspace_mut())
                         .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == tab_id))
                         .unwrap();
-                    // SSH cleanup: release pool entry for this pane
+                    // SSH 清理:释放该窗格的池条目
                     #[cfg(unix)]
                     if let Some(manager) = self.ssh_manager.as_ref() {
                         if let Some(pane) = tab.panes.get(&pane_id) {
                             if let Some(ctx) = pane.terminal() {
-                                // GAP-5.6: user-initiated pane close — flag + cancel.
+                                // GAP-5.6:用户主动关闭窗格——打标志 + 取消。
                                 ctx.mark_user_initiated_close();
                                 self.reconnect_hub.cancel(pane_id);
                                 if let Some((host, user, port)) = ctx.ssh_release_key() {
@@ -8800,11 +8800,11 @@ impl PureTermApp {
                         }
                     }
                     tab.panes.remove(&pane_id);
-                    // Drop per-pane state for the closed pane via the shared
-                    // teardown (single source of truth — see teardown_pane_state_maps).
-                    // Passed as disjoint field refs because `tab` borrows self.windows,
-                    // blocking a `&mut self` call. Pane ids are never reused, so a
-                    // map missed here leaks for the whole session.
+                    // 经共享的 teardown 丢弃被关窗格的每窗格状态
+                    //(单一事实源——见 teardown_pane_state_maps)。
+                    // 以互斥字段引用传入,因为 `tab` 借用 self.windows,
+                    // 挡住了 `&mut self` 调用。窗格 id 绝不复用,因此
+                    // 漏掉的映射会泄漏整个会话。
                     teardown_pane_state_maps(
                         &mut self.pane_cwds,
                         &mut self.pane_osc_title,
@@ -8813,16 +8813,16 @@ impl PureTermApp {
                         &mut self.pane_block_stores,
                         pane_id,
                     );
-                    // GAP-02 (global card): dismiss only if it points at this
-                    // pane. Inlined rather than a &mut self method so it touches
-                    // only disjoint fields while `tab` borrows self.windows.
+                    // GAP-02(全局卡片):仅当指向本窗格时才关闭。
+                    // 内联而非 &mut self 方法,使其在 `tab` 借用
+                    // self.windows 时只触碰互斥字段。
                     if self.error_recovery.dismiss_for_pane(pane_id.0) {
                         if let Some(c) = self.error_recovery_cancel.take() {
                             c.notify_one();
                         }
                     }
                     tab.active_pane = new_active;
-                    // Resize remaining panes
+                    // resize 剩余窗格
                     let layout = tab.split_tree.compute_layout(
                         0.0, 0.0, terminal_w, terminal_height,
                     );
@@ -8876,43 +8876,43 @@ impl PureTermApp {
                     self.command_palette = None;
                     return Task::none();
                 }
-                // GAP-32: Escape closes the Git overlay panel.
+                // GAP-32:Escape 关闭 Git 浮层面板。
                 if self.git_panel.open {
                     self.git_panel.close();
                     return Task::none();
                 }
-                // GAP-09: Escape closes the Notifications overlay panel.
+                // GAP-09:Escape 关闭通知浮层面板。
                 if self.notification_panel.open {
                     self.notification_panel.close();
                     return Task::none();
                 }
-                // GAP-01: Escape closes the AI Chat panel.
+                // GAP-01:Escape 关闭 AI 聊天面板。
                 if self.ai_chat_panel.open {
                     self.abort_inflight_chat();
                     self.ai_chat_panel.close();
                     return Task::none();
                 }
-                // GAP-4.1: Escape in vi mode → close search bar first, then exit visual/vi mode
+                // GAP-4.1:vi 模式中的 Escape → 先关搜索栏,再退出 visual/vi 模式
                 if self.vi_search.is_some() {
                     return Task::done(Message::ViSearchClose);
                 }
-                // GAP-3.5: Escape closes the ⌘L address-bar overlay.
+                // GAP-3.5:Escape 关闭 ⌘L 地址栏浮层。
                 if self.address_bar.is_some() {
                     self.address_bar = None;
                     return Task::none();
                 }
-                // GAP-3.8: Escape closes the ⌘F surface-search overlay.
+                // GAP-3.8:Escape 关闭 ⌘F surface 搜索浮层。
                 if self.surface_search.is_some() {
                     self.close_surface_search();
                     return Task::none();
                 }
-                // GAP-3.8: Escape closes the ⌘⇧F directory-search overlay.
+                // GAP-3.8:Escape 关闭 ⌘⇧F 目录搜索浮层。
                 if self.dir_search.is_some() {
                     self.dir_search = None;
                     return Task::none();
                 }
                 if self.is_vi_mode_active() {
-                    // Collect vi sub-mode snapshot and terminal ctx first
+                    // 先收集 vi 子模式快照与终端上下文
                     let vi_sub = self.active_tab_ref().and_then(|t| t.vi_sub_mode);
                     let ctx_opt = self.active_terminal_ctx();
                     if let (Some(mut sub_mode), Some(ctx)) = (vi_sub, ctx_opt) {
@@ -8926,7 +8926,7 @@ impl PureTermApp {
                                 tab.vi_sub_mode = None;
                             }
                         } else {
-                            // Sub-mode changed (e.g. Visual → Normal)
+                            // 子模式变化(如 Visual → Normal)
                             if let Some(tab) = self.active_tab_mut() {
                                 tab.vi_sub_mode = Some(sub_mode);
                             }
@@ -8934,12 +8934,12 @@ impl PureTermApp {
                     }
                     return Task::none();
                 }
-                // Fall through to send Escape to PTY
+                // 贯穿落下,把 Escape 发给 PTY
                 if let Some(ctx) = self.active_terminal_ctx() {
                     ctx.write_to_pty(b"\x1b");
                 }
             }
-            // Command palette arrow navigation
+            // 命令面板方向键导航
             KEvent::KeyPressed { key: Key::Named(Named::ArrowDown), .. }
                 if self.command_palette.is_some() =>
             {
@@ -8950,7 +8950,7 @@ impl PureTermApp {
             {
                 return Task::done(Message::CommandPaletteUp);
             }
-            // SSH dialog arrow navigation
+            // SSH 对话框方向键导航
             #[cfg(unix)]
             KEvent::KeyPressed { key: Key::Named(Named::ArrowDown), .. }
                 if self.ssh_dialog.is_some() =>
@@ -9027,21 +9027,21 @@ impl PureTermApp {
                 if self.renaming_tab.is_some() {
                     return Task::done(Message::RenameConfirmed);
                 }
-                // Command palette Enter
+                // 命令面板回车
                 if self.command_palette.is_some() {
                     return Task::done(Message::CommandPaletteEnter);
                 }
-                // GAP-4.1: Vi search Enter — confirm search
+                // GAP-4.1:Vi 搜索回车——确认搜索
                 if self.vi_search.is_some() {
                     return Task::done(Message::ViSearchConfirm);
                 }
-                // SSH dialog Enter — connect to selected profile
+                // SSH 对话框回车——连接所选配置档
                 #[cfg(unix)]
                 if let Some(ref dialog) = self.ssh_dialog {
                     let selected = dialog.selected;
                     return Task::done(Message::SshConnect(selected));
                 }
-                // Fall through to send Enter to PTY
+                // 贯穿落下,把回车发给 PTY
                 if let Some(task) = self.try_natural_language_enter() {
                     return task;
                 }
@@ -9050,9 +9050,9 @@ impl PureTermApp {
                 }
             }
             KEvent::KeyPressed { key, text, modifiers, .. } => {
-                // Prevent keystrokes from reaching PTY when overlays are active.
-                // Cmd+shortcuts are still processed below so the user can
-                // toggle overlays with ⌘⇧S / ⌘⇧P even when another overlay is open.
+                // 浮层激活时阻止按键到达 PTY。
+                // 下方的 Cmd+ 快捷键仍被处理,使用户能在
+                // 别的浮层开着时仍用 ⌘⇧S / ⌘⇧P 切换浮层。
                 if !modifiers.command()
                     && (self.ssh_dialog.is_some()
                         || self.ssh_settings.is_some()
@@ -9067,7 +9067,7 @@ impl PureTermApp {
                         || self.address_bar.is_some()
                         || self.ai_chat_panel.open)
                 {
-                    // GAP-4.1: Forward printable text to vi search bar
+                    // GAP-4.1:把可打印文本转发给 vi 搜索栏
                     if self.vi_search.is_some() {
                         if let Some(t) = text.as_deref() {
                             if !t.is_empty() {
@@ -9078,17 +9078,17 @@ impl PureTermApp {
                     return Task::none();
                 }
 
-                // IME composing: skip PTY write for intermediate Latin keys.
-                // The final composed text arrives via InputMethod::Commit.
-                // Allow Cmd+ shortcuts through even during composition.
+                // IME 组合中:跳过中间态拉丁键的 PTY 写入。
+                // 最终组合文本经 InputMethod::Commit 到达。
+                // 组合期间也放行 Cmd+ 快捷键。
                 if self.ime_composing && !modifiers.command() {
                     return Task::none();
                 }
 
-                // GAP-4.1: Vi mode keyboard interception.
-                // When vi mode is active, interpret keystrokes as vi motions
-                // instead of forwarding to PTY. Allow Cmd+ shortcuts through
-                // (so user can still ⌘C copy, ⌘V paste, ⌘⇧P palette, etc.).
+                // GAP-4.1:Vi 模式键盘拦截。
+                // vi 模式激活时把按键解释为 vi 移动命令,
+                // 而非转发给 PTY。Cmd+ 快捷键仍放行
+                //(用户仍可 ⌘C 复制、⌘V 粘贴、⌘⇧P 面板等)。
                 if self.is_vi_mode_active() && !modifiers.command() {
                     let vi_sub = self.active_tab_ref().and_then(|t| t.vi_sub_mode);
                     let ctx_opt = self.active_terminal_ctx();
@@ -9112,20 +9112,20 @@ impl PureTermApp {
                                 }
                             }
                             crate::vi_mode_handler::ViAction::MotionApplied => {
-                                // Update sub-mode in case it changed
+                                // 子模式若变化则更新
                                 if let Some(tab) = self.active_tab_mut() {
                                     tab.vi_sub_mode = Some(sub_mode);
                                 }
                             }
                             crate::vi_mode_handler::ViAction::EnterSearch(direction) => {
-                                // Open vi search bar
+                                // 打开 vi 搜索栏
                                 self.vi_search = Some(ViSearchState {
                                     query: String::new(),
                                     direction,
                                 });
                             }
                             crate::vi_mode_handler::ViAction::SearchNavigate(forward) => {
-                                // Jump to next/prev search match (only if search is active)
+                                // 跳到下一个/上一个搜索匹配(仅搜索激活时)
                                 if self.vi_search.is_some() {
                                     return Task::done(Message::ViSearchConfirm);
                                 }
@@ -9136,29 +9136,29 @@ impl PureTermApp {
                     }
                 }
 
-                // GAP-3.7: Keymap lookup replaces the inline match dispatch.
-                // The keymap bindings table exactly reproduces the old
-                // hardcoded behaviour, but is config-driven and overridable.
+                // GAP-3.7:键位表查找取代内联匹配分派。
+                // 键位表精确复刻旧的硬编码行为,
+                // 但由配置驱动、可覆盖。
                 let now = std::time::Instant::now();
                 match self.keymap.resolve(&key, modifiers, now) {
                     ResolveResult::Action(action) | ResolveResult::ChordAction(action) => {
                         return self.dispatch_action(action);
                     }
                     ResolveResult::ChordPending => {
-                        // Chord prefix accepted — swallow the key.
+                        // 和弦前缀被接受——吞掉该键。
                         return Task::none();
                     }
                     ResolveResult::Passthrough => {
-                        // No binding matched — fall through to PTY passthrough.
+                        // 无绑定命中——贯穿到 PTY 直通。
                     }
                 }
 
-                // PTY passthrough: no keymap binding matched.
+                // PTY 直通:无键位表绑定命中。
                 if let Some(ctx) = self.active_terminal_ctx() {
                     let bytes = self.key_to_bytes(&key, text.as_deref(), modifiers);
                     if !bytes.is_empty() {
                         ctx.write_to_pty(&bytes);
-                        // GAP-13: duplicate input to sibling panes when broadcasting.
+                        // GAP-13:广播时把输入复制到兄弟窗格。
                         if self.broadcast_cfg.enabled && self.broadcast.enabled {
                             if let (Some(win), Some(tab)) =
                                 (self.active_window(), self.active_tab_ref())
@@ -9193,13 +9193,13 @@ impl PureTermApp {
         Task::none()
     }
 
-    /// GAP-32: run a quick git action from the panel button row. Writes the
-    /// command into the focused pane's PTY (so it runs in-pane). lazygit on an
-    /// SSH pane is deferred (different notifier path); a missing `lazygit` or
-    /// `gh` binary toasts instead of writing. The panel stays open for the
-    /// in-pane actions (`add`/`commit`/`push`/`pull`/`create pr`) and closes
-    /// for lazygit (its TUI needs the pane visible). The command table itself
-    /// lives in the pure, unit-tested [`git_quick_action_command`].
+    /// GAP-32:运行面板按钮行的 git 快捷操作。把命令写入
+    /// 聚焦窗格的 PTY(因此在窗格内运行)。SSH 窗格上的 lazygit
+    /// 被推迟(通知器路径不同);缺少 `lazygit` 或
+    /// `gh` 二进制时弹 toast 而非写入。面板为窗格内动作
+    ///(`add`/`commit`/`push`/`pull`/`create pr`)保持打开,为
+    /// lazygit 关闭(其 TUI 需要窗格可见)。命令表本身在
+    /// 纯净、已单测的 [`git_quick_action_command`] 中。
     fn run_git_quick_action(
         &mut self,
         action: crate::git_panel::GitQuickAction,
@@ -9208,16 +9208,16 @@ impl PureTermApp {
         let Some(ctx) = self.active_terminal_ctx() else {
             return Task::done(Message::Toast("No active pane.".to_string()));
         };
-        // GAP-32 EventBus: every quick action is recorded (user-initiated, so
-        // this is bounded — never emitted on the per-tick status path).
+        // GAP-32 EventBus:每个快捷动作都被记录(用户发起,
+        // 因而有界——绝不从逐 tick 状态路径发出)。
         self.events.emit(
             crate::events::Category::Git,
             "git.quick_action",
             None,
             serde_json::json!({ "action": action.as_slug() }),
         );
-        // Side-effecting guards for the two binary-backed actions (need app
-        // state + toasts). The pure command table covers the in-pane commands.
+        // 两个依赖外部二进制动作的副作用守卫(需要应用
+        // 状态 + toast)。窗格内命令由纯命令表覆盖。
         match action {
             GitQuickAction::Lazygit => {
                 if ctx.is_ssh() {
@@ -9235,7 +9235,7 @@ impl PureTermApp {
                         "{bin} not installed — try `brew install lazygit`."
                     )));
                 }
-                // The TUI needs the pane visible.
+                // TUI 需要窗格可见。
                 self.git_panel.close();
             }
             GitQuickAction::CreatePr => {
@@ -9255,13 +9255,13 @@ impl PureTermApp {
         Task::none()
     }
 
-    /// GAP-3.7: Convert an `Action` to the corresponding `Task<Message>`.
+    /// GAP-3.7:把 `Action` 转换为对应的 `Task<Message>`。
     ///
-    /// This is the unified dispatch path shared by keyboard shortcuts,
-    /// command palette, and context menu. The actual business logic
-    /// lives in the `update()` match arms; this method only produces
-    /// the appropriate `Message` variant.
-    /// GAP-02: start (or restart) LLM analysis for a command failure.
+    /// 这是键盘快捷键、命令面板与右键菜单共享的
+    /// 统一分派路径。实际业务逻辑在 `update()` 的
+    /// match 分支里;本方法只产出适当的
+    /// `Message` 变体。
+    /// GAP-02:为命令失败启动(或重启)LLM 分析。
     fn begin_error_recovery(
         &mut self,
         failure: crate::error_recovery::FailureContext,
@@ -9299,7 +9299,7 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-08: start LLM shell-command generation for a `# description` input.
+    /// GAP-08:为 `# 描述` 输入启动 LLM shell 命令生成。
     fn begin_natural_language(
         &mut self,
         ctx: crate::natural_language::NlContext,
@@ -9325,8 +9325,8 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-08: if the active pane input line is `# description`, clear it and
-    /// start natural-language command generation instead of executing.
+    /// GAP-08:活动窗格输入行是 `# 描述` 时,清除它并
+    /// 启动自然语言命令生成,而非直接执行。
     fn try_natural_language_enter(&mut self) -> Option<Task<Message>> {
         if !self.natural_language_cfg.enabled {
             return None;
@@ -9347,7 +9347,7 @@ impl PureTermApp {
         Some(self.begin_natural_language(nl_ctx))
     }
 
-    /// GAP-4.2: detect previewable smart-selection target under the pane cursor.
+    /// GAP-4.2:检测窗格光标下可预览的智能选区目标。
     fn hover_target_at_pane(&self, pane_id: PaneId) -> Option<crate::hover_preview::HoverTarget> {
         let ctx = self
             .tabs()
@@ -9369,7 +9369,7 @@ impl PureTermApp {
         ))
     }
 
-    /// GAP-36: file:line target at cursor (smart selection + compiler paths).
+    /// GAP-36:光标处的 file:line 目标(智能选区 + 编译器路径)。
     fn semantic_target_at_pane(&self, pane_id: PaneId) -> Option<crate::hover_preview::HoverTarget> {
         let ctx = self
             .tabs()
@@ -9386,7 +9386,7 @@ impl PureTermApp {
         crate::hover_preview::semantic_target_at_point(&*term, pane_id.0, point)
     }
 
-    /// GAP-4.2: debounce hover preview on pane mouse move.
+    /// GAP-4.2:窗格鼠标移动时对悬停预览去抖。
     fn handle_hover_preview_move(&mut self, pane_id: PaneId) -> Task<Message> {
         if self.vi_search.is_some()
             || self.surface_search.is_some()
@@ -9411,11 +9411,11 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-01: cancel any in-flight chat turn and clear the panel's streaming
-    /// flag. Shared by panel-close (toggle + Escape) and Stop, so (a) the three
-    /// call sites can't drift out of sync, and (b) a late `AiChatChunk` racing
-    /// in after the close is dropped by `apply_chunk`'s gen guard instead of
-    /// writing into the now-hidden assistant placeholder.
+    /// GAP-01:取消在途的聊天轮次并清除面板的流式
+    /// 标志。面板关闭(切换 + Escape)与 Stop 共用,因此 (a) 三处
+    /// 调用点不会漂移;(b) 关闭后竞速到达的迟到 `AiChatChunk`
+    /// 被 `apply_chunk` 的代际守卫丢弃,而不是写进
+    /// 现已隐藏的助手占位符。
     fn abort_inflight_chat(&mut self) {
         if let Some(c) = self.ai_chat_cancel.take() {
             c.notify_one();
@@ -9423,7 +9423,7 @@ impl PureTermApp {
         self.ai_chat_panel.stop_streaming();
     }
 
-    /// GAP-01: send the chat input as a new turn with active-pane context.
+    /// GAP-01:以活动窗格上下文把聊天输入作为新轮次发送。
     fn send_ai_chat_message(&mut self) -> Task<Message> {
         let user_text = self.ai_chat_panel.input.trim().to_string();
         if user_text.is_empty() || self.ai_chat_panel.is_streaming() {
@@ -9480,7 +9480,7 @@ impl PureTermApp {
             }
             Action::CloseTab => Task::done(Message::CloseTab(self.active_tab_id())),
             Action::ClosePaneOrTab => {
-                // Context-dependent: close pane first; if last pane, close tab
+                // 视上下文:先关窗格;若是最后一个窗格,关标签页
                 let has_multiple_panes = self
                     .active_tab_ref()
                     .map(|t| t.panes.len() > 1)
@@ -9497,17 +9497,17 @@ impl PureTermApp {
             Action::MovePaneToNewTab => Task::done(Message::MovePaneToNewTab),
             Action::MovePaneToNewWindow => Task::done(Message::MovePaneToNewWindow),
             Action::NewWindow => Task::done(Message::NewWindow),
-            // GAP-2.1 Workspace
+            // GAP-2.1 工作区
             Action::NewWorkspace => Task::done(Message::NewWorkspace),
             Action::NextWorkspace => Task::done(Message::NextWorkspace),
             Action::PrevWorkspace => Task::done(Message::PrevWorkspace),
             Action::ActivateWorkspaceByIndex(i) => Task::done(Message::ActivateWorkspaceByIndex(i)),
 
-            // Split pane
+            // 拆分窗格
             Action::SplitHorizontal => Task::done(Message::SplitHorizontal),
             Action::SplitVertical => Task::done(Message::SplitVertical),
-            // GAP-3.5: split a new Web pane + focus the address bar so the
-            // user types a URL immediately. Direct call (mirrors NewTab).
+            // GAP-3.5:拆出新 Web 窗格并聚焦地址栏,使用户
+            // 立即输入 URL。直接调用(镜像 NewTab)。
             Action::SplitWeb => {
                 if let Some(new_id) = self.spawn_web_pane(SplitDirection::Horizontal, String::new()) {
                     self.address_bar = Some(AddressBarState {
@@ -9530,7 +9530,7 @@ impl PureTermApp {
                 Task::none()
             }
 
-            // Clipboard
+            // 剪贴板
             Action::ClipboardPaste => {
                 let text = std::panic::catch_unwind(|| {
                     arboard::Clipboard::new()
@@ -9548,7 +9548,7 @@ impl PureTermApp {
             Action::ClipboardCopy => Task::done(Message::ClipboardCopy),
             Action::SelectAll => Task::done(Message::SelectAll),
 
-            // Dialogs
+            // 对话框
             Action::OpenSshDialog => {
                 #[cfg(unix)]
                 {
@@ -9561,14 +9561,14 @@ impl PureTermApp {
             }
             Action::OpenCommandPalette => Task::done(Message::OpenCommandPalette),
             Action::OpenSettings => Task::done(Message::OpenSettings),
-            // GAP-3.5: ⌘L address bar.
+            // GAP-3.5:⌘L 地址栏。
             Action::FocusAddressBar => Task::done(Message::AddressBarOpen),
-            // GAP-32: ⌘⇧B Git panel / lazygit.
+            // GAP-32:⌘⇧B Git 面板 / lazygit。
             Action::ToggleGitPanel => Task::done(Message::ToggleGitPanel),
             Action::ToggleLeftSidebar => Task::done(Message::ToggleLeftSidebar),
             Action::ToggleRightSidebar => Task::done(Message::ToggleRightSidebar),
             Action::SidebarRightMode(m) => Task::done(Message::SidebarRightMode(m)),
-            // GAP-09: ⌘⇧M Notifications panel.
+            // GAP-09:⌘⇧M 通知面板。
             Action::ToggleNotificationsPanel => Task::done(Message::ToggleNotificationsPanel),
             Action::ErrorRecoveryToggle => Task::done(Message::ErrorRecoveryToggle),
             Action::ToggleInstantReplay => Task::done(Message::ToggleInstantReplay),
@@ -9586,19 +9586,19 @@ impl PureTermApp {
                 Task::done(Message::GitQuickAction(crate::git_panel::GitQuickAction::Lazygit))
             }
 
-            // Font / window — not yet wired, no-op
+            // 字体 / 窗口——尚未接线,空操作
             Action::IncreaseFontSize
             | Action::DecreaseFontSize
             | Action::ResetFontSize
             | Action::ToggleFullscreen
             | Action::SpawnNewInstance => Task::none(),
 
-            // GAP-4.1 Vi / Copy mode
+            // GAP-4.1 Vi / 复制模式
             Action::ToggleViMode => Task::done(Message::ToggleViMode),
 
-            // GAP-3.8 / GAP-4.3: surface search overlay
+            // GAP-3.8 / GAP-4.3:surface 搜索浮层
             Action::SearchForward => Task::done(Message::SurfaceSearchOpen),
-            // ⌘⇧F ripgrep directory search (GAP-3.8).
+            // ⌘⇧F ripgrep 目录搜索(GAP-3.8)。
             Action::SearchInDirectory => Task::done(Message::DirSearchOpen),
             Action::SearchNext => Task::done(Message::SurfaceSearchNext),
             Action::SearchPrev => Task::done(Message::SurfaceSearchPrev),
@@ -9608,9 +9608,9 @@ impl PureTermApp {
             Action::SearchToggleWholeWord => Task::done(Message::SurfaceSearchToggleWholeWord),
             Action::SearchToggleFollow => Task::done(Message::SurfaceSearchToggleFollow),
 
-            // GAP-6.4: write `command + Enter` into the active pane's PTY.
-            // Runs in the pane's shell/CWD (like mainstream terminal
-            // snippets / tmux send-keys); output is visible. No new process management.
+            // GAP-6.4:把 `命令 + 回车` 写入活动窗格的 PTY。
+            // 在窗格的 shell/CWD 中运行(同主流终端的
+            /// snippets / tmux send-keys);输出可见。不新增进程管理。
             Action::CustomCommand(id) => {
                 if let Some(cmd) = self.custom_commands.iter().find(|c| c.id == id) {
                     if let Some(ctx) = self.active_terminal_ctx() {
@@ -9690,12 +9690,12 @@ impl PureTermApp {
         }
     }
 
-    /// Handle a mouse wheel event over the terminal area.
+    /// 处理终端区域上的鼠标滚轮事件。
     ///
-    /// Mirrors the priority chain in Alacritty's `scroll_terminal`:
-    /// 1. Mouse protocol mode → encode scroll as button 64/65/66/67 reports
-    /// 2. Alternate screen + alternate scroll → send cursor-key escape sequences
-    /// 3. Normal mode → scroll the grid display offset (scrollback)
+    /// 镜像 Alacritty `scroll_terminal` 的优先级链:
+    /// 1. 鼠标协议模式 → 把滚动编码为按钮 64/65/66/67 报告
+    /// 2. 备用屏 + 备用滚动 → 发送方向键转义序列
+    /// 3. 普通模式 → 滚动网格显示偏移(回滚)
     fn handle_scroll(&mut self, delta: iced::mouse::ScrollDelta) {
         let Some(ctx) = self.active_terminal_ctx() else {
             return;
@@ -9709,7 +9709,7 @@ impl PureTermApp {
             return;
         }
 
-        // Normalize to a signed pixel delta. Iced/winit convention: positive y = scroll UP.
+        // 归一化为带符号的像素增量。Iced/winit 约定:y 为正 = 向上滚。
         let (delta_x_px, delta_y_px) = match delta {
             iced::mouse::ScrollDelta::Lines { x, y } => (x * cell_width, y * cell_height),
             iced::mouse::ScrollDelta::Pixels { x, y } => (x, y),
@@ -9724,14 +9724,14 @@ impl PureTermApp {
         let is_scroll_up = delta_y_px > 0.0;
         let is_scroll_left = delta_x_px > 0.0;
 
-        // Snapshot the current mode. Lock with `lock_unfair` to avoid blocking the
-        // PTY reader thread; release before writing to the PTY to prevent reentry.
+        // 快照当前模式。用 `lock_unfair` 加锁以免阻塞 PTY
+        // 读线程;写 PTY 前释放以防重入。
         let mode = *ctx.terminal().lock_unfair().mode();
 
         if mode.intersects(TermMode::MOUSE_MODE) {
-            // Path 1: forward as mouse report. last_cursor_pos is widget-relative
-            // (set by the terminal mouse_area's on_move), so dividing by cell size
-            // gives terminal cell coordinates directly.
+            // 路径 1:作为鼠标报告转发。last_cursor_pos 是组件相对
+            // 坐标(由终端 mouse_area 的 on_move 设置),除以单元格尺寸
+            // 直接得到终端单元格坐标。
             let pos = self.last_cursor_pos;
             let col = (pos.x / cell_width).floor().max(0.0) as usize;
             let row = (pos.y / cell_height).floor().max(0.0) as usize;
@@ -9752,8 +9752,8 @@ impl PureTermApp {
                 ctx.write_to_pty(&bytes);
             }
         } else if mode.contains(TermMode::ALT_SCREEN | TermMode::ALTERNATE_SCROLL) {
-            // Path 2: convert to cursor-key escape sequences. This is what
-            // Claude Code CLI / vim / less expect in alternate screen mode.
+            // 路径 2:转换为方向键转义序列。这正是 Claude Code
+            // CLI / vim / less 在备用屏模式下期望的。
             let line_cmd = if is_scroll_up { b'A' } else { b'B' };
             let col_cmd = if is_scroll_left { b'D' } else { b'C' };
 
@@ -9770,8 +9770,8 @@ impl PureTermApp {
             }
             ctx.write_to_pty(&content);
         } else if lines != 0 {
-            // Path 3: scroll the display offset (history) on the primary screen.
-            // GAP-4.3: a user-initiated scroll cancels tail-follow.
+            // 路径 3:在主屏上滚动显示偏移(历史)。
+            // GAP-4.3:用户主动滚动取消尾部跟随。
             if let Some(ref mut s) = self.surface_search {
                 s.follow_tail = false;
             }
@@ -9781,11 +9781,11 @@ impl PureTermApp {
         }
     }
 
-    /// Append one mouse-report escape sequence to `bytes` using either SGR
-    /// encoding (mode 1006) or the legacy X10 normal encoding.
+    /// 用 SGR 编码(模式 1006)或旧式 X10 普通编码,
+    /// 把一条鼠标报告转义序列追加到 `bytes`。
     fn encode_mouse_report(bytes: &mut Vec<u8>, mode: TermMode, point: TermPoint, button: u8) {
         if mode.contains(TermMode::SGR_MOUSE) {
-            // \x1b[<button;col;rowM
+            // 形如 \x1b[<button;col;rowM 的序列。
             let msg = format!(
                 "\x1b[<{};{};{}M",
                 button,
@@ -9794,7 +9794,7 @@ impl PureTermApp {
             );
             bytes.extend_from_slice(msg.as_bytes());
         } else {
-            // \x1b[M<button+32><col+33><row+33>
+            // 旧式编码形如 \x1b[M<button+32><col+33><row+33>。
             let col_byte = 32u16.saturating_add(1).saturating_add(point.column.0 as u16).min(255) as u8;
             let line_byte = 32u16.saturating_add(1).saturating_add(point.line.0.max(0) as u16).min(255) as u8;
             bytes.push(0x1b);
@@ -9806,11 +9806,11 @@ impl PureTermApp {
         }
     }
 
-    // ── Split pane helpers ──────────────────────────────────────────
+    // ── 拆分窗格辅助 ──────────────────────────────────────────────────────
 
-    /// Reload config from disk and apply all side effects (locale, SSH
-    /// profiles, font + grid resize).  Shared by `ConfigReloaded` (file
-    /// watcher) and `Settings(SavedAt)` (embedded settings save).
+    /// 从磁盘重载配置并应用全部副作用(locale、SSH
+    /// 配置档、字体 + 网格 resize)。由 `ConfigReloaded`(文件
+    /// 监视器)与 `Settings(SavedAt)`(内嵌设置保存)共用。
     fn apply_config_reload(&mut self) {
         let new_config = AppConfig::load(&self.config_path);
         let font_changed = new_config.font_family != self.config.font_family
@@ -9820,7 +9820,7 @@ impl PureTermApp {
         }
         self.config = new_config;
 
-        // GAP-6.7: config was reloaded from disk.
+        // GAP-6.7:配置已从磁盘重载。
         self.events.emit(
             crate::events::Category::Config,
             "config.reloaded",
@@ -9828,10 +9828,10 @@ impl PureTermApp {
             serde_json::json!({}),
         );
 
-        // Reload SSH profiles. If the user has the settings
-        // panel open and is mid-edit, prefer the panel's
-        // drafts (which are local edits) over the file's
-        // contents — but only when drafts are non-empty.
+        // 重载 SSH 配置档。若用户正开着设置
+        // 面板且编辑到一半,优先用面板的
+        /// 草稿(本地编辑)而非文件内容——
+        // 但仅当草稿非空。
         #[cfg(unix)]
         {
             let loaded = AppConfig::load_ssh_profiles(&self.config_path);
@@ -9845,31 +9845,31 @@ impl PureTermApp {
             }
         }
 
-        // GAP-7.3/7.5: reload hibernation thresholds + vault agent registry.
+        // GAP-7.3/7.5:重载休眠阈值 + vault agent 注册表。
         #[cfg(unix)]
         {
             self.hibernation_cfg = AppConfig::load_agent_hibernation(&self.config_path);
             self.vault_agents = AppConfig::load_vault_agents(&self.config_path);
         }
 
-        // GAP-24: reload status-bar config; rebuild the registry only if the
-        // component list or sparkline toggle changed (the publisher's ring
-        // buffer survives and repopulates new components on the next tick).
+        // GAP-24:重载状态栏配置;仅在组件列表或 sparkline
+        // 开关变化时重建注册表(发布者的环形
+        // 缓冲存活,下一 tick 重新填充新组件)。
         let new_sb = AppConfig::load_statusbar(&self.config_path);
         let rebuild = new_sb.components != self.status_bar_cfg.components
             || new_sb.show_sparklines != self.status_bar_cfg.show_sparklines;
         self.status_bar_cfg = new_sb;
-        // GAP-32: reload `[git]` config (panel toggle / PR refresh / lazygit cmd).
+        // GAP-32:重载 `[git]` 配置(面板切换 / PR 刷新 / lazygit 命令)。
         self.git_cfg = AppConfig::load_git(&self.config_path);
         self.sidebar_cfg = AppConfig::load_sidebar(&self.config_path);
-        // GAP-15: reload `[shell_integration]` config.
+        // GAP-15:重载 `[shell_integration]` 配置。
         self.shell_integration_cfg = AppConfig::load_shell_integration(&self.config_path);
-        // GAP-10: reload `[[triggers]]` rules (regex recompiled on load).
+        // GAP-10:重载 `[[triggers]]` 规则(加载时重编译正则)。
         self.triggers_cfg = AppConfig::load_triggers(&self.config_path);
         self.allow_exec_on_remote = AppConfig::load_allow_exec_on_remote(&self.config_path);
-        // GAP-09: reload `[notification]` config; if desktop toasts were
-        // (re)enabled, (re)request authorization (idempotent — system prompts
-        // only once).
+        // GAP-09:重载 `[notification]` 配置;桌面通知被(重新)
+        // 启用时(重新)请求授权(幂等——系统只提示
+        // 一次)。
         self.notification_cfg = AppConfig::load_notification(&self.config_path);
         self.url_scheme_cfg = AppConfig::load_url_scheme(&self.config_path);
         self.error_recovery_cfg = AppConfig::load_error_recovery(&self.config_path);
@@ -9932,29 +9932,29 @@ impl PureTermApp {
             }
         }
 
-        // GAP-3.7: Reload keybindings from [[keyboard.bindings]].
+        // GAP-3.7:从 [[keyboard.bindings]] 重载键绑定。
         let raw = AppConfig::load_keybindings(&self.config_path);
         let defaults = Keymap::from_defaults();
         self.keymap = Keymap::from_toml_overrides(&raw, &defaults);
 
-        // GAP-6.4: Reload [[commands]]. `from_toml_overrides` above built a
-        // fresh keymap from defaults + overrides, so stale custom bindings
-        // from the previous config are already gone — just re-register the
-        // new set. Also updates `self.custom_commands` so the palette sees
-        // any added/removed/renamed entries.
+        // GAP-6.4:重载 [[commands]]。上方的 `from_toml_overrides` 已从
+        // 默认 + 覆盖构建了全新键位表,旧配置的过期自定义
+        // 绑定已消失——只需重新注册
+        // 新集合。同时更新 `self.custom_commands`,使面板看到
+        // 任何增/删/改名的条目。
         self.custom_commands = AppConfig::load_custom_commands(&self.config_path);
         self.keymap.register_custom_commands(&self.custom_commands);
     }
 
-    /// GAP-6.1: Execute a side effect returned by a Socket API write method.
+    /// GAP-6.1:执行 Socket API 写方法返回的副作用。
     ///
-    /// Called from `Message::Ipc` after the response has been sent. Maps each
-    /// `IpcSideEffect` variant to the corresponding internal action or `Task`,
-    /// mirroring the equivalent keyboard-driven `Message` handler.
+    /// 由 `Message::Ipc` 在响应发出后调用。把每个
+    /// `IpcSideEffect` 变体映射到对应的内部动作或 `Task`,
+    /// 镜像等价的键盘驱动 `Message` 处理器。
     fn execute_ipc_side_effect(&mut self, fx: crate::ipc::IpcSideEffect) -> Task<Message> {
         use crate::ipc::IpcSideEffect as Fx;
         match fx {
-            // ── Tab operations ──
+            // ── 标签页操作 ───────────
             Fx::NewTab => {
                 let new_id = self.create_tab(self.terminal_viewport_width(), self.viewport_size.height);
                 self.set_active_tab(new_id);
@@ -9976,7 +9976,7 @@ impl PureTermApp {
                     Task::none()
                 }
             }
-            // ── Split / pane operations ──
+            // ── 拆分 / 窗格操作 ────────────────
             Fx::SplitHorizontal => {
                 self.split_pane(SplitDirection::Horizontal);
                 Task::none()
@@ -9985,7 +9985,7 @@ impl PureTermApp {
                 self.split_pane(SplitDirection::Vertical);
                 Task::none()
             }
-            // GAP-3.5: open the new pane as a web pane (wry WebView).
+            // GAP-3.5:把新窗格开为 web 窗格(wry WebView)。
             Fx::SplitPaneWeb { direction, url } => {
                 self.spawn_web_pane(direction, url);
                 Task::none()
@@ -9999,7 +9999,7 @@ impl PureTermApp {
             Fx::EqualizeSplits => Task::done(Message::EqualizeSplits),
             Fx::FocusNextPane => Task::done(Message::FocusPaneInOrder(1)),
             Fx::FocusPrevPane => Task::done(Message::FocusPaneInOrder(-1)),
-            // ── GAP-6.6: tmux-compatible layout ops ──
+            // ── GAP-6.6:tmux 兼容的布局操作 ─────────────────
             Fx::ResizePane { pane_id, delta_ratio } => {
                 self.apply_resize_pane(pane_id, delta_ratio);
                 Task::none()
@@ -10013,7 +10013,7 @@ impl PureTermApp {
                 Task::none()
             }
             Fx::DetachPane { pane_id } => {
-                // Make the target pane active, then reuse the break-pane path.
+                // 先让目标窗格变为活动,再复用 break-pane 路径。
                 if let Some(id) = pane_id {
                     self.make_pane_active(PaneId(id));
                 }
@@ -10028,12 +10028,12 @@ impl PureTermApp {
                 self.apply_pipe_pane(pane_id, command);
                 Task::none()
             }
-            // ── Config ──
+            // ── 配置 ──────
             Fx::ReloadConfig => {
                 self.apply_config_reload();
                 Task::none()
             }
-            // ── SSH ──
+            // SSH 连接───
             #[cfg(unix)]
             Fx::SshConnect { profile_index } => {
                 if self.ssh_manager.is_none() {
@@ -10061,10 +10061,10 @@ impl PureTermApp {
             }
             #[cfg(unix)]
             Fx::SshDisconnect { pane_id } => {
-                // GAP-5.6: flag the pane user-initiated-close BEFORE writing
-                // exit\r (order is load-bearing: the exit handler checks the
-                // flag to decide whether to auto-reconnect), then ask the
-                // remote shell to exit cleanly. None ⇒ active pane.
+                // GAP-5.6:在写入 exit\r **之前**给窗格打上用户主动关闭
+                // 标志(顺序是承重的:退出处理器靠该标志决定是否自动
+                // 重连),然后请求远端 shell 干净退出。None ⇒ 活动窗格。
+                // 远端 shell 干净退出。None ⇒ 活动窗格。
                 // 进入 Disconnected 终态并 emit ssh.state_changed → disconnected
                 // (Vanish 语义:状态机/事件流忠实反映断开,随后走现有 teardown
                 // 移除 pane;重连被 user_initiated_close 标志正确抑制)。
@@ -10090,10 +10090,10 @@ impl PureTermApp {
             }
             #[cfg(unix)]
             Fx::SendText { pane_id, text } => {
-                // GAP-7.9: write `text` into the resolved pane's PTY. Same
-                // pane-resolution shape as `SshDisconnect`; fire-and-forget.
-                // `write_to_pty` is a non-blocking channel send to the PTY IO
-                // thread, so this stays off the hot path.
+                // GAP-7.9:把 `text` 写入解析出的窗格 PTY。窗格解析
+                // 形状与 `SshDisconnect` 相同;发后即忘。
+                // `write_to_pty` 是发往 PTY IO 线程的非阻塞通道
+                // 发送,因此不占热路径。
                 let ctx = match pane_id {
                     Some(id) => self.pane_terminal_ctx(PaneId(id)),
                     None => self.active_terminal_ctx(),
@@ -10105,14 +10105,14 @@ impl PureTermApp {
             }
             #[cfg(unix)]
             Fx::FeedClearSession { session_id } => {
-                // GAP-7.4: SessionEnd hook fired → drop that agent's Feed memory.
+                // GAP-7.4:SessionEnd 钩子触发 → 丢弃该 agent 的 Feed 记忆。
                 self.feed_panel.clear_session(&session_id);
                 Task::none()
             }
             #[cfg(unix)]
             Fx::AgentSessionStarted { session_id, kind, cwd } => {
-                // GAP-7.5: SessionStart hook fired → persist the agent session id
-                // (for cold resume) + associate it with the owning pane.
+                // GAP-7.5:SessionStart 钩子触发 → 持久化 agent 会话 id
+                //(供冷恢复)并关联到持有它的窗格。
                 self.handle_agent_session_started(session_id, kind, cwd);
                 Task::none()
             }
@@ -10144,8 +10144,8 @@ impl PureTermApp {
                 Task::none()
             }
             Fx::NewWindow => self.open_new_window(),
-            // GAP-09: `pureterm notify` / external IPC → post a notification
-            // (source Cli) into the active or specified pane.
+            // GAP-09:`pureterm notify` / 外部 IPC → 向活动或指定
+            // 窗格发布一条通知(来源 Cli)。
             Fx::ShowNotification { title, body, pane_id } => {
                 if !self.notification_cfg.enabled {
                     return Task::none();
@@ -10155,7 +10155,7 @@ impl PureTermApp {
                     Some(id) => PaneId(id),
                     None => match active_pane {
                         Some(p) => p,
-                        // No active pane to attach the notification to.
+                        // 没有可挂接通知的活动窗格。
                         None => return Task::none(),
                     },
                 };
@@ -10189,9 +10189,9 @@ impl PureTermApp {
                 if let Some(t) = &n.title {
                     data["title"] = serde_json::json!(t);
                 }
-                // GAP-09 BUG-1 fix: gate the toast + audit event on `post()`'s bool. Cli is
-                // never throttled today (always true), but this keeps the contract consistent
-                // with the OSC/Bell handlers.
+                // GAP-09 BUG-1 修复:通知与审计事件以 `post()` 的返回值门控。
+                // Cli 今天不受节流(恒为 true),但这保持契约与 OSC/Bell
+                // 处理器一致。
                 if posted {
                     fire_toast(&self.notification_cfg, &n, pane_visible, self.app_focused);
                     self.events.emit(
@@ -10206,9 +10206,9 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-7.5: react to an agent's SessionStart hook. Persist the session id
-    /// (so a later `claude --resume <id>` cold-resume can find it) and tag the
-    /// pane that owns this agent so `capture_layout` re-persists it.
+    /// GAP-7.5:响应 agent 的 SessionStart 钩子。持久化会话 id
+    ///(使之后的 `claude --resume <id>` 冷恢复能找到它)并标记
+    /// 持有该 agent 的窗格,让 `capture_layout` 重新持久化它。
     #[cfg(unix)]
     fn handle_agent_session_started(
         &mut self,
@@ -10227,26 +10227,26 @@ impl PureTermApp {
             cwd: cwd.clone(),
             last_seen: now,
         });
-        // GAP-6.7: an agent reported its session id (SessionStart hook).
-        // Emitted before `session_id`/`kind` are moved into the pane map below.
+        // GAP-6.7:某 agent 上报了其会话 id(SessionStart 钩子)。
+        // 在 `session_id`/`kind` 被 move 进下方窗格映射之前发出。
         self.events.emit(
             crate::events::Category::Agent,
             "agent.session_started",
             Some(session_id.clone()),
             serde_json::json!({ "kind": kind.clone() }),
         );
-        // Associate with the active pane (heuristic: the agent most recently
-        // launched is the focused pane). `capture_layout` reads this map to
-        // persist agent_session_id into PaneSnapshot for cold resume.
+        // 关联到活动窗格(启发式:最近拉起的 agent 即聚焦
+        // 窗格)。`capture_layout` 读该映射,把 agent_session_id
+        // 持久化进 PaneSnapshot 供冷恢复。
         if let Some(tab) = self.tabs().iter().find(|t| t.id == self.active_tab_id()) {
             self.agent_sessions.insert(tab.active_pane, (session_id, kind));
         }
     }
 
-    /// GAP-7.3: scan live sessions for a hibernation candidate. Raises a
-    /// confirmation when the dual idle condition holds AND live-agent count
-    /// exceeds `max_live_terminals`. No-op if disabled or a confirmation is
-    /// already pending.
+    /// GAP-7.3:扫描存活会话寻找休眠候选。双重空闲条件成立
+    /// 且存活 agent 数超过 `max_live_terminals` 时弹出
+    /// 确认。已禁用或已有待处理确认时空操作。
+    /// 已有待处理确认时空操作。
     #[cfg(unix)]
     fn hibernation_scan(&mut self) {
         if !self.hibernation_cfg.enabled || self.hibernate_panel.is_visible() {
@@ -10260,7 +10260,7 @@ impl PureTermApp {
             Ok(s) => s,
             Err(_) => return,
         };
-        // GAP-7.6: cache the snapshot for view_bottom_bar's ❄ indicator.
+        // GAP-7.6:为 view_bottom_bar 的 ❄ 指示器缓存快照。
         self.last_session_list = sessions.clone();
 
         // GAP-7.3: dual idle gate + max_live_terminals + never_hibernate 豁免的纯
@@ -10279,7 +10279,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-7.3: SIGSTOP the session via the daemon (user confirmed / timeout).
+    /// GAP-7.3:经守护进程 SIGSTOP 该会话(用户确认 / 超时)。
     #[cfg(unix)]
     fn do_hibernate(&mut self, session_id: &str) {
         match crate::daemon_client::ensure_daemon()
@@ -10287,7 +10287,7 @@ impl PureTermApp {
         {
             Ok(true) => {
                 log::info!("hibernated session {session_id}");
-                // GAP-6.7: SIGSTOP applied to a daemon session.
+                // GAP-6.7:SIGSTOP 已施加到守护会话。
                 self.events.emit(
                     crate::events::Category::Session,
                     "session.hibernated",
@@ -10300,7 +10300,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-7.3: SIGCONT a hibernated session (user clicked ❄).
+    /// GAP-7.3:对已休眠会话 SIGCONT(用户点击了 ❄)。
     #[cfg(unix)]
     fn do_resume(&mut self, session_id: &str) {
         match crate::daemon_client::ensure_daemon()
@@ -10308,7 +10308,7 @@ impl PureTermApp {
         {
             Ok(true) => {
                 log::info!("resumed session {session_id}");
-                // GAP-6.7: SIGCONT applied to a hibernated session.
+                // GAP-6.7:SIGCONT 已施加到休眠会话。
                 self.events.emit(
                     crate::events::Category::Session,
                     "session.resumed",
@@ -10321,10 +10321,10 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-7.6: scan host for external agent processes and refresh the
-    /// detect-resume panel. No-op unless `[agent.detect]` is enabled and
-    /// `[[vault.agents]]` is declared; `refresh` recomputes entries from the
-    /// latest scan (see `detect_panel::DetectPanelState::refresh`).
+    /// GAP-7.6:扫描宿主机的外部 agent 进程并刷新
+    /// 探测-恢复面板。`[agent.detect]` 未启用或未声明
+    /// `[[vault.agents]]` 时空操作;`refresh` 从最新扫描重算条目
+    ///(见 `detect_panel::DetectPanelState::refresh`)。
     #[cfg(unix)]
     fn detect_scan(&mut self) {
         if !self.detect_cfg.enabled || self.vault_agents.is_empty() {
@@ -10335,10 +10335,10 @@ impl PureTermApp {
             .refresh(crate::agent_detect::with_sessions(detected));
     }
 
-    /// GAP-7.6: spawn one detected agent's resume command in a new pane —
-    /// interpolate `{session_id}` into the vault `resume_command` template
-    /// (falling back to `claude --resume {session_id}`), then `create_resume_tab`.
-    /// Emits a `session.resumed` event on success for the audit log.
+    /// GAP-7.6:在新窗格中拉起一个探测到的 agent 的恢复命令——
+    /// 把 `{session_id}` 插值进 vault 的 `resume_command` 模板
+    ///(回退到 `claude --resume {session_id}`),然后 `create_resume_tab`。
+    /// 成功时为审计日志发出 `session.resumed` 事件。
     #[cfg(unix)]
     fn detect_resume_one(&mut self, kind: &str, session_id: &str) {
         let template = self
@@ -10442,7 +10442,7 @@ impl PureTermApp {
                     Some(session_id.clone()),
                     serde_json::json!({ "choice": choice.as_str(), "source": "memory" }),
                 );
-                // GAP-7.7: token pre-approved → spawn the binding as a new tab.
+                // GAP-7.7:令牌已预批准 → 把绑定作为新标签页拉起。
                 if let Some(r) = resume {
                     let cwd = self
                         .active_pane_cwd()
@@ -10459,9 +10459,9 @@ impl PureTermApp {
         Task::none()
     }
 
-    /// Send one deferred JSON-RPC error reply through a browser IPC handle.
-    /// Factored out so the early-return paths below stay one-liners (instead of
-    /// each re-taking the Mutex + constructing the response).
+    /// 经浏览器 IPC 句柄发送一条延迟的 JSON-RPC 错误应答。
+    /// 抽出来使下方的早退路径保持单行(而不是
+    /// 每处都重新 take Mutex + 构造响应)。
     fn reply_browser_err(
         ipc_id: u64,
         reply_tx: &crate::ipc::ReplyTx,
@@ -10473,19 +10473,19 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-7.8: dispatch a `browser.*` request against a web pane.
+    /// GAP-7.8:针对 web 窗格分派 `browser.*` 请求。
     ///
-    /// Async ops (navigate/click/type/extract/scroll/wait/get_url/get_title/
-    /// screenshot) run via wry's `evaluate_script_with_callback`; the JSON-RPC
-    /// reply is **deferred** until the callback (or the `tokio::time::timeout`
-    /// backstop) resolves — same deferred-reply pattern as
+    /// 异步操作(navigate/click/type/extract/scroll/wait/get_url/get_title/
+    /// screenshot)经 wry 的 `evaluate_script_with_callback` 运行;JSON-RPC
+    /// 应答**延迟**到回调(或 `tokio::time::timeout`
+    /// 兜底)解决——与 feed 的延迟应答模式相同。
     /// [`handle_feed_request_approval`].
     ///
-    /// Two ops are synchronous and replied immediately (Phase C):
-    /// - `browser.bind_tunnel { pane_id, tunnel_id }` — resolve the daemon
-    ///   tunnel's local SOCKS5 endpoint and bind the pane's webview to it
-    ///   (rebuilds the webview with `with_proxy_config`).
-    /// - `browser.clear_tunnel { pane_id }` — drop the proxy binding.
+    /// 两个操作是同步的、立即应答(Phase C):
+    /// - `browser.bind_tunnel { pane_id, tunnel_id }` —— 解析守护
+    ///   隧道的本地 SOCKS5 端点并把窗格的 webview 绑定到它
+    ///(经 `with_proxy_config` 重建 webview)。
+    /// - `browser.clear_tunnel { pane_id }` —— 丢弃代理绑定。
     fn handle_browser_request(&mut self, ipc_req: crate::ipc::IpcRequest) -> Task<Message> {
         use crate::browser::{commands as browser_cmd, BrowserReply, BrowserResolved};
         use pureterm_jsonrpc::ERROR_INVALID_PARAMS;
@@ -10495,8 +10495,8 @@ impl PureTermApp {
         let method = ipc_req.method.as_str();
         let params = ipc_req.params.as_ref();
 
-        // Resolve the target web pane. Explicit `pane_id` wins; else the active
-        // tab's first web pane (convenience for single-browser-pane sessions).
+        // 解析目标 web 窗格。显式 `pane_id` 优先;否则取活动
+        // 标签页的第一个 web 窗格(单浏览器窗格会话的便利默认)。
         let pane_id = params
             .and_then(|p| p.get("pane_id"))
             .and_then(|v| v.as_u64())
@@ -10508,7 +10508,7 @@ impl PureTermApp {
                 .and_then(|t| t.panes.values().find_map(|p| p.web().cloned())),
         };
 
-        // ── Phase C: synchronous tunnel binding ops ──────────────────────
+        // ── Phase C:同步的隧道绑定操作 ────────────────────────────────────────────
         if method == "browser.bind_tunnel" {
             let tid = match params
                 .and_then(|p| p.get("tunnel_id"))
@@ -10563,7 +10563,7 @@ impl PureTermApp {
             };
         }
 
-        // ── Async agent-browser ops ─────────────────────────────────────
+        // ── 异步 agent-浏览器操作 ──────────────────────────────────────────────
         let op = match browser_cmd::parse_op(method, params) {
             Ok(op) => op,
             Err(msg) => {
@@ -10584,10 +10584,10 @@ impl PureTermApp {
             }
         };
 
-        // Sensitivity audit: a navigation to a new origin is recorded as a
-        // `browser.request` event (the agent is steering the browser somewhere
-        // new). MVP is audit-only — we proceed. A full interactive feed-panel
-        // gate (two-phase reply + a browser approval overlay) is deferred.
+        // 敏感度审计:导航到新源会记录为
+        // `browser.request` 事件(agent 正把浏览器引向新的
+        // 地方)。MVP 仅审计——照常进行。完整的交互式 Feed 面板
+        // 门控(两段式应答 + 浏览器审批浮层)推迟。
         if let Some(target) = op.is_sensitive_navigate(&ctx.url()) {
             self.events.emit(
                 crate::events::Category::Browser,
@@ -10597,8 +10597,8 @@ impl PureTermApp {
             );
         }
 
-        // Kick off the op; the oneshot resolves from the wry JS callback (or
-        // synchronously for navigate / screenshot / not-yet-realized).
+        // 启动操作;oneshot 由 wry JS 回调(或 navigate /
+        // screenshot / 尚未实现的同步路径)解决。
         let (tx, rx) = tokio::sync::oneshot::channel::<BrowserReply>();
         browser_cmd::execute(&ctx, &op, tx);
 
@@ -10611,8 +10611,8 @@ impl PureTermApp {
             async move {
                 let reply = match tokio::time::timeout(timeout, rx).await {
                     Ok(Ok(r)) => r,
-                    // oneshot dropped without sending (execute always resolves tx
-                    // once; defensive against a future change).
+                    // oneshot 未发送即被丢弃(execute 总会解决 tx 一次;
+                    // 防御未来变更)。
                     Ok(Err(_)) => BrowserReply::Error("browser op channel closed".into()),
                     Err(_) => BrowserReply::Error(format!(
                         "browser.{verb} timed out after {} ms",
@@ -10625,11 +10625,11 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-7.9: capture a pane's grid to text (`surface.snapshot`). Resolves
-    /// the pane (explicit `pane_id` else active), clones the cheap
-    /// `Arc<FairMutex<Term>>`, and runs the lock + `bounds_to_string` off-main
-    /// via `spawn_blocking` so a full-scrollback capture can't stutter the GUI.
-    /// The built response is forwarded to the deferred reply handle on resolve.
+    /// GAP-7.9:把窗格网格捕获为文本(`surface.snapshot`)。解析
+    /// 窗格(显式 `pane_id`,否则活动窗格),克隆廉价的
+    /// `Arc<FairMutex<Term>>`,经 `spawn_blocking` 在主线之外做加锁 +
+    /// `bounds_to_string`,使全量回滚捕获不会卡顿 GUI。
+    /// 构建好的响应在解决时转发给延迟应答句柄。
     #[cfg(unix)]
     fn handle_surface_snapshot(&mut self, ipc_req: crate::ipc::IpcRequest) -> Task<Message> {
         use crate::surface_snapshot::{capture, SurfaceSnapshotResolved};
@@ -10694,10 +10694,10 @@ impl PureTermApp {
         )
     }
 
-    /// Phase C: resolve a daemon tunnel's local SOCKS5 endpoint and bind the
-    /// pane's webview to it. The webview is rebuilt on the next frame with wry's
-    /// `with_proxy_config(Socks5)` so all traffic egresses via the gateway,
-    /// reaching hosts only it can resolve (R8). Synchronous JSON-RPC reply.
+    /// Phase C:解析守护隧道的本地 SOCKS5 端点并把窗格的
+    /// webview 绑定到它。webview 在下一帧经 wry 的
+    /// `with_proxy_config(Socks5)` 重建,使全部流量经网关出网,
+    /// 只能触达它能解析的主机(R8)。同步 JSON-RPC 应答。
     fn bind_browser_tunnel(
         &mut self,
         ipc_id: u64,
@@ -10728,7 +10728,7 @@ impl PureTermApp {
                 return Task::none();
             }
         };
-        // Parse "host:port" (rsplit_once so IPv6-ish brackets stay with host).
+        // 解析 "host:port"(rsplit_once,使 IPv6 式方括号留在主机侧)。
         let (host, port) = match local_addr.rsplit_once(':').and_then(|(h, p)| {
             p.parse::<u16>().ok().map(|port| (h.to_string(), port))
         }) {
@@ -10743,13 +10743,13 @@ impl PureTermApp {
             .and_then(|v| v.as_str())
             .unwrap_or("?")
             .to_string();
-        // GAP-7.8 review: only bind when the tunnel is `connected`. A
-        // stopped/failed/connecting/need_auth tunnel still reports a
-        // `local_addr` (parsed above) but has no live SOCKS5 listener — binding
-        // would rebuild the webview onto a dead port and `navigate` would
-        // fake-success while the page never loads. Status comes from the
-        // daemon's live tunnel list, so a tunnel that drops is caught on the
-        // next bind attempt.
+        // GAP-7.8 评审:仅当隧道为 `connected` 时才绑定。stopped/
+        // failed/connecting/need_auth 的隧道仍会报告
+        // `local_addr`(上方已解析)但没有活的 SOCKS5 监听——绑定
+        // 会把 webview 重建到死端口上,`navigate` 会
+        /// 假成功而页面永不加载。状态来自守护的
+        // 活动隧道列表,掉线的隧道会在下次绑定尝试时被
+        // 抓到。
         use crate::browser::commands::BindTunnelVerdict as Verdict;
         if let Verdict::Reject(reason) = crate::browser::commands::bind_tunnel_verdict(&status) {
             Self::reply_browser_err(
@@ -10791,9 +10791,9 @@ impl PureTermApp {
     /// 在拖动分割线、窗口 resize、分屏/关闭 pane 等情况后调用，
     /// 让 term 网格的 cols/rows 与视觉 bounds 保持一致。
     ///
-    /// `session_mins` — GAP-5.3: when `smallest_screen_wins` is on, maps
-    /// daemon `session_id` → min(cols)×min(rows) across every attached pane
-    /// in the workspace (precomputed by `apply_viewport_resize`).
+    /// `session_mins` —— GAP-5.3:开启 `smallest_screen_wins` 时,
+    /// 把守护 `session_id` 映射为工作区内全部挂接窗格的
+    /// min(cols)×min(rows)(由 `apply_viewport_resize` 预计算)。
     fn resize_panes_in_tab(
         tab: &mut Tab,
         viewport_w: f32,
@@ -10827,7 +10827,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-5.3: min(cols)×min(rows) per shared daemon session across all tabs.
+    /// GAP-5.3:每条被共享的守护会话在全部标签页间的 min(cols)×min(rows)。
     fn compute_session_min_sizes(
         tabs: &[Tab],
         viewport_w: f32,
@@ -10943,12 +10943,12 @@ impl PureTermApp {
         );
     }
 
-    /// Coalesced/trailing resize: apply `viewport_size` to every pane's grid
-    /// in every tab. Called from the `TerminalWakeup` tick when
-    /// `resize_pending` is set, so a drag's burst of `WindowResized` events
-    /// is throttled while the *final* size is always applied (fixing the
-    /// "rendered area stuck at pre-resize size" bug). Base tick is now 50ms
-    /// (Fix 1).
+    /// 合并/收尾的 resize:把 `viewport_size` 应用到每个标签页
+    /// 中每个窗格的网格。`resize_pending` 置位时由
+    /// `TerminalWakeup` tick 调用,使拖拽的一串 `WindowResized` 事件
+    /// 被节流,同时*最终*尺寸总会应用(修复
+    /// “渲染区域卡在旧尺寸”的缺陷)。基础 tick 现为 50ms。
+    /// “渲染区域卡在旧尺寸”的缺陷)。基础 tick 现为 50ms(Fix 1)。
     fn apply_viewport_resize(&mut self) {
         // 兜底：如果 GlyphState 还没按真实 scale 对齐（首帧 / 跨屏移动），
         // 先 reconfigure 再读 cell,避免 cell 物理尺寸与 glyph 物理尺寸失配
@@ -11073,7 +11073,7 @@ impl PureTermApp {
         Some(new_pane_id)
     }
 
-    /// Split the active pane in the given direction.
+    /// 按给定方向拆分活动窗格。
     fn split_pane(&mut self, direction: SplitDirection) {
         let active_tab_id = self.active_tab_id();
         let active_pane_id = self.active_tab_ref()
@@ -11082,17 +11082,17 @@ impl PureTermApp {
         let Some(active_pane_id) = active_pane_id else { return };
         let new_pane_id = PaneId::next();
 
-        // Inherit the active pane's cwd so the split opens in the directory
-        // the user is currently working in.
+        // 继承活动窗格的 cwd,使拆分开在用户当前
+        // 工作的目录。
         let cwd = self.active_pane_cwd();
-        // GAP-5.1 M1: route through persistent daemon; falls back to a direct
-        // local PTY when puretermd is unavailable.
+        // GAP-5.1 M1:经常驻守护路由;puretermd 不可用时
+        // 回退到直连本地 PTY。
         let terminal_ctx = Arc::new(TerminalContext::new_local_auto(
             cwd.as_deref(),
             self.shell_integration_opts(),
         ));
 
-        // Calculate new pane dimensions from layout
+        // 从布局计算新窗格尺寸
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let viewport_w = self.terminal_viewport_width();
         let aw = self.active_window_id;
@@ -11118,7 +11118,7 @@ impl PureTermApp {
 
         tab.split_tree.split(active_pane_id, new_pane_id, direction);
 
-        // Compute new layout to get the new pane's size
+        // 计算新布局以取得新窗格的尺寸
         let new_layout = tab.split_tree.compute_layout(
             0.0, 0.0, viewport_w, terminal_height,
         );
@@ -11128,14 +11128,14 @@ impl PureTermApp {
         let ch = gs.cell_height as u16;
         drop(gs);
 
-        // Resize new pane to its allocated area
+        // 把新窗格 resize 到其分得的区域
         if let Some(rect) = new_layout.get(&new_pane_id) {
             let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
             let rows = (rect.h / ch as f32).floor().max(1.0) as usize;
             terminal_ctx.resize(cols, rows, cw, ch);
         }
 
-        // Also resize the original pane since it got smaller
+        // 原窗格变小了,也 resize 它
         if let Some(rect) = new_layout.get(&active_pane_id) {
             if let Some(pane) = tab.panes.get(&active_pane_id) {
                 let cols = (rect.w / cw as f32).floor().max(1.0) as usize;
@@ -11156,7 +11156,7 @@ impl PureTermApp {
         );
         tab.active_pane = new_pane_id;
         self.mark_layout_dirty();
-        // GAP-6.7: a split created a new pane + its backing local PTY.
+        // GAP-6.7:拆分创建了新窗格及其背后的本地 PTY。
         self.events.emit(
             crate::events::Category::Pane,
             "pane.split",
@@ -11171,7 +11171,7 @@ impl PureTermApp {
         );
     }
 
-    /// Close the active pane. If it's the last pane, close the tab.
+    /// 关闭活动窗格。若它是最后一个窗格,关闭标签页。
     fn close_active_pane(&mut self) {
         let active_tab_id = self.active_tab_id();
 
@@ -11181,7 +11181,7 @@ impl PureTermApp {
             .unwrap_or(0);
 
         if pane_count <= 1 {
-            // Last pane — the caller should handle closing the tab
+            // 最后一个窗格——调用方应负责关闭标签页
             return;
         }
 
@@ -11200,8 +11200,8 @@ impl PureTermApp {
         };
 
         if let Some(new_active) = new_active {
-            // GAP-5.6: end the daemon session for this pane on close (immutable
-            // borrows only — done before the mut borrow that removes the pane).
+            // GAP-5.6:关闭时结束该窗格的守护会话(只用不可变
+            // 借用——在移除窗格的可变借用之前完成)。
             #[cfg(unix)]
             if let Some(tab) = self.tabs().iter().find(|t| t.id == active_tab_id) {
                 if let Some(pane) = tab.panes.get(&active_pane_id) {
@@ -11223,7 +11223,7 @@ impl PureTermApp {
                 .and_then(|w| w.active_workspace_mut())
                 .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == active_tab_id))
                 .unwrap();
-            // SSH cleanup: release pool entry for this pane
+            // SSH 清理:释放该窗格的池条目
             #[cfg(unix)]
             if let Some(manager) = self.ssh_manager.as_ref() {
                 if let Some(pane) = tab.panes.get(&active_pane_id) {
@@ -11235,9 +11235,9 @@ impl PureTermApp {
                 }
             }
             tab.panes.remove(&active_pane_id);
-            // Drop per-pane state for the closed pane via the shared teardown
-            // (single source of truth — see teardown_pane_state_maps). Disjoint
-            // field refs because `tab` borrows self.windows, blocking `&mut self`.
+            // 经共享的 teardown 丢弃被关窗格的每窗格状态
+            //(单一事实源——见 teardown_pane_state_maps)。以互斥
+            // 字段引用传入,因为 `tab` 借用 self.windows,挡住 `&mut self`。
             teardown_pane_state_maps(
                 &mut self.pane_cwds,
                 &mut self.pane_osc_title,
@@ -11246,14 +11246,14 @@ impl PureTermApp {
                 &mut self.pane_block_stores,
                 active_pane_id,
             );
-            // GAP-02 (global card): dismiss only if it points at this pane.
+            // GAP-02(全局卡片):仅当指向本窗格时才关闭。
             if self.error_recovery.dismiss_for_pane(active_pane_id.0) {
                 if let Some(c) = self.error_recovery_cancel.take() {
                     c.notify_one();
                 }
             }
             tab.active_pane = new_active;
-            // Resize remaining panes
+            // resize 剩余窗格
             let layout = tab.split_tree.compute_layout(
                 0.0, 0.0, viewport_w, terminal_height,
             );
@@ -11272,8 +11272,8 @@ impl PureTermApp {
             }
         }
 
-        // The active pane may have changed; refresh the status bar so it
-        // reflects the new active pane's cwd rather than the closed one's.
+        // 活动窗格可能已变;刷新状态栏,使其反映
+        // 新活动窗格的 cwd 而非已关窗格的。
         self.refresh_status_bar_cwd();
         self.mark_layout_dirty();
     }
@@ -11331,9 +11331,9 @@ impl PureTermApp {
         Some(pane)
     }
 
-    /// GAP-6.6: resize a pane's split ratio (tmux `resize-pane`). Finds the tab
-    /// containing the pane (active if None), applies the delta to its nearest
-    /// ancestor Split, then resyncs every pane's PTY grid to the new layout.
+    /// GAP-6.6:调整窗格拆分比例(tmux `resize-pane`)。找到
+    /// 含该窗格的标签页(None 则活动页),把增量应用到其最近的
+    /// 祖先 Split,再把每个窗格的 PTY 网格重新同步到新布局。
     fn apply_resize_pane(&mut self, pane_id: Option<u64>, delta_ratio: f32) {
         let pid = pane_id
             .map(PaneId)
@@ -11365,7 +11365,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-6.6: focus the geometric neighbor (tmux `select-pane -L/-R/-U/-D`).
+    /// GAP-6.6:聚焦几何邻居(tmux `select-pane -L/-R/-U/-D`)。
     fn apply_focus_geometric(&mut self, pane_id: Option<u64>, direction: SplitDirection) {
         let pid = pane_id
             .map(PaneId)
@@ -11391,9 +11391,9 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-6.6: swap two panes by id (tmux `swap-pane -s A -t B`). Both panes
-    /// must share a tab; `swap_by_ids` exchanges their leaf ids so their
-    /// contents render in each other's place (the panes HashMap is untouched).
+    /// GAP-6.6:按 id 交换两个窗格(tmux `swap-pane -s A -t B`)。两个窗格
+    /// 必须同属一个标签页;`swap_by_ids` 交换它们的叶子 id,使内容
+    /// 在彼此的位置渲染(panes 哈希表不动)。
     fn apply_swap_by_ids(&mut self, src: PaneId, dst: PaneId) {
         for tab in self.tabs_mut() {
             if tab.split_tree.contains(src) && tab.split_tree.contains(dst) {
@@ -11403,8 +11403,8 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-6.6: make `pane_id` the active pane of its tab + switch to that tab
-    /// (used by `break-pane` before detaching, so the right pane is moved).
+    /// GAP-6.6:让 `pane_id` 成为其标签页的活动窗格并切到该标签页
+    ///(break-pane 脱离前使用,确保移动的是正确的窗格)。
     fn make_pane_active(&mut self, pane_id: PaneId) {
         // T2b-1:field-path 直访 self.windows → 活跃 workspace;写 ws.active_tab。
         let aw = self.active_window_id;
@@ -11424,13 +11424,13 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-6.6: join-pane — move `src` from its tab into `dst_tab_index` as a
-    /// new sibling of the dst tab's active pane (tmux `join-pane`). No-op if src
-    /// is its tab's only pane or either tab is missing. The TerminalContext is
-    /// `Arc`-shared, so moving the `Pane` between tabs preserves the PTY /
-    /// daemon session; only the tree membership + grid sizes change.
+    /// GAP-6.6:join-pane——把 `src` 从其标签页移入 `dst_tab_index`,
+    /// 作为目标标签页活动窗格的新兄弟(tmux `join-pane`)。src 是其
+    /// 标签页唯一窗格、或任一标签页缺失时空操作。TerminalContext 是
+    /// `Arc` 共享的,因此 `Pane` 跨标签页移动保留 PTY / 守护
+    /// 会话;只有树成员关系与网格尺寸变化。
     fn apply_attach_pane(&mut self, src: PaneId, dst_tab_index: usize, direction: SplitDirection) {
-        // 1. Detach src from its source tab (record the index to resync later).
+        // 1. 把 src 从其源标签页脱离(记录索引供稍后重同步)。
         let (src_tab_idx, pane) = {
             let mut found = None;
             for (i, tab) in self.tabs_mut().iter_mut().enumerate() {
@@ -11451,7 +11451,7 @@ impl PureTermApp {
                 _ => return,
             }
         };
-        // 2. Insert into the dst tab as a sibling of its active pane.
+        // 2. 作为目标标签页活动窗格的兄弟插入。
         let (cw, ch) = {
             let gs = self.glyph_state.borrow();
             (gs.cell_width as u16, gs.cell_height as u16)
@@ -11479,9 +11479,9 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-6.6: pipe-pane — resolve the pane → daemon `session_id` and forward
-    /// to `pipe.set`. No-op if the pane isn't daemon-backed (local direct PTY)
-    /// or the daemon is unreachable. `command` None ⇒ clear the tap.
+    /// GAP-6.6:pipe-pane——解析窗格 → 守护 `session_id` 并转发
+    /// 到 `pipe.set`。窗格非守护承载(本地直连 PTY)或守护不可达时
+    /// 空操作。`command` 为 None ⇒ 清除管道。
     #[cfg(unix)]
     fn apply_pipe_pane(&mut self, pane_id: Option<u64>, command: Option<String>) {
         let ctx = match pane_id {
@@ -11495,7 +11495,7 @@ impl PureTermApp {
         }
     }
 
-    /// Resize all panes in a tab according to the current split layout.
+    /// 按当前拆分布局 resize 标签页中的全部窗格。
     fn resize_tab_panes(&mut self, tab: &mut Tab) {
         let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let layout = tab.split_tree.compute_layout(
@@ -11518,7 +11518,7 @@ impl PureTermApp {
         }
     }
 
-    /// Handle scroll for a specific pane.
+    /// 处理特定窗格的滚动。
     fn handle_scroll_for_pane(&mut self, pane_id: PaneId, delta: iced::mouse::ScrollDelta) {
         let ctx = self.active_tab_ref()
             .and_then(|tab| tab.panes.get(&pane_id))
@@ -11588,7 +11588,7 @@ impl PureTermApp {
             ctx.write_to_pty(&content);
         } else if lines != 0 {
             let delta = if is_scroll_up { lines as i32 } else { -(lines as i32) };
-            // GAP-4.3: a user-initiated scroll cancels tail-follow.
+            // GAP-4.3:用户主动滚动取消尾部跟随。
             if let Some(ref mut s) = self.surface_search {
                 s.follow_tail = false;
             }
@@ -11660,7 +11660,7 @@ impl PureTermApp {
                 .on_exit(Message::TabHoverExit(tab.id))
                 .on_right_press(Message::TabRightClick(tab.id));
 
-            // Color indicator bar on top of tab
+            // 标签页顶部的颜色指示条
             let tab_with_color: Element<'_, Message, Theme, iced::Renderer> =
                 if let Some(color) = tab.tab_color {
                     let color_bar: Element<'_, Message, Theme, iced::Renderer> = container(
@@ -11702,10 +11702,10 @@ impl PureTermApp {
             .height(TAB_BAR_HEIGHT)
             .padding([4, 8])
             .style(|_t: &Theme| container::Style {
-                // Reuse the status-bar background helper so the top and
-                // bottom bars stay visually synchronized under any future
-                // theme switch (today both resolve to ~rgb(34,34,39)
-                // against `Theme::Dark`).
+                // 复用状态栏背景辅助,使顶栏与底栏在未来的
+                // 主题切换下保持视觉同步(今天两者在 `Theme::Dark`
+                // 主题切换下保持视觉同步(今天两者在 `Theme::Dark`
+                // 下都解析为约 rgb(34,34,39))。
                 background: Some(Background::Color(
                     crate::status_bar::bar_bg(&Theme::Dark),
                 )),
@@ -11720,9 +11720,9 @@ impl PureTermApp {
             .into()
     }
 
-    // ---- Status bar (GAP-3.4) ----
+    // ---- 状态栏(GAP-3.4)----
 
-    /// Get cursor position (row, col) of the active pane's terminal.
+    /// 取活动窗格终端的光标位置(行,列)。
     fn get_active_cursor_pos(&self) -> (usize, usize) {
         let Some(tab) = self.active_tab_ref() else {
             return (0, 0);
@@ -11730,18 +11730,18 @@ impl PureTermApp {
         let Some(pane) = tab.panes.get(&tab.active_pane) else {
             return (0, 0);
         };
-        // Web panes have no terminal grid cursor.
+        // Web 窗格没有终端网格光标。
         let Some(ctx) = pane.terminal() else { return (0, 0) };
         let term = ctx.terminal().lock_unfair();
         let cursor = &term.grid().cursor;
         (cursor.point.line.0.max(0) as usize, cursor.point.column.0)
     }
 
-    /// Bottom status bar: cwd + git branch + SSH indicator + cursor position.
-    /// GAP-7.6: build the active pane's agent indicator (⚡/❄ + ⏳ pending) for
-    /// the status bar. `None` when the pane has no agent and nothing is
-    /// pending. Unix-only — depends on `last_session_list` (filled by
-    /// `hibernation_scan`) and `feed_panel`.
+    /// 底部状态栏:cwd + git 分支 + SSH 指示 + 光标位置。
+    /// GAP-7.6:为状态栏构建活动窗格的 agent 指示器(⚡/❄ + ⏳ 待处理)。
+    /// 窗格无 agent 且无待处理时为 `None`。仅 unix——依赖
+    /// `last_session_list`(由 `hibernation_scan` 填充)与 `feed_panel`。
+    /// `last_session_list`(由 `hibernation_scan` 填充)与 `feed_panel`。
     #[cfg(unix)]
     fn agent_indicator_for_active_pane(&self) -> Option<(String, Color)> {
         let active_pane = self.active_tab_ref()?.active_pane;
@@ -11762,14 +11762,14 @@ impl PureTermApp {
         use iced::widget::{button, container, row, space};
         use iced::{Background, Border, Length, Shadow};
 
-        // Resolve the active theme once per frame so every chip can read
-        // colors off `iced::Theme::Palette`. Today only `Theme::Dark` ships,
-        // but the helper path is wired for a future light/System switch.
+        // 每帧解析一次活动主题,使每个芯片都能从
+        // `iced::Theme::Palette` 读颜色。今天只有 `Theme::Dark`,
+        // 但辅助路径已为未来的浅色/System 切换接线。
         let theme = Theme::Dark;
 
-        // GAP-24: pre-compute the live per-pane/per-frame values into a portable
-        // `BarData` snapshot (cfg-gated SSH/Vi/agent formatting stays here,
-        // in-module), then let each registry component render itself.
+        // GAP-24:把每窗格/每帧的活动值预计算进可移植的
+        // `BarData` 快照(cfg 门控的 SSH/Vi/agent 格式化留在这里、
+        // 模块内),再让每个注册表组件自行渲染。
         let ssh: Option<(String, Color)> = 'ssh: {
             #[cfg(unix)]
             {
@@ -11779,7 +11779,7 @@ impl PureTermApp {
                         if let Some(snap) = pane.terminal().and_then(|c| c.ssh_state_snapshot()) {
                             let fwd = pane.terminal().and_then(|c| c.ssh_forward_summary());
                             break 'ssh Some(match snap {
-                                // GAP-5.6: reconnect-state-aware indicator.
+                                // GAP-5.6:感知重连状态的指示器。
                                 SshStateSnapshot::Connected => (
                                     if let Some(f) = fwd {
                                         format!("  SSH {f}")
@@ -11829,7 +11829,7 @@ impl PureTermApp {
             None
         };
 
-        // GAP-4.1: Vi/Copy mode indicator.
+        // GAP-4.1:Vi/复制模式指示器。
         let vi_mode: Option<&'static str> = self
             .active_tab_ref()
             .and_then(|tab| tab.vi_sub_mode)
@@ -11841,13 +11841,13 @@ impl PureTermApp {
                 crate::vi_mode_handler::ViSubMode::OperatorPending(_) => "  -- OP --",
             });
 
-        // GAP-7.6: agent indicator (⚡ active / ❄ hibernated / ⏳ feed pending).
+        // GAP-7.6:agent 指示器(⚡ 活动 / ❄ 休眠 / ⏳ 待处理 feed)。
         #[cfg(unix)]
         let agent: Option<(String, Color)> = self.agent_indicator_for_active_pane();
         #[cfg(not(unix))]
         let agent: Option<(String, Color)> = None;
 
-        // Per-frame clock config snapshot (owned; `BarData` borrows the ref).
+        // 每帧的时钟配置快照(持有所有权;`BarData` 借用引用)。
         let clock_cfg = crate::status_bar::component::ClockCfg {
             format: std::borrow::Cow::Owned(self.status_bar_cfg.clock_format.clone()),
             show_seconds: self.status_bar_cfg.clock_show_seconds,
@@ -11880,12 +11880,12 @@ impl PureTermApp {
             theme_for_view: &theme,
         };
 
-        // ── Group rendering ──────────────────────────────────────────────
-        // Segments are clustered by `BarGroup` (Context / Runtime / System /
-        // Meta) into 4 sub-rows. We insert an 8-px spacer *between* groups
-        // and let chips within a group keep their built-in 4-px internal
-        // spacing. Meta sits at the far right (after the flexible spacer),
-        // so ⌘K / cursor / clock naturally align-right.
+        // ── 分组渲染 ─────────────────────────────────────────────────────────
+        // 段按 `BarGroup`(Context / Runtime / System /
+        // Meta)聚成 4 个子行。组*之间*插入 8px 间隔,
+        // 组内芯片保持其内置的 4px 内部
+        // 间距。Meta 位于最右(弹性间隔之后),
+        // 因此 ⌘K / 光标 / 时钟自然右对齐。
         use crate::status_bar::component::BarGroup;
         let mut group_context: Vec<Element<'_, Message, Theme, iced::Renderer>> = Vec::new();
         let mut group_runtime: Vec<Element<'_, Message, Theme, iced::Renderer>> = Vec::new();
@@ -11903,9 +11903,9 @@ impl PureTermApp {
             target.push(el);
         }
 
-        // Build the 3 left-side groups inline (avoids HRTB lifetime fight
-        // when row! takes a closure-returning-Element). Each empty group
-        // becomes an empty row so the outer `row!` keeps its expected shape.
+        // 内联构建左侧 3 个组(避免 row! 接受
+        // 返回 Element 的闭包时的 HRTB 生命周期之争)。空组成为
+        // 空行,使外层 `row!` 保持期望的形状。
         let left_group0: Element<'_, Message, Theme, iced::Renderer> = {
             let mut r = row![].spacing(4).align_y(iced::Alignment::Center);
             for c in group_context.drain(..) {
@@ -11934,15 +11934,15 @@ impl PureTermApp {
             .spacing(0)
             .align_y(iced::Alignment::Center);
 
-        // Meta group on the right, with a small ⌘K chip prepended so the
-        // command palette is reachable from the bar even when the system
-        // has no key focus on a pane (e.g. mouse over the bar).
+        // 右侧的 Meta 组,前面加一个小的 ⌘K 芯片,使
+        // 命令面板即便在系统未把键位焦点
+        // 放在窗格上(例如鼠标停在状态栏)时也可达。
         let mut meta = row![].spacing(4).align_y(iced::Alignment::Center);
         if !group_meta.is_empty() {
-            // GAP-X: ⌘K entry point. Visible affordance that mirrors the
-            // ⌘⇧P keybinding (no new action / message — reuses
-            // Message::OpenCommandPalette so existing keymap wiring is
-            // intact).
+            // GAP-X:⌘K 入口。可见的能力,镜像
+            // ⌘⇧P 键绑定(无新动作/消息——复用
+            // Message::OpenCommandPalette,使既有键位表接线
+            // 不变)。
             let meta_bg = crate::status_bar::chip_bg(&theme, BarGroup::Meta);
             let meta_fg = crate::status_bar::chip_text(&theme, BarGroup::Meta);
             let meta_border = crate::status_bar::chip_border(&theme);
@@ -11979,9 +11979,9 @@ impl PureTermApp {
 
         let bar = row![left, space().width(Length::Fill), meta];
 
-        // Bar background & footer border derived from the active palette
-        // (currently `Theme::Dark`, but the path is hooked for any future
-        // theme switch).
+        // 状态栏背景与底栏边框取自活动调色板
+        //(目前是 `Theme::Dark`,但路径已为任何未来的
+        // 主题切换接线)。
         let bg = crate::status_bar::bar_bg(&theme);
         let footer = crate::status_bar::bar_border(&theme);
         container(bar.width(Length::Fill))
@@ -12062,7 +12062,7 @@ impl PureTermApp {
                 },
             });
 
-        // Clamp position to stay within viewport
+        // 钳制位置,使其留在视口内
         let menu_width = 200.0f32;
         let menu_height = (items_all.len() as f32) * 30.0;
         let x = menu.position.x.min(self.viewport_size.width - menu_width).max(0.0);
@@ -12078,7 +12078,7 @@ impl PureTermApp {
     fn view_rename_overlay(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         let state = self.renaming_tab.as_ref()?;
 
-        // Find the tab index to position the input roughly above it
+        // 查找标签页索引,把输入框大致放在其上方
         let tab_idx = self
             .tabs()
             .iter()
@@ -12154,7 +12154,7 @@ impl PureTermApp {
             color_row = color_row.push(swatch);
         }
 
-        // Clear color button
+        // 清空颜色按钮
         let clear_btn = button(text(self.i18n.t("tab.clear_color")).size(10))
             .on_press(Message::ClearTabColor)
             .padding([2, 6])
@@ -12202,9 +12202,9 @@ impl PureTermApp {
         Some(pin(picker_container).x(x).y(y).into())
     }
 
-    /// P3 GAP-5.7: render the SSH connection dialog as a modal overlay.
-    /// Lists configured profiles; the user picks one and we kick off the
-    /// ssh spawn via `Message::SshConnect`.
+    /// P3 GAP-5.7:把 SSH 连接对话框渲染为模态浮层。
+    /// 列出已配置的配置档;用户选择一个,我们通过
+    /// `Message::SshConnect` 启动 ssh 拉起。
     #[cfg(unix)]
     fn view_ssh_dialog(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, mouse_area, scrollable, space, text, text_input};
@@ -12245,7 +12245,7 @@ impl PureTermApp {
                     } else {
                         button::secondary
                     });
-                // Invisible hit target over the label rows above.
+                // 上方标签行上的不可见命中目标。
                 profile_list = profile_list.push(row_btn);
             }
         }
@@ -12255,11 +12255,11 @@ impl PureTermApp {
         content = content.push(scrollable(profile_list).height(Length::Fixed(200.0)));
 
         if let Some(err) = &dialog.error {
-            // Bug E fix: surface connection errors prominently. The
-            // previous white-on-dark text was easy to miss and made it
-            // look like "the dialog disappeared". We use a soft red
-            // background, a brighter red text color, and wrap in a
-            // container so the user can't miss it.
+            // Bug E 修复:显著呈现连接错误。原先的
+            // 深底白字容易被忽视,看起来像
+            // “对话框消失了”。改用柔和的红色
+            // 背景、更亮的红字色,并放进一个容器,使
+            // 用户不可能错过。
             let err_box = container(
                 text(err)
                     .size(13)
@@ -12292,15 +12292,15 @@ impl PureTermApp {
         let cancel_btn = button(text(self.i18n.t("ssh.dialog.button.cancel")))
             .on_press(Message::CloseSshDialog);
 
-        // Bug #1 fix: when there are no profiles, give the user a direct
-        // path to the SSH Settings panel (right-side editor) instead of
-        // leaving them stuck on the error message. The user can then
-        // click + New to add their first profile.
+        // Bug #1 修复:没有配置档时,给用户一条直达 SSH
+        // 设置面板(右侧编辑器)的路径,而非让他们卡在
+        // 错误消息上。用户可点击 + New 添加首个配置档。
+        // 点击 + New 添加首个配置档。
         //
         // Bug #3 顺带 fix: a single message handles both closing the
-        // dialog and opening the settings panel. (Calling `.on_press`
-        // twice replaces the first message with the second, so the
-        // dialog used to stay open.)
+        // 对话框并打开设置面板。(两次调用 `.on_press` 会
+        // 把第一条消息替换为第二条,此前对话框因此
+        // 保持打开。)
         let settings_btn = button(text(self.i18n.t("ssh.dialog.button.open_settings")))
             .on_press(Message::SshSettingsRequested);
 
@@ -12315,26 +12315,26 @@ impl PureTermApp {
             .width(Length::Fixed(420.0))
             .style(container::bordered_box);
 
-        // Center the dialog on the viewport.
+        // 对话框居中于视口。
         let cx = (self.viewport_size.width - 420.0).max(0.0) / 2.0;
         let cy = (self.viewport_size.height - 360.0).max(0.0) / 2.0;
 
-        // Bug #3 fix (round 2): REMOVED the full-screen dismiss_overlay.
-        // iced 0.14's mouse_area calls `shell.capture_event()` on
-        // `on_press`, which swallows clicks on inner widgets (e.g. the
-        // Connect button). Even with position-aware checks the inner
-        // button's on_press was unreliable. We close the dialog via
-        // (a) the Cancel / Open SSH Settings buttons, (b) Esc in
-        // `handle_keyboard`, (c) the SshConnect handler clearing
-        // `ssh_dialog = None` on success.
+        // Bug #3 修复(第二轮):已移除全屏 dismiss_overlay。
+        // iced 0.14 的 mouse_area 在 `on_press` 上调
+        // `shell.capture_event()`,会吞掉内层控件(如
+        // Connect 按钮)上的点击。即便做了位置判断,内层
+        // 按钮的 on_press 仍不可靠。我们经以下方式关闭对话框:
+        // (a) Cancel / Open SSH Settings 按钮,(b) Esc 键
+        // `handle_keyboard`,(c) SshConnect 处理器在成功时
+        // 清掉 `ssh_dialog = None`。
         Some(
             iced::widget::pin(dialog_container).x(cx).y(cy).into(),
         )
     }
 
-    /// P4 GAP-5.8: render the right-side SSH settings panel. Shows the
-    /// profile list, an edit form for the selected profile, and a
-    /// master-password unlock section.
+    /// P4 GAP-5.8:渲染右侧 SSH 设置面板。展示
+    /// 配置档列表、选中配置档的编辑表单,以及
+    /// 主密码解锁区。
     #[cfg(unix)]
     fn view_ssh_settings_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
@@ -12342,10 +12342,10 @@ impl PureTermApp {
 
         let s = self.ssh_settings.as_ref()?;
 
-        // Header row: title on the left, × Close on the right.
-        // The × button reuses `Message::ToggleSshSettingsPanel` (the
-        // same toggle that opened the panel) so behavior stays
-        // symmetric: × / Esc / command palette all do the same thing.
+        // 顶行:左侧标题,右侧 × 关闭。
+        // × 按钮复用 `Message::ToggleSshSettingsPanel`(打开
+        // 面板所用的同一切换),行为保持对称:× / Esc /
+        // 命令面板都一样。
         let header = row![
             text(self.i18n.t("ssh.panel.title")).size(16),
             space().width(Length::Fill),
@@ -12356,7 +12356,7 @@ impl PureTermApp {
         ]
         .spacing(4);
 
-        // Profile list (header is the first row of this column)
+        // 配置档列表(顶是该列的第一行)
         let mut list_col = column![header]
             .spacing(4)
             .padding(8);
@@ -12382,7 +12382,7 @@ impl PureTermApp {
             );
         }
 
-        // Edit form (or placeholder)
+        // 编辑表单(或占位)
         let form: Element<'_, Message, Theme, iced::Renderer> =
             if let Some(idx) = s.editing {
                 if let Some(p) = s.drafts.get(idx) {
@@ -12448,7 +12448,7 @@ impl PureTermApp {
                 text(self.i18n.t("ssh.panel.placeholder.empty")).size(13).into()
             };
 
-        // Master password section
+        // 主密码区
         let master_section = column![
             text(self.i18n.t("ssh.master.title")).size(15),
             text(s.master_status.render(&self.i18n)).size(12),
@@ -12479,7 +12479,7 @@ impl PureTermApp {
             .height(Length::Fill)
             .style(container::bordered_box);
 
-        // Pin to the right edge of the viewport.
+        // 钉在视口右边缘。
         let x = (self.viewport_size.width - 360.0).max(0.0);
         Some(iced::widget::pin(panel).x(x).y(0.0).into())
     }
@@ -12519,7 +12519,7 @@ impl PureTermApp {
         let countdown = text(format!("⏱ 超时自动 Deny:{}s", remaining)).size(11);
 
         let mut body_col = column![
-            // Header
+            // 标题行
             row![
                 text("Feed 审批").size(16),
                 space().width(Length::Fill),
@@ -12577,9 +12577,9 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(x).y(0.0).into())
     }
 
-    /// GAP-7.3: render the hibernation confirmation as a right-side pinned
-    /// overlay (mirrors `view_feed_panel`, but simpler: Hibernate / Cancel).
-    /// `None` when no confirmation is pending.
+    /// GAP-7.3:把休眠确认渲染为右侧钉住的
+    /// 浮层(镜像 `view_feed_panel`,更简单:Hibernate / Cancel)。
+    /// 无待处理确认时返回 `None`。
     #[cfg(unix)]
     fn view_hibernate_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, row, space, text};
@@ -12626,15 +12626,15 @@ impl PureTermApp {
             .width(Length::Fixed(320.0))
             .height(Length::Shrink)
             .style(container::bordered_box);
-        // Pin to the right edge, below the top status bar.
+        // 钉在右边缘,顶状态栏之下。
         let x = (self.viewport_size.width - 320.0).max(0.0);
         Some(iced::widget::pin(panel).x(x).y(48.0).into())
     }
 
-    /// GAP-7.6: render the detect-resume prompt as a right-side pinned overlay.
-    /// Aggregates N detected agents: a header with the count, one row per entry
+    /// GAP-7.6:把探测-恢复提示渲染为右侧钉住的浮层。
+    /// 聚合 N 个被探测的 agent:一个标题显示总数,每个条目一行
     /// (kind · sid prefix · pid + [Resume]), and a footer ([全部 Resume] / [稍后]).
-    /// `None` when the batch is empty.
+    /// 空批时返回 `None`。
     #[cfg(unix)]
     fn view_detect_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, row, space, text};
@@ -12656,7 +12656,7 @@ impl PureTermApp {
         .spacing(4)
         .padding(8);
 
-        // One row per detected agent: kind · sid prefix · (pid N) + [Resume].
+        // 每个被探测的 agent 一行:类型 · sid 前缀 · (pid N) + [Resume]。
         for e in &self.detect_panel.entries {
             let sid_short: String = e.session_id.chars().take(8).collect();
             let sid = e.session_id.clone();
@@ -12671,7 +12671,7 @@ impl PureTermApp {
             .spacing(4));
         }
 
-        // Footer: resume all / dismiss.
+        // 页脚:全部恢复 / 关闭。
         body = body.push(row![
             button(text("全部 Resume").size(12))
                 .on_press(Message::DetectResumeAll)
@@ -12690,17 +12690,17 @@ impl PureTermApp {
             .width(Length::Fixed(320.0))
             .height(Length::Shrink)
             .style(container::bordered_box);
-        // Pin to the right edge, below the top status bar. Pushed after feed/
-        // hibernate in the layers stack → sits on top in z-order; if it ever
-        // collides with the hibernate panel, bump y to 96.0.
+        // 钉在右边缘,顶状态栏之下。在图层栈中排在 feed /
+        // hibernate 之后 → z 序在上;若与休眠面板冲突,
+        // 把 y 增到 96.0。
         let x = (self.viewport_size.width - 320.0).max(0.0);
         Some(iced::widget::pin(panel).x(x).y(48.0).into())
     }
 
-    /// GAP-32: render the Git overlay panel (`⌘⇧B`). Read-only repo view —
-    /// branch / upstream / ahead-behind / per-category counts / recent commits /
-    /// in-progress op / linked PR — plus a quick-action button row that writes
-    /// git commands into the focused pane's PTY. Returns `None` when closed.
+    /// GAP-32:渲染 Git 浮层面板(`⌘⇧B`)。只读仓库视图——
+    /// 分支 / 上游 / 前后差 / 每类计数 / 最近提交 /
+    /// 进行中的操作 / 关联 PR——以及把 git 命令写入
+    /// 聚焦窗格 PTY 的快捷动作按钮行。关闭时返回 `None`。
     fn view_git_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use crate::git_panel::GitQuickAction;
         use crate::status_bar::GitOp;
@@ -12715,7 +12715,7 @@ impl PureTermApp {
 
         let mut body = column![].spacing(5).padding(10);
 
-        // Header: title + refresh + close.
+        // 标题行:标题 + 刷新 + 关闭。
         body = body.push(row![
             text("Git").size(14),
             space().width(Length::Fill),
@@ -12733,7 +12733,7 @@ impl PureTermApp {
         let amber = iced::Color::from_rgba(0.95, 0.75, 0.3, 1.0);
         let dim = iced::Color::from_rgba(0.55, 0.55, 0.55, 1.0);
 
-        // Branch / upstream / ahead-behind / op / counts.
+        // 分支 / 上游 / 前后差 / 操作 / 计数。
         if let Some(g) = self.git_panel.status.as_ref() {
             let branch = g.branch.clone().unwrap_or_else(|| "(unknown)".to_string());
             body = body.push(text(format!("\u{e0a0} {}", branch)).size(12));
@@ -12766,7 +12766,7 @@ impl PureTermApp {
             body = body.push(text("Resolving repo…").size(11).color(dim));
         }
 
-        // Recent commits.
+        // 最近提交。
         if !self.git_panel.last_log.is_empty() {
             body = body.push(space().height(2));
             body = body.push(text("Recent commits").size(10).color(dim));
@@ -12775,7 +12775,7 @@ impl PureTermApp {
             }
         }
 
-        // PR block.
+        // PR 块。
         if self.git_cfg.show_pr {
             body = body.push(space().height(2));
             if let Some(pr) = &self.git_panel.pr {
@@ -12804,7 +12804,7 @@ impl PureTermApp {
             }
         }
 
-        // Quick-action buttons → write the command into the focused pane's PTY.
+        // 快捷动作按钮 → 把命令写入聚焦窗格的 PTY。
         body = body.push(space().height(2));
         let mut buttons = row![
             button(text("Stage all").size(11))
@@ -12825,8 +12825,8 @@ impl PureTermApp {
                 .style(button::secondary),
         ]
         .spacing(4);
-        // Create PR shells out to `gh` — gate it behind the same switch as the
-        // PR block, so a `show_pr = false` config never offers a dead button.
+        // Create PR 走 `gh`——与 PR 块共用同一开关门控,
+        // `show_pr = false` 配置永远不会给出死按钮。
         if self.git_cfg.show_pr {
             buttons = buttons.push(
                 button(text("Create PR").size(11))
@@ -12843,7 +12843,7 @@ impl PureTermApp {
         );
         body = body.push(buttons);
 
-        // Cwd footer (tail-truncated path).
+        // cwd 页脚(尾部截断路径)。
         if let Some(cwd) = &self.git_panel.cwd {
             let chars: Vec<char> = cwd.chars().collect();
             let short: String = if chars.len() > 32 {
@@ -12862,9 +12862,9 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(x).y(48.0).into())
     }
 
-    /// GAP-09: Notifications history overlay panel (⌘⇧M). Left-anchored, lists
-    /// the store's history newest-first; clicking an entry clears that pane's
-    /// unread count. Mirrors `view_git_panel`'s pinned-container shape.
+    /// GAP-09:通知历史浮层面板(⌘⇧M)。左对齐,按时间
+    /// 倒序列出存储;点击条目清除该窗格的
+    /// 未读计数。镜像 `view_git_panel` 的钉住容器形状。
     fn view_notifications_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, row, scrollable, space, text};
         use iced::Length;
@@ -12875,7 +12875,7 @@ impl PureTermApp {
 
         let summary = self.notification_store.summary();
         let mut body = column![
-            // Header: title + unread count + dismiss-all + close.
+            // 标题行:标题 + 未读计数 + 全部关闭 + 关闭按钮。
             row![
                 text("Notifications").size(15),
                 space().width(Length::Fill),
@@ -12901,7 +12901,7 @@ impl PureTermApp {
                 text("No notifications yet").size(12).color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)),
             );
         } else {
-            // Newest-first.
+            // 按时间倒序。
             for entry in history.iter().rev() {
                 let n = &entry.notification;
                 let source = match n.source {
@@ -12939,7 +12939,7 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(8.0).y(48.0).into())
     }
 
-    /// GAP-01: right-docked AI Chat panel (⌘⇧L). Message list + input + stream Stop.
+    /// GAP-01:右钉的 AI 聊天面板(⌘⇧L)。消息列表 + 输入 + 流式 Stop。
     fn view_ai_chat_panel(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use crate::ai_chat::types::ChatRole;
         use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
@@ -12999,11 +12999,11 @@ impl PureTermApp {
                 let body: Element<'_, Message, Theme, iced::Renderer> = if is_streaming_placeholder {
                     text("…").size(12).into()
                 } else if msg.role == ChatRole::Assistant {
-                    // Assistant replies render as markdown: fenced code blocks as
-                    // monospace boxes, inline bold/italic/code spans styled. This
-                    // wires the previously-inert markdown.rs into the panel so the
-                    // fenced ```bash blocks the system prompt requests render as
-                    // real code, not literal fence markers.
+                    // 助手回复按 markdown 渲染:围栏代码块为
+                    // 等宽盒,行内的粗/斜/代码 span 加样式。这把
+                    // 此前空挂的 markdown.rs 接到面板,使系统提示请求的
+                    // 围栏 ```bash 块渲染为
+                    // 真代码而非字面围栏标记。
                     self.view_markdown_body(&msg.content)
                 } else {
                     text(msg.content.as_str()).size(12).into()
@@ -13041,10 +13041,10 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(x).y(48.0).into())
     }
 
-    /// GAP-01: render an assistant message's markdown body. Fenced code blocks
-    /// become a monospace box (with the language tag); paragraphs render as
-    /// styled spans (bold/italic/inline-code). Falls back to plain text when
-    /// parsing yields no blocks so the panel never shows an empty reply.
+    /// GAP-01:渲染助手消息的 markdown 正文。围栏代码块
+    /// 成为等宽盒(带语言标签);段落渲染为
+    /// 加样式的 span(粗/斜/行内代码)。解析无块时
+    /// 回退到纯文本,确保面板永不显示空回复。
     fn view_markdown_body<'a>(
         &'a self,
         content: &'a str,
@@ -13064,9 +13064,9 @@ impl PureTermApp {
         for block in blocks {
             match block {
                 Block::Paragraph(spans) => {
-                    // Clone each span's text so the styled spans own their data
-                    // (the parsed blocks are loop-local; borrowing them would
-                    // not outlive the returned Element).
+                    // 克隆每个 span 的文本,使样式 span 拥有自己的数据
+                    //(解析的块是循环本地的;借用它们
+                    // 无法走出返回的 Element)。
                     let rich: Vec<iced::widget::text::Span<'static>> = spans
                         .iter()
                         .map(|s| {
@@ -13102,7 +13102,7 @@ impl PureTermApp {
         col.into()
     }
 
-    /// GAP-4.2: hit-test the semantic hover-preview context menu.
+    /// GAP-4.2:命中测试语义悬停预览的右键菜单。
     fn hover_preview_menu_item_at(
         &self,
         pos: Point,
@@ -13125,7 +13125,7 @@ impl PureTermApp {
         items.get(idx).copied()
     }
 
-    /// GAP-4.2: smart-selection hover tooltip near the cursor.
+    /// GAP-4.2:智能选区悬停提示气泡,出现在光标附近。
     fn view_hover_preview_tooltip(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{column, container, text};
 
@@ -13176,7 +13176,7 @@ impl PureTermApp {
         Some(iced::widget::pin(card).x(tx).y(ty).into())
     }
 
-    /// GAP-4.2: right-click semantic menu (open / copy / editor).
+    /// GAP-4.2:右键语义菜单(打开 / 复制 / 编辑器)。
     fn view_hover_preview_menu(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, text};
 
@@ -13214,7 +13214,7 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-32: transient toast pill (bottom-center), shown for ~3.5s.
+    /// GAP-32:瞬态 toast 药丸(底部中央),),显示约 3.5 秒。
     fn view_toast(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{container, text};
         let (msg, _) = self.toast.as_ref()?;
@@ -13226,7 +13226,7 @@ impl PureTermApp {
         Some(iced::widget::pin(pill).x(x).y(y).into())
     }
 
-    /// GAP-02: bottom inline card for LLM fix suggestions on command failure.
+    /// GAP-02:底部内联卡片,显示命令失败的 LLM 修复建议。
     fn view_error_recovery_card(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, row, scrollable, space, text};
         use iced::Length;
@@ -13301,7 +13301,7 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(8.0).y(y).into())
     }
 
-    /// GAP-08: bottom inline card for `# description` → shell command suggestions.
+    /// GAP-08:底部内联卡片,显示 `# 描述` → shell 命令的建议。
     fn view_natural_language_card(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, row, scrollable, space, text};
         use iced::Length;
@@ -13368,10 +13368,10 @@ impl PureTermApp {
         Some(iced::widget::pin(panel).x(8.0).y(y).into())
     }
 
-    /// P5 GAP-5.9: render the command palette as a centered overlay.
-    /// Two modes:
-    /// - `Mode::Actions` — fuzzy-searchable list of registered actions.
-    /// - `Mode::Profiles` — direct list of configured SSH profiles.
+    /// P5 GAP-5.9:把命令面板渲染为居中浮层。
+    /// 两种模式:
+    /// - `Mode::Actions` —— 已注册动作的模糊搜索列表。
+    /// - `Mode::Profiles` —— 已配置 SSH 配置档的直接列表。
     fn view_command_palette(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, mouse_area, row, scrollable, space, text, text_input};
         use iced::Length;
@@ -13386,13 +13386,13 @@ impl PureTermApp {
 
         let mut body = column![title].spacing(8).padding(12);
 
-        // Query input
+        // 查询输入框
         let query_input = text_input(&self.i18n.t("palette.placeholder"), &s.query)
             .on_input(Message::CommandPaletteQuery)
             .width(Length::Fill);
         body = body.push(query_input);
 
-        // Visible items
+        // 可见条目
         let list: Element<'_, Message, Theme, iced::Renderer> = match s.mode {
             PaletteMode::Actions => {
                 let mut col = column![].spacing(2);
@@ -13416,7 +13416,7 @@ impl PureTermApp {
                             CommandEntry::SshListProfiles => {
                                 self.i18n.t("palette.action.ssh_list.label")
                             },
-                            // GAP-6.4: show the user-defined title directly.
+                            // GAP-6.4:直接展示用户定义的标题。
                             CommandEntry::Custom { title, .. } => title.clone(),
                         };
                         let is_sel = idx == s.selected;
@@ -13462,7 +13462,7 @@ impl PureTermApp {
         };
         body = body.push(list);
 
-        // Bottom hint row
+        // 底部提示行
         let hint = match s.mode {
             PaletteMode::Actions => self.i18n.t("palette.hint.actions"),
             #[cfg(unix)]
@@ -13477,20 +13477,20 @@ impl PureTermApp {
         let cx = (self.viewport_size.width - 520.0).max(0.0) / 2.0;
         let cy = (self.viewport_size.height - 360.0).max(0.0) / 2.0;
 
-        // Bug #3 fix (command palette): removed the full-screen
-        // dismiss overlay for the same reason as the SSH dialog (see
-        // view_ssh_dialog comment). The palette is closed by:
-        //  - selecting a profile / running an action (handler clears
+        // Bug #3 修复(命令面板):移除全屏
+        // dismiss 浮层,原因同 SSH 对话框(见
+        // view_ssh_dialog 注释)。面板由以下方式关闭:
+        //  - 选中配置档 / 运行动作(处理器清掉
         //    `command_palette = None`),
-        //  - the explicit close button / Esc key in `handle_keyboard`.
+        //  - 显式关闭按钮 / `handle_keyboard` 中的 Esc 键。
         Some(
             iced::widget::pin(dialog).x(cx).y(cy).into(),
         )
     }
 
-    /// GAP-4.1: Vi mode search bar — rendered as a small input pinned to the
-    /// bottom-center of the terminal area. Activated by `/` (forward) or `?`
-    /// (backward) while in vi mode.
+    /// GAP-4.1:Vi 模式搜索栏——渲染为钉在终端区域底部
+    /// 中央的小输入框。在 vi 模式中由 `/`(正向)或 `?`
+    ///(反向)激活。
     fn view_vi_search(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         let search = self.vi_search.as_ref()?;
 
@@ -13516,7 +13516,7 @@ impl PureTermApp {
             ..Default::default()
         });
 
-        // Pin to bottom-center of the terminal area
+        // 钉在终端区域的底部中央
         let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let y = terminal_h - 36.0;
         let cx = (self.viewport_size.width - 300.0).max(0.0) / 2.0;
@@ -13529,10 +13529,10 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-3.8: ⌘F surface-search overlay — a find bar pinned to the
-    /// bottom-center (same slot as the vi search bar; the two are mutually
-    /// exclusive). Editable input + flag toggles (case / regex / whole-word /
-    /// follow-tail) + close button.
+    /// GAP-3.8:⌘F surface 搜索浮层——钉在底部
+    /// 中央的查找栏(与 vi 搜索栏同位;两者互斥)。可编辑
+    /// 输入 + 标志开关(大小写 / 正则 / 整词 / 跟尾)+ 关闭按钮。
+    /// 跟尾)+ 关闭按钮。
     fn view_surface_search(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, container, row, text, text_input};
         use iced::Alignment;
@@ -13548,7 +13548,7 @@ impl PureTermApp {
             .on_submit(Message::SurfaceSearchConfirm)
             .width(Length::Fill);
 
-        // Flag toggle buttons: a leading "●" marks the active flag.
+        // 标志开关按钮:前置 “●” 标记激活的标志。
         let toggle = |label: &str, active: bool, msg: Message| {
             let caption = if active { format!("●{label}") } else { label.to_string() };
             button(text(caption).size(12)).on_press(msg)
@@ -13581,7 +13581,7 @@ impl PureTermApp {
             ..Default::default()
         });
 
-        // Bottom-center, same slot as the vi search bar.
+        // 底部中央,同 vi 搜索栏位置。
         let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         let y = terminal_h - 36.0;
         let cx = (self.viewport_size.width - 520.0).max(0.0) / 2.0;
@@ -13589,10 +13589,10 @@ impl PureTermApp {
         Some(iced::widget::pin(bar).x(cx).y(y).into())
     }
 
-    /// GAP-3.5: ⌘L Browser address-bar overlay — a URL field pinned to the
-    /// top-center (just below the tab bar). Enter loads the normalized URL
-    /// into the target Web pane (or spawns one); × / Esc closes. Mirrors
-    /// `view_surface_search`'s construction.
+    /// GAP-3.5:⌘L 浏览器地址栏浮层——钉在顶部
+    /// 中央(标签栏正下方)的 URL 字段。回车把规范化后的 URL
+    /// 载入目标 Web 窗格(或生成一个);× / Esc 关闭。镜像
+    /// `view_surface_search` 的结构。
     fn view_address_bar(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, container, row, text, text_input};
         use iced::Alignment;
@@ -13624,7 +13624,7 @@ impl PureTermApp {
             ..Default::default()
         });
 
-        // Top-center, just below the tab bar.
+        // 顶部中央,标签栏正下方。
         let w = 560.0;
         let y = TAB_BAR_HEIGHT + 4.0;
         let cx = (self.viewport_size.width - w).max(0.0) / 2.0;
@@ -13632,9 +13632,9 @@ impl PureTermApp {
         Some(iced::widget::pin(bar).x(cx).y(y).into())
     }
 
-    /// GAP-3.8: ⌘⇧F working-directory (ripgrep) search overlay. A centered
-    /// dialog with a query input + scrollable result list; clicking a result
-    /// opens it in `$EDITOR` at the line.
+    /// GAP-3.8:⌘⇧F 工作目录(ripgrep)搜索浮层。一个居中
+    /// 对话框,带查询输入 + 可滚动结果列表;点击结果
+    /// 在 `$EDITOR` 中打开对应行。
     fn view_dir_search(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         use iced::widget::{button, column, container, scrollable, text, text_input};
         use iced::Length;
@@ -13782,7 +13782,7 @@ impl PureTermApp {
                 },
             });
 
-        // Center the panel
+        // 把面板居中
         let panel_w = 376.0;
         let panel_h = 320.0;
         let x = (self.viewport_size.width - panel_w).max(0.0) / 2.0;
@@ -13791,7 +13791,7 @@ impl PureTermApp {
         Some(pin(panel).x(x).y(y).into())
     }
 
-    /// GAP-11: instant replay scrub overlay (bottom bar).
+    /// GAP-11:即时回放拖动浮层(底栏)。
     fn view_replay_overlay(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         if !self.replay_viewer.open {
             return None;
@@ -13826,9 +13826,9 @@ impl PureTermApp {
         )
     }
 
-    /// GAP-19: left sidebar (Workspace list + Git summary) for window `id`.
-    /// Resolves state + workspace list from the window being rendered (not the
-    /// active window) so each window shows its own sidebar/workspaces.
+    /// GAP-19:窗口 `id` 的左侧边栏(工作区列表 + Git 摘要)。
+    /// 从正在渲染的窗口(而非活动窗口)解析状态与工作区列表,
+    /// 使每个窗口显示自己的侧边栏/工作区。
     fn view_left_sidebar(&self, id: window::Id) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         let win = self.window_for(id)?;
         if !win.sidebar.left_open {
@@ -13871,10 +13871,10 @@ impl PureTermApp {
         Some(Self::sidebar_with_divider(crate::sidebar::SidebarSide::Left, panel, height))
     }
 
-    /// GAP-19: attach a draggable divider handle to one edge of a sidebar panel
-    /// (Left → trailing edge, Right → leading edge). The 5 px `mouse_area`
-    /// handle starts a divider drag; live motion is driven by the existing
-    /// `GlobalCursorMoved`/`GlobalMouseRelease` flow (same as pane dividers).
+    /// GAP-19:把可拖拽的分隔条手柄挂到侧边栏面板的一条边
+    ///(左 → 尾边,右 → 前边)。5px 的 `mouse_area`
+    /// 手柄启动分隔条拖拽;实时移动由既有的
+    /// `GlobalCursorMoved`/`GlobalMouseRelease` 流程驱动(同窗格分隔条)。
     fn sidebar_with_divider(
         side: crate::sidebar::SidebarSide,
         panel: Element<'_, Message, Theme, iced::Renderer>,
@@ -13901,7 +13901,7 @@ impl PureTermApp {
         }
     }
 
-    /// GAP-19: right sidebar (Find / Feed / Git tabs) for window `id`.
+    /// GAP-19:窗口 `id` 的右侧边栏(Find / Feed / Git 页)。
     fn view_right_sidebar(&self, id: window::Id) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         let win = self.window_for(id)?;
         if !win.sidebar.right_open {
@@ -13960,8 +13960,8 @@ impl PureTermApp {
             find_loading: self.remote_files.find_loading,
             find_error: self.remote_files.find_error.as_deref(),
         };
-        // GAP-51 v1: Blocks tab — pass the store ref and let the view do inline
-        // filtering (single source of truth: PaneBlockStore::filtered).
+        // GAP-51 v1:Blocks 页——传递存储引用并让视图做内联
+        // 过滤(单一事实源:PaneBlockStore::filtered)。
         let (active_pane_id, blocks_store): (u64, &crate::output_blocks::PaneBlockStore) =
             match self.active_tab_ref().map(|t| t.active_pane) {
                 Some(pid) => match self.pane_block_stores.get(&pid) {
@@ -14054,9 +14054,9 @@ impl PureTermApp {
             }
         }
 
-        // Cold-launch placeholder (main window only): paint instantly while the
-        // daemon bootstrap runs off-thread; the first terminal is created in
-        // DaemonReady. Non-main windows don't exist during boot, so fall through.
+        // 冷启动占位符(仅主窗口):守护引导在后台运行时
+        // 立即绘制;首个终端在 DaemonReady 创建。
+        // 引导期不存在非主窗口,直接向下贯穿。
         if !self.booted && Some(id) == self.main_window {
             return container("Starting PureTerm…")
                 .width(Length::Fill)
@@ -14138,7 +14138,7 @@ impl PureTermApp {
                     .into()
             };
 
-        // GAP-19: left | terminal | right three-column middle row.
+        // GAP-19:左 | 终端 | 右三栏中排。
         let mut middle = row![].width(Length::Fill).height(Length::Fixed(terminal_h));
         if let Some(left) = self.view_left_sidebar(id) {
             middle = middle.push(left);
@@ -14162,13 +14162,13 @@ impl PureTermApp {
             || self.renaming_tab.is_some()
             || self.color_picker_tab.is_some()
             || self.tab_list.is_some()
-            // Bug #1 + #2 + #3 actual root cause: the SSH dialog,
-            // SSH settings panel, and command palette are all opened
-            // INDEPENDENTLY of the context menu. When the user triggers
-            // them via shortcut / palette → action, no other overlay
-            // is active, so `has_overlay` would be false and the
-            // dialog/panel would never be pushed into the `layers`
-            // stack. Include all overlay states here.
+            // Bug #1 + #2 + #3 的实际根因:SSH 对话框、
+            // SSH 设置面板与命令面板都独立于
+            // 右键菜单打开。当用户经快捷键/
+            // 面板 → 动作触发时,没有其它浮层
+            // 激活,`has_overlay` 会是 false,
+            // 对话框/面板永不进 `layers`
+            // 栈。此处枚举所有浮层状态。
             || self.ssh_dialog.is_some()
             || self.ssh_settings.is_some()
             || self.command_palette.is_some()
@@ -14179,33 +14179,32 @@ impl PureTermApp {
             || self.feed_panel_visible()
             || self.hibernate_panel_visible()
             || self.detect_panel_visible()
-            // GAP-32: Git overlay retired — Git lives in the right sidebar tab.
-            // Keep git_panel.open for refresh/state only; no overlay layer.
+            // GAP-32:Git 浮层已退役——Git 现归右侧边栏页。
+            // 仅保留 git_panel.open 用于刷新/状态;无浮层层。
             || self.ai_chat_panel.open
             || self.error_recovery.open
             || self.replay_viewer.open;
 
         if has_overlay || self.toast.is_some() || self.error_recovery.open || self.replay_viewer.open {
-            // No full-screen `dismiss` overlay here. The previous design
-            // used `opaque(mouse_area.on_press(Dismiss))` to catch
-            // outside-clicks, but iced 0.14's `MouseArea` calls
-            // `shell.capture_event()` whenever `on_press` fires, which
-            // ALSO swallows clicks on inner widgets (e.g. menu items,
-            // dialog buttons). See `iced_widget/mouse_area.rs`:
+            // 此处不挂全屏 `dismiss` 浮层。此前设计
+            // 用 `opaque(mouse_area.on_press(Dismiss))` 抓
+            // 外部点击,但 iced 0.14 的 `MouseArea` 每次
+            // `on_press` 触发都调
+            // `shell.capture_event()`,这也会吞掉内层控件
+            //(如菜单项、对话框按钮)上的点击。见 `iced_widget/mouse_area.rs`:
             //
-            //     shell.publish(message.clone());
-            //     shell.capture_event();   // <-- prevents inner widgets
+            // 源码示例:shell.publish + capture_event——阻止内层控件响应,
             //
-            // Click-outside-to-dismiss is now handled by:
-            // 1. The action handlers themselves (ContextMenuAction,
-            //    SshConnect, CommandPaletteSelect, …) clear their own
-            //    overlay state in addition to dispatching the action.
-            // 2. The Esc key in `handle_keyboard` for all overlays.
-            // 3. The explicit Cancel / × buttons in each dialog.
+            // 现在用以下方式处理“外部点击关闭”:
+            // 1. 动作处理器自身(ContextMenuAction、
+            //    SshConnect、CommandPaletteSelect、…)在派发
+            //    动作的同时清掉自己的浮层状态。
+            // 2. `handle_keyboard` 中所有浮层的 Esc 键。
+            // 3. 每个对话框的显式 Cancel / × 按钮。
             //
-            // We keep the `has_overlay` check so the base is *not* drawn
-            // when an overlay is shown — the overlay widgets themselves
-            // fill the viewport.
+            // 保留 `has_overlay` 检查,使显示浮层时不绘制
+            // 底层——浮层控件自身会填满
+            // 视口。
             let mut layers: Vec<Element<'_, Message, Theme, iced::Renderer>> =
                 vec![base];
 
@@ -14241,15 +14240,15 @@ impl PureTermApp {
             if let Some(detect_el) = self.view_detect_panel() {
                 layers.push(detect_el);
             }
-            // GAP-32: Git overlay panel.
+            // GAP-32:Git 浮层面板。
             if let Some(git_el) = self.view_git_panel() {
                 layers.push(git_el);
             }
-            // GAP-09: Notifications history overlay panel.
+            // GAP-09:通知历史浮层面板。
             if let Some(notif_el) = self.view_notifications_panel() {
                 layers.push(notif_el);
             }
-            // GAP-01: AI Chat panel (right dock).
+            // GAP-01:AI 聊天面板(右钉)。
             if let Some(chat_el) = self.view_ai_chat_panel() {
                 layers.push(chat_el);
             }
@@ -14260,36 +14259,36 @@ impl PureTermApp {
                 layers.push(palette_el);
             }
 
-            // GAP-4.1: Vi search bar overlay
+            // GAP-4.1:Vi 搜索栏浮层
             if let Some(search_el) = self.view_vi_search() {
                 layers.push(search_el);
             }
 
-            // GAP-3.8: ⌘F surface-search overlay
+            // GAP-3.8:⌘F surface 搜索浮层
             if let Some(search_el) = self.view_surface_search() {
                 layers.push(search_el);
             }
 
-            // GAP-3.8: ⌘⇧F directory (ripgrep) search overlay
+            // GAP-3.8:⌘⇧F 目录(ripgrep)搜索浮层
             if let Some(search_el) = self.view_dir_search() {
                 layers.push(search_el);
             }
 
-            // GAP-3.5: ⌘L Browser address-bar overlay
+            // GAP-3.5:⌘L 浏览器地址栏浮层
             if let Some(ab_el) = self.view_address_bar() {
                 layers.push(ab_el);
             }
 
-            // GAP-02: Error Recovery inline card (bottom).
+            // GAP-02:错误恢复内联卡片(底部)。
             if let Some(er_el) = self.view_error_recovery_card() {
                 layers.push(er_el);
             }
-            // GAP-08: Natural language command card (bottom).
+            // GAP-08:自然语言命令卡片(底部)。
             if let Some(nl_el) = self.view_natural_language_card() {
                 layers.push(nl_el);
             }
 
-            // GAP-4.2: semantic hover preview menu / tooltip.
+            // GAP-4.2:语义悬停预览菜单 / 提示气泡。
             if let Some(menu_el) = self.view_hover_preview_menu() {
                 layers.push(menu_el);
             }
@@ -14297,7 +14296,7 @@ impl PureTermApp {
                 layers.push(tip_el);
             }
 
-            // GAP-32: transient toast (top-most layer).
+            // GAP-32:瞬态 toast(最顶层)。
             if let Some(toast_el) = self.view_toast() {
                 layers.push(toast_el);
             }
@@ -14320,13 +14319,13 @@ impl PureTermApp {
         }
     }
 
-    /// Render the split tree for a tab.
+    /// 渲染一个标签页的拆分树。
     fn view_split_tree(&self, tab: &Tab) -> Element<'_, Message, Theme, iced::Renderer> {
         let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
         self.view_node(&tab.split_tree, tab.active_pane, tab.id, self.terminal_viewport_width(), terminal_h)
     }
 
-    /// Recursively render a split node.
+    /// 递归渲染拆分节点。
     /// `avail_w`/`avail_h` 是当前节点可用的像素宽高，与 `compute_layout` 使用相同公式，
     /// 确保 Iced 视图布局与 PTY 网格尺寸完全一致，消除拖拽抖动。
     fn view_node(
@@ -14385,9 +14384,9 @@ impl PureTermApp {
         }
     }
 
-    /// Render a single pane. Terminal panes use the GPU shader; web panes
-    /// (GAP-3.5) render a transparent fill — the actual page is the wry
-    /// WKWebView child of the content NSView, positioned over this area by
+    /// 渲染单个窗格。终端窗格使用 GPU shader;web 窗格
+    ///(GAP-3.5)渲染透明填充——实际页面是内容 NSView 的
+    /// wry WKWebView 子视图,由其按此区域定位。
     /// `reposition_web_panes`.
     fn view_pane(
         &self,
@@ -14438,11 +14437,11 @@ impl PureTermApp {
         };
 
         self.publish_trigger_highlights_for_view(pane_id, is_active);
-        // T-core-graphics v3: refresh the per-frame image quad draw list from
-        // the live `ImageStore`. v3 keeps this simple: every chunked-graphics
-        // / Sixel / inline image with a grid placement is drawn. Visible-cell clipping (using
-        // `display_offset` + computed_rows/cols) is a v3+1 refinement that
-        // doesn't block the image_quad pipeline plumbing.
+        // T-core-graphics v3:从活动 `ImageStore` 刷新每帧的图像
+        // quad 绘制列表。v3 保持简洁:绘制所有有网格放置的
+        // 分块图形 / Sixel / 内联图像。可见单元格裁剪(用
+        // `display_offset` + 计算的 rows/cols)是 v3+1 的细化,不
+        // 阻塞 image_quad 流水线的布线。
         {
             use crate::terminal_shader::ImageQuadDraw;
             let mut draws = self.image_quad_draws.lock().unwrap();
@@ -14491,14 +14490,14 @@ impl PureTermApp {
             .on_right_press(Message::PaneRightClick(pane_id))
             .into();
 
-        // Wrap with IME activation so the OS enables input method for this pane
+        // 用 IME 激活包装,使 OS 为该窗格启用输入法
         let el: Element<'_, Message, Theme, iced::Renderer> =
             crate::ime_widget::ImeWrapper::new(el).into();
 
-        // Active pane gets a subtle blue border highlight; a pane with unread
-        // notifications gets an amber attention ring (GAP-09) so the user can
-        // spot which pane needs attention even when it isn't focused. Active
-        // wins when both are true (the blue is the stronger signal).
+        // 活动窗格加淡蓝边框高亮;有未读通知
+        // 的窗格加琥珀色注意力环(GAP-09),使用户能
+        // 在未聚焦时也能注意到哪个窗格需要关注。两者
+        // 都为真时活动胜出(蓝色信号更强)。
         let needs_attention = self.notification_cfg.ring
             && self.notification_store.needs_attention(pane_id);
         if is_active || needs_attention {
@@ -14523,7 +14522,7 @@ impl PureTermApp {
         }
     }
 
-    /// Render a draggable divider between panes.
+    /// 渲染窗格之间的可拖拽分隔条。
     /// 拖动由全局事件（GlobalCursorMoved/GlobalMouseRelease）处理，
     /// 这里只需要响应 on_press 启动拖动。
     ///
@@ -14607,27 +14606,27 @@ impl PureTermApp {
 
     pub fn subscription(&self) -> Subscription<Message> {
         let keyboard_sub = iced::keyboard::listen().map(Message::Keyboard);
-        // Wakeup timer is now a low-rate safety net (was 16ms/60Hz, the
-        // dominant idle CPU cost per the render-perf diagnosis 2026-06-30).
-        // Most wakeups are already fired explicitly via
-        // `Task::done(Message::TerminalWakeup)` from keyboard, resize, SSH,
-        // shell-integration, daemon and pane-event emitters — see the 15+
-        // `task.map(|_| Message::TerminalWakeup)` sites throughout this file.
-        // 50ms = 20Hz gives a 3x idle CPU reduction while keeping
-        // background work (PTY echo drain, trigger scan, notify dispatch,
-        // resize_pending apply) bounded to a 50ms worst-case delay.
-        // See the resilient-waddling-hinton design plan.
-        // Fix 1.
+        // Wakeup 计时器现在是低速率安全网(原为 16ms/60Hz,
+        // per render-perf 诊断 2026-06-30)。多数 wakeup 已
+        // 经由键盘、resize、SSH、shell 集成、守护与窗格事件
+        // 触发方以 `Task::done(Message::TerminalWakeup)` 显式
+        // 触发——见本文件中 15+ 处
+        // `task.map(|_| Message::TerminalWakeup)` 点。50ms = 20Hz
+        // 让空闲 CPU 降低 3x,同时把后台工作
+        //(PTY 回显示放、触发器扫描、通知派发、
+        // resize_pending 应用)限制在 50ms 最坏延迟内。
+        // 见 resilient-waddling-hinton 设计方案。
+        // 见 resilient-waddling-hinton 设计方案。Fix 1。
         let wakeup_sub = time::every(Duration::from_millis(50)).map(|_| Message::TerminalWakeup);
-        // GAP-5.6: ~4 Hz tick that flushes the layout snapshot if it's been
-        // dirty for ≥500 ms (debounced on-change persistence).
+        // GAP-5.6:约 4 Hz tick,若布局脏了 ≥500 ms
+        // 则冲刷快照(变更即持久化的去抖)。
         let layout_save_sub =
             time::every(Duration::from_millis(250)).map(|_| Message::LayoutSaveTick);
         // GAP-7.4: ~2Hz tick —— 扫描 120s 软超时自动 Deny + 刷新 Feed 面板倒计时。
         #[cfg(unix)]
         let feed_tick_sub = time::every(Duration::from_millis(500)).map(|_| Message::FeedTick);
-        // GAP-7.3: hibernation idle scan (cfg scan_interval, default 3s) +
-        // 1Hz countdown refresh for the confirmation panel.
+        // GAP-7.3:休眠空闲扫描(cfg scan_interval,默认 3s)+
+        // 确认面板的 1Hz 倒计时刷新。
         #[cfg(unix)]
         let hibernation_scan_secs = self.hibernation_cfg.scan_interval_secs.max(1);
         #[cfg(unix)]
@@ -14637,8 +14636,8 @@ impl PureTermApp {
         #[cfg(unix)]
         let hibernation_countdown_sub =
             time::every(Duration::from_secs(1)).map(|_| Message::HibernationCountdownTick);
-        // GAP-7.6: periodic external-agent detect scan (independent of
-        // hibernation's tick; default 30s). Drives the detect-resume panel.
+        // GAP-7.6:周期性外部 agent 探测扫描(独立于
+        // 休眠 tick;默认 30s)。驱动探测-恢复面板。
         #[cfg(unix)]
         let detect_scan_secs = self.detect_cfg.scan_interval_secs.max(1);
         #[cfg(unix)]
@@ -14672,13 +14671,13 @@ impl PureTermApp {
                 }) if modifiers.command() && c.as_str() == "," => {
                     Some(Message::OpenSettings)
                 }
-                // NOTE: ⌘⇧S / ⌘⇧P are handled exclusively by
-                // `handle_keyboard` (the `keyboard::listen()` path). The
-                // `Event::Keyboard` arm in this closure was a duplicate
-                // that produced a second `Message::OpenSshDialog` /
-                // `Message::OpenCommandPalette` for the same physical key
-                // press, which caused iced to double-process the event
-                // and the dialog to never appear.
+                // 注意:⌘⇧S / ⌘⇧P 完全由 `handle_keyboard`
+                //(`keyboard::listen()` 路径)处理。本闭包中的
+                // `Event::Keyboard` 分支是重复项,会为同一物理
+                // 按键产生第二个 `Message::OpenSshDialog` /
+                // `Message::OpenCommandPalette`,使 iced 重复处理事件,
+                // 导致对话框永不出现。
+                // 因此对话框永不出现。
                 // 全局鼠标移动：用于分割线拖动（即使鼠标离开分割线窄区域）
                 Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::GlobalCursorMoved(position))
@@ -14687,7 +14686,7 @@ impl PureTermApp {
                 Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                     Some(Message::GlobalMouseRelease)
                 }
-                // IME events (Chinese/Japanese/Korean input)
+                // IME 事件(中日韩输入)
                 Event::InputMethod(ime_event) => {
                     Some(Message::InputMethod(ime_event))
                 }
@@ -14701,33 +14700,33 @@ impl PureTermApp {
         let config_sub = crate::config_watcher::watch(self.config_path.clone())
             .map(|_| Message::ConfigReloaded);
 
-        // GAP-2.3: IPC subscription — creates the channel pair in the stream
-        // builder and forwards IpcRequests as Messages to update().
-        // The sender is stored in ipc_channel_state for MainWindowOpened to clone.
+        // GAP-2.3:IPC 订阅——在流构建器中创建通道对,
+        // 并把 IpcRequests 作为 Message 转发给 update()。
+        // sender 存在 ipc_channel_state 中供 MainWindowOpened 克隆。
         let ipc_sub = Subscription::run_with(
             IpcKey(self.ipc_channel_state.clone()),
             ipc_stream_builder,
         );
 
-        // GAP-5.6: reconnect worker → main loop. Claims the hub's updates
-        // receiver once and forwards ReconnectUpdates as Messages.
+        // GAP-5.6:重连工作线程 → 主循环。一次性认领 hub 的
+        // updates 接收端,并把 ReconnectUpdates 转发为 Messages。
         #[cfg(unix)]
         let reconnect_sub = Subscription::run_with(
             ReconnectKey(self.reconnect_hub.clone()),
             reconnect_stream_builder,
         );
 
-        // GAP-6.7: in-process event bus → Message::Event (foundation for
-        // GAP-6.8 programmable sidebar; v1 consumer is the JSONL log + CLI).
+        // GAP-6.7:进程内事件总线 → Message::Event(GAP-6.8
+        // 可编程侧边栏的基础;v1 消费者是 JSONL 日志 + CLI)。
         let events_sub = Subscription::run_with(
             EventsKey(self.events.clone()),
             events_stream_builder,
         );
 
-        // GAP-24: Enhanced Status Bar — shared system-stat publisher
-        // (CPU/Memory/Network/Battery) + periodic tick for git/process refresh.
-        // Both keyed on status_bar_cfg so editing `refresh_interval_secs` in the
-        // config restarts the sampler at the new cadence.
+        // GAP-24:增强状态栏——共享的系统统计发布者
+        //(CPU/内存/网络/电池)+ 周期 tick 刷新 git/进程。
+        // 二者都按 status_bar_cfg 键控,使编辑配置中
+        // `refresh_interval_secs` 时以新节奏重启采样器。
         let status_bar_stats_sub =
             crate::status_bar::stats_subscription(self.status_bar_cfg.clone());
         let status_bar_tick_secs = self.status_bar_cfg.refresh_interval_secs.max(1);
@@ -14822,19 +14821,19 @@ pub fn run() -> iced::Result {
     .run()
 }
 
-/// The single window/tab title resolver used by `tab_display_title`. A non-empty
-/// OSC title (set by the program via OSC 0/2, GAP-1.3, or restored by a CSI 23t
-/// pop) wins outright — the shell's own title always takes precedence, so we
-/// never clobber it. Otherwise fall back to PureTerm's derived title (`tab.title`);
-/// GAP-32: when `enabled` and a non-empty `branch` is known, append ` [<branch>]`
-/// to the derived title; if disabled or no branch, return it verbatim. Pure + tested.
+/// `tab_display_title` 所用的单一窗口/标签页标题解析器。非空
+/// OSC 标题(经 OSC 0/2 或 CSI 23t 弹出由 GAP-1.3 设置)
+/// 直接胜出——shell 自己的标题始终优先,我们
+/// 永不覆盖。否则回退到 PureTerm 派生的标题(`tab.title`);
+/// GAP-32:启用且已知非空 `branch` 时,把 ` [<branch>]`
+/// 追加到派生标题;禁用或无分支则原样返回。纯函数,已测试。
 fn tab_title_with_branch(
     osc: Option<&str>,
     derived: &str,
     branch: Option<&str>,
     enabled: bool,
 ) -> String {
-    // OSC program-set title wins outright (GAP-1.3 precedence).
+    // OSC 程序设置的标题直接胜出(GAP-1.3 优先级)。
     if let Some(s) = osc {
         if !s.is_empty() {
             return s.to_string();
@@ -14850,14 +14849,14 @@ fn tab_title_with_branch(
     derived.to_string()
 }
 
-/// Remove `pane_id` from every per-pane runtime map. Single source of truth for
-/// the destroy-site cleanup list — every site that destroys a pane MUST route
-/// through here (directly, or via `PureTermApp::teardown_pane_state`). Pane ids
-/// are never reused, so a map missed here leaks for the whole session.
+/// 把 `pane_id` 从每窗格运行时映射中移除。销毁点清理的
+/// 单一事实源——每个销毁窗格的位置都必须经此
+///(直接或经 `PureTermApp::teardown_pane_state`)。窗格 id
+/// 绝不复用,漏掉此处会泄漏整个会话。
 ///
-/// Free function (not `&mut self`) so the two single-pane close paths — which
-/// hold a `&mut Tab` borrow into `self.windows` and can't call a `&mut self`
-/// method — can still reach it via disjoint field borrows.
+/// 自由函数(非 `&mut self`),使两条持有 `&mut Tab`
+/// 借用 `self.windows` 的单窗格关闭路径仍能经
+/// 互斥字段借用到达它。
 fn teardown_pane_state_maps(
     cwds: &mut HashMap<PaneId, String>,
     osc_title: &mut HashMap<PaneId, String>,
@@ -14875,17 +14874,17 @@ fn teardown_pane_state_maps(
 
 #[cfg(test)]
 mod tests {
-    // GAP-09: desktop-toast gating regression. The intrusive OS toast is
-    // suppressed when the user can already see the relevant surface.
+    // GAP-09:桌面通知门控回归。侵入式 OS 通知在
+    // 用户已能看到相关表面时被抑制。
     use alacritty_terminal::event::NotifyOccasion;
 
     #[test]
     fn gap09_should_toast_always_only_when_pane_not_visible() {
         use NotifyOccasion::{Always, Invisible, Unfocused};
-        // Visible pane (app focused AND pane active) ⇒ never toast:
+        // 可见窗格(应用聚焦且窗格活动)⇒ 永不通知:
         assert!(!super::should_toast(Always, true, true));
         assert!(!super::should_toast(Invisible, true, true));
-        // Pane not the active focused pane ⇒ toast:
+        // 窗格非活动聚焦窗格 ⇒ 通知:
         assert!(super::should_toast(Always, false, true));
         assert!(super::should_toast(Invisible, false, true));
         assert!(super::should_toast(Unfocused, false, false));
@@ -14894,10 +14893,10 @@ mod tests {
     #[test]
     fn gap09_should_toast_unfocused_only_when_app_not_focused() {
         use NotifyOccasion::Unfocused;
-        // App focused ⇒ never toast an `o=unfocused` signal (gentlest occasion):
+        // 应用聚焦 ⇒ 永不通知 `o=unfocused` 信号(最温和的时机):
         assert!(!super::should_toast(Unfocused, false, true));
         assert!(!super::should_toast(Unfocused, true, true));
-        // App not focused ⇒ toast:
+        // 应用未聚焦 ⇒ 通知:
         assert!(super::should_toast(Unfocused, false, false));
     }
 
@@ -14925,7 +14924,7 @@ mod tests {
         let (label, _) = super::agent_indicator("claude-code", false, 3).unwrap();
         assert!(label.contains('\u{23f3}')); // ⏳
         assert!(label.contains('3'));
-        // No agent on pane but pending elsewhere → badge still shows.
+        // 窗格无 agent 但别处有 pending → 徽标仍显示。
         let (label2, _) = super::agent_indicator("", false, 1).unwrap();
         assert!(label2.contains('\u{23f3}'));
         assert!(!label2.contains('\u{26a1}'));
@@ -14936,7 +14935,7 @@ mod tests {
         assert!(super::agent_indicator("", false, 0).is_none());
     }
 
-    // ── GAP-3.5: address-bar URL normalization ──────────────────────
+    // ── GAP-3.5:地址栏 URL 规范化 ─────────────────────────────────
 
     #[test]
     fn normalize_url_passes_through_scheme() {
@@ -14966,13 +14965,13 @@ mod tests {
     fn normalize_url_search_fallback() {
         let out = super::normalize_url_input("how do i exit vim");
         assert!(out.starts_with("https://www.google.com/search?q="));
-        // spaces → '+'
+        // 空格 → '+'
         assert!(out.contains("how+do+i+exit+vim"));
     }
 
     #[test]
     fn normalize_url_about_blank_passthrough() {
-        // No "://", but a bare scheme like about:blank passes through.
+        // 无 "://",但裸 scheme 如 about:blank 直通。
         assert_eq!(super::normalize_url_input("about:blank"), "about:blank");
     }
 
@@ -14984,9 +14983,9 @@ mod tests {
 
     #[test]
     fn normalize_url_bare_host_port_gets_http_prefix() {
-        // GAP-3.5 review B1: `localhost:8080` was matched by the bare-scheme
-        // passthrough (lhs "localhost" is all-alpha) and returned verbatim —
-        // WKWebView can't load a scheme-less `localhost:8080`. Now → http://.
+        // GAP-3.5 评审 B1:`localhost:8080` 此前被裸 scheme
+        // 直通匹配(lhs "localhost" 全字母)并原样返回——
+        // WKWebView 加载不了无 scheme 的 `localhost:8080`。现在 → http://。
         assert_eq!(
             super::normalize_url_input("localhost:8080"),
             "http://localhost:8080"
@@ -15003,17 +15002,17 @@ mod tests {
 
     #[test]
     fn normalize_url_about_blank_still_passthrough() {
-        // Regression guard: a real bare scheme whose rhs is non-numeric still
-        // passes through (the host:port branch only fires on all-digit rhs).
+        // 回归保护:rhs 非数字的真裸 scheme 仍
+        // 直通(host:port 分支只在 rhs 全数字时触发)。
         assert_eq!(super::normalize_url_input("about:blank"), "about:blank");
         assert_eq!(super::normalize_url_input("mailto:x@y.io"), "mailto:x@y.io");
     }
 
     #[test]
     fn normalize_url_dotted_host_port_still_https() {
-        // Surgical scope: only the *bare-hostname* (no dot) + port case is
-        // rewritten to http://. A dotted host:port keeps going through the
-        // domain branch (https://), unchanged.
+        // 精准范围:仅 *裸主机名*(无点)+ 端口
+        // 被改写为 http://。带点 host:port 走域名
+        // 分支(https://),不变。
         assert_eq!(
             super::normalize_url_input("127.0.0.1:3000"),
             "https://127.0.0.1:3000"
@@ -15032,8 +15031,8 @@ mod tests {
 
     #[test]
     fn address_bar_action_stale_target_falls_back_to_spawn() {
-        // B2: target captured at ⌘L-open, but pane closed before Enter → spawn
-        // (don't silently drop the typed URL).
+        // B2:⌘L 打开时捕获了 target,但按回车前窗格被关 → 生成新窗格
+        //(不要静默丢弃已输入的 URL)。
         use crate::split_tree::PaneId;
         assert_eq!(
             super::address_bar_confirm_action(Some(PaneId(7)), false, "https://x.io"),
@@ -15051,7 +15050,7 @@ mod tests {
 
     #[test]
     fn address_bar_action_empty_url_drops() {
-        // B3: empty input → Drop (no load, no event), regardless of target.
+        // B3:空输入 → Drop(不加载、不发事件),与 target 无关。
         use crate::split_tree::PaneId;
         assert_eq!(
             super::address_bar_confirm_action(Some(PaneId(7)), true, ""),
@@ -15065,14 +15064,14 @@ mod tests {
 
     #[test]
     fn percent_encode_query_unreserved_and_special() {
-        // unreserved pass through; space → '+'; others → %XX.
+        // 非保留字符直通;空格 → '+';其余 → %XX。
         assert_eq!(super::percent_encode_query("a Z_-.~"), "a+Z_-.~");
         assert_eq!(super::percent_encode_query("?&="), "%3F%26%3D");
     }
 
     #[test]
     fn tab_title_osc_wins_over_branch_suffix() {
-        // GAP-32: a program-set OSC title is never clobbered by the branch.
+        // GAP-32:程序设置的 OSC 标题永不被该分支覆盖。
         assert_eq!(
             super::tab_title_with_branch(Some("vim"), "#1", Some("main"), true),
             "vim"
@@ -15085,7 +15084,7 @@ mod tests {
             super::tab_title_with_branch(None, "#1", Some("main"), true),
             "#1 [main]"
         );
-        // Empty OSC (reset) still falls into the derived path.
+        // 空 OSC(重置)仍走派生路径。
         assert_eq!(
             super::tab_title_with_branch(Some(""), "#1", Some("feature/x"), true),
             "#1 [feature/x]"
@@ -15094,14 +15093,14 @@ mod tests {
 
     #[test]
     fn tab_title_no_suffix_when_disabled_or_no_branch() {
-        // Disabled → never append, even with a branch known.
+        // 禁用 → 永不追加,即便已知分支。
         assert_eq!(
             super::tab_title_with_branch(None, "#1", Some("main"), false),
             "#1"
         );
-        // Enabled but no branch (not a repo) → derived verbatim.
+        // 启用但无分支(非仓库) → 派生原样。
         assert_eq!(super::tab_title_with_branch(None, "#1", None, true), "#1");
-        // Enabled but empty branch string → derived verbatim.
+        // 启用但分支字符串为空 → 派生原样。
         assert_eq!(
             super::tab_title_with_branch(None, "#1", Some(""), true),
             "#1"
@@ -15110,11 +15109,11 @@ mod tests {
 
     #[test]
     fn gap13_teardown_pane_state_maps_removes_from_all_five_maps() {
-        // GAP-1.3 review: every destroy site (single-pane close, tab close,
-        // window close, tab-range context ops) must drop the doomed panes'
-        // entries from ALL five per-pane runtime maps — pane ids are never
-        // reused, so a map missed at any site leaks for the whole session.
-        // Locks the shared "complete teardown" contract.
+        // GAP-1.3 评审:每个销毁点(单窗格关、标签页关、
+        // 关窗口、标签页范围的右键操作)都必须从全部五张
+        // 每窗格运行时映射中丢弃被关窗格的条目——窗格 id 永远
+        // 不复用,因此任一位置漏掉映射都会泄漏整个会话。
+        // 这锁定了共享的“完整 teardown”契约。
         use crate::split_tree::PaneId;
         use std::collections::HashMap;
         let gone = PaneId(7);
@@ -15132,13 +15131,13 @@ mod tests {
 
         super::teardown_pane_state_maps(&mut cwds, &mut osc, &mut trigger, &mut shell, &mut blocks, gone);
 
-        // `gone` removed from every map…
+        // `gone` 从每张映射中移除……
         assert!(cwds.get(&gone).is_none());
         assert!(osc.get(&gone).is_none());
         assert!(trigger.get(&gone).is_none());
         assert!(shell.get(&gone).is_none());
         assert!(blocks.get(&gone).is_none());
-        // …and `keep` survives in every map (teardown is keyed, not clear()).
+        // ……而 `keep` 在每张映射中存活(teardown 按键,不是 clear())。
         assert_eq!(cwds.get(&keep).map(String::as_str), Some("/b"));
         assert_eq!(osc.get(&keep).map(String::as_str), Some("k"));
         assert!(trigger.contains_key(&keep));
@@ -15159,10 +15158,10 @@ mod tests {
     fn gap21_dirty_should_clear_only_when_no_change_during_flush() {
         use std::time::Instant;
         let t0 = Instant::now();
-        // Force t1 != t0: two consecutive Instant::now() calls frequently return
-        // the same value on fast machines, which would make dirty_should_clear
-        // (an equality check) wrongly return "equal -> clear". +1ns guarantees a
-        // distinct timestamp so the "changed during flush" assertions are stable.
+        // 强制 t1 != t0:在快速机器上两次连续 Instant::now() 调用
+        // 常返回相同值,会让 dirty_should_clear(等值检查)
+        // 错误地返回“相等 → 清掉”。+1ns 保证时间戳不同,
+        // 使“冲刷期间变化”断言稳定。
         let t1 = t0 + std::time::Duration::from_nanos(1);
         // 期间无新变更(时间戳未动) → 清 dirty。
         assert!(super::dirty_should_clear(Some(t0), Some(t0)));

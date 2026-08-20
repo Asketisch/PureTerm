@@ -101,11 +101,11 @@ impl SplitNode {
         }
     }
 
-    /// GAP-6.6: detach (remove) a leaf pane, collapsing its parent Split into
-    /// the sibling (tmux `break-pane` / `join-pane` source side). Returns true
-    /// iff the pane was present and the tree still has ≥1 pane afterwards
-    /// (false if it was the only leaf — the last pane can't be detached). The
-    /// caller owns moving the pane's content elsewhere.
+    /// GAP-6.6:分离(移除)一个叶子窗格,把它的父 Split 折叠进
+    /// 兄弟节点(tmux `break-pane` / `join-pane` 的源侧)。当且仅当该窗格存在
+    /// 且操作后树中仍保有 ≥1 个窗格时返回 true
+    ///(若它是唯一叶子则返回 false——最后一个窗格不可分离)。
+    /// 把窗格内容移往别处由调用方负责。
     pub fn detach_leaf(&mut self, pane_id: PaneId) -> bool {
         self.remove(pane_id).is_some()
     }

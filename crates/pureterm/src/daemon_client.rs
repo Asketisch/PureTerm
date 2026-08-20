@@ -1,8 +1,8 @@
-//! GUI-side daemon client: control-plane RPC + spawn-on-demand.
+//! GUI 侧守护进程客户端:控制面 RPC + 按需拉起。
 //!
-//! The GUI never holds a real PTY fd. It talks to `puretermd` via JSON-RPC
-//! over the fixed daemon socket, then connects to the per-session data socket
-//! with `DaemonPty` (which implements `EventedPty`).
+//! GUI 从不持有真正的 PTY fd。它经由 JSON-RPC
+//! 通过固定的守护进程 socket 与 `puretermd` 通信,再连到每会话数据 socket,
+//! 由 `DaemonPty`(实现 `EventedPty`)使用。
 
 mod rpc;
 mod sessions;

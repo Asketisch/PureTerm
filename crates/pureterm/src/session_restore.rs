@@ -23,23 +23,23 @@ mod tab;
 pub use restore::{cold_resume_agent, restore};
 pub use snapshot::{save_atomic, save_atomic_to};
 
-/// One persisted pane, in DFS leaf order aligned with the tab's `split_tree`.
-/// `session_id == None` marks a non-daemon (direct PTY) pane, which cannot
-/// survive GUI restart; restore prunes it.
+/// 一个持久化的窗格,按与该 tab 的 `split_tree` 对齐的 DFS 叶子顺序排列。
+/// `session_id == None` 表示非守护进程(直连 PTY)窗格,它无法
+/// 跨 GUI 重启存活;恢复时会将其裁剪掉。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PaneSnapshot {
     pub session_id: Option<String>,
-    /// `"local"` or `"ssh"` (only meaningful when `session_id` is `Some`).
+    /// `"local"` 或 `"ssh"`(仅当 `session_id` 为 `Some` 时有效)。
     pub kind: String,
-    /// SSH profile name (for title + reconnect metadata lookup); `None` for local.
+    /// SSH 配置名(用于标题 + 重连元数据查找);本地窗格为 `None`。
     pub ssh_profile: Option<String>,
     pub title: String,
-    /// GAP-7.5: agent session id (Claude Code / Codex) for cold resume via
-    /// `claude --resume <id>`. `None` for plain shells. `#[serde(default)]`
-    /// keeps v1 snapshots loadable (field absent ⇒ `None`).
+    /// GAP-7.5:agent 会话 id(Claude Code / Codex),用于经
+    /// `claude --resume <id>` 冷恢复。普通 shell 为 `None`。`#[serde(default)]`
+    /// 保证 v1 快照仍可加载(字段缺失 ⇒ `None`)。
     #[serde(default)]
     pub agent_session_id: Option<String>,
-    /// GAP-7.5: agent kind (`claude-code`/`codex`), pairs with agent_session_id.
+    /// GAP-7.5:agent 类型(`claude-code`/`codex`),与 agent_session_id 成对。
     #[serde(default)]
     pub agent_kind: Option<String>,
     /// GAP-3.5: web pane 的 URL(仅 `kind == "web"` 时有值)。`#[serde(default)]`
@@ -94,8 +94,8 @@ pub const SNAPSHOT_VERSION: u32 = 2;
 const SNAPSHOT_FILE: &str = "workspaces.json";
 const LEGACY_V1_FILE: &str = "gui-sessions.json";
 
-/// Path of the on-disk layout snapshot. Lives in the daemon's persistent,
-/// owner-only (0o700) data dir, created by `pureterm_daemon::discovery::ensure_dirs`.
+/// 磁盘上布局快照的路径。位于守护进程的持久化、
+/// 仅所有者(0o700)数据目录下,由 `pureterm_daemon::discovery::ensure_dirs` 创建。
 pub fn state_path() -> PathBuf {
     pureterm_daemon::discovery::data_dir().join(SNAPSHOT_FILE)
 }
@@ -136,10 +136,10 @@ pub fn wrap_v1_into_v2(
     }
 }
 
-/// Load the snapshot. `None` if missing or unparseable (treated as fresh start).
+/// 加载快照。缺失或无法解析时返回 `None`(视为全新启动)。
 /// v2 path reads `workspaces.json`;若无则尝试一次性迁移 v1 `gui-sessions.json`。
 pub fn load() -> Option<LayoutSnapshot> {
-    // v2 path: workspaces.json
+    // v2 路径:workspaces.json
     if let Ok(data) = std::fs::read(state_path()) {
         match serde_json::from_slice::<LayoutSnapshot>(&data) {
             Ok(s) if s.version == SNAPSHOT_VERSION => return Some(s),
@@ -170,15 +170,15 @@ fn migrate_v1_to_v2() -> Option<LayoutSnapshot> {
 
 // ── 恢复结果类型(Unix only — 恢复涉及 spawn PTY/SSH) ──────────────────────
 
-/// A restored pane: its content carrier (terminal or web, GAP-3.5) + display title.
+/// 恢复出的窗格:内容载体(终端或 web,GAP-3.5)+ 显示标题。
 #[cfg(unix)]
 pub struct RestoredPane {
     pub content: crate::split_tree::Surface,
     pub title: String,
 }
 
-/// A restored tab: a split tree already remapped to fresh `PaneId`s, plus its
-/// panes in DFS leaf order (aligned with `split_tree.pane_ids()`).
+/// 恢复出的 tab:已重映射为全新 `PaneId` 的 split tree,外加
+/// 按 DFS 叶子顺序排列的窗格(与 `split_tree.pane_ids()` 对齐)。
 #[cfg(unix)]
 pub struct RestoredTab {
     pub title: String,

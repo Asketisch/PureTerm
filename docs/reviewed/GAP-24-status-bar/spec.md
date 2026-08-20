@@ -1,6 +1,6 @@
 ---
 gap: GAP-24
-title: Enhanced Status Bar
+title: 增强状态栏
 category: UI/外壳
 plan_type: enhance
 priority: P2

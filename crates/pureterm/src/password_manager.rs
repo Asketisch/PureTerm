@@ -1,8 +1,8 @@
-//! GAP-37: Password manager integration — 1Password / LastPass / Keychain for SSH.
+//! GAP-37:密码管理器集成——SSH 用 1Password / LastPass / Keychain。
 
 use std::process::Command;
 
-/// Global `[ssh].password_manager` setting.
+/// 全局 `[ssh].password_manager` 设置。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum PasswordManagerSource {
     #[default]
@@ -29,7 +29,7 @@ pub struct PasswordRef {
     pub lpass_entry: Option<String>,
 }
 
-/// Probe which CLI password sources are available on PATH.
+/// 探测 PATH 上有哪些 CLI 密码源可用。
 pub fn probe_sources() -> Vec<&'static str> {
     let mut out = Vec::new();
     if which("security") {
@@ -52,7 +52,7 @@ fn which(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Resolve a password for SSH auth. Never logs the secret.
+/// 为 SSH 认证解析密码。绝不记录该密钥。
 pub fn resolve_password(
     source: PasswordManagerSource,
     host: &str,

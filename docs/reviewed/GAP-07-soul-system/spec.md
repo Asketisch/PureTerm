@@ -1,7 +1,7 @@
 ---
 gap: GAP-07
-title: Soul System
-category: AI Agent
+title: 灵魂系统
+category: AI 智能体
 plan_type: feature
 priority: P2
 effort: S

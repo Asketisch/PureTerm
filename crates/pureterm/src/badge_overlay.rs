@@ -1,6 +1,6 @@
-//! GAP-29: Environment badge overlay (PROD/DEV/STAGING).
+//! GAP-29:环境徽标覆盖层(PROD/DEV/STAGING)。
 
-/// Badge corner placement.
+/// 徽标角落位置。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BadgePosition {
     TopLeft,
@@ -21,7 +21,7 @@ impl BadgePosition {
     }
 }
 
-/// `[badge]` config.
+/// `[badge]` 配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct BadgeOverlayConfig {
     pub enabled: bool,
@@ -45,7 +45,7 @@ impl Default for BadgeOverlayConfig {
 }
 
 impl BadgeOverlayConfig {
-    /// Per-profile override: non-empty profile badge wins over global text.
+    /// 按配置档覆盖:非空配置档徽标优先于全局文本。
     pub fn effective_text<'a>(&'a self, profile_badge: Option<&'a str>) -> Option<&'a str> {
         if !self.enabled {
             return None;

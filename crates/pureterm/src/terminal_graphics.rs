@@ -1,43 +1,37 @@
-//! T-core-graphics: Sixel / chunked graphics protocol / inline image —
-//! the GUI-side half. The byte-level parser lives in
-//! `alacritty_terminal::event_loop::scan_graphics`; this module owns the
-//! in-memory image store and its integration with the surface snapshot /
-//! scrollback.
+//! T-core-graphics：Sixel / 分块图形协议 / 内联图像——GUI 侧的一半。
+//! 字节级解析器位于 `alacritty_terminal::event_loop::scan_graphics`；
+//! 本模块负责内存图像存储及其与表面快照 / 回滚的集成。
 //!
-//! ## Model
+//! ## 模型
 //!
-//! 1. The terminal's event loop emits `Event::GraphicsImage` for every
-//!    fully-assembled single-chunk image (Sixel / `a=T` chunked-graphics /
-//!    inline image). Multi-chunk graphics images are assembled here, in
-//!    [`ImageStore`], keyed by image id (`i=…`).
-//! 2. The renderer reads from [`ImageStore`] when its atlas has a free slot
-//!    and the image's grid placement overlaps the viewport.
-//! 3. Scrollback pruning trims the store's image set to entries that still
-//!    have a placement inside the visible grid (anchors outside the
-//!    scrollback are removed, anchors inside are kept — the spec calls this
-//!    the "scrollback prune" pass).
+//! 1. 终端事件循环为每个完整组装好的单块图像（Sixel / `a=T` 分块图形 /
+//!    内联图像）发出 `Event::GraphicsImage`。多块图形图像在本模块的
+//!    [`ImageStore`] 中按图像 id（`i=…`）组装。
+//! 2. 当图集有空位且图像的网格放置与视口重叠时，渲染器从 [`ImageStore`]
+//!    读取。
+//! 3. 回滚剪枝把存储中的图像集修剪为仍在可见网格内有放置的条目
+//!    （锚点在回滚区之外的移除，在内部的保留——规范称之为
+//!    “回滚剪枝”通道）。
 //!
-//! v1 deliberately keeps the surface small: the Sixel/graphics byte parser is
-//! real and the store is real; the GPU blit path is wired in v2.
+//! v1 刻意保持较小的表面：Sixel/图形字节解析器是真实的，存储也是真实的；
+//! GPU blit 路径在 v2 接线。
 
 use std::collections::{HashMap, VecDeque};
 
 use alacritty_terminal::event::GraphicsImage;
 
-/// Reassembled chunked-graphics chunk (only the `i=` id and the base64
-/// payload; the renderer reads `width` / `height` from the chunked
-/// metadata when the final chunk arrives).
+/// 重组后的分块图形块（只含 `i=` id 与 base64 载荷；渲染器在最终块
+/// 到达时从分块元数据读取 `width` / `height`）。
 #[derive(Debug, Clone)]
 struct GraphicsChunk {
-    /// Payload bytes of this chunk (decoded from base64).
+    /// 该块的载荷字节（从 base64 解码而来）。
     bytes: Vec<u8>,
-    /// Final chunk? (`m=1`)
+    /// 是最终块吗？（`m=1`）
     final_chunk: bool,
 }
 
-/// Chunked-graphics multi-chunk reassembler. A single image id maps to a
-/// FIFO of chunks; the final chunk's arrival flushes the concatenation
-/// into a single [`GraphicsImage`].
+/// 分块图形的多块重组器。单个图像 id 映射到一个 FIFO 块队列；
+/// 最终块的到达会把拼接结果冲刷为单个 [`GraphicsImage`]。
 #[derive(Debug, Clone, Default)]
 pub struct GraphicsAssembler {
     by_id: HashMap<u32, VecDeque<GraphicsChunk>>,
@@ -48,15 +42,13 @@ impl GraphicsAssembler {
         Self { by_id: HashMap::new() }
     }
 
-    /// Record a chunk for image `id`. Returns `Some(image)` if this chunk
-    /// (or any earlier buffered one) was the final chunk — flushing all
-    /// chunks into a single concatenated payload. Returns `None` if more
-    /// chunks are still expected.
+    /// 为图像 `id` 记录一个块。若该块（或此前缓冲的任何一块）是最终块，
+    /// 返回 `Some(image)`——把所有块冲刷为单个拼接载荷。若仍期待更多块，
+    /// 返回 `None`。
     ///
-    /// `format`, `width`, `height`, and `cols`/`rows` come from the final
-    /// chunk's metadata. The first chunk's metadata is discarded — the
-    /// chunked-graphics spec only requires the metadata to be repeated on
-    /// every chunk, so the cleanest source is whatever the last chunk carries.
+    /// `format`、`width`、`height` 与 `cols`/`rows` 来自最终块的元数据。
+    /// 第一块的元数据被丢弃——分块图形规范只要求元数据在每个块上重复，
+    /// 因此最干净的来源是最后一块携带的内容。
     pub fn push(
         &mut self,
         id: u32,
@@ -105,42 +97,38 @@ impl GraphicsAssembler {
         })
     }
 
-    /// Drop any in-flight reassembly buffers for image ids that haven't
-    /// completed in `max_age` calls. Returns the number of buffers dropped.
+    /// 丢弃在 `max_age` 次调用内未完成的图像 id 的进行中重组缓冲区。
+    /// 返回被丢弃的缓冲区数量。
     pub fn gc(&mut self, max_age: usize) -> usize {
-        // No per-entry age in v1 (stateless) — we just clean up when the
-        // image id collides with a new transmission (see `push`). This
-        // method exists for symmetry with future eviction policies and for
-        // tests.
+        // v1 没有按条目的存活时间（无状态）——我们只在图像 id 与新的传输冲突
+        // 时清理（见 `push`）。此方法的存在是为了与未来的逐出策略对称、
+        // 也为了测试。
         let _ = max_age;
         0
     }
 }
 
-/// In-memory store of decoded graphics images, keyed by image id (chunked
-/// graphics protocol) or insertion order (Sixel / inline image, which
-/// carry no id). The renderer reads from here when blitting.
+/// 已解码图形图像的内存存储，按图像 id（分块图形协议）或插入顺序
+/// （Sixel / 内联图像，不带 id）索引。渲染器 blit 时从这里读取。
 #[derive(Debug, Clone)]
 pub struct ImageStore {
-    /// id → image (chunked graphics protocol).
+    /// id → 图像（分块图形协议）。
     by_id: HashMap<u32, StoredImage>,
-    /// Sixel / inline-image images, indexed by insertion order. Eviction
-    /// is FIFO when `max_entries` is reached.
+    /// Sixel / 内联图像，按插入顺序索引。达到 `max_entries` 时按 FIFO 逐出。
     sequential: VecDeque<StoredImage>,
-    /// Monotonic z counter assigned at insertion time.
+    /// 插入时分配的单调 z 计数器。
     z_next: u32,
-    /// Hard cap on total images. Oldest Sixel/inline-image entries are
-    /// evicted first; chunked-graphics images keyed by `id` are pinned
-    /// while the reassembler holds them.
+    /// 图像总数的硬上限。最旧的 Sixel/内联图像条目先被逐出；被重组器持有的
+    /// 按 `id` 索引的分块图形图像会被固定。
     max_entries: usize,
-    /// Optional byte cap; the per-image size is checked on insertion.
+    /// 可选的字节上限；插入时检查每张图像的大小。
     max_image_bytes: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct StoredImage {
     image: GraphicsImage,
-    /// Number of bytes the image occupies in the store.
+    /// 图像在存储中占用的字节数。
     pub(crate) bytes: usize,
 }
 
@@ -151,17 +139,15 @@ impl ImageStore {
             sequential: VecDeque::new(),
             z_next: 1,
             max_entries: max_entries.max(1),
-            // No floor on `max_image_bytes` — the test in this module uses
-            // small caps to exercise the rejection path. Production callers
-            // pull the value from `[terminal_graphics] max_image_bytes`
-            // (default 32 MiB).
+            // `max_image_bytes` 不设下限——本模块的测试用小上限来演练拒绝路径。
+            // 生产调用者从 `[terminal_graphics] max_image_bytes` 取值
+            // （默认 32 MiB）。
             max_image_bytes: max_image_bytes.max(1),
         }
     }
 
-    /// Insert an image into the store. Returns the new z value. If
-    /// `max_image_bytes` is exceeded, the image is dropped and `None` is
-    /// returned.
+    /// 向存储插入一张图像。返回新的 z 值。若超过 `max_image_bytes`，
+    /// 图像被丢弃并返回 `None`。
     pub fn insert(&mut self, image: GraphicsImage) -> Option<u32> {
         let bytes = image.pixels.as_ref().map(|p| p.len()).unwrap_or(0)
             + image.encoded.len();
@@ -176,11 +162,10 @@ impl ImageStore {
         let stored = StoredImage { image: image.clone(), bytes };
 
         if image.placement.id != 0 {
-            // Chunked graphics: keyed by id; a retransmission replaces the
-            // previous content for the same id.
+            // 分块图形：按 id 索引；同一 id 的重新传输会替换此前的内容。
             self.by_id.insert(image.placement.id, stored);
         } else {
-            // Sixel / inline image: sequential FIFO.
+            // Sixel / 内联图像：顺序 FIFO。
             self.sequential.push_back(stored);
             while self.sequential.len() + self.by_id.len() > self.max_entries {
                 self.sequential.pop_front();
@@ -189,39 +174,36 @@ impl ImageStore {
         Some(z)
     }
 
-    /// Look up an image by id (chunked graphics protocol). Returns `None` if absent.
+    /// 按 id 查找图像（分块图形协议）。不存在时返回 `None`。
     pub fn get_by_id(&self, id: u32) -> Option<&GraphicsImage> {
         self.by_id.get(&id).map(|s| &s.image)
     }
 
-    /// T-core-graphics v3: iterate the sequential (Sixel / inline-image)
-    /// image queue in insertion order. Used by `iced_app.rs` to populate
-    /// the per-frame `image_quad_draws` list.
+    /// T-core-graphics v3：按插入顺序遍历顺序（Sixel / 内联图像）图像队列。
+    /// 供 `iced_app.rs` 填充每帧的 `image_quad_draws` 列表。
     pub fn sequential(&self) -> impl Iterator<Item = &GraphicsImage> {
         self.sequential.iter().map(|s| &s.image)
     }
 
-    /// T-core-graphics v3: iterate the id-keyed (chunked graphics) image
-    /// map. The iterator order is `HashMap`'s (effectively random); callers
-    /// that need stable ordering should sort by `placement.z` (which
-    /// `image_quad_draws` already does).
+    /// T-core-graphics v3：遍历按 id 索引（分块图形）的图像映射。迭代顺序
+    /// 是 `HashMap` 的（实际上随机）；需要稳定顺序的调用方应按
+    /// `placement.z` 排序（`image_quad_draws` 已经这么做了）。
     pub fn by_id_values(&self) -> impl Iterator<Item = &GraphicsImage> {
         self.by_id.values().map(|s| &s.image)
     }
 
-    /// Total image count.
+    /// 图像总数。
     pub fn len(&self) -> usize {
         self.sequential.len() + self.by_id.len()
     }
 
-    /// True if no images are stored.
+    /// 没有存储任何图像时为 true。
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Drop images whose placement row is above `first_visible_row` and
-    /// strictly below the scrollback cap (`scrollback_lines`). Returns the
-    /// number of images dropped.
+    /// 丢弃放置行在 `first_visible_row` 之上且严格低于回滚上限
+    /// （`scrollback_lines`）的图像。返回被丢弃的图像数量。
     pub fn prune_scrollback(&mut self, first_visible_row: u32, scrollback_lines: u32) -> usize {
         let mut dropped = 0;
         self.sequential.retain(|s| {
@@ -232,38 +214,37 @@ impl ImageStore {
             }
             true
         });
-        // Chunked-graphics images keyed by id are pinned — the spec says
-        // "scrollback bookkeeping is keyed by grid placement", and a chunked
-        // image that hasn't been completed yet has no grid placement to prune against.
+        // 按 id 索引的分块图形图像被固定——规范说“回滚记账按网格放置索引”，
+        // 而尚未完成的分块图像没有可剪枝的网格放置。
         dropped
     }
 }
 
-/// Detect which graphics protocol a chunk of PTY bytes uses, if any.
+/// 检测一段 PTY 字节块使用的是哪种图形协议（如果有的话）。
 ///
-/// This is the byte-prefix sniff used by the scrollback / status surfaces
-/// to decide whether a chunk deserves a scan pass; the real parse lives in
-/// `alacritty_terminal::event_loop::scan_graphics`. Returned IDs are
-/// internal stable identifiers (see inline comments).
+/// 这是回滚 / 状态表面用于决定一个字节块是否值得做扫描通道的
+/// 字节前缀嗅探；真正的解析在
+/// `alacritty_terminal::event_loop::scan_graphics`。返回的 ID 是
+/// 内部稳定标识符（见内联注释）。
 pub fn detect_protocol(chunk: &[u8]) -> Option<&'static str> {
-    // Protocol IDs are internal (not exposed to users); they identify which
-    // escape-sequence family a chunk belongs to, for the scrollback/status
-    // scan decision. See `alacritty_terminal::event_loop::scan_graphics`.
+    // 协议 ID 是内部的（不暴露给用户）；它们标识字节块属于哪个转义序列
+    // 家族，用于回滚/状态扫描决策。见
+    // `alacritty_terminal::event_loop::scan_graphics`。
     if chunk.starts_with(b"\x1b_G") {
-        Some("graphics") // APC `_` — chunked graphics protocol
+        Some("graphics") // APC `_`——分块图形协议
     } else if chunk.starts_with(b"\x1bPq") {
-        Some("sixel") // DCS `Pq` — sixel raster protocol
+        Some("sixel") // DCS `Pq`——sixel 栅格协议
     } else if chunk.starts_with(b"\x1b]1337;File=") {
-        Some("inline_image") // OSC 1337 — inline image protocol
+        Some("inline_image") // OSC 1337——内联图像协议
     } else {
         None
     }
 }
 
-/// Legacy metadata-only graphics placement cache. Kept because P4 runtime
-/// constructs one for backward-compat with pre-t-core-closure callers; the
-/// new code path uses [`ImageStore`] / [`GraphicsAssembler`] above. The
-/// v1 cache only tracks `(id, cols, rows, payload_len)` — no pixels.
+/// 仅元数据的传统图形放置缓存。保留是因为 P4 运行时为兼容
+/// t-core 收敛前的调用方会构造一个；新的代码路径使用上面的
+/// [`ImageStore`] / [`GraphicsAssembler`]。v1 缓存只跟踪
+/// `(id, cols, rows, payload_len)`——不含像素。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GraphicsPlacement {
     pub id: u32,
@@ -300,17 +281,15 @@ impl GraphicsCache {
     }
 }
 
-/// Per-image config. Mirrors the `[terminal_graphics]` block in
-/// `default-config.toml` and the `app_config::TerminalGraphicsConfig` the
-/// config loader returns. The new fields added in t-core-closure are
-/// `max_image_bytes` and `max_concurrent_images`.
+/// 每图像的配置。镜像 `default-config.toml` 中的 `[terminal_graphics]`
+/// 块以及配置加载器返回的 `app_config::TerminalGraphicsConfig`。
+/// t-core 收敛新增的字段是 `max_image_bytes` 与 `max_concurrent_images`。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TerminalGraphicsConfig {
     pub enabled: bool,
     pub max_images: usize,
-    /// Per-image byte cap. Chunked-graphics PNG images can be megabytes;
-    /// the default (32 MiB) rejects pathological payloads before they pin
-    /// the store.
+    /// 每图像的字节上限。分块图形 PNG 图像可能有数兆字节；
+    /// 默认值（32 MiB）在病态载荷固定存储之前就将其拒绝。
     pub max_image_bytes: usize,
 }
 
@@ -364,23 +343,23 @@ mod tests {
     fn store_evicts_oldest_sequential() {
         let mut s = ImageStore::new(2, 1024 * 1024);
         for i in 0..3 {
-            // id=0 → sequential (Sixel / inline-image mode).
+            // id=0 → 顺序（Sixel / 内联图像模式）。
             let mut img = rgba_image(0, 1, 1, 1, 1, 0);
             img.placement.id = 0;
             img.placement.row = i as u16;
             s.insert(img);
         }
-        // 2-cap evicts the oldest; only the latest 2 remain.
+        // 上限 2 逐出最旧的；只保留最新的 2 张。
         assert_eq!(s.len(), 2);
     }
 
     #[test]
     fn store_rejects_oversized() {
-        let mut s = ImageStore::new(8, 16); // 16-byte cap
-        let img = rgba_image(0, 2, 2, 2, 2, 0); // 2*2*4 = 16 bytes
-        // Exactly at the cap → allowed.
+        let mut s = ImageStore::new(8, 16); // 16 字节上限
+        let img = rgba_image(0, 2, 2, 2, 2, 0); // 2*2*4 = 16 字节
+        // 恰好达到上限 → 允许。
         assert!(s.insert(img.clone()).is_some());
-        // Add 4 more pixels → 20 bytes, exceeds cap.
+        // 再加 4 个像素 → 20 字节，超过上限。
         let mut big = rgba_image(0, 3, 2, 3, 2, 0);
         big.pixels = Some(vec![0u8; 24]);
         assert!(s.insert(big).is_none());
@@ -391,10 +370,10 @@ mod tests {
         let mut s = ImageStore::new(8, 1024 * 1024);
         for i in 0..5u16 {
             let mut img = rgba_image(0, 1, 1, 1, 1, i);
-            img.placement.id = 0; // sequential so it can be pruned
+            img.placement.id = 0; // 连续分配,故可被清理
             s.insert(img);
         }
-        // Visible window is rows 3..5, scrollback 2 → keep rows >= 1, drop row 0.
+        // 可见窗口是第 3..5 行，回滚 2 → 保留行 >= 1，丢弃第 0 行。
         let dropped = s.prune_scrollback(3, 2);
         assert_eq!(dropped, 1);
         assert_eq!(s.len(), 4);
@@ -403,7 +382,7 @@ mod tests {
     #[test]
     fn graphics_assembler_emits_only_on_final() {
         let mut a = GraphicsAssembler::new();
-        // m=0 → more chunks → None
+        // m=0 → 还有更多块 → None
         let r = a.push(
             1,
             GraphicsFormat::Rgba,
@@ -415,7 +394,7 @@ mod tests {
             false,
         );
         assert!(r.is_none());
-        // m=1 → final → emit concatenation of the two chunks
+        // m=1 → 最终块 → 发出两个块的拼接结果
         let r = a.push(
             1,
             GraphicsFormat::Rgba,

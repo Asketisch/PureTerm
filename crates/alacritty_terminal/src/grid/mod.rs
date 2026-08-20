@@ -1,4 +1,4 @@
-//! A specialized 2D grid implementation optimized for use in a terminal.
+//! 面向终端优化的专用二维网格实现。
 
 use std::cmp::{max, min};
 use std::ops::{Bound, Deref, Index, IndexMut, Range, RangeBounds};
@@ -20,10 +20,10 @@ pub use self::row::Row;
 use self::storage::Storage;
 
 pub trait GridCell: Sized {
-    /// Check if the cell contains any content.
+    /// 检查单元格是否含任何内容。
     fn is_empty(&self) -> bool;
 
-    /// Perform an opinionated cell reset based on a template cell.
+    /// 基于模板单元格执行有主见的重置。
     fn reset(&mut self, template: &Self);
 
     fn flags(&self) -> &Flags;
@@ -32,23 +32,23 @@ pub trait GridCell: Sized {
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Cursor<T> {
-    /// The location of this cursor.
+    /// 该光标的位置。
     pub point: Point,
 
-    /// Template cell when using this cursor.
+    /// 使用此光标时的模板单元格。
     pub template: T,
 
-    /// Currently configured graphic character sets.
+    /// 当前配置的图形字符集。
     pub charsets: Charsets,
 
-    /// Tracks if the next call to input will need to first handle wrapping.
+    /// 跟踪下一次 input 调用是否需要先处理换行。
     ///
-    /// This is true after the last column is set with the input function. Any function that
-    /// implicitly sets the line or column needs to set this to false to avoid wrapping twice.
+    /// 用 input 函数设置最后一列后为 true。任何隐式设置行或列的函数都需要
+    /// 把它置为 false,避免二次换行。
     ///
-    /// Tracking `input_needs_wrap` makes it possible to not store a cursor position that exceeds
-    /// the number of columns, which would lead to index out of bounds when interacting with arrays
-    /// without sanitization.
+    /// 跟踪 `input_needs_wrap` 使我们无需存储超出列数的光标位置——那样的位置
+    /// 在未净化就与数组交互时会导致索引越界。
+    /// 在未净化就与数组交互时会导致索引越界。
     pub input_needs_wrap: bool,
 }
 
@@ -78,7 +78,7 @@ pub enum Scroll {
     Bottom,
 }
 
-/// Grid based terminal content storage.
+/// 基于网格的终端内容存储。
 ///
 /// ```notrust
 /// ┌─────────────────────────┐  <-- max_scroll_limit + lines
@@ -108,32 +108,32 @@ pub enum Scroll {
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Grid<T> {
-    /// Current cursor for writing data.
+    /// 写数据的当前光标。
     #[cfg_attr(feature = "serde", serde(skip))]
     pub cursor: Cursor<T>,
 
-    /// Last saved cursor.
+    /// 上次保存的光标。
     #[cfg_attr(feature = "serde", serde(skip))]
     pub saved_cursor: Cursor<T>,
 
-    /// Lines in the grid. Each row holds a list of cells corresponding to the
-    /// columns in that row.
+    /// 网格中的行。每行持有与该行列对应的
+    /// 单元格列表。
     raw: Storage<T>,
 
-    /// Number of columns.
+    /// 列数。
     columns: usize,
 
-    /// Number of visible lines.
+    /// 可见行数。
     lines: usize,
 
-    /// Offset of displayed area.
+    /// 显示区域的偏移。
     ///
-    /// If the displayed region isn't at the bottom of the screen, it stays
-    /// stationary while more text is emitted. The scrolling implementation
-    /// updates this offset accordingly.
+    /// 显示区域不在屏幕底部时,更多文本输出
+    /// 期间它保持不动。滚动实现会相应
+    /// 更新此偏移。
     display_offset: usize,
 
-    /// Maximum number of lines in history.
+    /// 历史中的最大行数。
     max_scroll_limit: usize,
 }
 
@@ -150,7 +150,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         }
     }
 
-    /// Update the size of the scrollback history.
+    /// 更新回滚历史的大小。
     pub fn update_history(&mut self, history_size: usize) {
         let current_history_size = self.history_size();
         if current_history_size > history_size {
@@ -193,7 +193,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         T: ResetDiscriminant<D>,
         D: PartialEq,
     {
-        // When rotating the entire region, just reset everything.
+        // 旋转整个区域时,直接全部重置。
         if region.end - region.start <= positions {
             for i in (region.start.0..region.end.0).map(Line::from) {
                 self.raw[i].reset(&self.cursor.template);
@@ -202,38 +202,38 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
             return;
         }
 
-        // Which implementation we can use depends on the existence of a scrollback history.
+        // 用哪种实现取决于是否存在回滚历史。
         //
-        // Since a scrollback history prevents us from rotating the entire buffer downwards, we
-        // instead have to rely on a slower, swap-based implementation.
+        // 回滚历史使我们无法把整个缓冲向下旋转,
+        // 因此只能依赖较慢的、基于交换的实现。
         if self.max_scroll_limit == 0 {
-            // Swap the lines fixed at the bottom to their target positions after rotation.
+            // 旋转后,把固定在底部的行交换到目标位置。
             //
-            // Since we've made sure that the rotation will never rotate away the entire region, we
-            // know that the position of the fixed lines before the rotation must already be
-            // visible.
+            // 由于已确保旋转绝不会把整个区域转走,
+            // 我们知道旋转前固定行的位置必然已经可见。
+            // 我们知道旋转前固定行的位置必然已经可见。
             //
-            // We need to start from the top, to make sure the fixed lines aren't swapped with each
-            // other.
+            // 必须从顶部开始,确保固定行不会彼此
+            // 交换。
             let screen_lines = self.screen_lines() as i32;
             for i in (region.end.0..screen_lines).map(Line::from) {
                 self.raw.swap(i, i - positions as i32);
             }
 
-            // Rotate the entire line buffer downward.
+            // 把整个行缓冲向下旋转。
             self.raw.rotate_down(positions);
 
-            // Ensure all new lines are fully cleared.
+            // 确保所有新行完全清空。
             for i in (0..positions).map(Line::from) {
                 self.raw[i].reset(&self.cursor.template);
             }
 
-            // Swap the fixed lines at the top back into position.
+            // 把顶部固定行换回原位。
             for i in (0..region.start.0).map(Line::from) {
                 self.raw.swap(i, i + positions);
             }
         } else {
-            // Subregion rotation.
+            // 子区域旋转。
             let range = (region.start + positions).0..region.end.0;
             for line in range.rev().map(Line::from) {
                 self.raw.swap(line, line - positions);
@@ -246,15 +246,15 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         }
     }
 
-    /// Move lines at the bottom toward the top.
+    /// 把底部的行移向顶部。
     ///
-    /// This is the performance-sensitive part of scrolling.
+    /// 这是滚动的性能敏感部分。
     pub fn scroll_up<D>(&mut self, region: &Range<Line>, positions: usize)
     where
         T: ResetDiscriminant<D>,
         D: PartialEq,
     {
-        // When rotating the entire region with fixed lines at the top, just reset everything.
+        // 带顶部固定行旋转整个区域时,直接全部重置。
         if region.end - region.start <= positions && region.start != 0 {
             for i in (region.start.0..region.end.0).map(Line::from) {
                 self.raw[i].reset(&self.cursor.template);
@@ -263,44 +263,44 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
             return;
         }
 
-        // Update display offset when not pinned to active area.
+        // 未钉在活动区域时更新显示偏移。
         if self.display_offset != 0 {
             self.display_offset = min(self.display_offset + positions, self.max_scroll_limit);
         }
 
-        // Only rotate the entire history if the active region starts at the top.
+        // 仅当活动区域从顶部开始时才旋转整个历史。
         if region.start == 0 {
-            // Create scrollback for the new lines.
+            // 为新行创建回滚。
             self.increase_scroll_limit(positions);
 
-            // Swap the lines fixed at the top to their target positions after rotation.
+            // 旋转后,把固定在顶部的行交换到目标位置。
             //
-            // Since we've made sure that the rotation will never rotate away the entire region, we
-            // know that the position of the fixed lines before the rotation must already be
-            // visible.
+            // 由于已确保旋转绝不会把整个区域转走,
+            // 我们知道旋转前固定行的位置必然已经可见。
+            // 我们知道旋转前固定行的位置必然已经可见。
             //
-            // We need to start from the bottom, to make sure the fixed lines aren't swapped with
-            // each other.
+            // 必须从底部开始,确保固定行不会彼此
+            // 交换。
             for i in (0..region.start.0).rev().map(Line::from) {
                 self.raw.swap(i, i + positions);
             }
 
-            // Rotate the entire line buffer upward.
+            // 把整个行缓冲向上旋转。
             self.raw.rotate(-(positions as isize));
 
-            // Swap the fixed lines at the bottom back into position.
+            // 把底部固定行换回原位。
             let screen_lines = self.screen_lines() as i32;
             for i in (region.end.0..screen_lines).rev().map(Line::from) {
                 self.raw.swap(i, i - positions);
             }
         } else {
-            // Rotate lines without moving anything into history.
+            // 不移入历史地旋转行。
             for i in (region.start.0..region.end.0 - positions as i32).map(Line::from) {
                 self.raw.swap(i, i + positions);
             }
         }
 
-        // Ensure all new lines are fully cleared.
+        // 确保所有新行完全清空。
         for i in (region.end.0 - positions as i32..region.end.0).map(Line::from) {
             self.raw[i].reset(&self.cursor.template);
         }
@@ -311,7 +311,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         T: ResetDiscriminant<D>,
         D: PartialEq,
     {
-        // Determine how many lines to scroll up by.
+        // 决定向上滚动多少行。
         let end = Point::new(Line(self.lines as i32 - 1), Column(self.columns()));
         let mut iter = self.iter_from(end);
         while let Some(cell) = iter.prev() {
@@ -323,16 +323,16 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         let positions = (iter.point.line.0 + 1) as usize;
         let region = Line(0)..Line(self.lines as i32);
 
-        // Clear the viewport.
+        // 清空视口。
         self.scroll_up(&region, positions);
 
-        // Reset rotated lines.
+        // 重置被旋转的行。
         for line in (0..(self.lines - positions)).map(Line::from) {
             self.raw[line].reset(&self.cursor.template);
         }
     }
 
-    /// Completely reset the grid state.
+    /// 完全重置网格状态。
     pub fn reset<D>(&mut self)
     where
         T: ResetDiscriminant<D>,
@@ -344,7 +344,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         self.cursor = Cursor::default();
         self.display_offset = 0;
 
-        // Reset all visible lines.
+        // 重置所有可见行。
         let range = self.topmost_line().0..(self.screen_lines() as i32);
         for line in range.map(Line::from) {
             self.raw[line].reset(&self.cursor.template);
@@ -353,7 +353,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
 }
 
 impl<T> Grid<T> {
-    /// Reset a visible region within the grid.
+    /// 重置网格内的一个可见区域。
     pub fn reset_region<D, R: RangeBounds<Line>>(&mut self, bounds: R)
     where
         T: ResetDiscriminant<D> + GridCell + Default,
@@ -381,42 +381,42 @@ impl<T> Grid<T> {
 
     #[inline]
     pub fn clear_history(&mut self) {
-        // Explicitly purge all lines from history.
+        // 显式从历史清除全部行。
         self.raw.shrink_lines(self.history_size());
 
-        // Reset display offset.
+        // 重置显示偏移。
         self.display_offset = 0;
     }
 
-    /// This is used only for initializing after loading ref-tests.
+    /// 仅用于加载 ref 测试后的初始化。
     #[inline]
     pub fn initialize_all(&mut self)
     where
         T: GridCell + Default,
     {
-        // Remove all cached lines to clear them of any content.
+        // 移除全部缓存行以清掉内容。
         self.truncate();
 
-        // Initialize everything with empty new lines.
+        // 用新的空行初始化一切。
         self.raw.initialize(self.max_scroll_limit - self.history_size(), self.columns);
     }
 
-    /// This is used only for truncating before saving ref-tests.
+    /// 仅用于保存 ref 测试前的截断。
     #[inline]
     pub fn truncate(&mut self) {
         self.raw.truncate();
     }
 
-    /// Iterate over all cells in the grid starting at a specific point.
+    /// 从指定点开始迭代网格中的全部单元格。
     #[inline]
     pub fn iter_from(&self, point: Point) -> GridIterator<'_, T> {
         let end = Point::new(self.bottommost_line(), self.last_column());
         GridIterator { grid: self, point, end }
     }
 
-    /// Iterate over all visible cells.
+    /// 迭代全部可见单元格。
     ///
-    /// This is slightly more optimized than calling `Grid::iter_from` in combination with
+    /// 这比组合调用 `Grid::iter_from` 与截断更优化。
     /// `Iterator::take_while`.
     #[inline]
     pub fn display_iter(&self) -> GridIterator<'_, T> {
@@ -442,7 +442,7 @@ impl<T> Grid<T> {
 
 impl<T: PartialEq> PartialEq for Grid<T> {
     fn eq(&self, other: &Self) -> bool {
-        // Compare struct fields and check result of grid comparison.
+        // 比较结构体字段并检查网格比较结果。
         self.raw.eq(&other.raw)
             && self.columns.eq(&other.columns)
             && self.lines.eq(&other.lines)
@@ -482,36 +482,36 @@ impl<T> IndexMut<Point> for Grid<T> {
     }
 }
 
-/// Grid dimensions.
+/// 网格尺寸。
 pub trait Dimensions {
-    /// Total number of lines in the buffer, this includes scrollback and visible lines.
+    /// 缓冲中的总行数,含回滚与可见行。
     fn total_lines(&self) -> usize;
 
-    /// Height of the viewport in lines.
+    /// 视口高度(行)。
     fn screen_lines(&self) -> usize;
 
-    /// Width of the terminal in columns.
+    /// 终端宽度(列)。
     fn columns(&self) -> usize;
 
-    /// Index for the last column.
+    /// 最后一列的索引。
     #[inline]
     fn last_column(&self) -> Column {
         Column(self.columns() - 1)
     }
 
-    /// Line farthest up in the grid history.
+    /// 网格历史中最上面的行。
     #[inline]
     fn topmost_line(&self) -> Line {
         Line(-(self.history_size() as i32))
     }
 
-    /// Line farthest down in the grid history.
+    /// 网格历史中最下面的行。
     #[inline]
     fn bottommost_line(&self) -> Line {
         Line(self.screen_lines() as i32 - 1)
     }
 
-    /// Number of invisible lines part of the scrollback history.
+    /// 回滚历史中不可见的行数。
     #[inline]
     fn history_size(&self) -> usize {
         self.total_lines().saturating_sub(self.screen_lines())
@@ -565,25 +565,25 @@ impl<T> Deref for Indexed<T> {
     }
 }
 
-/// Grid cell iterator.
+/// 网格单元格迭代器。
 pub struct GridIterator<'a, T> {
-    /// Immutable grid reference.
+    /// 不可变网格引用。
     grid: &'a Grid<T>,
 
-    /// Current position of the iterator within the grid.
+    /// 迭代器在网格内的当前位置。
     point: Point,
 
-    /// Last cell included in the iterator.
+    /// 迭代器包含的最后一个单元格。
     end: Point,
 }
 
 impl<'a, T> GridIterator<'a, T> {
-    /// Current iterator position.
+    /// 迭代器当前位置。
     pub fn point(&self) -> Point {
         self.point
     }
 
-    /// Cell at the current iterator position.
+    /// 当前迭代器位置处的单元格。
     pub fn cell(&self) -> &'a T {
         &self.grid[self.point]
     }
@@ -593,7 +593,7 @@ impl<'a, T> Iterator for GridIterator<'a, T> {
     type Item = Indexed<&'a T>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // Stop once we've reached the end of the grid.
+        // 到达网格末尾即停止。
         if self.point >= self.end {
             return None;
         }
@@ -628,7 +628,7 @@ impl<'a, T> Iterator for GridIterator<'a, T> {
     }
 }
 
-/// Bidirectional iterator.
+/// 双向迭代器。
 pub trait BidirectionalIterator: Iterator {
     fn prev(&mut self) -> Option<Self::Item>;
 }
@@ -638,7 +638,7 @@ impl<T> BidirectionalIterator for GridIterator<'_, T> {
         let topmost_line = self.grid.topmost_line();
         let last_column = self.grid.last_column();
 
-        // Stop once we've reached the end of the grid.
+        // 到达网格末尾即停止。
         if self.point <= Point::new(topmost_line, Column(0)) {
             return None;
         }

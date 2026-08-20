@@ -1,15 +1,15 @@
-//! Core chat types shared by the provider layer, the panel, and persistence.
+//! 由 provider 层、面板与持久化共享的核心聊天类型。
 //!
-//! `ChatMessage` / `ChatRole` are serde (de)serializable: providers wrap them
-//! into their own wire formats (Anthropic vs OpenAI) and the session store
-//! round-trips them through JSON. `ChatRequest` is the in-memory ask handed to a
-//! provider. `ChatEvent` is the unit a streaming provider yields back to the GUI
-//! (in-memory only — no serde; it never crosses a serialization boundary).
+//! `ChatMessage` / `ChatRole` 可 serde(反)序列化:provider 把它们包装成
+//! 各自的线上格式(Anthropic 或 OpenAI),会话存储
+//! 通过 JSON 往返。`ChatRequest` 是交给
+//! provider 的内存请求。`ChatEvent` 是流式 provider 回给 GUI 的单位
+//! (仅内存 —— 无 serde;它从不跨越序列化边界)。
 
 use serde::{Deserialize, Serialize};
 
-/// Conversational role of a message. Serializes to the lowercase wire form both
-/// Anthropic and OpenAI expect (`"user"` / `"assistant"`).
+/// 消息的对话角色。序列化为小写线上形式,
+/// 这是 Anthropic 与 OpenAI 都期望的(`"user"` / `"assistant"`)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatRole {
@@ -17,8 +17,8 @@ pub enum ChatRole {
     Assistant,
 }
 
-/// One turn in a conversation. `content` is plain text (no multimodal in v1);
-/// providers that need structured parts wrap this into their own body shape.
+/// 对话中的一轮。`content` 是纯文本(v1 无多模态);
+/// 需要结构化部分的 provider 会把它包装成自己的消息体。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: ChatRole,
@@ -41,9 +41,9 @@ impl ChatMessage {
     }
 }
 
-/// A completion request handed to a [`super::provider::ChatProvider`]. Oldest
-/// turn first; `system` is an optional top-level instruction (Anthropic models
-/// it separately, OpenAI as a leading system message — each provider adapts).
+/// 交给 [`super::provider::ChatProvider`] 的补全请求。最旧的
+/// 回合在前;`system` 是可选顶层指令(Anthropic 单独建模,
+/// OpenAI 作为开头的系统消息 —— 由各 provider 自行适配)。
 #[derive(Clone, Debug)]
 pub struct ChatRequest {
     pub model: String,
@@ -53,24 +53,24 @@ pub struct ChatRequest {
     pub temperature: Option<f32>,
 }
 
-/// One event yielded by a streaming provider. A turn produces ≥1 `TextDelta`,
-/// then exactly one terminal `Done` or `Error`, then the stream ends.
+/// 流式 provider 产出的事件。一轮会产生 ≥1 个 `TextDelta`,
+/// 随后恰好一个终态 `Done` 或 `Error`,然后流结束。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ChatEvent {
-    /// Incremental assistant text; the panel appends to the in-flight assistant
-    /// message and re-renders (throttled).
+    /// 增量助手文本;面板追加到进行中的助手
+    /// 消息并重新渲染(限流)。
     TextDelta(String),
-    /// Successful completion. Optional token usage for display.
+    /// 成功完成。可选的 token 用量,用于展示。
     Done {
         input_tokens: Option<u32>,
         output_tokens: Option<u32>,
     },
-    /// Non-fatal warning (e.g. a malformed SSE line that was skipped). Logged,
-    /// never surfaced to the user.
+    /// 非致命警告(例如被跳过的一条畸形 SSE 行)。记录日志,
+    /// 绝不展示给用户。
     Warn(String),
-    /// Fatal error; the stream ends after this. Surfaced as an error bubble.
+    /// 致命错误;此后流结束。以错误气泡展示。
     Error(String),
-    /// Reserved for Phase 4 (MCP function calling). Never constructed in v1.
+    /// 为 Phase 4(MCP 函数调用)预留。v1 中从不构造。
     ToolCallRequest {
         id: String,
         name: String,
@@ -79,7 +79,7 @@ pub enum ChatEvent {
 }
 
 impl ChatEvent {
-    /// `Done` or `Error` — the events after which a stream must terminate.
+    /// `Done` 或 `Error` —— 此后流必须终止的事件。
     pub fn is_terminal(&self) -> bool {
         matches!(self, ChatEvent::Done { .. } | ChatEvent::Error(_))
     }
@@ -110,7 +110,7 @@ mod tests {
     fn chat_message_round_trips_through_json() {
         let msg = ChatMessage::user("fix the bug");
         let json = serde_json::to_string(&msg).unwrap();
-        // Wire shape both providers expect: {"role":"user","content":"..."}.
+        // 两个 provider 都期望的线上格式:{"role":"user","content":"..."}。
         assert!(json.contains("\"role\":\"user\""));
         assert!(json.contains("\"content\":\"fix the bug\""));
         let back: ChatMessage = serde_json::from_str(&json).unwrap();

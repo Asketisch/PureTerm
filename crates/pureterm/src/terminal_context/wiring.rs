@@ -29,10 +29,10 @@ use crate::ssh::config::SshProfile;
 #[cfg(unix)]
 use crate::ssh::reconnect::SshState;
 
-/// GAP-5.1/5.6 shared wiring: build a `LocalCtx` that mirrors a daemon PTY
-/// over `data_path`. Used by both the create path (fresh session, after
-/// `create_local`) and the attach path (recovery of an existing session, after
-/// `attach_existing`). `child_pid` is 0 — the child is owned by the daemon.
+/// GAP-5.1/5.6 共享接线:构建把守护进程 PTY 字节流镜像到本地的
+/// `LocalCtx`(经 `data_path`)。创建路径(新会话,`create_local` 之后)
+/// 与恢复路径(既有会话的恢复,`attach_existing` 之后)
+/// 两者共用。`child_pid` 为 0——子进程归守护进程所有。
 #[cfg(unix)]
 pub(super) fn wire_local_daemon(
     data_path: &Path,
@@ -66,17 +66,17 @@ pub(super) fn wire_local_daemon(
         notifier: Notifier(loop_tx),
         event_rx,
         size,
-        child_pid: 0, // child is owned by the daemon; pid not meaningful here
+        child_pid: 0, // 子进程归守护进程所有;此处 pid 无意义
         session_id: Some(session_id),
     })
 }
 
-/// GAP-5.1/5.6 shared wiring: build an `SshCtx` that mirrors a daemon-owned
-/// `ssh -tt` child over `data_path`. Used by both the create path (after
-/// `create_ssh`) and the attach path (recovery). `password` is `None` on the
-/// attach path: the live ssh child is already authenticated, and the password
-/// is not persisted across GUI restart (auto-reconnect after a later network
-/// drop on a restored session is therefore best-effort).
+/// GAP-5.1/5.6 共享接线:构建把守护进程持有的
+/// `ssh -tt` 子进程镜像到本地的 `SshCtx`(经 `data_path`)。创建路径
+/// (`create_ssh` 之后)与恢复路径共用。恢复路径上 `password` 为 `None`:
+/// 存活的 ssh 子进程已认证,且密码不会在 GUI 重启间
+/// 持久化(因此恢复会话在之后的网络中断后自动重连
+/// 只是尽力而为)。
 #[cfg(unix)]
 pub(super) fn wire_ssh_daemon(
     data_path: &Path,

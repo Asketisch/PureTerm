@@ -1,14 +1,14 @@
-//! `pureterm ssh connect <user@host>` — a real interactive SSH client backed by
-//! the persistent `puretermd` daemon (GAP-5.1 M3, the literal DoD).
+//! `pureterm ssh connect <user@host>`——由常驻 `puretermd` 守护进程支持的
+//! 真实交互式 SSH 客户端(GAP-5.1 M3,即字面意义上的 DoD 验收标准)。
 //!
-//! The command (1) ensures the daemon, (2) creates a daemon-owned SSH session,
-//! (3) attaches the current TTY in raw mode and pumps bytes between the local
-//! terminal and the daemon's data plane. When the CLI exits (stdin EOF /
-//! session exit / Ctrl+C), the session **stays alive in puretermd** — the user
-//! can re-attach later from the GUI or another `pureterm ssh connect`.
+//! 该命令 (1) 确保守护进程就绪,(2) 创建由守护进程持有的 SSH 会话,
+//! (3) 以原始模式接管当前 TTY,在本机终端与守护进程数据平面之间
+//! 双向搬运字节。当 CLI 退出(stdin EOF /
+//! 会话退出 / Ctrl+C)后,会话**仍在 puretermd 中存活**——用户
+//! 之后可从 GUI 或再次执行 `pureterm ssh connect` 重新接入。
 //!
-//! This is the daemon-direct counterpart to the GUI-IPC `ssh connect --index`
-//! (which asks a running GUI to open a tab).
+//! 这是 GUI-IPC `ssh connect --index` 的守护进程直连版
+//! (后者请求正在运行的 GUI 打开标签页)。
 
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
@@ -30,7 +30,7 @@ const STDIN_KEY: usize = 0;
 const DATA_KEY: usize = 1;
 const WINCH_KEY: usize = 2;
 
-/// Connect the current terminal to a persistent daemon SSH session.
+/// 将当前终端连接到常驻的守护进程 SSH 会话。
 pub fn connect(
     target: &str,
     port: Option<u16>,
@@ -47,7 +47,7 @@ pub fn connect(
         forwards,
         smallest_screen_wins,
     ) {
-        // Make sure errors are visible even after (attempted) raw-mode teardown.
+        // 即便(尝试)退出原始模式之后,也要确保错误可见。
         eprintln!("\n[pureterm ssh] {msg}");
         std::process::exit(1);
     }
@@ -67,7 +67,7 @@ fn run_connect(
 
     let daemon_socket = daemon_client::ensure_daemon().map_err(|e| format!("daemon unavailable: {e}"))?;
 
-    // Initial PTY size from the current terminal.
+    // 取自当前终端的初始 PTY 尺寸。
     let (cols, rows) = tty_size();
     let (session_id, data_path) = daemon_client::create_ssh(
         &daemon_socket,
@@ -93,18 +93,18 @@ fn run_connect(
     let mut data = local_connect(&data_path).map_err(|e| format!("data socket: {e}"))?;
     data.set_nonblocking(true).map_err(|e| format!("set_nonblocking: {e}"))?;
 
-    // Raw mode (best-effort; succeeds when run from a real terminal).
+    // 原始模式(尽力而为;在真实终端中运行时会成功)。
     let _tty_guard = TtyGuard::enable_raw();
 
-    // SIGWINCH → self-pipe so the poll loop can react to resizes.
+    // SIGWINCH → 自管道,使轮询循环能响应终端尺寸变化。
     let (winch_send, winch_recv) =
         local_pair().map_err(|e| format!("winch pipe: {e}"))?;
     winch_recv.set_nonblocking(true).map_err(|e| format!("winch nonblock: {e}"))?;
     let _winch_sig = signal_pipe::register(signal_hook::consts::SIGWINCH, winch_send).ok();
 
     let poll = Poller::new().map_err(|e| format!("poller: {e}"))?;
-    // Take ownership of stdin (fd 0) as a File so polling can register it. It is
-    // leaked on exit (`mem::forget`) so we never close the process's real stdin.
+    // 以 File 形式接管 stdin(fd 0),以便轮询器注册它。该 fd
+    // 在退出时(`mem::forget`)被故意泄漏,绝不关闭进程的真实 stdin。
     let stdin = unsafe { File::from_raw_fd(0) };
     set_nonblock(0);
     unsafe {
@@ -176,7 +176,7 @@ fn run_connect(
                     frame_buf.drain(..pos);
                 }
                 WINCH_KEY => {
-                    // Drain the self-pipe.
+                    // 排空自管道。
                     let mut sink = [0u8; 64];
                     let _ = (&winch_recv).read(&mut sink);
                     let (c, r) = tty_size();
@@ -188,9 +188,9 @@ fn run_connect(
         }
     }
 
-    // Best-effort teardown; the session is intentionally left alive in puretermd.
+    // 尽力清理;会话被有意保留在 puretermd 中。
     let _ = poll.delete(&stdin);
-    std::mem::forget(stdin); // never close the real stdin fd
+    std::mem::forget(stdin); // 永不关闭真实的 stdin fd
     let _ = poll.delete(&data);
     let _ = poll.delete(&winch_recv);
     if let Some(reason) = done_reason {
@@ -199,7 +199,7 @@ fn run_connect(
     Ok(())
 }
 
-/// Write all bytes to a non-blocking stream, spinning briefly on WouldBlock.
+/// 向非阻塞流写入全部字节,遇 WouldBlock 时短暂自旋重试。
 fn write_all_stream(stream: &mut LocalStream, mut data: &[u8]) -> io::Result<()> {
     while !data.is_empty() {
         match stream.write(data) {
@@ -216,7 +216,7 @@ fn write_all_stream(stream: &mut LocalStream, mut data: &[u8]) -> io::Result<()>
     Ok(())
 }
 
-/// Parse `[user@]host` into `(Option<user>, host)`.
+/// 将 `[user@]host` 解析为 `(Option<user>, host)`。
 pub fn parse_target(target: &str) -> Option<(Option<String>, String)> {
     let t = target.trim();
     if t.is_empty() {
@@ -229,7 +229,7 @@ pub fn parse_target(target: &str) -> Option<(Option<String>, String)> {
     }
 }
 
-/// Current terminal size via `TIOCGWINSZ` on stdout.
+/// 通过 stdout 上的 `TIOCGWINSZ` 获取当前终端尺寸。
 fn tty_size() -> (u16, u16) {
     let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
     if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } == 0 {
@@ -251,7 +251,7 @@ fn set_nonblock(fd: RawFd) {
     }
 }
 
-/// RAII raw-mode guard: enables raw on construction, restores on drop.
+/// RAII 原始模式守卫:构造时启用原始模式,析构时恢复。
 struct TtyGuard {
     orig: Option<libc::termios>,
 }

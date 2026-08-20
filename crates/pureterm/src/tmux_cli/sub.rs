@@ -21,67 +21,67 @@ use super::handlers::{
 };
 use super::target::rpc;
 
-/// `pureterm tmux <command>` — tmux-compatible subset (GAP-6.6).
+/// `pureterm tmux <command>` — 兼容 tmux 的子集(GAP-6.6)。
 #[derive(Subcommand)]
 pub enum TmuxSub {
-    /// Capture a pane's terminal buffer to stdout (tmux `capture-pane`).
+    /// 把窗格的终端缓冲捕获到 stdout(tmux `capture-pane`)。
     CapturePane {
-        /// Target pane (`%N` / `:+` / `:-` / omitted=active).
+        /// 目标窗格(`%N` / `:+` / `:-` / 省略=活动)。
         #[arg(short = 't', long = "target")]
         target: Option<String>,
-        /// Print to stdout (tmux `-p`). Defaults to the last 50 lines.
+        /// 打印到 stdout(tmux `-p`)。默认最近 50 行。
         #[arg(short = 'p', long)]
         print: bool,
-        /// Start line (tmux `-S`). `-` = full scrollback; `0` = viewport top.
+        /// 起始行(tmux `-S`)。`-` = 全部回滚;`0` = 视口顶部。
         #[arg(short = 'S', long = "start", allow_hyphen_values = true)]
         start: Option<String>,
-        /// End line (tmux `-E`). `-` = viewport bottom.
+        /// 结束行(tmux `-E`)。`-` = 视口底部。
         #[arg(short = 'E', long = "end", allow_hyphen_values = true)]
         end: Option<String>,
-        /// Keep only the last N lines.
+        /// 只保留最后 N 行。
         #[arg(long = "lines")]
         lines: Option<usize>,
     },
-    /// List panes (tmux `list-panes`).
+    /// 列出窗格(tmux `list-panes`)。
     ListPanes {
-        /// Format string (tmux `-F`). Variables: `#{pane_id}` `#{pane_index}`
-        /// `#{tab_index}` `#{tab_title}` `#{pane_active}` `#{pane_current_path}`.
+        /// 格式字符串(tmux `-F`)。变量:`#{pane_id}` `#{pane_index}`
+        /// `#{tab_index}` `#{tab_title}` `#{pane_active}` `#{pane_current_path}`。
         #[arg(short = 'F', long = "format")]
         format: Option<String>,
         #[arg(short = 't', long = "target")]
         target: Option<String>,
     },
-    /// Send keys to a pane's PTY (tmux `send-keys`).
+    /// 向窗格的 PTY 发送按键(tmux `send-keys`)。
     SendKeys {
         #[arg(short = 't', long = "target")]
         target: Option<String>,
-        /// Keys to send. Known names (Enter/Tab/Escape/Space/BSpace/Up/Down/...)
-        /// are translated; everything else is sent literally and concatenated.
+        /// 要发送的按键。已知名称(Enter/Tab/Escape/Space/BSpace/Up/Down/...)
+        /// 会被翻译;其余内容按字面发送并拼接。
         keys: Vec<String>,
     },
-    /// Split the active pane (tmux `split-window`). `-h` = side by side.
+    /// 分割活动窗格(tmux `split-window`)。`-h` = 左右并排。
     SplitWindow {
         #[arg(short = 't', long = "target")]
         target: Option<String>,
-        /// Split horizontally (side by side) — tmux `-h`.
+        /// 水平分割(左右并排)— tmux `-h`。
         #[arg(short = 'h', long)]
         horizontal: bool,
-        /// Split vertically (stacked) — tmux default / `-v`.
+        /// 垂直分割(上下堆叠)— tmux 默认 / `-v`。
         #[arg(short = 'v', long)]
         vertical: bool,
-        /// Optional command (ignored in phase 1 — the new pane is a shell).
+        /// 可选命令(阶段一忽略——新窗格是 shell)。
         command: Option<String>,
     },
-    /// Close the active pane (tmux `kill-pane`).
+    /// 关闭活动窗格(tmux `kill-pane`)。
     KillPane {
         #[arg(short = 't', long = "target")]
         target: Option<String>,
     },
-    /// Move focus between panes (tmux `select-pane`).
+    /// 在窗格间移动焦点(tmux `select-pane`)。
     SelectPane {
         #[arg(short = 't', long = "target")]
         target: Option<String>,
-        /// Geometry focus (phase 2).
+        /// 几何焦点(阶段二)。
         #[arg(short = 'L', long = "left")]
         left: bool,
         #[arg(short = 'R', long = "right")]
@@ -90,11 +90,11 @@ pub enum TmuxSub {
         up: bool,
         #[arg(short = 'D', long = "down")]
         down: bool,
-        /// Toggle to the last pane (not yet supported).
+        /// 切换到最后使用的窗格(暂未支持)。
         #[arg(short = 'l', long = "last")]
         last: bool,
     },
-    /// Resize a pane (tmux `resize-pane`) — phase 2.
+    /// 调整窗格大小(tmux `resize-pane`)— 阶段二。
     ResizePane {
         #[arg(short = 't', long = "target")]
         target: Option<String>,
@@ -111,7 +111,7 @@ pub enum TmuxSub {
         #[arg(short = 'y', long)]
         y: Option<usize>,
     },
-    /// Swap two panes (tmux `swap-pane`) — phase 2.
+    /// 交换两个窗格(tmux `swap-pane`)— 阶段二。
     SwapPane {
         #[arg(short = 's', long = "source")]
         source: Option<String>,
@@ -122,20 +122,20 @@ pub enum TmuxSub {
         #[arg(short = 'U', long = "up")]
         up: bool,
     },
-    /// Break a pane out into its own tab (tmux `break-pane`) — phase 2.
+    /// 把窗格拆出为独立标签页(tmux `break-pane`)— 阶段二。
     BreakPane {
         #[arg(short = 's', long = "source")]
         source: Option<String>,
         #[arg(short = 't', long = "target")]
         target: Option<String>,
     },
-    /// Apply a preset layout (tmux `select-layout`) — phase 2.
+    /// 应用预设布局(tmux `select-layout`)— 阶段二。
     SelectLayout {
         #[arg(short = 't', long = "target")]
         target: Option<String>,
         layout: String,
     },
-    /// Move a pane from another tab/split here (tmux `join-pane`) — phase 3.
+    /// 把另一标签页/分割中的窗格移到这里(tmux `join-pane`)— 阶段三。
     JoinPane {
         #[arg(short = 's', long = "source")]
         source: Option<String>,
@@ -146,30 +146,30 @@ pub enum TmuxSub {
         #[arg(short = 'v', long)]
         vertical: bool,
     },
-    /// Pipe a pane's output to a shell command (tmux `pipe-pane`) — phase 4.
+    /// 把窗格输出管道给 shell 命令(tmux `pipe-pane`)— 阶段四。
     PipePane {
         #[arg(short = 't', long = "target")]
         target: Option<String>,
-        /// Only pipe output, not input (tmux `-o`).
+        /// 只管道输出、不管道输入(tmux `-o`)。
         #[arg(short = 'o', long)]
         output: bool,
         command: Option<String>,
     },
-    /// Wait for / signal a named channel or lock (tmux `wait-for`) — phase 4.
+    /// 等待 / 通知一个命名通道或锁(tmux `wait-for`)— 阶段四。
     WaitFor {
-        /// Channel or lock name.
+        /// 通道或锁名称。
         channel: String,
-        /// Signal the channel, waking all waiters (tmux `-S`).
+        /// 通知通道,唤醒所有等待者(tmux `-S`)。
         #[arg(short = 'S', long = "signal")]
         signal: bool,
-        /// Acquire a lock (tmux `-L`).
+        /// 获取锁(tmux `-L`)。
         #[arg(short = 'L', long = "lock")]
         lock: bool,
-        /// Release a lock (tmux `-U`).
+        /// 释放锁(tmux `-U`)。
         #[arg(short = 'U', long = "unlock")]
         unlock: bool,
     },
-    /// Print a message (tmux `display-message`).
+    /// 打印一条消息(tmux `display-message`)。
     DisplayMessage {
         #[arg(short = 't', long = "target")]
         target: Option<String>,
@@ -180,7 +180,7 @@ pub enum TmuxSub {
     },
 }
 
-/// Entry point — mirrors `daemon_cli::dispatch` / `tunnel_cli::start`.
+/// 入口点——镜像 `daemon_cli::dispatch` / `tunnel_cli::start`。
 pub fn dispatch(cmd: TmuxSub, socket: &Option<PathBuf>, _json: bool) {
     if let Err(msg) = run(cmd, socket) {
         eprintln!("[pureterm tmux] {msg}");
@@ -218,7 +218,7 @@ pub(crate) fn run(cmd: TmuxSub, socket: &Option<PathBuf>) -> Result<(), String> 
         }
         TmuxSub::BreakPane { source, .. } => run_break(socket, source),
         TmuxSub::SelectLayout { .. } => {
-            // MVP: every preset layout (even-*/tiled/main-*) maps to equalize.
+            // MVP:所有预设布局(even-*/tiled/main-*)都映射为均衡。
             rpc(socket, "pane.equalize", None)?;
             Ok(())
         }

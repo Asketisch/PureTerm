@@ -13,7 +13,7 @@ use super::subs::{
     PaneSub, ReplaySub, ShortcutsSub, SshSub, SurfaceSub, SystemSub, TabSub, WindowSub,
 };
 
-// ── Top-level parser ──────────────────────────────────────────────────────
+// ── 顶层解析器 ───────────────────────────────────────────────────────────
 
 #[derive(Parser)]
 #[command(
@@ -25,11 +25,11 @@ use super::subs::{
                   via its Socket API (JSON-RPC 2.0)."
 )]
 pub struct Cli {
-    /// Override the PureTerm Unix socket path (default: auto-discovered)
+    /// 覆盖 PureTerm 的 Unix socket 路径（默认：自动发现）
     #[arg(long, global = true)]
     pub socket: Option<PathBuf>,
 
-    /// Print compact (one-line) JSON instead of pretty-printed
+    /// 输出紧凑（单行）JSON 而非美化打印
     #[arg(long, global = true)]
     pub json: bool,
 
@@ -39,200 +39,197 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Command {
-    /// System / version info
+    /// 系统 / 版本信息
     System {
         #[command(subcommand)]
         cmd: SystemSub,
     },
-    /// Window operations
+    /// 窗口操作
     Window {
         #[command(subcommand)]
         cmd: WindowSub,
     },
-    /// Tab operations
+    /// 标签页操作
     Tab {
         #[command(subcommand)]
         cmd: TabSub,
     },
-    /// Split / pane operations
+    /// 分屏 / 面板操作
     Pane {
         #[command(subcommand)]
         cmd: PaneSub,
     },
-    /// Surface / PTY operations
+    /// Surface / PTY 操作
     Surface {
         #[command(subcommand)]
         cmd: SurfaceSub,
     },
-    /// Config read / reload
+    /// 配置读取 / 重载
     Config {
         #[command(subcommand)]
         cmd: ConfigSub,
     },
-    /// SSH session management (Unix only)
+    /// SSH 会话管理（仅 Unix）
     #[cfg(unix)]
     Ssh {
         #[command(subcommand)]
         cmd: SshSub,
     },
-    /// Manage the persistent puretermd daemon + login autostart (Unix only)
+    /// 管理常驻 puretermd 守护进程 + 登录自启（仅 Unix）
     #[cfg(unix)]
     Daemon {
         #[command(subcommand)]
         cmd: DaemonSub,
     },
-    /// Debug / diagnostics
+    /// 调试 / 诊断
     Debug {
         #[command(subcommand)]
         cmd: DebugSub,
     },
-    /// Manage keyboard shortcut presets (writes config, no IPC)
+    /// 管理键盘快捷键预设（写配置，不走 IPC）
     Shortcuts {
         #[command(subcommand)]
         cmd: ShortcutsSub,
     },
-    /// Raw JSON-RPC escape hatch: pureterm msg <method> [JSON_PARAMS]
+    /// 原始 JSON-RPC 逃生口：pureterm msg <method> [JSON_PARAMS]
     Msg {
-        /// Dotted method name, e.g. system.ping
+        /// 点分隔的方法名，如 system.ping
         method: String,
-        /// Raw JSON params, e.g. '{"index":1}'
+        /// 原始 JSON 参数，如 '{"index":1}'
         params: Option<String>,
     },
-    /// GAP-09: post a desktop notification into the running PureTerm.
-    /// `pureterm notify "build done"` → `notification.post` RPC → in-app ring +
-    /// status-bar count + Dock badge + (gated) macOS toast. Emits a
-    /// `notification.posted` event with `source:"cli"` (see `pureterm events tail`).
+    /// GAP-09：向运行中的 PureTerm 发一条桌面通知。
+    /// `pureterm notify "build done"` → `notification.post` RPC → 应用内响铃 +
+    /// 状态栏计数 + Dock 角标 +（受控的）macOS toast。发出带 `source:"cli"`
+    /// 的 `notification.posted` 事件（见 `pureterm events tail`）。
     Notify {
-        /// Notification body (required).
+        /// 通知正文（必填）。
         message: String,
-        /// Optional title headline.
+        /// 可选的标题。
         #[arg(long)]
         title: Option<String>,
-        /// Target pane id; defaults to the active pane.
+        /// 目标面板 id；默认为活动面板。
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// GAP-7.1: agent hook shim. Reads the agent's hook-event JSON on stdin,
-    /// applies PureTerm's `[[agent.hook]]` policy, prints a Claude-Code-protocol
-    /// decision. Registered in the agent's own hook config (e.g.
-    /// `~/.claude/settings.json`); no GUI/IPC involved.
+    /// GAP-7.1：agent hook 垫片。从 stdin 读取 agent 的 hook 事件 JSON，
+    /// 应用 PureTerm 的 `[[agent.hook]]` 策略，打印一个
+    /// Claude Code 协议决策。注册在 agent 自己的 hook 配置里（如
+    /// `~/.claude/settings.json`）；不涉及 GUI/IPC。
     Hook {
-        /// Event name, e.g. PreToolUse. If omitted, taken from stdin JSON's
-        /// `hook_event_name`.
+        /// 事件名，如 PreToolUse。省略时取 stdin JSON 的 `hook_event_name`。
         event: Option<String>,
     },
-    /// GAP-7.2: install/uninstall PureTerm hook shims into external agent
-    /// configs (Claude Code first). No IPC — writes the agent's config file
-    /// directly (e.g. `~/.claude/settings.json`).
+    /// GAP-7.2：向外部 agent 配置（首选 Claude Code）安装/卸载 PureTerm
+    /// hook 垫片。不走 IPC——直接改写 agent 的配置文件
+    /// （如 `~/.claude/settings.json`）。
     Agents {
         #[command(subcommand)]
         cmd: AgentsSub,
     },
-    /// GAP-7.3: hibernate/resume agent sessions via the daemon (SIGSTOP/
-    /// SIGCONT) + list idle status. Unix only. (Singular `agent` — distinct
-    /// from `agents`, the adapter installer.)
+    /// GAP-7.3：经守护进程休眠/恢复 agent 会话（SIGSTOP/SIGCONT）
+    /// + 列出空闲状态。仅 Unix。（单数 `agent`——区别于 `agents`，
+    /// 即适配器安装器。）
     #[cfg(unix)]
     Agent {
         #[command(subcommand)]
         cmd: AgentSub,
     },
-    /// GAP-7.6: read the Feed approval audit log (`feed.jsonl`). Local, no IPC.
+    /// GAP-7.6：读取 Feed 审批审计日志（`feed.jsonl`）。本地，不走 IPC。
     Feed {
         #[command(subcommand)]
         cmd: FeedSub,
     },
-    /// GAP-6.7: read/follow the unified event log (`events.jsonl`). Local, no IPC.
+    /// GAP-6.7：读取/跟随统一事件日志（`events.jsonl`）。本地，不走 IPC。
     Events {
         #[command(subcommand)]
         cmd: EventsSub,
     },
-    /// GAP-11: session replay from events.jsonl (list / export).
+    /// GAP-11：从 events.jsonl 回放会话（列出 / 导出）。
     Replay {
         #[command(subcommand)]
         cmd: ReplaySub,
     },
-    /// GAP-7.8: drive an embedded web pane over the agent-browser protocol
-    /// (`browser.*` JSON-RPC). `--pane-id` (from `pane list`) selects the pane;
-    /// omit it to target the first web pane.
+    /// GAP-7.8：经 agent-browser 协议驱动内嵌 web 面板（`browser.*` JSON-RPC）。
+    /// `--pane-id`（来自 `pane list`）选择面板；省略则作用于第一个 web 面板。
     Browser {
         #[command(subcommand)]
         cmd: BrowserSub,
     },
-    /// GAP-7.10: MCP server + agent-client install — expose PureTerm's terminal
-    /// surface to AI agents (Claude Code, Codex) as native MCP tools.
+    /// GAP-7.10：MCP 服务端 + agent 客户端安装——把 PureTerm 的终端
+    /// surface 以原生 MCP 工具形式暴露给 AI agent（Claude Code、Codex）。
     Mcp {
         #[command(subcommand)]
         cmd: McpSub,
     },
-    /// GAP-6.6: tmux-compatible command subset — maps tmux commands onto the
-    /// pane/surface Socket API (+ daemon for pipe-pane/wait-for). Target syntax
-    /// (`-t`/`-s`): `%N`, `:+`, `:-`, omitted=active.
+    /// GAP-6.6：tmux 兼容命令子集——把 tmux 命令映射到面板/surface
+    /// Socket API（pipe-pane/wait-for 走守护进程）。目标语法
+    /// （`-t`/`-s`）：`%N`、`:+`、`:-`、省略=活动。
     Tmux {
         #[command(subcommand)]
         cmd: crate::tmux_cli::TmuxSub,
     },
-    /// T-core-tmux-cc: attach to a tmux session via `tmux -CC`. Unlike the
-    /// cold-CLI `tmux` subcommand (which forks per invocation), this is a
-    /// long-running backend: the GUI spawns a `tmux -CC new-session` /
-    /// `attach -t` child and parses its envelope stream. v1 surfaces the
-    /// CLI; the GUI is the actual consumer.
+    /// T-core-tmux-cc：通过 `tmux -CC` 附加到 tmux 会话。不同于冷 CLI
+    /// `tmux` 子命令（每次调用 fork 一次），这是长期运行的后端：GUI 生成
+    /// `tmux -CC new-session` / `attach -t` 子进程并解析其 envelope 流。
+    /// v1 只提供 CLI 入口；真正的消费者是 GUI。
     TmuxAttach {
-        /// Session name to attach to (omit to create a new one).
+        /// 要附加的会话名（省略则新建一个）。
         #[arg(short = 't', long = "target")]
         session: Option<String>,
-        /// Open a new detached window after attach.
+        /// 附加后打开一个新的分离窗口。
         #[arg(long = "new-window")]
         new_window: bool,
     },
-    /// GAP-47: AppleScript-friendly automation (`osascript` → `pureterm script …`).
+    /// GAP-47：AppleScript 友好的自动化（`osascript` → `pureterm script …`）。
     Script {
         #[command(subcommand)]
         cmd: crate::script_cli::ScriptSub,
     },
-    /// GAP-48: `pureterm://` URL scheme helpers (register / parse / open).
+    /// GAP-48：`pureterm://` URL scheme 辅助（注册 / 解析 / 打开）。
     Url {
         #[command(subcommand)]
         cmd: crate::script_cli::UrlSub,
     },
-    /// GAP-49: Plugin management (list / install stub).
+    /// GAP-49：插件管理（列出 / 安装桩）。
     Plugin {
         #[command(subcommand)]
         cmd: crate::p4_cli::PluginSub,
     },
-    /// GAP-50: Config cloud sync (local bundle MVP).
+    /// GAP-50：配置云同步（本地打包 MVP）。
     Sync {
         #[command(subcommand)]
         cmd: crate::p4_cli::SyncSub,
     },
-    /// GAP-44: Shared session invite / serve stub.
+    /// GAP-44：共享会话邀请 / 服务桩。
     Share {
         #[command(subcommand)]
         cmd: crate::p4_cli::ShareSub,
     },
-    /// GAP-45: Check for application updates.
+    /// GAP-45：检查应用更新。
     Update {
         #[command(subcommand)]
         cmd: crate::p4_cli::UpdateSub,
     },
-    /// GAP-52: Workflow list / render.
+    /// GAP-52：工作流列表 / 渲染。
     Workflow {
         #[command(subcommand)]
         cmd: crate::p4_cli::WorkflowSub,
     },
-    /// GAP-53: Notebook show.
+    /// GAP-53：笔记本展示。
     Notebook {
         #[command(subcommand)]
         cmd: crate::p4_cli::NotebookSub,
     },
-    /// GAP-60: Pane capture export.
+    /// GAP-60：面板捕获导出。
     Capture {
         #[command(subcommand)]
         cmd: crate::p4_cli::CaptureSub,
     },
 }
 
-/// Parse the CLI from `std::env::args()` (keeps the clap import local to this
-/// module; `main` calls this then `run`).
+/// 从 `std::env::args()` 解析 CLI（把 clap 的 import 保持在本模块局部；
+/// `main` 先调它再调 `run`）。
 pub fn parse_from_env() -> Cli {
     Cli::parse_from(std::env::args())
 }

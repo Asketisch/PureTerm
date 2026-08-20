@@ -1,25 +1,25 @@
-//! T-core-shell-integ v3 E2E tests (checklist D.5).
+//! T-core-shell-integ v3 的 E2E 测试(清单 D.5)。
 //!
-//! Default-`#[ignore]`d: these tests run a **real fish / pwsh / elvish /
-//! nu** subprocess. On hosts without the binary on `$PATH`, the test
-//! skips with an informative message rather than failing. Run with:
-//!   cargo test -p pureterm-daemon --lib shell_integ_e2e --include-ignored --nocapture
+//! 默认带 `#[ignore]`:这些测试会运行**真实的 fish / pwsh / elvish /
+//! nu** 子进程。主机 `$PATH` 上没有对应二进制时,测试以
+//! 信息性消息跳过而非失败。运行方式:
+//!   手动运行:cargo test -p pureterm-daemon --lib shell_integ_e2e --include-ignored --nocapture
 //!
-//! ## Verification approach
+//! ## 验证思路
 //!
-//! 1. Call [`crate::shell_integration::prepare_shell_env`] with the
-//!    per-shell `ShellIntegrationOpts`.
-//! 2. Read the per-shell preamble file written to the tagged temp dir.
-//! 3. Run the preamble's OSC 133 byte sequences through a minimal
-//!    parser (mirrors `alacritty_terminal::event_loop::scan_osc133`)
-//!    to confirm the expected PromptStart / CommandStart / OutputStart
-//!    / OutputEnd letter codes are present.
+//! 1. 以每 shell 的 `ShellIntegrationOpts` 调用
+//!    [`crate::shell_integration::prepare_shell_env`]。
+//! 2. 读取写入带标签临时目录的每 shell 前导文件。
+//! 3. 把前导的 OSC 133 字节序列送进一个极简
+//!    解析器(镜像 `alacritty_terminal::event_loop::scan_osc133`)
+//!    确认期望的 PromptStart / CommandStart / OutputStart
+//!    / OutputEnd 字母码都在。
 //!
-//! Why "preamble → parser" instead of "real PTY": the PTY plumbing
-//! already has its own E2E layer (`tmux_cc_e2e.rs`, `graphics_e2e.rs`);
-//! for shell-integration the value-add of going through a real PTY is
-//! nil — we just need to verify the preamble produces the right byte
-//! sequence when sourced.
+//! 为何用“前导 → 解析器”而非“真实 PTY”:PTY 管道已有
+//! 自己的 E2E 层(`tmux_cc_e2e.rs`、`graphics_e2e.rs`);
+//! 对 shell 集成而言,走真实 PTY 的增益
+//! 为零——只需验证前导被 source 时产生正确的字节
+//! 序列。
 
 #![cfg(unix)]
 
@@ -30,7 +30,7 @@ use alacritty_terminal::event::ShellMarkKind;
 
 use crate::shell_integration::{prepare_shell_env, Shell, ShellIntegrationOpts};
 
-/// Probe whether a binary is on `$PATH`. Returns `true` if found.
+/// 探测某二进制是否在 `$PATH` 上。找到返回 `true`。
 fn bin_on_path(name: &str) -> bool {
     Command::new("which")
         .arg(name)
@@ -39,9 +39,9 @@ fn bin_on_path(name: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Find the env value containing `substr`, returning a clone. Returns
-/// `None` if no env value matches. Explicit return type so the
-/// `HashMap<String, String>` inference doesn't fail.
+/// 查找包含 `substr` 的环境值并返回克隆。无匹配返回
+/// `None`。显式标注返回类型,避免 `HashMap<String, String>`
+/// 推断失败。
 fn find_env_dir(env: &HashMap<String, String>, substr: &str) -> Option<String> {
     for v in env.values() {
         if v.contains(substr) {
@@ -51,10 +51,10 @@ fn find_env_dir(env: &HashMap<String, String>, substr: &str) -> Option<String> {
     None
 }
 
-/// Parse OSC 133 marks out of a byte stream and return the sequence of
-/// `ShellMarkKind`s observed. Mirrors `event_loop::scan_osc133` so the
-/// E2E can run without a real PTY: the preamble writes the same bytes
-/// whether the source is a fish shell or a recorded file.
+/// 从字节流解析出 OSC 133 标记,返回观察到的 `ShellMarkKind`
+/// 序列。镜像 `event_loop::scan_osc133`,使 E2E 无需真实
+/// PTY 即可运行:无论 source 方是 fish shell 还是录制文件,
+/// 前导写出的字节都相同。
 fn parse_osc133_kinds(buf: &[u8]) -> Vec<ShellMarkKind> {
     let prefix = b"\x1b]133;";
     let mut kinds = Vec::new();
@@ -77,8 +77,8 @@ fn parse_osc133_kinds(buf: &[u8]) -> Vec<ShellMarkKind> {
                 if let Some(k) = kind {
                     kinds.push(k);
                 }
-                // Skip past terminator (BEL or ST) — same logic as
-                // event_loop::scan_osc133.
+                // 跳过终止符(BEL 或 ST)——与 event_loop::scan_osc133
+                // 的逻辑相同。
                 let mut p = after + 1;
                 while p < buf.len() {
                     match buf[p] {
@@ -102,9 +102,9 @@ fn parse_osc133_kinds(buf: &[u8]) -> Vec<ShellMarkKind> {
     kinds
 }
 
-/// Run `binary` with `args` under the prepared `env`, capture stdout
-/// as a UTF-8 string. Returns `None` if the binary is missing or fails
-/// to spawn. (Kept for future real-shell round-trip tests.)
+/// 在准备好的 `env` 下以 `args` 运行 `binary`,把 stdout
+/// 捕获为 UTF-8 字符串。二进制缺失或拉起失败返回
+/// `None`。(保留供未来的真实 shell 往返测试。)
 #[allow(dead_code)]
 fn run_shell_capture(
     binary: &str,
@@ -129,9 +129,9 @@ fn fish_prompt_smoke() {
     }
     let env_map = prepare_shell_env("e2e-fish-v3", ShellIntegrationOpts::all_on());
 
-    // fish needs a TTY to draw its prompt; for headless we read the
-    // preamble file directly and verify it embeds the right OSC 133
-    // letter codes.
+    // fish 需要 TTY 才能绘制提示符;无头环境下我们直接读
+    // 前导文件并验证它内嵌了正确的 OSC 133
+    // 字母码。
     let xdg_dir = env_map
         .get("XDG_CONFIG_HOME")
         .cloned()
@@ -166,8 +166,8 @@ fn fish_prompt_smoke() {
         "fish preamble should register a fish_prompt handler"
     );
 
-    // Sanity: parse the preamble's OSC 133 letter emissions (they're
-    // embedded in `_pt_ms` definitions as printf format strings).
+    // 健全性:解析前导的 OSC 133 字母发射(它们以 printf
+    // 格式串的形式内嵌在 `_pt_ms` 定义中)。
     let kinds = parse_osc133_kinds(preamble.as_bytes());
     assert!(
         kinds.contains(&ShellMarkKind::PromptStart),
@@ -178,7 +178,7 @@ fn fish_prompt_smoke() {
         "preamble should embed CommandStart OSC 133 reference"
     );
 
-    // Cleanup temp dir.
+    // 清理临时目录。
     let _ = std::fs::remove_dir_all(&xdg_dir);
 }
 
@@ -191,7 +191,7 @@ fn pwsh_prompt_smoke() {
     }
     let env_map = prepare_shell_env("e2e-pwsh-v3", ShellIntegrationOpts::all_on());
 
-    // PowerShell preamble lives in the temp $PROFILE path; look it up.
+    // PowerShell 前导位于临时 $PROFILE 路径;查找到它。
     let pwsh_dir = find_env_dir(&env_map, "pureterm-pwsh").expect("pwsh temp dir set in env");
     let pwsh_profile_path =
         std::path::Path::new(&pwsh_dir).join("Microsoft.PowerShell_profile.ps1");
@@ -201,7 +201,7 @@ fn pwsh_prompt_smoke() {
         preamble.contains("_pt_ms"),
         "pwsh preamble should define _pt_ms helper"
     );
-    // pwsh preamble writes OSC 133 marks for A/B/C/D as printf sequences.
+    // pwsh 前导以 printf 序列为 A/B/C/D 写出 OSC 133 标记。
     let kinds = parse_osc133_kinds(preamble.as_bytes());
     assert!(
         kinds.contains(&ShellMarkKind::PromptStart),
@@ -216,7 +216,7 @@ fn pwsh_prompt_smoke() {
         "pwsh preamble should embed OutputEnd"
     );
 
-    // Cleanup.
+    // 清理。
     let _ = std::fs::remove_dir_all(&pwsh_dir);
 }
 
@@ -268,9 +268,9 @@ fn nu_prompt_smoke() {
     let _ = std::fs::remove_dir_all(&nu_dir);
 }
 
-/// Smoke test for `Shell::detect` — covers the path-based detection
-/// for the four shells introduced in v3. Always-on (no `#[ignore]`)
-/// because it doesn't need an external tool.
+/// `Shell::detect` 的冒烟测试——覆盖 v3 引入的四个
+/// shell 的基于路径的检测。始终运行(无 `#[ignore]`),
+/// 因为它不需要外部工具。
 #[test]
 fn detect_v3_shells_from_path() {
     assert_eq!(Shell::detect(Some("/usr/local/bin/fish")), Some(Shell::Fish));
@@ -283,29 +283,29 @@ fn detect_v3_shells_from_path() {
         Shell::detect(Some("/usr/local/bin/elvish")),
         Some(Shell::Elvish)
     );
-    // `Shell::detect` matches on the substring `elvish`, so a path
-    // containing only `elv` does NOT classify as Elvish (the binary
-    // is `elvish`, not `elv`). The v2 `detect` test at
-    // `shell_integration.rs:545` uses the full name; we mirror it.
+    // `Shell::detect` 按子串 `elvish` 匹配,因此只含 `elv`
+    // 的路径不会被分类为 Elvish(二进制名是
+    // `elvish` 而非 `elv`)。`shell_integration.rs:545`
+    // 处的 v2 `detect` 测试用全名;此处镜像它。
     assert_eq!(Shell::detect(Some("/usr/local/bin/elv")), None);
 }
 
-/// Compile-time check that `prepare_shell_env` produces the expected
-/// `Shell`-keyed preamble for each of the four v3 shells. Headless —
-/// always-on.
+/// 编译期检查 `prepare_shell_env` 为四个 v3 shell 各产出
+/// 期望的 `Shell` 键控前导。无头——
+/// 始终运行。
 #[test]
 fn prepare_emits_all_v3_shells() {
     let env = prepare_shell_env("e2e-v3-detect", ShellIntegrationOpts::all_on());
 
-    // Sanity: XDG_CONFIG_HOME is set to one of the per-shell temp dirs
-    // (the last write wins, but the file system has all four — we
-    // locate them via the `temp_*_dir` helpers).
+    // 健全性:XDG_CONFIG_HOME 被设为某个每 shell 临时目录
+    //(最后一次写入生效,但文件系统里四个都有——
+    // 我们经 `temp_*_dir` 辅助函数定位它们)。
     assert!(
         env.contains_key("XDG_CONFIG_HOME"),
         "XDG_CONFIG_HOME must be set"
     );
 
-    // Fish preamble: temp_fish_dir(tag)/conf.d/00_pureterm.fish
+    // Fish 前导:temp_fish_dir(tag)/conf.d/00_pureterm.fish
     let fish_root = std::env::temp_dir().join(".pureterm-fish-e2e-v3-detect");
     let fish_preamble = fish_root.join("conf.d/00_pureterm.fish");
     assert!(
@@ -314,12 +314,12 @@ fn prepare_emits_all_v3_shells() {
         fish_preamble
     );
 
-    // Nushell preamble: temp_nu_dir(tag)/env.nu
+    // Nushell 前导:temp_nu_dir(tag)/env.nu
     let nu_root = std::env::temp_dir().join(".pureterm-nu-e2e-v3-detect");
     let nu_preamble = nu_root.join("env.nu");
     assert!(nu_preamble.exists(), "nu preamble at {:?}", nu_preamble);
 
-    // Elvish preamble: temp_elv_dir(tag)/rc.elv
+    // Elvish 前导:temp_elv_dir(tag)/rc.elv
     let elv_root = std::env::temp_dir().join(".pureterm-elv-e2e-v3-detect");
     let elv_preamble = elv_root.join("rc.elv");
     assert!(
@@ -328,7 +328,7 @@ fn prepare_emits_all_v3_shells() {
         elv_preamble
     );
 
-    // PowerShell preamble: temp_pwsh_dir(tag)/Microsoft.PowerShell_profile.ps1
+    // PowerShell 前导:temp_pwsh_dir(tag)/Microsoft.PowerShell_profile.ps1
     let pwsh_root = std::env::temp_dir().join(".pureterm-pwsh-e2e-v3-detect");
     let pwsh_preamble = pwsh_root.join("Microsoft.PowerShell_profile.ps1");
     assert!(
@@ -337,7 +337,7 @@ fn prepare_emits_all_v3_shells() {
         pwsh_preamble
     );
 
-    // Cleanup all four temp dirs.
+    // 清理全部四个临时目录。
     let _ = std::fs::remove_dir_all(fish_root);
     let _ = std::fs::remove_dir_all(nu_root);
     let _ = std::fs::remove_dir_all(elv_root);

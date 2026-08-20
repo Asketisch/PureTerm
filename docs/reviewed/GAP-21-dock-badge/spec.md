@@ -1,6 +1,6 @@
 ---
 gap: GAP-21
-title: Dock Badge
+title: Dock 角标
 category: UI/外壳
 plan_type: wrap-up
 priority: P4

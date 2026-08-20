@@ -1,4 +1,4 @@
-//! GAP-35: Minimal LSP client over JSON-RPC stdio (rust-analyzer MVP).
+//! GAP-35:基于 JSON-RPC stdio 的极简 LSP 客户端(rust-analyzer MVP)。
 
 mod client;
 mod diagnostic;

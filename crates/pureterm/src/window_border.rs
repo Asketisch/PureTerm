@@ -1,6 +1,6 @@
-//! GAP-28: Custom window border (active / inactive styles).
+//! GAP-28: 自定义窗口边框(激活 / 未激活样式)。
 
-/// `[window.border]` config.
+/// `[window.border]` 配置段。
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowBorderConfig {
     pub enabled: bool,

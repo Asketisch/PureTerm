@@ -133,27 +133,27 @@ impl SshState {
         }
     }
 
-    /// Sync the in-memory profile list back to `doc["ssh"]["profiles"]`.
+    /// 把内存配置档列表同步回 `doc["ssh"]["profiles"]`。
     ///
-    /// **Merge mode (intentional)**: settings UI only exposes 5 fields
-    /// (`name/host/user/port/key_path`) but the on-disk schema has 7
-    /// (adds `password` — encrypted credential — and `shortcut`). A naive
-    /// `doc["ssh"]["profiles"] = ArrayOfTables::new()` would silently drop
-    /// the two UI-invisible fields every time the user touches the SSH
-    /// page. We instead match each UI profile against existing on-disk
-    /// tables by `name` and copy unknown keys forward.
+    /// **合并模式(有意设计)**:设置 UI 只暴露 5 个字段
+    /// (`name/host/user/port/key_path`),但磁盘 schema 有 7 个
+    /// (多出 `password`——加密凭据——和 `shortcut`)。天真的
+    /// `doc["ssh"]["profiles"] = ArrayOfTables::new()` 会在用户每次
+    /// 触碰 SSH 页时静默丢弃这两个 UI 不可见
+    /// 字段。因此我们改为按 `name` 把每个 UI 配置档与既有磁盘
+    /// 表匹配,并把未知键原样带过去。
     ///
-    /// Match semantics:
-    /// - Same `name`: preserve the original table's items, overwrite the
-    ///   5 known fields with UI values, drop optional fields the UI
-    ///   cleared (empty `user`/`key_path`, default port 22).
-    /// - UI has a name the doc doesn't: append a fresh 5-field table.
-    /// - Doc has a name the UI doesn't: drop it (user deleted in UI).
+    /// 匹配语义:
+    /// - `name` 相同:保留原表的条目,用 UI 值覆盖 5 个
+    ///   已知字段,丢弃 UI 清空的可选字段(空 `user`/`key_path`、
+    ///   默认端口 22)。
+    /// - UI 有而文档没有的名字:追加全新的 5 字段表。
+    /// - 文档有而 UI 没有的名字:丢弃(用户在 UI 中删除了)。
     fn sync_to_doc(&self, doc: &mut toml_edit::DocumentMut) {
-        // Snapshot existing on-disk profile tables keyed by name so we can
-        // recover any UI-unknown fields (password / shortcut / future
-        // additions). We clone tables here so the borrow on `doc` ends
-        // before we re-borrow it for the write below.
+        // 按名字快照既有磁盘配置档表,以便恢复任何 UI 未知
+        // 字段(password / shortcut / 未来
+        // 新增)。这里克隆表,使对 `doc` 的借用
+        // 在下面再次借用写入前结束。
         let mut existing_by_name: std::collections::HashMap<String, toml_edit::Table> =
             std::collections::HashMap::new();
         if let Some(arr) = doc
@@ -171,13 +171,13 @@ impl SshState {
 
         let mut arr = toml_edit::ArrayOfTables::new();
         for p in &self.profiles {
-            // Start from the existing on-disk table (if any) so unknown
-            // fields like `password` and `shortcut` survive the round-trip.
+            // 从既有磁盘表(若有)出发,使 password 和
+            // shortcut 这类未知字段在往返后存活。
             let mut table = existing_by_name
                 .remove(&p.name)
                 .unwrap_or_else(toml_edit::Table::new);
 
-            // Always overwrite UI-known fields with the in-memory value.
+            // 总是用内存值覆盖 UI 已知字段。
             table.insert("name", toml_edit::Item::Value(p.name.clone().into()));
             table.insert("host", toml_edit::Item::Value(p.host.clone().into()));
 
@@ -192,14 +192,14 @@ impl SshState {
                     table.insert("port", toml_edit::Item::Value(port.into()));
                 }
                 Ok(_) => {
-                    // Port is 22 (default) — drop the explicit key so the
-                    // table stays minimal, matching the original load
-                    // semantics that treat missing port as 22.
+                    // 端口为 22(默认)——丢弃显式键,使
+                    // 表保持精简,与最初加载时把缺失端口
+                    // 视为 22 的语义一致。
                     table.remove("port");
                 }
                 Err(_) => {
-                    // Leave whatever's there (likely user typing in the
-                    // text input); next valid keystroke will overwrite.
+                    // 保留现有值(可能是用户正在
+                    // 文本框输入);下一次有效按键会覆盖它。
                 }
             }
 
@@ -218,12 +218,12 @@ impl SshState {
         doc["ssh"]["profiles"] = toml_edit::Item::ArrayOfTables(arr);
     }
 
-    /// Apply this page's in-memory state to the given document. Used by
-    /// `SettingsState::apply_dirty_sections` so a Save reloads the
-    /// latest on-disk doc and replays only this page's intent.
+    /// 把本页内存状态应用到给定文档。供
+    /// `SettingsState::apply_dirty_sections` 使用:保存时重载
+    /// 最新磁盘文档并只重放本页的意图。
     ///
-    /// Implemented in terms of `sync_to_doc` (which already does
-    /// section-scoped merge).
+    /// 基于 `sync_to_doc` 实现(它已做
+    /// 分节合并)。
     pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
         self.sync_to_doc(doc);
     }

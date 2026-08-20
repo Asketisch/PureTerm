@@ -3,8 +3,8 @@ use super::types::{interpolate, InterpolateVars};
 use crate::app_config::{AppConfig, ResumeBinding};
 
 
-/// Interpolate a binding's shell template for spawning. `session_id` is "" for
-/// a manual `resume run` (no agent session); cold-resume passes the dead id.
+/// 插值绑定的 shell 模板以便启动。手动 `resume run` 时 `session_id` 为 ""
+/// (没有 agent 会话);冷恢复则传入已死亡的会话 id。
 pub(crate) fn interpolate_shell(
     shell: &[String],
     kind: &str,
@@ -23,15 +23,15 @@ pub(crate) fn interpolate_shell(
     )
 }
 
-/// GAP-7.7: pure core of `cold_resume_argv`. Given already-loaded `bindings`,
-/// resolve the `auto=true` binding for `kind` and, if `authorized` approves it,
-/// return the interpolated argv. `None` when no auto binding matches or it
-/// matches but isn't authorized — cold-resume never prompts (the `restore()`
-/// path has no Feed panel access); the user must `pureterm surface resume run`
-/// once to mint the token.
+/// GAP-7.7:`cold_resume_argv` 的纯核心。给定已加载的 `bindings`,
+/// 解析 `kind` 的 `auto=true` 绑定;若 `authorized` 批准,
+/// 返回插值后的 argv。当没有匹配的自动绑定、或
+/// 匹配但未获授权时返回 `None`——冷恢复从不弹提示(`restore()`
+/// 路径无法访问 Feed 面板);用户必须执行一次 `pureterm surface resume run`
+/// 来铸造 token。
 ///
-/// `authorized` is injected so this stays pure & testable without the on-disk
-/// token store; the public `cold_resume_argv` passes the real `authorize`.
+/// `authorized` 以注入方式传入,使本函数无需磁盘 token 存储
+/// 即可保持纯函数、可测试;公开的 `cold_resume_argv` 传入真实的 `authorize`。
 pub(crate) fn cold_resume_argv_from(
     bindings: &[ResumeBinding],
     kind: &str,
@@ -57,11 +57,11 @@ pub(crate) fn cold_resume_argv_from(
     Some(interpolate_shell(&b.shell, &b.kind, &b.checkpoint, session_id, cwd))
 }
 
-/// GAP-7.7: resolve the `auto=true` resume binding for `kind` and, if a valid
-/// HMAC token authorizes it, return the interpolated argv to spawn. Returns
-/// `None` when no auto binding matches, or when it matches but has no token
-/// yet — cold-resume never prompts (the `restore()` path has no Feed panel
-/// access); the user must `pureterm surface resume run` once to mint the token.
+/// GAP-7.7:解析 `kind` 的 `auto=true` resume 绑定;若有效的
+/// HMAC token 授权,则返回要启动的插值 argv。
+/// 当没有匹配的自动绑定、或匹配但尚无 token 时返回 `None`;
+/// 冷恢复从不弹提示(`restore()` 路径无法访问 Feed 面板),
+/// 用户必须执行一次 `pureterm surface resume run` 来铸造 token。
 pub(crate) fn cold_resume_argv(kind: &str, session_id: &str, cwd: &str) -> Option<Vec<String>> {
     let bindings = AppConfig::load_resume_bindings(&AppConfig::config_path());
     cold_resume_argv_from(&bindings, kind, session_id, cwd, |b| {

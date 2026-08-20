@@ -1,6 +1,6 @@
 ---
 gap: GAP-47
-title: AppleScript Bridge
+title: AppleScript 桥
 category: 平台
 plan_type: platform
 priority: P2

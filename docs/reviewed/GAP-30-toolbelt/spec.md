@@ -1,6 +1,6 @@
 ---
 gap: GAP-30
-title: Toolbelt
+title: 工具带
 category: UI/外壳
 plan_type: feature
 priority: P3

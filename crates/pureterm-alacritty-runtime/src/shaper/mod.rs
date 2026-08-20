@@ -1,80 +1,80 @@
-//! T-core-shaper: per-glyph shaping trait + cluster mapping + advance.
+//! T-core-shaper:逐字形整形 trait + 聚簇映射 + 步进。
 //!
-//! v1: a pure-Rust, no-deps shaper that walks the input by grapheme
-//! cluster (UAX #29 approximation) and emits one [`ShapedGlyph`] per
-//! cluster with the `x_advance` set to the supplied cell width. The
-//! shape is "monospace cluster = N cells" — N=1 for Latin / ASCII, N=2
-//! for CJK / Hangul / Hiragana / Katakana / wide emoji. v1 is enough
-//! to expose the trait surface and let the cluster↔cell reverse-lookup
-//! (used by `ime_widget` / `bidi`) work without pulling in a full
-//! Harfbuzz. A real `rustybuzz_shaper` lands in v2.
+//! v1:纯 Rust、零依赖的整形器,按字素聚簇(UAX #29 近似)
+//! 遍历输入,每个聚簇产出一个 [`ShapedGlyph`],
+//! `x_advance` 设为传入的单元格宽度。整形规则是
+//! “等宽聚簇 = N 格”——拉丁 / ASCII 为 N=1,CJK /
+//! 谚文 / 平假名 / 片假名 / 宽 emoji 为 N=2。v1 足以
+//! 暴露 trait 表面,让聚簇↔单元格反查(供 `ime_widget` /
+//! `bidi` 使用)无需引入完整 Harfbuzz 即可工作。
+//! 真正的 `rustybuzz_shaper` 在 v2 落地。
 //!
-//! ## Why trait first?
+//! ## 为什么先做 trait?
 //!
-//! The renderer / bidi / ime code paths need the *contract* (`x_advance`
-//! + `cluster`) — not necessarily a real Harfbuzz port — to wire up
-//! the `ShapedGlyph { x_advance }` field on `CachedGlyph` (see
-//! `renderer::glyph_atlas::CachedGlyph`) and the `cluster → cell`
-//! reverse-lookup the IME widget needs to position its preedit
-//! composition. v1 ships the contract; v2 swaps the impl.
+//! 渲染 / bidi / ime 代码路径需要的是*契约*(`x_advance`
+//! + `cluster`)——不一定是真正的 Harfbuzz 移植——以便接通
+//! `CachedGlyph` 的 `ShapedGlyph { x_advance }` 字段(见
+//! `renderer::glyph_atlas::CachedGlyph`)与 IME 组件定位其
+//! 预编辑组合所需的 `cluster → cell`
+//! 反查。v1 交付契约;v2 替换实现。
 
-/// One shaped glyph: a single code-point (or grapheme cluster) ready
-/// to render at a grid cell. The `cluster` field is the byte offset
-/// into the original string — used by the IME / bidi layers to map a
-/// shape back to a cell position.
+/// 单个整形字形:已就绪、可在网格单元格渲染的一个码点
+///(或字素聚簇)。`cluster` 字段是到原字符串的字节偏移
+/// ——IME / bidi 层用它把字形映射回
+/// 单元格位置。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ShapedGlyph {
-    /// Glyph id within the font. v1 always emits `0` (the `.notdef`
-    /// glyph); a real shaper returns the font-specific id.
+    /// 字体内的字形 id。v1 恒发 `0`(即 `.notdef`
+    /// 字形);真正的整形器返回字体特定的 id。
     pub glyph_id: u32,
-    /// Byte offset into the input string where this glyph's cluster
-    /// starts. Combined with the next glyph's `cluster`, the IME can
-    /// map a glyph back to a byte range.
+    /// 该字形聚簇起点在输入字符串中的字节偏移。
+    /// 与下一个字形的 `cluster` 组合,IME 可把
+    /// 字形映射回字节区间。
     pub cluster: u32,
-    /// Horizontal advance in pixels (post-font-units). v1 returns
-    /// `font_cell_width * cell_count` (cell_count is 1 for Latin, 2
-    /// for CJK wide).
+    /// 水平步进(像素,字体单位换算后)。v1 返回
+    /// `font_cell_width * cell_count`(拉丁为 1,CJK 宽字符
+    /// 为 2)。
     pub x_advance: f32,
-    /// Vertical advance in pixels. v1 returns 0 (the line height comes
-    /// from the font metrics, not the shaper).
+    /// 垂直步进(像素)。v1 返回 0(行高来自
+    /// 字体度量,而非整形器)。
     pub y_advance: f32,
-    /// Horizontal offset from the cursor. Used for combining marks and
-    /// complex scripts.
+    /// 相对光标的水平偏移。用于组合附标与
+    /// 复杂文字。
     pub x_offset: f32,
-    /// Vertical offset from the baseline.
+    /// 相对基线的垂直偏移。
     pub y_offset: f32,
 }
 
-/// One shaped run — a contiguous span of the input string with its
-/// shaped glyphs and a `cluster → cell` reverse map.
+/// 一个整形 run——输入字符串的连续片段及其
+/// 整形字形与 `cluster → cell` 反查表。
 #[derive(Debug, Clone)]
 pub struct ShapedRun {
     pub glyphs: Vec<ShapedGlyph>,
-    /// `cluster_to_cell[i]` gives the grid cell index for glyph `i`.
-    /// v1: 1:1 with the input. v2: maps Unicode grapheme clusters to
-    /// terminal cells (the cell may consume 1 or 2 columns for CJK
-    /// wide characters — see `cell_count` derived from `x_advance`).
+    /// `cluster_to_cell[i]` 给出字形 `i` 的网格单元格索引。
+    /// v1:与输入 1:1。v2:把 Unicode 字素聚簇映射到
+    /// 终端单元格(CJK 宽字符可能占 1 或 2 列——
+    /// 见由 `x_advance` 推导的 `cell_count`)。
     pub cluster_to_cell: Vec<u32>,
 }
 
 impl ShapedRun {
-    /// T-core-shaper v3: map a byte offset in the input string to the
-    /// grid cell that holds the glyph whose cluster starts at (or just
-    /// before) `byte_offset`. Used by the IME widget to position the
-    /// preedit composition cursor over the right cell.
+    /// T-core-shaper v3:把输入字符串的字节偏移映射到
+    /// 持有该字形的网格单元格(其聚簇起点等于或恰好位于
+    /// `byte_offset` 之前)。IME 组件用它把
+    /// 预编辑组合光标定位到正确单元格上。
     ///
-    /// Returns `None` when `byte_offset` is past the end of the input
-    /// or when the run has no glyphs. Returns `Some(0)` when the
-    /// offset is before the first cluster (e.g. the user pressed a
-    /// composing key at position 0).
+    /// `byte_offset` 超出输入末尾或 run 无字形时返回
+    /// `None`。偏移在第一个聚簇之前时返回
+    /// `Some(0)`(例如用户在位置 0 按下
+    /// 组合键)。
     pub fn cluster_byte_to_cell(&self, byte_offset: usize) -> Option<u32> {
         if self.glyphs.is_empty() {
             return None;
         }
-        // Find the last glyph whose cluster starts at or before the offset.
-        // Glyphs are emitted in input order, so a reverse linear scan from
-        // the back is O(cluster_count) worst case but typically O(1) — IME
-        // moves are usually near the cursor's previous position.
+        // 找最后一个聚簇起点等于或位于该偏移之前的字形。
+        // 字形按输入顺序产出,因此从尾部反向线性扫描
+        // 最坏 O(cluster_count),但通常 O(1)——IME
+        // 移动通常就在光标前一位置附近。
         let mut last_match: Option<u32> = None;
         for (i, g) in self.glyphs.iter().enumerate() {
             if (g.cluster as usize) <= byte_offset {
@@ -87,19 +87,19 @@ impl ShapedRun {
     }
 }
 
-/// The shaper trait. The renderer calls `shape` with the input string
-/// and gets back a shaped run. The cell width is supplied by the
-/// renderer (it knows the font metrics).
+/// 整形器 trait。渲染器以输入字符串调用 `shape`,
+/// 取回一个整形 run。单元格宽度由
+/// 渲染器提供(它掌握字体度量)。
 pub trait Shaper: Send + Sync {
-    /// Shape the input string. The result is a [`ShapedRun`].
+    /// 整形输入字符串。结果是一个 [`ShapedRun`]。
     fn shape(&self, input: &str, font_cell_width: f32) -> ShapedRun;
 }
 
-/// Pure-Rust monospace shaper. Each Unicode grapheme cluster
-/// (UAX #29 approximation) is treated as one cluster; the cluster's
-/// `x_advance` is `font_cell_width` × cell count (1 for Latin, 2 for
-/// CJK / Hangul / Hiragana / Katakana / wide emoji / multi-codepoint
-/// clusters). The cluster↔cell map is `1:1` for v1.
+/// 纯 Rust 等宽整形器。每个 Unicode 字素聚簇
+/// (UAX #29 近似)视为一个聚簇;聚簇的
+/// `x_advance` 为 `font_cell_width` × 格数(拉丁 1,
+/// CJK / 谚文 / 平假名 / 片假名 / 宽 emoji / 多码点
+/// 聚簇为 2)。v1 的聚簇↔单元格映射为 `1:1`。
 #[derive(Debug, Clone, Default)]
 pub struct MonospaceShaper;
 
@@ -133,12 +133,12 @@ impl Shaper for MonospaceShaper {
     }
 }
 
-/// True if the cluster's head char is a "wide" character (CJK / wide
-/// emoji). v1: ignore multi-codepoint "wide" detection for emoji ZWJ
-/// sequences — a real ZWJ cluster is 2 cells, but we can't tell a
-/// base+marking from a ZWJ emoji without UAX #29, so we conservatively
-/// report 1 cell (the head char) + see the conservative
-/// `x_advance = cell_width` for ZWJ clusters in `shape`.
+/// 聚簇首字符是“宽”字符(CJK / 宽
+/// emoji)时为真。v1:忽略 emoji ZWJ 序列的多码点“宽”检测
+///——真正的 ZWJ 聚簇占 2 格,但没有 UAX #29 就无法区分
+/// 基字符+附标与 ZWJ emoji,因此保守地按
+/// 1 格(首字符)上报——另见 `shape` 中 ZWJ 聚簇保守的
+/// `x_advance = cell_width`。
 fn is_wide(s: &str) -> bool {
     let c = s.chars().next().unwrap_or('\0');
     is_wide_char(c)
@@ -147,30 +147,30 @@ fn is_wide(s: &str) -> bool {
 fn is_wide_char(c: char) -> bool {
     let cp = c as u32;
     matches!(cp,
-        // CJK Unified Ideographs (basic)
+        // CJK 统一表意文字(基本区)
         0x4E00..=0x9FFF
-        // CJK Unified Ideographs Extension A
+        // CJK 统一表意文字扩展 A
         | 0x3400..=0x4DBF
-        // CJK Compatibility Ideographs
+        // CJK 兼容表意文字
         | 0xF900..=0xFAFF
-        // Hiragana / Katakana
+        // 平假名 / 片假名
         | 0x3040..=0x30FF
-        // Hangul Syllables
+        // 谚文音节
         | 0xAC00..=0xD7AF
-        // Fullwidth Forms
+        // 全角形式
         | 0xFF00..=0xFF60
-        // Emoji + Misc Symbols (a conservative subset)
+        // emoji 与杂项符号(保守子集)
         | 0x1F300..=0x1F9FF
     )
 }
 
-/// Iterate `(byte_offset, cluster_str)` over the grapheme clusters of
-/// `input`. v1 is a no-deps approximation: it walks the string and
-/// emits a cluster per Unicode scalar value, but combines a
-/// non-spacing / combining mark (General_Category starts with M) with
-/// the previous cluster. This is good enough for monospace Latin /
-/// CJK / Hangul / Hangul Jamo — emoji ZWJ sequences are over-counted
-/// as 1 cell (v2 brings a real UAX #29 implementation).
+/// 在 `input` 的字素聚簇上迭代 `(byte_offset, cluster_str)`。
+/// v1 是零依赖近似:遍历字符串,每个 Unicode 标量值
+/// 产出一个聚簇,但把非间距 / 组合附标(General_Category
+/// 以 M 开头)并入前一聚簇。这对等宽拉丁 /
+/// CJK / 谚文 / 谚文 Jamo 足够——emoji ZWJ 序列会被多算成
+/// 1 格(v2 引入真正的 UAX #29 实现)。
+/// 1 格(v2 引入真正的 UAX #29 实现)的剩余说明。
 fn grapheme_clusters(input: &str) -> impl Iterator<Item = (usize, &str)> {
     GraphemeIter { input, pos: 0 }
 }
@@ -191,7 +191,7 @@ impl<'a> Iterator for GraphemeIter<'a> {
         let mut chars = self.input[start..].char_indices();
         let (_, c) = chars.next()?;
         let mut end = start + c.len_utf8();
-        // Fold combining marks into the current cluster.
+        // 把组合附标折叠进当前聚簇。
         for (_, next) in chars {
             if !is_combining(next) {
                 break;
@@ -215,7 +215,7 @@ fn is_combining(c: char) -> bool {
     )
 }
 
-/// Real rustybuzz shaper + font fallback chain (v2).
+/// 真正的 rustybuzz 整形器 + 字体回退链(v2)。
 pub mod fallback;
 pub mod rustybuzz_shaper;
 
@@ -282,11 +282,11 @@ mod tests {
 
     #[test]
     fn emoji_sequences_are_wide() {
-        // Man + ZWJ + Laptop. v1: ZWJ (`U+200D`) is NOT a combining mark,
-        // so the iterator produces 3 clusters, not 1. The head char of
-        // each is in the emoji range, so each cluster is wide (2 cells);
-        // the ZWJ itself is a non-wide 0-width char and falls through
-        // to the half-width 1-cell advance.
+        // 男 + ZWJ + 笔记本电脑。v1:ZWJ(`U+200D`)不是组合附标,
+        // 因此迭代器产出 3 个聚簇而非 1 个。每个的
+        // 首字符都在 emoji 区间,所以每个聚簇都是宽的(2 格);
+        // ZWJ 本身是非宽的零宽字符,落入
+        // 半宽 1 格步进。
         let run = MonospaceShaper::new().shape("\u{1F468}\u{200D}\u{1F4BB}", 7.0);
         assert_eq!(run.glyphs.len(), 3);
         assert_eq!(run.glyphs[0].x_advance, 14.0); // Man 👨
@@ -308,7 +308,7 @@ mod tests {
         let run = MonospaceShaper::new().shape(input, 7.0);
         let cluster_starts: Vec<usize> = run.glyphs.iter().map(|g| g.cluster as usize).collect();
         // Glyph 0 covers "a" (1 byte), glyph 1 covers "你" (3 bytes),
-        // glyph 2 covers "b" (1 byte).
+        // 字形 2 覆盖 "b"(1 字节)。
         let mut prev = 0;
         let mut ends: Vec<usize> = Vec::new();
         for &s in &cluster_starts {
@@ -318,9 +318,9 @@ mod tests {
             prev = s;
         }
         ends.push(input.len());
-        // The glyph 0 starts at 0; glyph 1 starts at 1; glyph 2 starts at 4.
+        // 字形 0 起点 0;字形 1 起点 1;字形 2 起点 4。
         assert_eq!(cluster_starts, vec![0, 1, 4]);
-        // Input length = 5.
+        // 输入长度 = 5。
         assert_eq!(input.len(), 5);
     }
 }

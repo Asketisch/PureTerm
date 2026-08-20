@@ -1,6 +1,6 @@
 ---
 gap: GAP-46
-title: i18n
+title: i18n(国际化)
 category: 平台
 plan_type: feature
 priority: P3

@@ -1,6 +1,6 @@
 ---
 gap: GAP-25
-title: Multi-Window
+title: 多窗口
 category: UI/外壳
 plan_type: feature
 priority: P2

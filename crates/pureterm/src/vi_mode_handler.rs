@@ -1,12 +1,11 @@
-//! GAP-4.1 / GAP-14: Vi (copy) mode keyboard handler.
+//! GAP-4.1 / GAP-14：Vi（复制）模式键盘处理器。
 //!
-//! When `TermMode::VI` is active on a terminal, keystrokes are interpreted
-//! as vi motions/operations instead of being forwarded to the PTY. This module
-//! provides the sub-mode state machine and key→action mapping.
+//! 当终端的 `TermMode::VI` 激活时，按键被解释为 vi 移动/操作，
+//! 而不是转发给 PTY。本模块提供子模式状态机与按键→动作映射。
 //!
-//! The low-level vi cursor engine (ViMotion, ViModeCursor) lives in the
-//! vendored `alacritty_terminal::vi_mode` crate — this module is purely the
-//! PureTerm UI integration layer.
+//! 底层 vi 光标引擎（ViMotion、ViModeCursor）位于 vendored 的
+//! `alacritty_terminal::vi_mode` crate 里——本模块纯粹是
+//! PureTerm 的 UI 集成层。
 
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::index::{Column, Direction, Side};
@@ -15,24 +14,24 @@ use alacritty_terminal::vi_mode::ViMotion;
 
 use crate::terminal_context::TerminalContext;
 
-// ── Sub-mode tracking ──────────────────────────────────────────────────
+// ── 子模式跟踪 ────────────────────────────────────────────────────────────
 
-/// Vi mode sub-state. `None` on the Tab means vi mode is off.
+/// vi 模式子状态。Tab 上为 `None` 表示 vi 模式关闭。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViSubMode {
-    /// Normal mode: hjkl motions, v/V/Ctrl+v enter visual, y yanks.
+    /// 普通模式：hjkl 移动，v/V/Ctrl+v 进入可视模式，y 复制。
     Normal,
-    /// Visual (char-wise): motions extend selection, y yanks.
+    /// 可视（逐字符）：移动扩展选区，y 复制。
     Visual,
-    /// Visual line: whole-line selection.
+    /// 可视行：整行选择。
     VisualLine,
-    /// Visual block: rectangular selection.
+    /// 可视块：矩形选择。
     VisualBlock,
-    /// GAP-14: pending operator (`d`/`c`/`y`) awaiting motion/text-object.
+    /// GAP-14：待定操作符（`d`/`c`/`y`），等待移动或文本对象。
     OperatorPending(ViOperator),
 }
 
-/// GAP-14: vim operators.
+/// GAP-14：vim 操作符。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViOperator {
     Delete,
@@ -40,7 +39,7 @@ pub enum ViOperator {
     Yank,
 }
 
-/// GAP-14: named register slot (a–z); `"` + register char.
+/// GAP-14：命名寄存器槽（a–z）；`"` + 寄存器字符。
 #[derive(Debug, Clone, Default)]
 pub struct ViRegisters {
     slots: [String; 26],
@@ -78,33 +77,33 @@ impl ViRegisters {
     }
 }
 
-// ── Vi action result ───────────────────────────────────────────────────
+// ── Vi 动作结果 ───────────────────────────────────────────────────────────
 
-/// Result of processing a keypress in vi mode.
+/// 处理 vi 模式按键的结果。
 #[derive(Debug)]
 pub enum ViAction {
-    /// A vi motion was applied.
+    /// 已应用一个 vi 移动。
     MotionApplied,
-    /// Vi mode was exited.
+    /// vi 模式已退出。
     ExitViMode,
-    /// Enter search mode. Direction::Right = forward (/), Direction::Left = backward (?).
+    /// 进入搜索模式。Direction::Right = 向前（/），Direction::Left = 向后（?）。
     EnterSearch(Direction),
-    /// Jump to next (true) or previous (false) search match.
+    /// 跳到下一个（true）或上一个（false）搜索匹配。
     SearchNavigate(bool),
-    /// The key was not recognized in the current sub-mode; ignore it.
+    /// 当前子模式不认识该键；忽略它。
     Ignored,
 }
 
-// ── Key dispatch ───────────────────────────────────────────────────────
+// ── 按键分发 ───────────────────────────────────────────────────────────────
 
-/// Process a keypress while vi mode is active.
+/// 在 vi 模式激活时处理一次按键。
 ///
-/// `text` is the printable character from the key event (if any).
-/// `modifiers` are the keyboard modifiers.
-/// `sub_mode` is the current vi sub-mode (updated in-place if needed).
-/// `ctx` is the active terminal context.
+/// `text` 是按键事件中的可打印字符（若有）。
+/// `modifiers` 是键盘修饰键。
+/// `sub_mode` 是当前 vi 子模式（需要时原地更新）。
+/// `ctx` 是活动终端上下文。
 ///
-/// Returns the action taken.
+/// 返回采取的动作。
 pub fn handle_vi_keypress(
     text: Option<&str>,
     modifiers: iced::keyboard::Modifiers,
@@ -113,10 +112,10 @@ pub fn handle_vi_keypress(
     pending_register: &mut Option<char>,
     ctx: &std::sync::Arc<TerminalContext>,
 ) -> ViAction {
-    // Escape always exits vi mode (from any sub-mode)
+    // Escape 总是退出 vi 模式（从任意子模式）
     if modifiers.is_empty() && text == Some("\u{1b}") {
-        // The raw escape char; but iced sends Escape as a Named key, not text.
-        // We handle this via the Named key path in iced_app.rs instead.
+        // 原始转义字符；但 iced 把 Escape 作为 Named 键发送，而非文本。
+        // 我们改在 iced_app.rs 的 Named 键路径里处理它。
     }
 
     let ch = match text {
@@ -124,7 +123,7 @@ pub fn handle_vi_keypress(
         _ => return ViAction::Ignored,
     };
 
-    // Ctrl combinations
+    // Ctrl 组合键
     if modifiers.contains(iced::keyboard::Modifiers::CTRL) {
         match ch {
             'd' | 'D' => return scroll_half_page(ctx, 1),
@@ -134,7 +133,7 @@ pub fn handle_vi_keypress(
         }
     }
 
-    // Shift should not be held (except for uppercase letters we explicitly handle)
+    // 不应按住 Shift（除了我们显式处理的大写字母）
     if modifiers.shift() && !modifiers.command() {
         match ch {
             'G' => return apply_motion(ctx, ViMotion::Low),
@@ -142,12 +141,12 @@ pub fn handle_vi_keypress(
         }
     }
 
-    // Plain keys (no modifiers)
+    // 普通键（无修饰键）
     if !modifiers.is_empty() {
         return ViAction::Ignored;
     }
 
-    // GAP-14: operators + put
+    // GAP-14：操作符 + put
     if matches!(*sub_mode, ViSubMode::Normal) {
         match ch {
             'd' => {
@@ -172,7 +171,7 @@ pub fn handle_vi_keypress(
                 return finish_operator(op, &text, registers, sub_mode, ctx);
             }
             'd' if matches!(op, ViOperator::Delete) => {
-                // dd — delete line
+                // dd —— 删除本行
                 let text = capture_line(ctx);
                 return finish_operator(ViOperator::Delete, &text, registers, sub_mode, ctx);
             }
@@ -183,7 +182,7 @@ pub fn handle_vi_keypress(
     }
 
     match ch {
-        // ── Motions ────────────────────────────────────────────────
+        // ── 移动 ─────────────────────────────────────────────────────
         'h' => apply_motion(ctx, ViMotion::Left),
         'j' => apply_motion(ctx, ViMotion::Down),
         'k' => apply_motion(ctx, ViMotion::Up),
@@ -193,20 +192,20 @@ pub fn handle_vi_keypress(
         'e' => apply_motion(ctx, ViMotion::WordRightEnd),
         '0' => apply_motion(ctx, ViMotion::First),
         '$' => apply_motion(ctx, ViMotion::Last),
-        'g' => apply_motion(ctx, ViMotion::High), // simplified: single 'g' = gg = High
+        'g' => apply_motion(ctx, ViMotion::High), // 简化：单个 'g' = gg = 顶行
         'G' => apply_motion(ctx, ViMotion::Low),
         '{' => apply_motion(ctx, ViMotion::ParagraphUp),
         '}' => apply_motion(ctx, ViMotion::ParagraphDown),
         '%' => apply_motion(ctx, ViMotion::Bracket),
 
-        // ── Visual modes ───────────────────────────────────────────
+        // ── 可视模式 ─────────────────────────────────────────────────
         'v' => enter_visual(sub_mode, ctx, ViSubMode::Visual),
         'V' => enter_visual(sub_mode, ctx, ViSubMode::VisualLine),
 
-        // ── Yank ───────────────────────────────────────────────────
+        // ── 复制 ─────────────────────────────────────────────────────
         'y' => yank(sub_mode, ctx),
 
-        // ── Search ──────────────────────────────────────────────────
+        // ── 搜索 ─────────────────────────────────────────────────────
         '/' => return ViAction::EnterSearch(Direction::Right),
         '?' => return ViAction::EnterSearch(Direction::Left),
         'n' => return ViAction::SearchNavigate(true),
@@ -216,12 +215,12 @@ pub fn handle_vi_keypress(
     }
 }
 
-/// Handle the Escape key press (Named key, not a character).
-/// Returns true if vi mode should be exited.
+/// 处理 Escape 键按下（Named 键，而非字符）。
+/// 返回 true 表示应退出 vi 模式。
 pub fn handle_vi_escape(sub_mode: &mut ViSubMode, ctx: &std::sync::Arc<TerminalContext>) -> bool {
     match sub_mode {
         ViSubMode::Normal => {
-            // Exit vi mode entirely
+            // 完全退出 vi 模式
             return true;
         }
         ViSubMode::OperatorPending(_) => {
@@ -229,7 +228,7 @@ pub fn handle_vi_escape(sub_mode: &mut ViSubMode, ctx: &std::sync::Arc<TerminalC
             false
         }
         ViSubMode::Visual | ViSubMode::VisualLine | ViSubMode::VisualBlock => {
-            // Return to normal sub-mode, clear selection
+            // 回到普通子模式，清除选区
             *sub_mode = ViSubMode::Normal;
             {
                 let mut term = ctx.terminal().lock();
@@ -240,7 +239,7 @@ pub fn handle_vi_escape(sub_mode: &mut ViSubMode, ctx: &std::sync::Arc<TerminalC
     }
 }
 
-// ── Internal helpers ───────────────────────────────────────────────────
+// ── 内部辅助 ───────────────────────────────────────────────────────────────
 
 fn apply_motion(ctx: &std::sync::Arc<TerminalContext>, motion: ViMotion) -> ViAction {
     let mut term = ctx.terminal().lock();
@@ -263,7 +262,7 @@ fn enter_visual(
     target: ViSubMode,
 ) -> ViAction {
     if *sub_mode == target {
-        // Already in this visual mode — toggle off to Normal
+        // 已处于该可视模式——切回普通模式
         *sub_mode = ViSubMode::Normal;
         let mut term = ctx.terminal().lock();
         term.selection = None;
@@ -290,7 +289,7 @@ fn yank(sub_mode: &mut ViSubMode, ctx: &std::sync::Arc<TerminalContext>) -> ViAc
         let mut term = ctx.terminal().lock();
         match *sub_mode {
             ViSubMode::Normal => {
-                // yy: yank the current line
+                // yy：复制当前行
                 let point = term.vi_mode_cursor.point;
                 let start = alacritty_terminal::index::Point::new(point.line, Column(0));
                 let end = alacritty_terminal::index::Point::new(point.line, term.last_column());
@@ -300,12 +299,12 @@ fn yank(sub_mode: &mut ViSubMode, ctx: &std::sync::Arc<TerminalContext>) -> ViAc
                 term.selection = Some(sel);
             }
             ViSubMode::Visual | ViSubMode::VisualLine | ViSubMode::VisualBlock => {
-                // yank existing selection
+                // 复制现有选区
             }
             ViSubMode::OperatorPending(_) => {}
         }
         let text = term.selection_to_string().unwrap_or_default();
-        // Clear selection and exit vi mode
+        // 清除选区并退出 vi 模式
         term.selection = None;
         text
     };
@@ -350,7 +349,7 @@ fn finish_operator(
         registers.store(None, text.to_string());
     }
     if matches!(op, ViOperator::Delete | ViOperator::Change) {
-        ctx.write_to_pty(b"\x7f"); // MVP: backspace hint
+        ctx.write_to_pty(b"\x7f"); // MVP：退格提示
     }
     *sub_mode = ViSubMode::Normal;
     ViAction::MotionApplied
@@ -364,7 +363,7 @@ fn put_from_register(
     if let Some(text) = registers.get(None) {
         let mut bytes = text.as_bytes().to_vec();
         if before {
-            // MVP: no cursor motion — paste at PTY
+            // MVP：不做光标移动——直接在 PTY 粘贴
         }
         ctx.write_to_pty(&bytes);
         ViAction::MotionApplied
@@ -373,7 +372,7 @@ fn put_from_register(
     }
 }
 
-// ── Unit tests ─────────────────────────────────────────────────────────
+// ── 单元测试 ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -381,8 +380,8 @@ mod tests {
 
     #[test]
     fn test_sub_mode_default_not_stored() {
-        // ViSubMode is stored as Option<ViSubMode> on Tab.
-        // None means vi mode off.
+        // ViSubMode 作为 Option<ViSubMode> 存在 Tab 上。
+        // None 表示 vi 模式关闭。
         let mode: Option<ViSubMode> = None;
         assert!(mode.is_none());
     }
@@ -391,19 +390,19 @@ mod tests {
     fn test_sub_mode_transitions() {
         let mut mode = ViSubMode::Normal;
 
-        // Normal → Visual
+        // 普通 → 可视
         mode = ViSubMode::Visual;
         assert_eq!(mode, ViSubMode::Visual);
 
-        // Visual → Normal (Escape)
+        // 可视 → 普通（Escape）
         mode = ViSubMode::Normal;
         assert_eq!(mode, ViSubMode::Normal);
 
-        // Normal → VisualLine
+        // 普通 → 可视行
         mode = ViSubMode::VisualLine;
         assert_eq!(mode, ViSubMode::VisualLine);
 
-        // Normal → VisualBlock
+        // 普通 → 可视块
         mode = ViSubMode::VisualBlock;
         assert_eq!(mode, ViSubMode::VisualBlock);
     }

@@ -14,7 +14,7 @@ use super::SocketRouter;
 impl SocketRouter {
     /// 注册 pane.* / surface.* / shell.context / trigger.list 方法。
     pub(super) fn register_pane(&mut self) {
-        // ── pane.* (6 methods) ────────────────────────────────────────
+        // ── pane.* 六个方法 ───────────────────────────────────────────────
         self.register("pane.list", |_params, snap| {
             let mut panes = Vec::new();
             for (tab_idx, title) in snap.tab_titles.iter().enumerate() {
@@ -22,10 +22,10 @@ impl SocketRouter {
                 let active_id = snap.active_pane_ids.get(tab_idx).copied().unwrap_or(0);
                 let ids = snap.pane_ids.get(tab_idx);
                 for pane_idx in 0..count {
-                    // GAP-6.6: expose the pane's OWN stable id (vs the legacy
-                    // `active_pane_id`, which was identical for every row in a
-                    // tab). Fall back to active when the per-pane id list is
-                    // shorter than the count so targeting degrades, not breaks.
+                    // GAP-6.6:暴露窗格自己的稳定 id(不同于旧有的
+                    // `active_pane_id`,过去的它在标签内每行都相同)。
+                    // 当逐窗格 id 列表比计数短时回退到活动 id,
+                    // 使定向降级而非中断。
                     let pane_id = ids
                         .and_then(|v| v.get(pane_idx).copied())
                         .unwrap_or(active_id);
@@ -35,7 +35,7 @@ impl SocketRouter {
                         "pane_index": pane_idx,
                         "pane_id": pane_id,
                         "active": pane_id == active_id,
-                        // Legacy field kept for back-compat.
+                        // 旧字段,为向后兼容保留。
                         "active_pane_id": active_id,
                     }));
                 }
@@ -59,7 +59,7 @@ impl SocketRouter {
             }
         });
 
-        // ── GAP-3.5: pane.split_web — open a web pane (WebView) ──
+        // ── GAP-3.5: pane.split_web —— 打开网页窗格 (WebView) ──────────
         self.register("pane.split_web", |params, _snap| {
             let direction = params
                 .as_ref()
@@ -70,9 +70,9 @@ impl SocketRouter {
                 .as_ref()
                 .and_then(|p| p.get("url"))
                 .and_then(|v| v.as_str());
-            // GAP-7.8: normalize via the shared `loadable_url` core so a bare
-            // `localhost:8080` actually loads. Missing/blank url → sane default;
-            // non-URL input → reject rather than spawn a webview that can't load.
+            // GAP-7.8:经共享的 `loadable_url` 核心规范化,使裸的
+            // `localhost:8080` 真正可加载。缺失/空白 url → 合理的默认;
+            // 非 URL 输入 → 直接拒绝,而不去拉起一个无法加载的 webview。
             let url = match url.map(str::trim).filter(|s| !s.is_empty()) {
                 None => "https://example.com".to_string(),
                 Some(u) => match crate::browser::url::loadable_url(u) {
@@ -118,7 +118,7 @@ impl SocketRouter {
                 "prev" | "previous" => {
                     (Ok(serde_json::json!({"focused": "prev"})), Some(IpcSideEffect::FocusPrevPane))
                 }
-                // GAP-6.6: geometric focus (tmux `select-pane -L/-R/-U/-D`).
+                // GAP-6.6:几何焦点(tmux `select-pane -L/-R/-U/-D`)。
                 "left" | "right" => (
                     Ok(serde_json::json!({"focused": direction})),
                     Some(IpcSideEffect::FocusGeometric { pane_id, direction: SplitDirection::Horizontal }),
@@ -134,8 +134,8 @@ impl SocketRouter {
         });
 
         self.register("pane.swap", |params, _snap| {
-            // GAP-6.6: `src`+`dst` ⇒ swap two arbitrary panes by id; otherwise
-            // fall back to swapping the active pane with its sibling (legacy).
+            // GAP-6.6:`src`+`dst` ⇒ 按 id 交换任意两个窗格;否则
+            // 回退到把活动窗格与其兄弟交换(旧行为)。
             let src = params.as_ref().and_then(|p| p.get("src")).and_then(|v| v.as_u64());
             let dst = params.as_ref().and_then(|p| p.get("dst")).and_then(|v| v.as_u64());
             match (src, dst) {
@@ -151,10 +151,10 @@ impl SocketRouter {
             (Ok(serde_json::json!({"zoom_toggled": true})), Some(IpcSideEffect::ToggleZoom))
         });
 
-        // ── GAP-6.6: tmux layout ops (resize / detach / equalize) ──────
-        // resize-pane — adjust the nearest-ancestor Split ratio by a delta.
-        // tmux counts cells; the handler doesn't know total cells, so each
-        // `amount` unit ≈ 3% ratio (MVP). Absolute `cols`/`rows` reuse the shape.
+        // ── GAP-6.6:tmux 布局操作(resize / detach / equalize) ──────────────
+        // resize-pane — 按增量调整最近祖先 Split 的比例。
+        // tmux 按格计数;处理器不知道总格数,因此每个
+        // `amount` 单位 ≈ 3% 比例(MVP)。绝对 `cols`/`rows` 复用该形态。
         self.register("pane.resize", |params, _snap| {
             const STEP: f32 = 0.03;
             let pane_id = params.as_ref().and_then(|p| p.get("pane_id")).and_then(|v| v.as_u64());
@@ -189,18 +189,18 @@ impl SocketRouter {
             }
         });
 
-        // break-pane — detach a pane into its own tab (None ⇒ active).
+        // break-pane — 把窗格拆出为其独立标签页(None ⇒ 活动)。
         self.register("pane.detach", |params, _snap| {
             let pane_id = params.as_ref().and_then(|p| p.get("pane_id")).and_then(|v| v.as_u64());
             (Ok(serde_json::json!({ "detached": true })), Some(IpcSideEffect::DetachPane { pane_id }))
         });
 
-        // select-layout — equalize the active tab's split ratios.
+        // select-layout — 均衡活动标签页的分割比例。
         self.register("pane.equalize", |_params, _snap| {
             (Ok(serde_json::json!({ "equalized": true })), Some(IpcSideEffect::EqualizeSplits))
         });
 
-        // join-pane — move a pane from its tab into another (tmux `join-pane`).
+        // join-pane — 把窗格从其标签页移入另一个(tmux `join-pane`)。
         self.register("pane.attach", |params, _snap| {
             let src = params.as_ref().and_then(|p| p.get("src_pane_id")).and_then(|v| v.as_u64());
             let dst_tab = params.as_ref().and_then(|p| p.get("dst_tab_index")).and_then(|v| v.as_u64());
@@ -223,7 +223,7 @@ impl SocketRouter {
             }
         });
 
-        // ── surface.* (4 methods) ─────────────────────────────────────
+        // ── surface.* 四个方法 ────────────────────────────────────────────
         self.register("surface.list", |_params, snap| {
             let mut surfaces = Vec::new();
             for (tab_idx, title) in snap.tab_titles.iter().enumerate() {
@@ -231,7 +231,7 @@ impl SocketRouter {
                 let active_id = snap.active_pane_ids.get(tab_idx).copied().unwrap_or(0);
                 let ids = snap.pane_ids.get(tab_idx);
                 for pane_idx in 0..count {
-                    // GAP-6.6: per-pane stable id (see `pane.list`).
+                    // GAP-6.6:逐窗格稳定 id(见 `pane.list`)。
                     let pane_id = ids
                         .and_then(|v| v.get(pane_idx).copied())
                         .unwrap_or(active_id);
@@ -250,9 +250,9 @@ impl SocketRouter {
             (Ok(serde_json::json!(surfaces)), None)
         });
 
-        // GAP-15: shell context (cwd, last command, recent commands) for a pane.
-        // Defaults to the active pane; honors an optional `recent` cap. Unknown /
-        // non-integrated panes (SSH/fish) return `integrated:false`.
+        // GAP-15:窗格的 shell 上下文(cwd、最近命令、近期命令)。
+        // 默认取活动窗格;遵循可选的 `recent` 上限。未知 /
+        // 未集成的窗格(SSH/fish)返回 `integrated:false`。
         self.register("shell.context", |params, snap| {
             use crate::shell_context::ShellContextSummary;
             let pane_id = params
@@ -287,7 +287,7 @@ impl SocketRouter {
             (Ok(val), None)
         });
 
-        // GAP-10: list configured trigger rules (read-only; no send_text secrets).
+        // GAP-10:列出已配置的触发规则(只读;不含 send_text 密钥)。
         self.register("trigger.list", |_params, snap| {
             let triggers: Vec<Value> = snap
                 .triggers
@@ -316,9 +316,9 @@ impl SocketRouter {
                         .as_ref()
                         .and_then(|p| p.get("pane_id"))
                         .and_then(|v| v.as_u64());
-                    // GAP-7.9: emit a side effect so the main loop performs the
-                    // actual PTY write (sync handlers can't reach `write_to_pty`
-                    // without the iced `App`). None ⇒ active pane at exec time.
+                    // GAP-7.9:发出副作用,让主循环执行
+                    // 真正的 PTY 写入(同步处理器无法触及 `write_to_pty`
+                    // 而没有 iced `App`)。None ⇒ 执行时取活动窗格。
                     #[cfg(unix)]
                     let fx = Some(IpcSideEffect::SendText {
                         pane_id,
@@ -339,9 +339,9 @@ impl SocketRouter {
             }
         });
 
-        // GAP-6.6: pipe-pane — tap a pane's PTY output to a shell command. The
-        // main loop resolves pane → daemon session_id (deferred; sync handlers
-        // only see AppSnapshot) and forwards to `pipe.set`.
+        // GAP-6.6:pipe-pane — 把窗格 PTY 输出接入 shell 命令。
+        // 主循环把窗格解析为守护进程 session_id(推迟;同步处理器
+        // 只能看到 AppSnapshot)并转发到 `pipe.set`。
         self.register("surface.pipe", |params, _snap| {
             let pane_id = params.as_ref().and_then(|p| p.get("pane_id")).and_then(|v| v.as_u64());
             let command = params
@@ -357,7 +357,7 @@ impl SocketRouter {
         });
 
         self.register("surface.resize", |_params, _snap| {
-            // Resize is implicit via pane layout changes.
+            // 调整大小经由窗格布局变化隐式完成。
             (
                 Ok(serde_json::json!({"note": "surface.resize: use pane.split/pane.close to trigger resize"})),
                 None,
@@ -365,7 +365,7 @@ impl SocketRouter {
         });
 
         self.register("surface.snapshot", |_params, _snap| {
-            // Full terminal buffer snapshot — requires deep integration with Term<T>.
+            // 完整终端缓冲快照——需要与 Term<T> 深度集成。
             (
                 Ok(serde_json::json!({"note": "surface.snapshot: not yet implemented; requires Term grid access"})),
                 None,

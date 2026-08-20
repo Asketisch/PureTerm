@@ -34,44 +34,42 @@ pub struct TerminalPrimitive {
     pub(in crate::terminal_shader) bg_indices: Vec<u32>,
     pub(in crate::terminal_shader) text_vertices: Vec<TextVertex>,
     pub(in crate::terminal_shader) text_indices: Vec<u32>,
-    // Partial-upload dirty atlas (Fix 2): holds the dirty rect list + an
-    // Arc-shared full atlas buffer. Render time loops the regions and emits
-    // a `queue.write_texture` per region, avoiding the previous
-    // `Vec::clone()` of the entire 4 MiB / 16 MiB atlas on every dirty frame.
-    // `Arc` lets the main thread and render thread share the allocation.
+    // 部分上传的脏 atlas(Fix 2):保存脏矩形列表 + 一个 Arc 共享的完整
+    // atlas 缓冲区。渲染时遍历区域,每个区域发一次 `queue.write_texture`,避免
+    // 之前每个脏帧对整个 4 MiB / 16 MiB atlas 的 `Vec::clone()`。`Arc` 让主线程
+    // 和渲染线程共享同一分配。
     pub(in crate::terminal_shader) grayscale_atlas: Option<AtlasDirty>,
     pub(in crate::terminal_shader) color_atlas: Option<AtlasDirty>,
-    /// Per-frame GPU buffers – each Primitive instance owns its own,
-    /// avoiding the shared-Pipeline overwrite bug in split-screen.
+    /// 每帧 GPU 缓冲区 —— 每个 Primitive 实例拥有自己的缓冲区,
+    /// 避免分屏时共享 Pipeline 相互覆盖的 bug。
     pub(in crate::terminal_shader) gpu: Mutex<GpuResources>,
-    /// Shared scale factor: updated by `prepare()` with the actual viewport
-    /// scale factor each frame; read by `draw()` to detect changes.
+    /// 共享缩放因子:`prepare()` 每帧用实际视口缩放因子更新它;
+    /// `draw()` 读取它来检测变化。
     pub(in crate::terminal_shader) viewport_scale_factor: Arc<AtomicU32>,
-    /// GAP-54: cached background image, mode, opacity, and signature
-    /// (FNV-1a of the loaded bytes). `None` when disabled or no file.
+    /// GAP-54:缓存的背景图片、模式、不透明度以及签名
+    /// (已加载字节的 FNV-1a)。禁用或无文件时为 `None`。
     pub(in crate::terminal_shader) background_image: Option<DecodedBackground>,
     pub(in crate::terminal_shader) background_mode: BackgroundMode,
     pub(in crate::terminal_shader) background_opacity: f32,
     pub(in crate::terminal_shader) background_signature: u64,
 
-    // T-core-graphics v3: image quad state. Cloned from the shared `Arc`s
-    // on `TerminalProgram` so the render thread can:
-    //   1. Drain `decode_rx` into `image_quad_state` (push decoded RGBA
-    //      pixels into the CPU-side `ImageAtlas`).
-    //   2. Pull `image_quad_draws` (UI-thread filled) to build vertex/index
-    //      buffers for the GPU atlas.
+    // T-core-graphics v3:image quad 状态。从 `TerminalProgram` 上的共享 `Arc`
+    // 克隆而来,使渲染线程可以:
+    //   1. 把 `decode_rx` 排入 `image_quad_state`(将解码后的 RGBA
+    //      像素推入 CPU 侧 `ImageAtlas`)。
+    //   2. 取出 `image_quad_draws`(UI 线程填充)为 GPU atlas 构建顶点/索引
+    //      缓冲区。
     //
-    // The `Mutex` is short-lived (`try_recv()` / insert / clone-drain) and
-    // never held across an `.await` — it just satisfies `Sync` for
-    // `Primitive::prepare(&self, ...)` which only takes `&self`.
+    // `Mutex` 持有时间很短(`try_recv()` / insert / clone-drain),绝不在
+    // `.await` 期间持有 —— 它只是让 `Primitive::prepare(&self, ...)`(仅取
+    // `&self`)满足 `Sync`。
     pub(in crate::terminal_shader) image_quad_state: Arc<Mutex<ImageQuadState>>,
     pub(in crate::terminal_shader) image_quad_draws: Arc<Mutex<Vec<ImageQuadDraw>>>,
     pub(in crate::terminal_shader) decode_rx:
         Arc<Mutex<std::sync::mpsc::Receiver<crate::image_decode_worker::DecodedImage>>>,
-    // Cell dimensions in logical px, cached at construction from
-    // `glyph_state`. The image quad pass multiplies `col * cell_w` and
-    // `row * cell_h` to get screen-space quads. Caching avoids taking the
-    // glyph state lock inside `prepare()` (which runs on the render thread).
+    // 逻辑像素下的单元格尺寸,构造时从 `glyph_state` 缓存。
+    // image quad 通道用 `col * cell_w` 和 `row * cell_h` 计算屏幕空间四边形。
+    // 缓存避免在 `prepare()`(运行于渲染线程)内加 glyph 状态锁。
     pub(in crate::terminal_shader) cell_w: f32,
     pub(in crate::terminal_shader) cell_h: f32,
 }
@@ -87,11 +85,9 @@ impl fmt::Debug for TerminalPrimitive {
 }
 
 impl TerminalPrimitive {
-    /// GAP-54: install a new background image (decoded RGBA8). Pass
-    /// `None` to clear. The signature is a caller-supplied hash of the
-    /// source bytes — used to avoid re-uploading identical content
-    /// across frames. Mode and opacity are applied to the texture at
-    /// draw time; pass them every call.
+    /// GAP-54:安装新的背景图片(解码后的 RGBA8)。传 `None` 清除。
+    /// 签名是调用方提供的源字节哈希 —— 用于避免跨帧重复上传相同内容。
+    /// 模式和不透明度在绘制时应用到纹理;每次调用都要传入。
     #[allow(dead_code)]
     pub fn set_background_image(
         &mut self,
@@ -118,17 +114,15 @@ impl Primitive for TerminalPrimitive {
         bounds: &Rectangle,
         viewport: &Viewport,
     ) {
-        // Publish the actual viewport scale factor so that `draw()` (next frame)
-        // can reconfigure the glyph atlas if needed.
+        // 发布实际视口缩放因子,使 `draw()`(下一帧)可以在需要时重配字形 atlas。
         let vp_scale = viewport.scale_factor();
         self.viewport_scale_factor.store(
             f32_to_bits(vp_scale),
             Ordering::Relaxed,
         );
 
-        // Keep uniforms in logical coordinates — iced_wgpu sets the GPU viewport
-        // to bounds × scale_factor, so the vertex shader's NDC conversion must use
-        // the same logical coordinate system as the vertex positions.
+        // 保持 uniform 为逻辑坐标 —— iced_wgpu 把 GPU 视口设为 bounds × scale_factor,
+        // 因此顶点着色器的 NDC 换算必须与顶点位置使用同一套逻辑坐标系。
         let uniforms = ScreenUniforms {
             corner_radius: 0.0,
             screen_width: bounds.width,
@@ -141,27 +135,27 @@ impl Primitive for TerminalPrimitive {
 
         let mut gpu = self.gpu.lock().unwrap();
 
-        // --- BgColor pass ---
+        // --- 背景色通道 ---
         prepare_bg_color_pass(self, pipeline, device, bounds, &mut gpu, &uniforms);
 
-        // --- GAP-54: background image pass ---
+        // --- GAP-54:背景图片通道 ---
         prepare_bg_image_pass(self, pipeline, device, queue, bounds, &mut gpu);
 
-        // --- Atlas textures (persistent) ---
+        // --- Atlas 纹理(常驻) ---
         prepare_atlas_textures(self, pipeline, device, queue);
 
-        // --- T-core-graphics v3: image quad pass ---
-        // Step A: drain the decode channel.
+        // --- T-core-graphics v3:image quad 通道 ---
+        // 步骤 A:排空解码通道。
         drain_decode_channel(self);
-        // Step B: upload dirty atlas regions to the GPU texture.
+        // 步骤 B:把脏 atlas 区域上传到 GPU 纹理。
         prepare_image_atlas_texture(self, pipeline, device, queue);
-        // Step C: build per-frame vertex/index buffers from `image_quad_draws`.
+        // 步骤 C:根据 `image_quad_draws` 构建每帧顶点/索引缓冲区。
         prepare_image_quad_buffers(self, pipeline, device, &mut gpu, &uniforms);
 
-        // --- CellText pass ---
+        // --- 单元格文本通道 ---
         prepare_cell_text_pass(self, pipeline, device, &mut gpu, &uniforms);
 
-        drop(gpu); // release lock before any potential future use of self
+        drop(gpu); // 在后续可能使用 self 之前释放锁
     }
 
     fn draw(
@@ -171,8 +165,8 @@ impl Primitive for TerminalPrimitive {
     ) -> bool {
         let gpu = self.gpu.lock().unwrap();
 
-        // GAP-54: draw background image first (under everything). Reuses the
-        // same ScreenUniforms (slot 0) and binds the per-pane image+sample (slot 1).
+        // GAP-54:先绘制背景图片(位于最下层)。复用同一组 ScreenUniforms(slot 0),
+        // 并绑定每面板的图片+采样器(slot 1)。
         if gpu.bg_image_index_count > 0 {
             if let (Some(vb), Some(ib), Some(img_bg), Some(uniform_bg)) = (
                 &gpu.bg_image_vertex_buffer,
@@ -189,7 +183,7 @@ impl Primitive for TerminalPrimitive {
             }
         }
 
-        // Draw bg_color pass
+        // 绘制背景色通道
         if gpu.bg_index_count > 0 {
             if let (Some(vb), Some(ib), Some(bg)) = (&gpu.bg_vertex_buffer, &gpu.bg_index_buffer, &gpu.bg_bind_group) {
                 render_pass.set_pipeline(&pipeline.bg_color_pipeline);
@@ -200,10 +194,9 @@ impl Primitive for TerminalPrimitive {
             }
         }
 
-        // T-core-graphics v3: image quad pass. Rendered between bg_color
-        // and cell_text so terminal text overlays images (z-order rule:
-        // images as cell backgrounds, text on top — see ExitPlanMode plan
-        // §0).
+        // T-core-graphics v3:image quad 通道。绘制在 bg_color 与 cell_text 之间,
+        // 使终端文本叠在图片之上(z 序规则:图片作为单元格背景,文本在上层 ——
+        // 见 ExitPlanMode 计划 §0)。
         if gpu.image_quad_index_count > 0 {
             if let (Some(vb), Some(ib), Some(atlas_bg), Some(uniform_bg)) = (
                 &gpu.image_quad_vertex_buffer,
@@ -220,7 +213,7 @@ impl Primitive for TerminalPrimitive {
             }
         }
 
-        // Draw cell_text pass
+        // 绘制单元格文本通道
         if gpu.text_index_count > 0 {
             if let (Some(vb), Some(ib), Some(atlas_bg), Some(uniform_bg)) = (
                 &gpu.text_vertex_buffer, &gpu.text_index_buffer,

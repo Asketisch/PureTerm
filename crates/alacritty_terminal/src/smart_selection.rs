@@ -1,7 +1,7 @@
-//! Smart selection — precision-based regex rules for terminal text.
+//! 智能选区——面向终端文本的、按精度分级的正则规则。
 //!
-//! Given a line of text and a click offset, `evaluate` returns the highest-precision
-//! rule whose match spans the click (ties broken by longest match).
+//! 给定一行文本与点击偏移,`evaluate` 返回精度最高、
+//! 且匹配覆盖点击位置的规则(并列时取最长匹配)。
 
 use std::collections::HashMap;
 
@@ -104,7 +104,7 @@ impl SmartSelectionService {
     pub fn default_rules() -> Vec<SmartRule> {
         let s = |x: &str| x.to_string();
         vec![
-            // VeryHigh — URLs
+            // VeryHigh(极高)——URL
             SmartRule::new(
                 "url",
                 "URL",
@@ -119,7 +119,7 @@ impl SmartSelectionService {
                 Precision::VeryHigh,
                 vec![s("copy")],
             ),
-            // High — email
+            // High(高)——邮箱
             SmartRule::new(
                 "email",
                 "Email Address",
@@ -127,7 +127,7 @@ impl SmartSelectionService {
                 Precision::High,
                 vec![s("copy")],
             ),
-            // Normal — structural patterns
+            // Normal(普通)——结构性模式
             SmartRule::new(
                 "quoted-string",
                 "Quoted String",
@@ -156,7 +156,7 @@ impl SmartSelectionService {
                 Precision::Normal,
                 vec![s("copy")],
             ),
-            // Low — ambiguous patterns
+            // Low(低)——歧义模式
             SmartRule::new(
                 "git-sha",
                 "Git SHA-1",
@@ -186,7 +186,7 @@ impl SmartSelectionService {
         self.enabled
     }
 
-    /// Replace the active ruleset. Recompiles regexes; invalid patterns are skipped.
+    /// 替换活动规则集。重编译正则;无效模式被跳过。
     pub fn replace_rules(&mut self, rules: Vec<SmartRule>) {
         self.compiled.clear();
         for r in &rules {
@@ -201,8 +201,8 @@ impl SmartSelectionService {
         self.rules = rules;
     }
 
-    /// Find the best rule whose match spans `click_offset`.
-    /// Highest precision wins. Ties broken by longest match.
+    /// 找到匹配覆盖 `click_offset` 的最佳规则。
+    /// 精度最高者胜。并列时取最长匹配。
     pub fn evaluate(&self, text: &str, click_offset: usize) -> Option<SmartMatch> {
         if !self.enabled {
             return None;
@@ -247,7 +247,7 @@ impl SmartSelectionService {
         best
     }
 
-    /// Every match of every enabled rule across the text.
+    /// 每个启用规则在文本上的全部匹配。
     pub fn evaluate_all(&self, text: &str) -> Vec<SmartMatch> {
         if !self.enabled {
             return Vec::new();

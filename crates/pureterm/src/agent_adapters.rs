@@ -87,7 +87,7 @@ pub struct InstallReport {
     pub pureterm_bin: PathBuf,
 }
 
-// ── AgentAdapter trait ────────────────────────────────────────────────────
+// ── AgentAdapter trait(适配器) ───────────────────────────────────────────────
 
 /// 一个被支持的外部 agent。v1 实现:`ClaudeCodeAdapter`。
 ///

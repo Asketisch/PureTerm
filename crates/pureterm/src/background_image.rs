@@ -1,8 +1,8 @@
-//! GAP-54: Terminal background image — config + decode + GPU-ready RGBA buffer.
+//! GAP-54:终端背景图——配置 + 解码 + 供 GPU 使用的 RGBA 缓冲。
 
 use std::path::{Path, PathBuf};
 
-/// Image tiling mode (positioning within the terminal viewport).
+/// 图片平铺模式(在终端视口内的定位方式)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BackgroundMode {
     #[default]
@@ -21,7 +21,7 @@ impl BackgroundMode {
     }
 }
 
-/// `[background]` config.
+/// `[background]` 配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackgroundImageConfig {
     pub enabled: bool,
@@ -54,8 +54,8 @@ impl BackgroundImageConfig {
     }
 }
 
-/// Decoded RGBA8 image data ready to be uploaded to a `wgpu::Texture`.
-/// Width / height in pixels; data length is exactly `width * height * 4`.
+/// 解码后的 RGBA8 图像数据,准备上传到 `wgpu::Texture`。
+/// 宽 / 高以像素计;数据长度恰为 `width * height * 4`。
 #[derive(Clone, Debug)]
 pub struct DecodedBackground {
     pub width: u32,
@@ -63,9 +63,9 @@ pub struct DecodedBackground {
     pub data: Vec<u8>,
 }
 
-/// Decode a PNG/JPEG file into a top-down RGBA8 buffer. Errors are
-/// returned as `String` (this module is called from non-wgpu contexts;
-/// callers translate as needed).
+/// 把 PNG/JPEG 文件解码为自上而下的 RGBA8 缓冲。错误以
+/// `String` 形式返回(本模块会从非 wgpu 上下文调用;
+/// 调用方按需转换)。
 pub fn decode_rgba8(path: &Path) -> Result<DecodedBackground, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     decode_rgba8_from_bytes(&bytes)
@@ -83,9 +83,9 @@ pub fn decode_rgba8_from_bytes(bytes: &[u8]) -> Result<DecodedBackground, String
     })
 }
 
-/// Convenience: resolve the config + decode in one step. Returns
-/// `Ok(None)` when the config disables the background or has no file;
-/// `Ok(Some(DecodedBackground))` on success; `Err` on decode failure.
+/// 便捷封装:一步完成配置解析 + 解码。返回
+/// `Ok(None)`(配置禁用背景或没有文件)、
+/// 成功时 `Ok(Some(DecodedBackground))`;解码失败为 `Err`。
 pub fn load_decoded(cfg: &BackgroundImageConfig) -> Result<Option<DecodedBackground>, String> {
     let Some(path) = cfg.resolved_path() else {
         return Ok(None);
@@ -111,7 +111,7 @@ mod tests {
             opacity: 0.5,
             mode: BackgroundMode::Center,
         };
-        // resolved_path requires the file to exist on disk, so it's None
+        // resolved_path 要求文件真实存在于磁盘,因此为 None
         assert!(cfg.resolved_path().is_none());
         assert!(load_decoded(&cfg).unwrap().is_none());
     }

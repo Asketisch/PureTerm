@@ -1,28 +1,28 @@
-//! OpenAI-compatible SSE → [`ChatEvent`](super::types::ChatEvent) mapping.
+//! OpenAI 兼容的 SSE → [`ChatEvent`](super::types::ChatEvent) 映射。
 //!
-//! OpenAI and every compatible endpoint (DeepSeek, OpenRouter, local Ollama's
-//! OpenAI shim) stream **untyped** SSE: no `event:` field, just `data:` JSON
-//! chunks of the `chat.completion.chunk` shape, terminated by `data: [DONE]`.
+//! OpenAI 及所有兼容端点(DeepSeek、OpenRouter、本地 Ollama 的
+//! OpenAI 垫片)都以**无类型** SSE 输出:没有 `event:` 字段,只有
+//! `chat.completion.chunk` 形状的数据块,以 `data: [DONE]` 结束。
 //!
 //! ```text
-//! data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}   (first chunk, no content)
-//! data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}
-//! data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
-//! data: [DONE]                            → terminal `Done`
+//! data: {"choices":[{"delta":{"role":"assistant"},"finish_reason":null}]}   (首块,无内容)
+//! data: {"choices":[{"delta":{"content":"Hello"},"finish_reason":null}]}   (内容块)
+//! data: {"choices":[{"delta":{},"finish_reason":"stop"}]}   (终止块)
+//! data: [DONE]                            → 终止 `Done`
 //! ```
 //!
-//! `usage` appears only when the caller requested
-//! `stream_options.include_usage` (then it rides a trailing chunk with an empty
-//! `choices` array); we capture it if present and surface it on the terminal
-//! `Done`.
+//! `usage` 仅在调用方请求了
+//! `stream_options.include_usage` 时才会出现(此时挂在一个带空
+//! `choices` 数组的尾块上);我们会捕获它(若存在)并在终止的
+//! `Done` 中呈现。
 
 use crate::ai_chat::provider::SseMapping;
 use crate::ai_chat::sse::SseEvent;
 use crate::ai_chat::types::ChatEvent;
 
-/// Stateful OpenAI-compatible SSE→ChatEvent mapper. Construct one fresh per
-/// `stream()` call. `finished` guards against a double `Done` (a
-/// `finish_reason:"stop"` chunk followed by the `[DONE]` sentinel).
+/// 有状态的 OpenAI 兼容 SSE→ChatEvent 映射器。每次 `stream()`
+/// 调用构造一个全新的实例。`finished` 防止出现双重 `Done`
+/// (`finish_reason:"stop"` 块后紧跟着 `[DONE]` 哨兵)时生效。
 #[derive(Debug, Default)]
 pub struct OpenAiMap {
     finished: bool,
@@ -38,11 +38,11 @@ impl OpenAiMap {
 
 impl SseMapping for OpenAiMap {
     fn map(&mut self, ev: &SseEvent) -> Option<ChatEvent> {
-        // Already terminated — a trailing [DONE] after a finish_reason chunk.
+        // 已终止——`finish_reason` 块后跟随的 `[DONE]`。
         if self.finished {
             return None;
         }
-        // Stream terminator sentinel (OpenAI always sends this last).
+        // 流终止哨兵(OpenAI 总是最后发送它)。
         if ev.data == "[DONE]" {
             self.finished = true;
             return Some(ChatEvent::Done {
@@ -50,13 +50,13 @@ impl SseMapping for OpenAiMap {
                 output_tokens: self.output_tokens,
             });
         }
-        // Malformed payload → skip (turn continues).
+        // 畸形载荷 → 跳过(回合继续)。
         let data: serde_json::Value = match serde_json::from_str(&ev.data) {
             Ok(v) => v,
             Err(_) => return None,
         };
-        // Optional usage (only present with stream_options.include_usage). The
-        // usage chunk has an empty choices array and rides the trailing event.
+        // 可选 usage(仅在请求了 stream_options.include_usage 时存在)。
+        // usage 块带空 choices 数组,挂在尾部事件上。
         if let Some(usage) = data.get("usage") {
             self.input_tokens = usage
                 .get("prompt_tokens")
@@ -67,15 +67,15 @@ impl SseMapping for OpenAiMap {
                 .and_then(|v| v.as_u64())
                 .map(|n| n as u32);
         }
-        // Content delta (the common case).
+        // 内容增量(常见情形)。
         if let Some(content) = data
             .pointer("/choices/0/delta/content")
             .and_then(|v| v.as_str())
         {
             return Some(ChatEvent::TextDelta(content.to_string()));
         }
-        // finish_reason present (and no content) → terminal. Some servers send
-        // this then [DONE]; guard with `finished` to avoid a double Done.
+        // finish_reason 存在(且无内容)→ 终止。有些服务器
+        // 先发这个再发 `[DONE]`;用 `finished` 防止双重 Done。
         if data
             .pointer("/choices/0/finish_reason")
             .and_then(|v| v.as_str())
@@ -87,7 +87,7 @@ impl SseMapping for OpenAiMap {
                 output_tokens: self.output_tokens,
             });
         }
-        // First-chunk role-only delta, or any other shape → ignored.
+        // 首块仅 role 的增量,或其他形状 → 忽略。
         None
     }
 }
@@ -133,20 +133,20 @@ mod tests {
                 output_tokens: None,
             }),
         );
-        // The trailing [DONE] must not emit a second Done.
+        // 尾部的 [DONE] 不得再产生一个 Done。
         assert_eq!(m.map(&data("[DONE]")), None);
     }
 
     #[test]
     fn usage_chunk_is_captured_and_surfaced_on_done() {
         let mut m = OpenAiMap::new();
-        // Some content first.
+        // 先来一些内容。
         let c = data(r#"{"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}"#);
         assert_eq!(m.map(&c), Some(ChatEvent::TextDelta("hi".into())));
-        // Trailing usage chunk (empty choices) — capture, no event.
+        // 尾部 usage 块(空 choices)——捕获,不产生事件。
         let u = data(r#"{"choices":[],"usage":{"prompt_tokens":8,"completion_tokens":2}}"#);
         assert_eq!(m.map(&u), None);
-        // [DONE] carries the remembered usage.
+        // [DONE] 携带已记住的 usage。
         assert_eq!(
             m.map(&data("[DONE]")),
             Some(ChatEvent::Done {
@@ -171,7 +171,7 @@ mod tests {
 }
 
 // ============================================================================
-// OpenAiProvider — reqwest shim for any OpenAI-compatible endpoint.
+// OpenAiProvider — 任意 OpenAI 兼容端点的 reqwest 垫片。
 // ============================================================================
 
 use crate::ai_chat::provider::{classify_reqwest_error, drive_decode, ChatProvider, MpscReceiverStream, SecretKey};
@@ -179,20 +179,20 @@ use crate::ai_chat::types::ChatRequest;
 use iced::futures::Stream;
 use std::sync::Arc;
 
-/// Validate a configured OpenAI-compatible `base_url`. Allows `https://*` (any
-/// host) and `http://127.0.0.1` / `http://localhost` / `http://[::1]` for a
-/// local Ollama shim. Rejects everything else (plain HTTP to other hosts,
-/// `file://`, etc.) so a misconfigured or hostile config can't redirect the
-/// Bearer key + the full terminal context to an arbitrary endpoint. Pure +
-/// dependency-free (manual scheme/host split).
+/// 校验配置的 OpenAI 兼容 `base_url`:允许 `https://*`(任意主机)
+/// 及 `http://127.0.0.1` / `http://localhost` / `http://[::1]`(本地
+/// Ollama 垫片);拒绝其余一切(对其他主机的明文 HTTP、
+/// `file://` 等),防止配置错误或被篡改的配置把
+/// Bearer 密钥及完整终端上下文重定向到任意端点;纯手写、
+/// 零依赖(scheme/host 手工拆分)。
 pub fn validate_base_url(url: &str) -> Result<(), &'static str> {
     let u = url.trim();
     let (scheme, rest) = u.split_once("://").ok_or("base_url must be http(s)")?;
     match scheme {
         "https" => Ok(()),
         "http" => {
-            // Host is the segment before the first '/'; strip the port, then any
-            // IPv6 brackets, so `[::1]:11434` → `::1`.
+            // 主机是第一个 '/' 之前的片段;去掉端口号,再处理
+            // IPv6 方括号,使 `[::1]:11434` → `::1`。
             let host = rest.split('/').next().unwrap_or("");
             let host = host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host);
             let host = host.trim_start_matches('[').trim_end_matches(']');
@@ -206,10 +206,10 @@ pub fn validate_base_url(url: &str) -> Result<(), &'static str> {
     }
 }
 
-/// Any OpenAI-compatible chat-completions endpoint (OpenAI, DeepSeek, OpenRouter,
-/// local Ollama's OpenAI shim). `base_url` is the API prefix (default
-/// `https://api.openai.com/v1`); `/chat/completions` is appended. Auth is
-/// `Authorization: Bearer <key>`.
+/// 任意 OpenAI 兼容的 chat-completions 端点(OpenAI、DeepSeek、OpenRouter、
+/// 本地 Ollama 的 OpenAI 垫片)。`base_url` 是 API 前缀(默认
+/// `https://api.openai.com/v1`);请求时在后面拼 `/chat/completions`;认证为
+/// `Authorization: Bearer <key>`。
 #[derive(Debug)]
 pub struct OpenAiProvider {
     client: reqwest::Client,
@@ -220,7 +220,7 @@ pub struct OpenAiProvider {
 impl OpenAiProvider {
     const DEFAULT_BASE: &'static str = "https://api.openai.com/v1";
 
-    /// `base_url`: API prefix including any `/v1`. `None` → OpenAI default.
+    /// `base_url`:API 前缀,可含 `/v1`。`None` → 使用 OpenAI 默认地址。
     pub fn new(client: reqwest::Client, api_key: SecretKey, base_url: Option<String>) -> Self {
         let base = base_url
             .unwrap_or_else(|| Self::DEFAULT_BASE.to_string())
@@ -233,13 +233,13 @@ impl OpenAiProvider {
         }
     }
 
-    /// Full chat-completions URL (base + `/chat/completions`).
+    /// 完整的 chat-completions URL(base + `/chat/completions`)。
     pub fn endpoint(&self) -> &str {
         &self.api_url
     }
 
-    /// OpenAI chat-completions body. `system` becomes a leading `system` role
-    /// message (OpenAI has no top-level system field); `temperature` only when set.
+    /// OpenAI chat-completions 请求体。`system` 会成为开头的 `system` 角色消息
+    /// (OpenAI 没有顶层 system 字段);`temperature` 仅在设置时带上。
     pub fn build_body(&self, req: &ChatRequest) -> serde_json::Value {
         let mut messages: Vec<serde_json::Value> = Vec::new();
         if let Some(sys) = &req.system {
@@ -330,7 +330,7 @@ mod provider_tests {
         assert_eq!(body["model"], "gpt-4o");
         assert_eq!(body["max_tokens"], 512);
         assert_eq!(body["stream"], true);
-        // temperature is f32 → compare with tolerance, not exact equality.
+        // temperature 是 f32 → 用容差比较,而非精确相等。
         let t = body["temperature"].as_f64().unwrap();
         assert!((t - 0.7).abs() < 1e-5, "temperature was {t}");
         let msgs = body["messages"].as_array().unwrap();
@@ -338,7 +338,7 @@ mod provider_tests {
         assert_eq!(msgs[0]["role"], "system");
         assert_eq!(msgs[0]["content"], "be brief");
         assert_eq!(msgs[1]["role"], "user");
-        // OpenAI has no top-level system field.
+        // OpenAI 没有顶层 system 字段。
         assert!(body.get("system").is_none());
     }
 
@@ -400,7 +400,7 @@ mod provider_tests {
 
     #[test]
     fn validate_base_url_rejects_non_local_http() {
-        // Link-local / metadata / internal hosts must be rejected.
+        // 链路本地 / 元数据 / 内网主机必须被拒绝。
         assert!(validate_base_url("http://169.254.169.254").is_err());
         assert!(validate_base_url("http://internal.corp.example/v1").is_err());
         assert!(validate_base_url("http://8.8.8.8").is_err());

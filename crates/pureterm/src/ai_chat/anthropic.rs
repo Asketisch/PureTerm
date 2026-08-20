@@ -1,28 +1,28 @@
-//! Anthropic (Claude) SSE → [`ChatEvent`](super::types::ChatEvent) mapping.
+//! Anthropic(Claude)SSE → [`ChatEvent`](super::types::ChatEvent) 映射。
 //!
-//! Anthropic streams with **typed** SSE events (`event: <type>` plus a JSON
-//! `data:` payload whose own `type` field echoes the event name). The events v1
-//! text streaming cares about:
+//! Anthropic 采用**带类型**的 SSE 事件流输出(`event: <type>` 外加一个 JSON
+//! `data:` 载荷,其自身的 `type` 字段与事件名一致)。v1 版
+//! 文本流式输出所关注的事件如下:
 //!
 //! ```text
-//! event: message_start          data: {… "message":{"usage":{"input_tokens": N,…}}}
-//! event: content_block_start    data: {…}                  (ignored in v1)
-//! event: content_block_delta    data: {"delta":{"type":"text_delta","text":"…"}}
-//! event: content_block_stop     data: {…}                  (ignored in v1)
-//! event: message_delta          data: {"usage":{"output_tokens": N}}
-//! event: message_stop           data: {…}   → terminal `Done`
+//! event: message_start          data: {… "message":{"usage":{"input_tokens": N,…}}}   (流开始,记录输入 token 数)
+//! event: content_block_start    data: {…}                  (v1 中忽略)
+//! event: content_block_delta    data: {"delta":{"type":"text_delta","text":"…"}}   (文本增量)
+//! event: content_block_stop     data: {…}                  (v1 中忽略)
+//! event: message_delta          data: {"usage":{"output_tokens": N}}   (记录输出 token 数)
+//! event: message_stop           data: {…}   → 终止 `Done`
 //! ```
 //!
-//! `ping`, `content_block_start/stop`, and non-text content blocks (thinking,
-//! tool_use — Phase 4) are ignored in v1.
+//! `ping`、`content_block_start/stop` 以及非文本内容块(thinking、
+//! tool_use —— Phase 4)在 v1 中一律忽略。
 
 use crate::ai_chat::provider::SseMapping;
 use crate::ai_chat::sse::SseEvent;
 use crate::ai_chat::types::ChatEvent;
 
-/// Stateful Anthropic SSE→ChatEvent mapper. Construct one fresh per `stream()`
-/// call; `input_tokens`/`output_tokens` accumulate across events and surface on
-/// the terminal `message_stop`.
+/// 有状态的 Anthropic SSE→ChatEvent 映射器。每次 `stream()` 调用都构造全新实例;
+/// `input_tokens`/`output_tokens` 跨事件累积,并在终止的
+/// `message_stop` 上呈现出来。
 #[derive(Debug, Default)]
 pub struct AnthropicMap {
     input_tokens: Option<u32>,
@@ -37,17 +37,17 @@ impl AnthropicMap {
 
 impl SseMapping for AnthropicMap {
     fn map(&mut self, ev: &SseEvent) -> Option<ChatEvent> {
-        // Malformed payload → skip (turn continues). Anthropic's payload `type`
-        // field drives dispatch; we only care about a handful of event types.
+        // 畸形载荷 → 跳过(回合继续)。Anthropic 载荷的 `type`
+        // 字段驱动分发;我们只关心少数事件类型。
         let data: serde_json::Value = serde_json::from_str(&ev.data).ok()?;
         match data.get("type").and_then(|t| t.as_str()) {
-            // Assistant text delta. `delta.text` is absent on non-text content
-            // blocks (thinking, tool_use — Phase 4); those fall through to None.
+            // 助手文本增量。`delta.text` 在非文本内容块
+            // (thinking、tool_use —— Phase 4)上缺失;这些落入 None。
             Some("content_block_delta") => {
                 let text = data.pointer("/delta/text")?.as_str()?;
                 Some(ChatEvent::TextDelta(text.to_string()))
             }
-            // Remember input_tokens for the final Done.
+            // 记住 input_tokens,供最终 Done 使用。
             Some("message_start") => {
                 self.input_tokens = data
                     .pointer("/message/usage/input_tokens")
@@ -55,7 +55,7 @@ impl SseMapping for AnthropicMap {
                     .map(|n| n as u32);
                 None
             }
-            // Remember output_tokens (overrides the placeholder from message_start).
+            // 记住 output_tokens(覆盖 message_start 中的占位值)。
             Some("message_delta") => {
                 self.output_tokens = data
                     .pointer("/usage/output_tokens")
@@ -63,12 +63,12 @@ impl SseMapping for AnthropicMap {
                     .map(|n| n as u32);
                 None
             }
-            // Terminal: surface accumulated usage.
+            // 终止:呈现累积的用量。
             Some("message_stop") => Some(ChatEvent::Done {
                 input_tokens: self.input_tokens,
                 output_tokens: self.output_tokens,
             }),
-            // content_block_start/stop, ping, unknown → ignored in v1.
+            // content_block_start/stop、ping、未知类型 → v1 中忽略。
             _ => None,
         }
     }
@@ -117,9 +117,9 @@ mod tests {
             "message_start",
             r#"{"type":"message_start","message":{"usage":{"input_tokens":25,"output_tokens":1}}}"#,
         );
-        // message_start yields no event itself...
+        // message_start 本身不产生事件……
         assert_eq!(m.map(&start), None);
-        // ...but input_tokens are remembered and surface on message_stop.
+        // ……但 input_tokens 已被记住,并在 message_stop 上呈现。
         let stop = ev("message_stop", r#"{"type":"message_stop"}"#);
         assert_eq!(
             m.map(&stop),
@@ -149,7 +149,7 @@ mod tests {
 
         assert_eq!(m.map(&start), None);
         assert_eq!(m.map(&delta), Some(ChatEvent::TextDelta("hi".into())));
-        assert_eq!(m.map(&md), None); // output_tokens remembered, no event yet
+        assert_eq!(m.map(&md), None); // output_tokens 已记忆,但尚未产生事件
         assert_eq!(
             m.map(&stop),
             Some(ChatEvent::Done {
@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn ignored_events_yield_nothing() {
         let mut m = AnthropicMap::new();
-        // content_block_start/stop, ping, unknown types → no event in v1.
+        // content_block_start/stop、ping、未知类型 → v1 中不产生事件。
         assert_eq!(
             m.map(&ev(
                 "content_block_start",
@@ -180,14 +180,14 @@ mod tests {
     #[test]
     fn malformed_json_payload_is_skipped_not_fatal() {
         let mut m = AnthropicMap::new();
-        // A truncated payload must not panic; it yields None and the turn continues.
+        // 截断的载荷必须不 panic;它产生 None,回合继续。
         let bad = ev("content_block_delta", "{not valid json");
         assert_eq!(m.map(&bad), None);
     }
 }
 
 // ============================================================================
-// AnthropicProvider — the reqwest HTTP shim around the mapper above.
+// AnthropicProvider — 上文映射器的 reqwest HTTP 垫片。
 // ============================================================================
 
 use crate::ai_chat::provider::{classify_reqwest_error, drive_decode, ChatProvider, MpscReceiverStream, SecretKey};
@@ -195,10 +195,10 @@ use crate::ai_chat::types::ChatRequest;
 use iced::futures::Stream;
 use std::sync::Arc;
 
-/// Anthropic Claude via the Messages API (`POST /v1/messages`, SSE response).
-/// Holds a reqwest client + the env-resolved [`SecretKey`]; the model comes from
-/// each [`ChatRequest`]. `derive(Debug)` is safe: [`SecretKey`]'s own `Debug`
-/// redacts the key.
+/// Anthropic Claude,通过 Messages API(`POST /v1/messages`,SSE 响应)。
+/// 持有 reqwest 客户端和从环境变量解析的 [`SecretKey`];模型来自
+/// 每次 [`ChatRequest`]。`derive(Debug)` 是安全的:[`SecretKey`] 自身的 `Debug`
+/// 实现会隐去密钥。
 #[derive(Debug)]
 pub struct AnthropicProvider {
     client: reqwest::Client,
@@ -217,9 +217,9 @@ impl AnthropicProvider {
         }
     }
 
-    /// Build the Messages API body. `system` is a top-level field (Anthropic
-    /// models it separately from the message array); `temperature` only included
-    /// when set.
+    /// 构造 Messages API 请求体。`system` 是顶层字段(Anthropic
+    /// 把它与消息数组分开建模);`temperature` 仅在
+    /// 设置时才包含。
     pub fn build_body(&self, req: &ChatRequest) -> serde_json::Value {
         let mut body = serde_json::json!({
             "model": req.model,
@@ -283,8 +283,8 @@ impl ChatProvider for AnthropicProvider {
                     return;
                 }
             };
-            // drive_decode owns the body stream for the turn; resp stays alive in
-            // this task for the duration of the await.
+            // drive_decode 持有本回合的响应体流;resp 在此任务中
+            // 存活至 await 结束。
             drive_decode(resp.bytes_stream(), AnthropicMap::new(), cancel, tx).await;
         });
         Box::pin(MpscReceiverStream::new(rx))

@@ -1,23 +1,23 @@
-//! T-core-shaper v2: configuration for the shaper backend.
+//! T-core-shaper v2: 字形整形后端的配置。
 //!
-//! Mirrors the `[shaper]` block in `default-config.toml`. The shaper
-//! defaults to `monospace` (the v1 cluster-aware shaper) and v2 swaps in
-//! `rustybuzz` when the user opts in and provides a font blob.
+//! 对应 `default-config.toml` 中的 `[shaper]` 配置块。整形后端
+//! 默认使用 `monospace`(v1 聚簇感知整形器);用户选择 v2 时切换为
+//! `rustybuzz`,前提是用户提供字体 blob。
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-/// Which shaper backend to use.
+/// 使用哪个字形整形后端。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShaperBackend {
-    /// Pure-Rust cluster-aware shaper (v1). Always available, no
-    /// font-load dependency. Correct for Latin + CJK width; doesn't
-    /// handle ligatures or complex script shaping.
+    /// 纯 Rust 聚簇感知整形器(v1)。始终可用,不依赖
+    /// 字体文件加载。对拉丁文与中日韩文字宽度处理正确;
+    /// 但不支持连字与复杂文字整形。
     Monospace,
-    /// Harfbuzz via rustybuzz (v2). Requires a real font blob and the
-    /// `rustybuzz` / `unicode-bidi` / `unicode-script` deps, which are
-    /// already pulled in by `pureterm-alacritty-runtime`.
+    /// 通过 rustybuzz 调用 Harfbuzz(v2)。需要真实的字体 blob,以及
+    /// `rustybuzz` / `unicode-bidi` / `unicode-script` 依赖,这些依赖
+    /// 已由 `pureterm-alacritty-runtime` 引入。
     RustyBuzz,
 }
 
@@ -43,30 +43,30 @@ impl ShaperBackend {
     }
 }
 
-/// The fallback chain entries the user can put in `[shaper].fallback_chain`.
-/// Each entry names a font file and the script the font covers.
+/// 用户可放入 `[shaper].fallback_chain` 的回退字体链条目。
+/// 每个条目指定一个字体文件路径,以及该字体覆盖的文字脚本。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FallbackEntry {
-    /// Display name (informational).
+    /// 显示名称(仅供参考)。
     pub name: String,
-    /// Path to a .ttf / .otf / .ttc file. May be `~`-expanded by the
-    /// loader.
+    /// 指向 .ttf / .otf / .ttc 文件的路径。可能由加载器执行 `~` 展开。
+    /// 负责展开处理。
     pub path: String,
-    /// Script tag: "cjk-jp" / "cjk-kr" / "cjk-sc" / "emoji" / "serif".
+    /// 文字脚本标签: "cjk-jp" / "cjk-kr" / "cjk-sc" / "emoji" / "serif"。
     pub script: String,
 }
 
-/// The shaper configuration block.
+/// 字形整形配置块。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShaperConfig {
     pub backend: ShaperBackend,
-    /// ISO-639 language tag for script-specific features (e.g. "en-US",
-    /// "ja", "zh-Hans"). Defaults to "en-US".
+    /// 用于文字特性选择的 ISO-639 语言标签(例如 "en-US",
+    /// "ja"、"zh-Hans")。默认值为 "en-US"。
     pub language: String,
-    /// Whether to enable OpenType features (ligatures, contextual forms).
+    /// 是否启用 OpenType 特性(连字、上下文替换等)。
     pub enable_features: bool,
-    /// Ordered fallback font chain. Used when the primary font is missing
-    /// a glyph.
+    /// 有序的回退字体链。当主字体缺失字形时
+    /// 使用回退。
     pub fallback_chain: Vec<FallbackEntry>,
 }
 
@@ -113,22 +113,21 @@ impl Default for ShaperConfig {
 }
 
 impl ShaperConfig {
-    /// Load the `[shaper]` block from a TOML config file. Falls back to
-    /// the default if the block is absent or any field is missing.
+    /// 从 TOML 配置文件加载 `[shaper]` 配置块。若块不存在或
+    /// 字段缺失,则回退到默认配置。
     pub fn load(path: &Path) -> Self {
         let mut cfg = Self::default();
         let Ok(text) = std::fs::read_to_string(path) else {
             return cfg;
         };
-        // toml_edit is the spec-compliant parser we already depend on for
-        // the config IO layer (preserves formatting for `pureterm-cli config
-        // set`). It happily accepts a partial document like
-        // `[shaper]\nbackend = "rustybuzz"\n` without complaining about
-        // missing root-level fields.
+        // toml_edit 是符合规范的解析器,配置 IO 层已依赖它来
+        // 保留格式(供 `pureterm-cli config` 使用)。它能接受残缺文档,
+        // 它能接受形如 `[shaper]\nbackend = "rustybuzz"\n` 的残缺文档,而不会
+        // 抱怨缺少顶层字段。
         let Ok(value) = text.parse::<toml_edit::DocumentMut>() else {
             return cfg;
         };
-        // Walk to the [shaper] table.
+        // 定位到 [shaper] 配置表。
         let Some(table) = value
             .as_item()
             .get("shaper")
@@ -147,10 +146,10 @@ impl ShaperConfig {
         }
         if let Some(arr) = table.get("fallback_chain").and_then(|v| v.as_array()) {
             let mut entries = Vec::new();
-            // In toml_edit 0.22, `Array` is heterogeneous and stores
-            // `Item` values. Inline tables arrive as `Item::Value(Value::InlineTable(...))`
-            // — unwrap them and pull each entry's keys via `get` on the
-            // inline table.
+            // 在 toml_edit 0.22 中,`Array` 是异构的,存储
+            // `Item` 值。内联表以 `Item::Value(Value::InlineTable(...))` 形式到达,
+            // 需解包,并通过 `get` 获取每个条目的键(见第 153 行)。
+            //
             for item in arr.iter() {
                 let inline = match item.as_inline_table() {
                     Some(t) => t,
@@ -191,7 +190,7 @@ mod tests {
         assert_eq!(cfg.backend, ShaperBackend::Monospace);
         assert_eq!(cfg.language, "en-US");
         assert!(cfg.enable_features);
-        // Default chain has 6 entries per the spec.
+        // 按规格说明,默认回退链有 6 个条目。
         assert_eq!(cfg.fallback_chain.len(), 6);
     }
 

@@ -1,18 +1,18 @@
-//! GAP-5.2: persist live tunnel configs across daemon restarts.
+//! GAP-5.2:守护进程重启后持久化存活隧道的配置。
 //!
-//! `TunnelManager` holds live state (`oneshot::Sender`, `AbortHandle`) that is
-//! not serializable, so we snapshot a serializable projection — `TunnelConfig`
-//! — into a daemon-owned `tunnels.json`. On startup the file is reloaded and
-//! each config is registered as a *stopped* tunnel (config-only restore; the
-//! user re-starts explicitly — see the GAP-5.2 plan; auto-reconnect is deferred).
+//! `TunnelManager` 持有的存活状态(`oneshot::Sender`、`AbortHandle`)
+//! 不可序列化,因此我们快照出一个可序列化投影——`TunnelConfig`
+//! ——写入守护进程自有的 `tunnels.json`。启动时重载该文件,
+//! 把每个配置注册为*已停止*的隧道(仅恢复配置;
+//! 由用户显式重启——见 GAP-5.2 方案;自动重连延后)。
 //!
-//! Secrets are deliberately NOT persisted (mirrors the SSH-profile pattern): a
-//! `TunnelConfig` has no `password` field, so a password-auth tunnel restored on
-//! restart re-enters `NeedAuth` rather than hanging on a secret we never stored.
+//! 机密被有意不持久化(镜像 SSH 配置档模式):
+//! `TunnelConfig` 没有 `password` 字段,因此密码认证隧道重启
+//! 恢复后重新进入 `NeedAuth`,而不是挂在从未存储的机密上。
 //!
-//! The on-disk shape is forward-compatible: every field defaults, so adding
-//! fields later is non-breaking (no `version` bump needed). `version` is still
-//! recorded for future migrations.
+//! 磁盘形态向前兼容:每个字段都有默认值,以后加字段
+//! 不破坏兼容(无需提升 `version`)。仍记录 `version`
+//! 以备未来迁移。
 
 use std::path::Path;
 
@@ -25,8 +25,8 @@ fn default_remote_dns() -> bool {
     true
 }
 
-/// Serializable projection of a live tunnel. **No `password`/secret field** —
-/// see the module docs.
+/// 存活隧道的可序列化投影。**无 `password`/机密字段**——
+/// 见模块文档。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TunnelConfig {
     pub host: String,
@@ -43,15 +43,15 @@ pub struct TunnelConfig {
     pub forward_agent: bool,
 }
 
-/// On-disk container.
+/// 磁盘容器。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TunnelsFile {
     pub version: u32,
     pub tunnels: Vec<TunnelConfig>,
 }
 
-/// Atomically write `cfg` to `path`. Best-effort: logs on failure (a persist
-/// error must never crash the daemon).
+/// 把 `cfg` 原子写入 `path`。尽力而为:失败仅记录日志(持久化
+/// 错误绝不能让守护进程崩溃)。
 pub fn save_tunnels(path: &Path, cfg: &TunnelsFile) {
     use std::io::Write;
     let Some(dir) = path.parent() else {
@@ -85,7 +85,7 @@ pub fn save_tunnels(path: &Path, cfg: &TunnelsFile) {
     }
 }
 
-/// Load `tunnels.json`. Returns `None` if the file is missing or corrupt.
+/// 加载 `tunnels.json`。文件缺失或损坏时返回 `None`。
 pub fn load_tunnels(path: &Path) -> Option<TunnelsFile> {
     let s = std::fs::read_to_string(path).ok()?;
     serde_json::from_str(&s).ok()
@@ -121,7 +121,7 @@ mod tests {
 
     #[test]
     fn default_port_and_remote_dns_when_absent() {
-        // No `port` / `remote_dns` in the JSON → defaults 22 / true.
+        // JSON 里没有 `port` / `remote_dns` → 默认 22 / true。
         let json = r#"{"host":"gw","local_port":1080}"#;
         let cfg: TunnelConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.port, 22);
@@ -145,8 +145,8 @@ mod tests {
 
     #[test]
     fn secret_is_not_persisted() {
-        // No password field exists on TunnelConfig, so a serialized config must
-        // never contain "password" — guards against a future field being added.
+        // TunnelConfig 不存在 password 字段,因此序列化后的配置
+        // 绝不能含 "password"——防止未来误加字段。
         let json = serde_json::to_string(&sample().tunnels[0]).unwrap();
         assert!(
             !json.contains("password"),

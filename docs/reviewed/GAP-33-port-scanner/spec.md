@@ -1,6 +1,6 @@
 ---
 gap: GAP-33
-title: Port Scanner
+title: 端口扫描
 category: 开发者工具
 plan_type: feature
 priority: P2

@@ -9,52 +9,52 @@ use serde::{Deserialize, Serialize};
 use super::Row;
 use crate::index::Line;
 
-/// Maximum number of buffered lines outside of the grid for performance optimization.
+/// 网格之外为性能优化缓冲的最大行数。
 const MAX_CACHE_SIZE: usize = 1_000;
 
-/// A ring buffer for optimizing indexing and rotation.
+/// 为优化索引与旋转而设的环形缓冲。
 ///
-/// The [`Storage::rotate`] and [`Storage::rotate_down`] functions are fast modular additions on
-/// the internal [`zero`] field. As compared with [`slice::rotate_left`] which must rearrange items
-/// in memory.
+/// [`Storage::rotate`] 与 [`Storage::rotate_down`] 只是对内部 [`zero`] 字段的快速模加法。
+/// 相比之下 [`slice::rotate_left`] 必须重排内存中的
+/// 元素。
 ///
-/// As a consequence, both [`Index`] and [`IndexMut`] are reimplemented for this type to account
-/// for the zeroth element not always being at the start of the allocation.
+/// 因此本类型重新实现了 [`Index`] 与 [`IndexMut`],以处理
+/// 第零个元素不一定在分配起点的情况。
 ///
-/// Because certain [`Vec`] operations are no longer valid on this type, no [`Deref`]
-/// implementation is provided. Anything from [`Vec`] that should be exposed must be done so
-/// manually.
+/// 由于某些 [`Vec`] 操作在本类型上不再合法,不提供 [`Deref`]
+/// 实现。任何需要暴露的 [`Vec`] 能力都必须
+/// 手动转发。
 ///
-/// [`slice::rotate_left`]: https://doc.rust-lang.org/std/primitive.slice.html#method.rotate_left
-/// [`Deref`]: std::ops::Deref
-/// [`zero`]: #structfield.zero
+/// [`slice::rotate_left`]:文档见 Rust 标准库(链接受限,略)。
+/// [`Deref`]:即 std::ops::Deref。
+/// [`zero`]:即本结构体的 zero 字段。
 #[derive(Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Storage<T> {
     inner: Vec<Row<T>>,
 
-    /// Starting point for the storage of rows.
+    /// 行存储的起点。
     ///
-    /// This value represents the starting line offset within the ring buffer. The value of this
-    /// offset may be larger than the `len` itself, and will wrap around to the start to form the
-    /// ring buffer. It represents the bottommost line of the terminal.
+    /// 该值表示环形缓冲内的起始行偏移。偏移可以大于
+    /// `len` 本身,并会回绕到起点构成环形缓冲。它代表终端的
+    /// 最底行。
     zero: usize,
 
-    /// Number of visible lines.
+    /// 可见行数。
     visible_lines: usize,
 
-    /// Total number of lines currently active in the terminal (scrollback + visible)
+    /// 终端中当前活动的总行数(回滚 + 可见)。
     ///
-    /// Shrinking this length allows reducing the number of lines in the scrollback buffer without
-    /// having to truncate the raw `inner` buffer.
-    /// As long as `len` is bigger than `inner`, it is also possible to grow the scrollback buffer
-    /// without any additional insertions.
+    /// 缩小此长度即可减少回滚缓冲的行数,
+    /// 无需截断原始 `inner` 缓冲。
+    /// 只要 `len` 大于 `inner`,同样可以在不做任何额外插入
+    /// 的情况下增长回滚缓冲。
     len: usize,
 }
 
 impl<T: PartialEq> PartialEq for Storage<T> {
     fn eq(&self, other: &Self) -> bool {
-        // Both storage buffers need to be truncated and zeroed.
+        // 两个存储缓冲都需要截断并清零。
         assert_eq!(self.zero, 0);
         assert_eq!(other.zero, 0);
 
@@ -68,52 +68,52 @@ impl<T> Storage<T> {
     where
         T: Default,
     {
-        // Initialize visible lines; the scrollback buffer is initialized dynamically.
+        // 初始化可见行;回滚缓冲动态初始化。
         let mut inner = Vec::with_capacity(visible_lines);
         inner.resize_with(visible_lines, || Row::new(columns));
 
         Storage { inner, zero: 0, visible_lines, len: visible_lines }
     }
 
-    /// Increase the number of lines in the buffer.
+    /// 增加缓冲中的行数。
     #[inline]
     pub fn grow_visible_lines(&mut self, next: usize)
     where
         T: Default,
     {
-        // Number of lines the buffer needs to grow.
+        // 缓冲需要增长的行数。
         let additional_lines = next - self.visible_lines;
 
         let columns = self[Line(0)].len();
         self.initialize(additional_lines, columns);
 
-        // Update visible lines.
+        // 更新可见行数。
         self.visible_lines = next;
     }
 
-    /// Decrease the number of lines in the buffer.
+    /// 减少缓冲中的行数。
     #[inline]
     pub fn shrink_visible_lines(&mut self, next: usize) {
-        // Shrink the size without removing any lines.
+        // 不移除任何行地缩小尺寸。
         let shrinkage = self.visible_lines - next;
         self.shrink_lines(shrinkage);
 
-        // Update visible lines.
+        // 更新可见行数。
         self.visible_lines = next;
     }
 
-    /// Shrink the number of lines in the buffer.
+    /// 缩小缓冲中的行数。
     #[inline]
     pub fn shrink_lines(&mut self, shrinkage: usize) {
         self.len -= shrinkage;
 
-        // Free memory.
+        // 释放内存。
         if self.inner.len() > self.len + MAX_CACHE_SIZE {
             self.truncate();
         }
     }
 
-    /// Truncate the invisible elements from the raw buffer.
+    /// 从原始缓冲截掉不可见元素。
     #[inline]
     pub fn truncate(&mut self) {
         self.rezero();
@@ -121,7 +121,7 @@ impl<T> Storage<T> {
         self.inner.truncate(self.len);
     }
 
-    /// Dynamically grow the storage buffer at runtime.
+    /// 运行时动态增长存储缓冲。
     #[inline]
     pub fn initialize(&mut self, additional_rows: usize, columns: usize)
     where
@@ -142,14 +142,14 @@ impl<T> Storage<T> {
         self.len
     }
 
-    /// Swap implementation for Row<T>.
+    /// Row<T> 的交换实现。
     ///
-    /// Exploits the known size of Row<T> to produce a slightly more efficient
-    /// swap than going through slice::swap.
+    /// 利用 Row<T> 的已知大小,产出比经 slice::swap 略高效的
+    /// 交换。
     ///
-    /// The default implementation from swap generates 8 movups and 4 movaps
-    /// instructions. This implementation achieves the swap in only 8 movups
-    /// instructions.
+    /// swap 的默认实现生成 8 条 movups 与 4 条 movaps
+    /// 指令。本实现只用 8 条 movups
+    /// 指令完成交换。
     pub fn swap(&mut self, a: Line, b: Line) {
         debug_assert_eq!(mem::size_of::<Row<T>>(), mem::size_of::<usize>() * 4);
 
@@ -157,15 +157,15 @@ impl<T> Storage<T> {
         let b = self.compute_index(b);
 
         unsafe {
-            // Cast to a qword array to opt out of copy restrictions and avoid
-            // drop hazards. Byte array is no good here since for whatever
-            // reason LLVM won't optimized it.
+            // 转成 qword 数组以绕过复制限制并避免
+            // drop 风险。字节数组不行,因为 LLVM
+            // 不肯优化它。
             let a_ptr = self.inner.as_mut_ptr().add(a) as *mut MaybeUninit<usize>;
             let b_ptr = self.inner.as_mut_ptr().add(b) as *mut MaybeUninit<usize>;
 
-            // Copy 1 qword at a time.
+            // 每次复制 1 个 qword。
             //
-            // The optimizer unrolls this loop and vectorizes it.
+            // 优化器会展开并向量化该循环。
             let mut tmp: MaybeUninit<usize>;
             for i in 0..4 {
                 tmp = *a_ptr.offset(i);
@@ -175,7 +175,7 @@ impl<T> Storage<T> {
         }
     }
 
-    /// Rotate the grid, moving all lines up/down in history.
+    /// 旋转网格,把所有行在历史中上移/下移。
     #[inline]
     pub fn rotate(&mut self, count: isize) {
         debug_assert!(count.unsigned_abs() <= self.inner.len());
@@ -184,17 +184,17 @@ impl<T> Storage<T> {
         self.zero = (self.zero as isize + count + len as isize) as usize % len;
     }
 
-    /// Rotate all existing lines down in history.
+    /// 把所有既有行在历史中下移。
     ///
-    /// This is a faster, specialized version of [`rotate_left`].
+    /// 这是 [`rotate_left`] 的更快特化版本。
     ///
-    /// [`rotate_left`]: https://doc.rust-lang.org/std/vec/struct.Vec.html#method.rotate_left
+    /// [`rotate_left`]:文档见 Rust 标准库 Vec::rotate_left。
     #[inline]
     pub fn rotate_down(&mut self, count: usize) {
         self.zero = (self.zero + count) % self.inner.len();
     }
 
-    /// Update the raw storage buffer.
+    /// 更新原始存储缓冲。
     #[inline]
     pub fn replace_inner(&mut self, vec: Vec<Row<T>>) {
         self.len = vec.len();
@@ -202,7 +202,7 @@ impl<T> Storage<T> {
         self.zero = 0;
     }
 
-    /// Remove all rows from storage.
+    /// 从存储移除所有行。
     #[inline]
     pub fn take_all(&mut self) -> Vec<Row<T>> {
         self.truncate();
@@ -215,7 +215,7 @@ impl<T> Storage<T> {
         buffer
     }
 
-    /// Compute actual index in underlying storage given the requested index.
+    /// 给定请求索引,计算底层存储中的实际索引。
     #[inline]
     fn compute_index(&self, requested: Line) -> usize {
         debug_assert!(requested.0 < self.visible_lines as i32);
@@ -226,14 +226,14 @@ impl<T> Storage<T> {
 
         let zeroed = self.zero + positive;
 
-        // Use if/else instead of remainder here to improve performance.
+        // 此处用 if/else 而非取余以提升性能。
         //
-        // Requires `zeroed` to be smaller than `self.inner.len() * 2`,
-        // but both `self.zero` and `requested` are always smaller than `self.inner.len()`.
+        // 要求 `zeroed` 小于 `self.inner.len() * 2`,
+        // 但 `self.zero` 与 `requested` 都恒小于 `self.inner.len()`。
         if zeroed >= self.inner.len() { zeroed - self.inner.len() } else { zeroed }
     }
 
-    /// Rotate the ringbuffer to reset `self.zero` back to index `0`.
+    /// 旋转环形缓冲,把 `self.zero` 复位到索引 `0`。
     #[inline]
     fn rezero(&mut self) {
         if self.zero == 0 {
@@ -333,22 +333,22 @@ mod tests {
         assert_eq!(storage.zero, 2);
     }
 
-    /// Grow the buffer one line at the end of the buffer.
+    /// 在缓冲末尾增长一行。
     ///
-    /// Before:
-    ///   0: 0 <- Zero
+    /// 之前:
+    ///   0: 0 <- Zero(零点)
     ///   1: 1
     ///   2: -
-    /// After:
-    ///   0: 0 <- Zero
+    /// 之后:
+    ///   0: 0 <- Zero(零点)
     ///   1: 1
     ///   2: -
     ///   3: \0
     ///   ...
-    ///   MAX_CACHE_SIZE: \0
+    ///   MAX_CACHE_SIZE: \0(空位)
     #[test]
     fn grow_after_zero() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![filled_row('0'), filled_row('1'), filled_row('-')],
             zero: 0,
@@ -356,10 +356,10 @@ mod tests {
             len: 3,
         };
 
-        // Grow buffer.
+        // 增长缓冲。
         storage.grow_visible_lines(4);
 
-        // Make sure the result is correct.
+        // 确保结果正确。
         let mut expected = Storage {
             inner: vec![filled_row('0'), filled_row('1'), filled_row('-')],
             zero: 0,
@@ -374,22 +374,22 @@ mod tests {
         assert_eq!(storage.len, expected.len);
     }
 
-    /// Grow the buffer one line at the start of the buffer.
+    /// 在缓冲开头增长一行。
     ///
-    /// Before:
+    /// 之前:
     ///   0: -
-    ///   1: 0 <- Zero
+    ///   1: 0 <- Zero(零点)
     ///   2: 1
-    /// After:
-    ///   0: 0 <- Zero
+    /// 之后:
+    ///   0: 0 <- Zero(零点)
     ///   1: 1
     ///   2: -
     ///   3: \0
     ///   ...
-    ///   MAX_CACHE_SIZE: \0
+    ///   MAX_CACHE_SIZE: \0(空位)
     #[test]
     fn grow_before_zero() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![filled_row('-'), filled_row('0'), filled_row('1')],
             zero: 1,
@@ -397,10 +397,10 @@ mod tests {
             len: 3,
         };
 
-        // Grow buffer.
+        // 增长缓冲。
         storage.grow_visible_lines(4);
 
-        // Make sure the result is correct.
+        // 确保结果正确。
         let mut expected = Storage {
             inner: vec![filled_row('0'), filled_row('1'), filled_row('-')],
             zero: 0,
@@ -415,19 +415,19 @@ mod tests {
         assert_eq!(storage.len, expected.len);
     }
 
-    /// Shrink the buffer one line at the start of the buffer.
+    /// 在缓冲开头缩小一行。
     ///
-    /// Before:
+    /// 之前:
     ///   0: 2
-    ///   1: 0 <- Zero
+    ///   1: 0 <- Zero(零点)
     ///   2: 1
-    /// After:
-    ///   0: 2 <- Hidden
-    ///   0: 0 <- Zero
+    /// 之后:
+    ///   0: 2 <- Hidden(隐藏)
+    ///   0: 0 <- Zero(零点)
     ///   1: 1
     #[test]
     fn shrink_before_zero() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![filled_row('2'), filled_row('0'), filled_row('1')],
             zero: 1,
@@ -435,10 +435,10 @@ mod tests {
             len: 3,
         };
 
-        // Shrink buffer.
+        // 缩小缓冲。
         storage.shrink_visible_lines(2);
 
-        // Make sure the result is correct.
+        // 确保结果正确。
         let expected = Storage {
             inner: vec![filled_row('2'), filled_row('0'), filled_row('1')],
             zero: 1,
@@ -451,19 +451,19 @@ mod tests {
         assert_eq!(storage.len, expected.len);
     }
 
-    /// Shrink the buffer one line at the end of the buffer.
+    /// 在缓冲末尾缩小一行。
     ///
-    /// Before:
-    ///   0: 0 <- Zero
+    /// 之前:
+    ///   0: 0 <- Zero(零点)
     ///   1: 1
     ///   2: 2
-    /// After:
-    ///   0: 0 <- Zero
+    /// 之后:
+    ///   0: 0 <- Zero(零点)
     ///   1: 1
-    ///   2: 2 <- Hidden
+    ///   2: 2 <- Hidden(隐藏)
     #[test]
     fn shrink_after_zero() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![filled_row('0'), filled_row('1'), filled_row('2')],
             zero: 0,
@@ -471,10 +471,10 @@ mod tests {
             len: 3,
         };
 
-        // Shrink buffer.
+        // 缩小缓冲。
         storage.shrink_visible_lines(2);
 
-        // Make sure the result is correct.
+        // 确保结果正确。
         let expected = Storage {
             inner: vec![filled_row('0'), filled_row('1'), filled_row('2')],
             zero: 0,
@@ -487,25 +487,25 @@ mod tests {
         assert_eq!(storage.len, expected.len);
     }
 
-    /// Shrink the buffer at the start and end of the buffer.
+    /// 在缓冲开头与末尾缩小。
     ///
-    /// Before:
+    /// 之前:
     ///   0: 4
     ///   1: 5
-    ///   2: 0 <- Zero
+    ///   2: 0 <- Zero(零点)
     ///   3: 1
     ///   4: 2
     ///   5: 3
-    /// After:
-    ///   0: 4 <- Hidden
-    ///   1: 5 <- Hidden
-    ///   2: 0 <- Zero
+    /// 之后:
+    ///   0: 4 <- Hidden(隐藏)
+    ///   1: 5 <- Hidden(隐藏)
+    ///   2: 0 <- Zero(零点)
     ///   3: 1
-    ///   4: 2 <- Hidden
-    ///   5: 3 <- Hidden
+    ///   4: 2 <- Hidden(隐藏)
+    ///   5: 3 <- Hidden(隐藏)
     #[test]
     fn shrink_before_and_after_zero() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![
                 filled_row('4'),
@@ -520,10 +520,10 @@ mod tests {
             len: 6,
         };
 
-        // Shrink buffer.
+        // 缩小缓冲。
         storage.shrink_visible_lines(2);
 
-        // Make sure the result is correct.
+        // 确保结果正确。
         let expected = Storage {
             inner: vec![
                 filled_row('4'),
@@ -543,21 +543,21 @@ mod tests {
         assert_eq!(storage.len, expected.len);
     }
 
-    /// Check that when truncating all hidden lines are removed from the raw buffer.
+    /// 检查截断时全部隐藏行都从原始缓冲移除。
     ///
-    /// Before:
-    ///   0: 4 <- Hidden
-    ///   1: 5 <- Hidden
-    ///   2: 0 <- Zero
+    /// 之前:
+    ///   0: 4 <- Hidden(隐藏)
+    ///   1: 5 <- Hidden(隐藏)
+    ///   2: 0 <- Zero(零点)
     ///   3: 1
-    ///   4: 2 <- Hidden
-    ///   5: 3 <- Hidden
-    /// After:
-    ///   0: 0 <- Zero
+    ///   4: 2 <- Hidden(隐藏)
+    ///   5: 3 <- Hidden(隐藏)
+    /// 之后:
+    ///   0: 0 <- Zero(零点)
     ///   1: 1
     #[test]
     fn truncate_invisible_lines() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![
                 filled_row('4'),
@@ -572,10 +572,10 @@ mod tests {
             len: 2,
         };
 
-        // Truncate buffer.
+        // 截断缓冲。
         storage.truncate();
 
-        // Make sure the result is correct.
+        // 确保结果正确。
         let expected = Storage {
             inner: vec![filled_row('0'), filled_row('1')],
             zero: 0,
@@ -588,18 +588,18 @@ mod tests {
         assert_eq!(storage.len, expected.len);
     }
 
-    /// Truncate buffer only at the beginning.
+    /// 仅在开头截断缓冲。
     ///
-    /// Before:
+    /// 之前:
     ///   0: 1
-    ///   1: 2 <- Hidden
-    ///   2: 0 <- Zero
-    /// After:
+    ///   1: 2 <- Hidden(隐藏)
+    ///   2: 0 <- Zero(零点)
+    /// 之后:
     ///   0: 1
-    ///   0: 0 <- Zero
+    ///   0: 0 <- Zero(零点)
     #[test]
     fn truncate_invisible_lines_beginning() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![filled_row('1'), filled_row('2'), filled_row('0')],
             zero: 2,
@@ -607,10 +607,10 @@ mod tests {
             len: 2,
         };
 
-        // Truncate buffer.
+        // 截断缓冲。
         storage.truncate();
 
-        // Make sure the result is correct.
+        // 确保结果正确。
         let expected = Storage {
             inner: vec![filled_row('0'), filled_row('1')],
             zero: 0,
@@ -623,33 +623,33 @@ mod tests {
         assert_eq!(storage.len, expected.len);
     }
 
-    /// First shrink the buffer and then grow it again.
+    /// 先缩小缓冲再重新增长。
     ///
-    /// Before:
+    /// 之前:
     ///   0: 4
     ///   1: 5
-    ///   2: 0 <- Zero
+    ///   2: 0 <- Zero(零点)
     ///   3: 1
     ///   4: 2
     ///   5: 3
-    /// After Shrinking:
-    ///   0: 4 <- Hidden
-    ///   1: 5 <- Hidden
-    ///   2: 0 <- Zero
+    /// 缩小后:
+    ///   0: 4 <- Hidden(隐藏)
+    ///   1: 5 <- Hidden(隐藏)
+    ///   2: 0 <- Zero(零点)
     ///   3: 1
     ///   4: 2
-    ///   5: 3 <- Hidden
-    /// After Growing:
+    ///   5: 3 <- Hidden(隐藏)
+    /// 增长后:
     ///   0: 4
     ///   1: 5
     ///   2: -
-    ///   3: 0 <- Zero
+    ///   3: 0 <- Zero(零点)
     ///   4: 1
     ///   5: 2
     ///   6: 3
     #[test]
     fn shrink_then_grow() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![
                 filled_row('4'),
@@ -664,10 +664,10 @@ mod tests {
             len: 6,
         };
 
-        // Shrink buffer.
+        // 缩小缓冲。
         storage.shrink_lines(3);
 
-        // Make sure the result after shrinking is correct.
+        // 确保缩小后的结果正确。
         let shrinking_expected = Storage {
             inner: vec![
                 filled_row('4'),
@@ -685,10 +685,10 @@ mod tests {
         assert_eq!(storage.zero, shrinking_expected.zero);
         assert_eq!(storage.len, shrinking_expected.len);
 
-        // Grow buffer.
+        // 增长缓冲。
         storage.initialize(1, 1);
 
-        // Make sure the previously freed elements are reused.
+        // 确保先前释放的元素被复用。
         let growing_expected = Storage {
             inner: vec![
                 filled_row('4'),
@@ -710,7 +710,7 @@ mod tests {
 
     #[test]
     fn initialize() {
-        // Setup storage area.
+        // 布置存储区。
         let mut storage: Storage<char> = Storage {
             inner: vec![
                 filled_row('4'),
@@ -725,11 +725,11 @@ mod tests {
             len: 6,
         };
 
-        // Initialize additional lines.
+        // 初始化额外的行。
         let init_size = 3;
         storage.initialize(init_size, 1);
 
-        // Generate expected grid.
+        // 生成期望的网格。
         let mut expected_inner = vec![
             filled_row('0'),
             filled_row('1'),

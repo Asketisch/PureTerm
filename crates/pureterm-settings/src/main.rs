@@ -28,8 +28,8 @@ fn main() -> iced::Result {
 
     log::info!("Using config: {}", config_path.display());
 
-    // Bring settings window to foreground on macOS (spawned as child process,
-    // won't automatically activate without this)
+    // macOS 上把设置窗口带到前台(作为子进程拉起,
+    // 不这样做不会自动激活)
     #[cfg(target_os = "macos")]
     std::thread::spawn(|| {
         std::thread::sleep(std::time::Duration::from_millis(100));

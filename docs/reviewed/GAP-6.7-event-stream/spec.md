@@ -1,6 +1,6 @@
 ---
 gap: GAP-6.7
-title: Event Stream
+title: 事件流
 category: 集成
 plan_type: integration
 priority: P0

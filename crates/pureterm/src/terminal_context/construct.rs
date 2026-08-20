@@ -19,7 +19,7 @@ use alacritty_terminal::term::test::TermSize;
 use alacritty_terminal::term::{Config as TermConfig, Term};
 use alacritty_terminal::tty::{self, Options as PtyOptions};
 use crossbeam_channel::bounded;
-// GAP-15: shell-integration injection opts (OSC 7 + OSC 133).
+// GAP-15：shell 集成注入选项（OSC 7 + OSC 133）。
 use pureterm_daemon::shell_integration::ShellIntegrationOpts;
 
 #[cfg(unix)]
@@ -44,12 +44,11 @@ use crate::ssh::pty::SshPty;
 use crate::ssh::reconnect::SshState;
 
 impl TerminalContext {
-    /// Create a new local-pty terminal context. Equivalent to the
-    /// pre-P2 `TerminalContext::new()`.
+    /// 创建新的本地 PTY 终端上下文。等价于 P2 之前的 `TerminalContext::new()`。
     ///
-    /// `cwd`, when `Some`, becomes the shell's startup directory so a new
-    /// tab/pane can inherit the current working directory. `shell_opts` (GAP-15)
-    /// selects which shells get OSC 133 integration injected alongside OSC 7.
+    /// `cwd` 为 `Some` 时成为 shell 的启动目录，使新 Tab/面板能继承
+    /// 当前工作目录。`shell_opts`（GAP-15）选择哪些 shell 在 OSC 7 之外
+    /// 注入 OSC 133 集成。
     pub fn new_local(cwd: Option<&Path>, shell_opts: ShellIntegrationOpts) -> io::Result<Self> {
         let (event_tx, event_rx) = bounded(64);
         let event_listener = ChannelEventListener::new(event_tx);
@@ -72,22 +71,19 @@ impl TerminalContext {
         };
         tty::setup_env();
 
-        // Build PTY options: set the startup directory to the inherited cwd,
-        // and inject the OSC 7 cwd-reporting hook into the child environment
-        // (shared with the daemon path) so this shell reports its working
-        // directory — which is what lets new tabs/panes inherit it.
+        // 构建 PTY 选项：把启动目录设为继承的 cwd，并把 OSC 7 目录上报钩子
+        // 注入子进程环境（与 daemon 路径共用），使该 shell 上报其工作
+        // 目录——这正是新 Tab/面板能继承它的原因。
         //
-        // Using `Options::env` instead of `std::env::set_var` on this process
-        // avoids two problems the previous approach had: (1) racing concurrent
-        // PTY spawns on the same temp ZDOTDIR, and (2) leaking the temp
-        // ZDOTDIR into unrelated spawns. It also keeps the hook injection
-        // out of `Msg::Input`, which can block the PTY IO thread on macOS
-        // .app bundles when the payload exceeds ~80 bytes.
+        // 用 `Options::env` 而不是本进程的 `std::env::set_var`，避免了旧做法
+        // 的两个问题：(1) 并发 PTY 生成在同一个临时 ZDOTDIR 上竞争；(2) 把
+        // 临时 ZDOTDIR 泄漏到无关的生成中。同时使钩子注入不进入 `Msg::Input`，
+        // 以免负载超过约 80 字节时阻塞 macOS .app 包上的 PTY IO 线程。
         let mut pty_options = PtyOptions::default();
         pty_options.working_directory = cwd.map(PathBuf::from);
-        // GAP-15: OSC 7 cwd + OSC 133 marks. `shell_opts` comes from the loaded
-        // `[shell_integration]` config (the daemon path can't honor config, so
-        // it always uses all_on — this direct fallback is where the knobs apply).
+        // GAP-15：OSC 7 目录上报 + OSC 133 标记。`shell_opts` 来自已加载的
+        // `[shell_integration]` 配置（daemon 路径无法读取配置，始终使用
+        // all_on——这些开关只在直接 PTY 兜底路径上生效）。
         pty_options.env.extend(
             pureterm_daemon::shell_integration::prepare_shell_env(
                 &std::process::id().to_string(),
@@ -120,14 +116,12 @@ impl TerminalContext {
         }))
     }
 
-    /// Create a new local-PTY terminal context routed through the persistent
-    /// daemon (`puretermd`). The daemon owns the real PTY (so the child
-    /// survives GUI close); this side holds a `DaemonPty` that mirrors bytes
-    /// over a socketpair.
+    /// 创建经由持久化 daemon（`puretermd`）路由的本地 PTY 终端上下文。
+    /// daemon 拥有真正的 PTY（因此子进程在 GUI 关闭后仍存活）；本侧持有
+    /// 一个 `DaemonPty`，通过 socketpair 镜像字节。
     ///
-    /// GAP-5.1 M1: same contract as `new_local()` from the caller's
-    /// perspective — returns a `TerminalContext::Local` with a working
-    /// terminal, notifier, and event channel.
+    /// GAP-5.1 M1：对调用方而言与 `new_local()` 契约一致——返回带可用
+    /// 终端、notifier 和事件通道的 `TerminalContext::Local`。
     #[cfg(unix)]
     pub fn new_local_via_daemon(cwd: Option<&Path>) -> io::Result<Self> {
         use crate::daemon_client;
@@ -153,11 +147,10 @@ impl TerminalContext {
         Ok(TerminalContext::Local(ctx))
     }
 
-    /// GAP-5.6 cross-restart recovery: re-attach to a daemon session that was
-    /// created in a previous GUI run and is still alive. The daemon replays the
-    /// session's scrollback as `SCROLLBACK` frames, so the freshly-built `Term`
-    /// + `vte::ansi::Processor` rebuilds the visible grid + scrollback. The
-    /// shell continues running uninterrupted (no re-spawn).
+    /// GAP-5.6 跨重启恢复：重新附加到上一个 GUI 运行期间创建且仍存活的
+    /// daemon 会话。daemon 以 `SCROLLBACK` 帧重放会话的回滚，使新构建的
+    /// `Term` + `vte::ansi::Processor` 重建可见网格与回滚。shell 继续
+    /// 不间断运行（无需重新生成）。
     #[cfg(unix)]
     pub fn attach_local_via_daemon(session_id: &str, size: TermSize) -> io::Result<Self> {
         use crate::daemon_client;
@@ -168,17 +161,14 @@ impl TerminalContext {
         Ok(TerminalContext::Local(ctx))
     }
 
-    /// GAP-5.1 M1: route new local terminals through the persistent daemon so
-    /// the PTY survives GUI restart. Falls back to a direct local PTY when the
-    /// daemon is unreachable (e.g. `puretermd` is not packaged alongside the
-    /// running binary), so the terminal always works — at the cost of losing
-    /// session-survival until the daemon is available. This is the entry point
-    /// the GUI tab/split creation should use.
+    /// GAP-5.1 M1：让新本地终端走持久化 daemon，使 PTY 在 GUI 重启后
+    /// 仍存活。当 daemon 不可达时（例如 `puretermd` 未与运行中的二进制
+    /// 一同打包），回退到直接本地 PTY，保证终端始终可用——代价是 daemon
+    /// 可用前会话无法跨重启存活。这是 GUI 创建 Tab/拆分应使用的入口。
     ///
-    /// `cwd`, when `Some`, is forwarded to whichever path spawns the shell so
-    /// a new tab/pane can inherit the current working directory. `shell_opts`
-    /// (GAP-15) is honored only on the direct-PTY fallback (the daemon path is
-    /// always full integration).
+    /// `cwd` 为 `Some` 时转发给生成 shell 的任意路径，使新 Tab/面板能
+    /// 继承当前工作目录。`shell_opts`（GAP-15）只在直接 PTY 兜底路径上
+    /// 生效（daemon 路径始终为完整集成）。
     pub fn new_local_auto(cwd: Option<&Path>, shell_opts: ShellIntegrationOpts) -> Self {
         #[cfg(unix)]
         {
@@ -197,12 +187,11 @@ impl TerminalContext {
         Self::new_local(cwd, shell_opts).expect("Failed to create terminal context")
     }
 
-    /// Create a new SSH-backed terminal context. The SSH child is spawned
-    /// via `SshSessionManager::spawn_pty`, then wired into the same
-    /// alacritty `PtyEventLoop` the local path uses.
+    /// 创建新的 SSH 支撑终端上下文。SSH 子进程经 `SshSessionManager::spawn_pty`
+    /// 生成，然后接入与本地路径相同的 alacritty `PtyEventLoop`。
     ///
-    /// This is the entry point the GAP-5.7 P3 stage will call. It is
-    /// unix-only; on Windows the caller must use a stub instead.
+    /// 这是 GAP-5.7 P3 阶段将调用的入口。仅 Unix；Windows 上调用方
+    /// 必须改用桩实现。
     #[cfg(unix)]
     pub fn new_ssh(
         profile: &SshProfile,
@@ -226,9 +215,9 @@ impl TerminalContext {
         let terminal = Term::new(term_config, &size, event_listener.clone());
         let terminal = Arc::new(FairMutex::new(terminal));
 
-        // Hand the concrete SshPty to PtyEventLoop. The loop thread owns the
-        // pty by value for its full lifetime; the `ThreadJoiner` lets a later
-        // `reattach` wait for this thread before spinning a replacement loop.
+        // 把具体的 SshPty 交给 PtyEventLoop。循环线程在其整个生命周期内按值
+        // 拥有 pty；`ThreadJoiner` 让后续的 `reattach` 先等待该线程结束，
+        // 再启动替换循环。
         let pty_loop = PtyEventLoop::new(
             Arc::clone(&terminal),
             event_listener,
@@ -240,7 +229,7 @@ impl TerminalContext {
         let loop_tx = pty_loop.channel();
         let io_thread = ThreadJoiner::new(pty_loop.spawn());
 
-        // socket_path is recorded in the SshSessionManager pool already.
+        // socket_path 已记录在 SshSessionManager 池中。
         let _ = socket_path;
 
         Ok(TerminalContext::Ssh(SshCtx {
@@ -267,16 +256,14 @@ impl TerminalContext {
         }))
     }
 
-    /// GAP-5.1 M3: open an SSH session owned by the persistent daemon so the
-    /// remote shell survives GUI restart. The GUI side is the same `DaemonPty`
-    /// mirror the local path uses — only the daemon spawns `ssh` instead of a
-    /// local shell. `password` must already be resolved (CredentialStore /
-    /// profile) by the caller; it is forwarded to the daemon for `SSH_ASKPASS`.
+    /// GAP-5.1 M3：打开由持久化 daemon 拥有的 SSH 会话，使远程 shell 在
+    /// GUI 重启后仍存活。GUI 侧与本地路径使用的是同一个 `DaemonPty` 镜像——
+    /// 只是 daemon 生成 `ssh` 而不是本地 shell。`password` 必须已由调用方
+    /// 解析（CredentialStore / profile）；它会转发给 daemon 用于 `SSH_ASKPASS`。
     ///
-    /// Auto-reconnect (GAP-5.6) is intentionally NOT wired here: the daemon
-    /// keeps the existing ssh child alive across GUI restart, and re-attach
-    /// rebuilds scrollback. If the network itself drops, the user reconnects via
-    /// the SSH dialog (daemon-side reconnect is a later refinement).
+    /// 此处有意不接入自动重连（GAP-5.6）：daemon 让现有 ssh 子进程跨 GUI
+    /// 重启存活，重连附加会重建回滚。若网络本身断开，用户通过 SSH 对话框
+    /// 重连（daemon 侧重连是后续细化项）。
     #[cfg(unix)]
     pub fn new_ssh_via_daemon(profile: &SshProfile, password: Option<String>) -> io::Result<Self> {
         use crate::daemon_client;
@@ -299,9 +286,9 @@ impl TerminalContext {
             num_cols,
             num_lines,
             profile.forward_agent,
-            // ssh.agent_sock config override wiring is a follow-up; the
-            // resolver already honors it (override > $SSH_AUTH_SOCK >
-            // launchctl) — pass None to use inherited env / launchctl.
+            // ssh.agent_sock 配置覆盖接线属于后续工作；解析器已支持它（override
+            // > $SSH_AUTH_SOCK > launchctl）——传 None 以使用继承的环境变量
+            // (来自 launchctl 或 shell 环境)。
             None,
             profile.forwards(),
             settings.smallest_screen_wins,
@@ -311,13 +298,11 @@ impl TerminalContext {
         Ok(TerminalContext::Ssh(ctx))
     }
 
-    /// GAP-5.6 cross-restart recovery: re-attach to a daemon-owned SSH session
-    /// that is still alive (the `ssh -tt` child survived GUI restart in the
-    /// daemon). No re-authentication is needed — the remote shell continues.
-    /// `profile` supplies the display name / connection metadata (looked up by
-    /// name from the GUI's persisted profile list at restore time; if the
-    /// profile was deleted, the caller passes a synthetic placeholder and
-    /// auto-reconnect after a later drop is best-effort).
+    /// GAP-5.6 跨重启恢复：重新附加到仍存活的 daemon 拥有的 SSH 会话
+    /// （`ssh -tt` 子进程在 daemon 中经受住了 GUI 重启）。无需重新认证——
+    /// 远程 shell 继续运行。`profile` 提供显示名 / 连接元数据（恢复时
+    /// 按名称从 GUI 持久化的配置文件列表查找；若配置文件已被删除，调用方
+    /// 传入合成占位符，之后掉线时的自动重连仅为尽力而为）。
     #[cfg(unix)]
     pub fn attach_ssh_via_daemon(
         session_id: &str,

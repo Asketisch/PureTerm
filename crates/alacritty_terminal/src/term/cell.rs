@@ -36,7 +36,7 @@ bitflags! {
     }
 }
 
-/// Counter for hyperlinks without explicit ID.
+/// 无显式 ID 超链接的计数器。
 static HYPERLINK_ID_SUFFIX: AtomicU32 = AtomicU32::new(0);
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -75,10 +75,10 @@ impl From<Hyperlink> for VteHyperlink {
 #[derive(Debug, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 struct HyperlinkInner {
-    /// Identifier for the given hyperlink.
+    /// 给定超链接的标识符。
     id: String,
 
-    /// Resource identifier of the hyperlink.
+    /// 超链接的资源标识符。
     uri: String,
 }
 
@@ -97,9 +97,9 @@ impl HyperlinkInner {
     }
 }
 
-/// Trait for determining if a reset should be performed.
+/// 判断是否应执行重置的 trait。
 pub trait ResetDiscriminant<T> {
-    /// Value based on which equality for the reset will be determined.
+    /// 用于判定重置相等性的值。
     fn discriminant(&self) -> T;
 }
 
@@ -115,11 +115,11 @@ impl ResetDiscriminant<Color> for Cell {
     }
 }
 
-/// Dynamically allocated cell content.
+/// 动态分配的单元格内容。
 ///
-/// This storage is reserved for cell attributes which are rarely set. This allows reducing the
-/// allocation required ahead of time for every cell, with some additional overhead when the extra
-/// storage is actually required.
+/// 该存储保留给极少设置的单元格属性。这样能减少
+/// 每个单元格预分配的空间,只在真正需要额外
+/// 存储时才付出开销。
 #[derive(Default, Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct CellExtra {
@@ -128,7 +128,7 @@ pub struct CellExtra {
     hyperlink: Option<Hyperlink>,
 }
 
-/// Content and attributes of a single cell in the terminal grid.
+/// 终端网格中单个单元格的内容与属性。
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Cell {
@@ -153,20 +153,20 @@ impl Default for Cell {
 }
 
 impl Cell {
-    /// Zerowidth characters stored in this cell.
+    /// 存于本单元格的零宽字符。
     #[inline]
     pub fn zerowidth(&self) -> Option<&[char]> {
         self.extra.as_ref().map(|extra| extra.zerowidth.as_slice())
     }
 
-    /// Write a new zerowidth character to this cell.
+    /// 向本单元格写入新的零宽字符。
     #[inline]
     pub fn push_zerowidth(&mut self, character: char) {
         let extra = self.extra.get_or_insert(Default::default());
         Arc::make_mut(extra).zerowidth.push(character);
     }
 
-    /// Remove all wide char data from a cell.
+    /// 移除单元格中的全部宽字符数据。
     #[inline(never)]
     pub fn clear_wide(&mut self) {
         self.flags.remove(Flags::WIDE_CHAR);
@@ -176,9 +176,9 @@ impl Cell {
         self.c = ' ';
     }
 
-    /// Set underline color on the cell.
+    /// 设置单元格的下划线颜色。
     pub fn set_underline_color(&mut self, color: Option<Color>) {
-        // If we reset color and we don't have zerowidth we should drop extra storage.
+        // 若重置了颜色且没有零宽字符,应丢弃额外存储。
         if color.is_none()
             && self
                 .extra
@@ -192,13 +192,13 @@ impl Cell {
         }
     }
 
-    /// Underline color stored in this cell.
+    /// 本单元格存储的下划线颜色。
     #[inline]
     pub fn underline_color(&self) -> Option<Color> {
         self.extra.as_ref()?.underline_color
     }
 
-    /// Set hyperlink.
+    /// 设置超链接。
     pub fn set_hyperlink(&mut self, hyperlink: Option<Hyperlink>) {
         let should_drop = hyperlink.is_none()
             && self
@@ -214,7 +214,7 @@ impl Cell {
         }
     }
 
-    /// Hyperlink stored in this cell.
+    /// 本单元格存储的超链接。
     #[inline]
     pub fn hyperlink(&self) -> Option<Hyperlink> {
         self.extra.as_ref()?.hyperlink.clone()
@@ -261,9 +261,9 @@ impl From<Color> for Cell {
     }
 }
 
-/// Get the length of occupied cells in a line.
+/// 获取一行中已占用单元格的长度。
 pub trait LineLength {
-    /// Calculate the occupied line length.
+    /// 计算已占用的行长。
     fn line_length(&self) -> Column;
 }
 
@@ -299,10 +299,10 @@ mod tests {
 
     #[test]
     fn cell_size_is_below_cap() {
-        // Expected cell size on 64-bit architectures.
+        // 64 位架构上的预期单元格大小。
         const EXPECTED_CELL_SIZE: usize = 24;
 
-        // Ensure that cell size isn't growing by accident.
+        // 确保单元格大小不会意外增长。
         assert!(mem::size_of::<Cell>() <= EXPECTED_CELL_SIZE);
     }
 

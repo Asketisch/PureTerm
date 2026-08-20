@@ -1,20 +1,20 @@
 use std::path::PathBuf;
 
-/// GAP-40: port-forward / X11 flags plumbed into `ssh -tt` (`-L`/`-R`/`-X`/`-Y`).
+/// GAP-40:传入 `ssh -tt` 的端口转发 / X11 标志(`-L`/`-R`/`-X`/`-Y`)。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SshForwards {
-    /// Each entry is passed verbatim to `ssh -L` (e.g. `8080:localhost:80`).
+    /// 每个条目原样传给 `ssh -L`(例如 `8080:localhost:80`)。
     pub local: Vec<String>,
-    /// Each entry is passed verbatim to `ssh -R`.
+    /// 每个条目原样传给 `ssh -R`。
     pub remote: Vec<String>,
-    /// Request untrusted X11 forwarding (`-X`).
+    /// 请求不受信任的 X11 转发(`-X`)。
     pub x11: bool,
-    /// Request trusted X11 forwarding (`-Y`; takes precedence over `x11`).
+    /// 请求受信任的 X11 转发(`-Y`;优先于 `x11`)。
     pub x11_trusted: bool,
 }
 
 impl SshForwards {
-    /// One-line summary for status-bar / dialog hints (e.g. `L2 R1 X`).
+    /// 供状态栏 / 对话框提示的单行摘要(例如 `L2 R1 X`)。
     pub fn summary(&self) -> Option<String> {
         let mut parts = Vec::new();
         if !self.local.is_empty() {
@@ -36,7 +36,7 @@ impl SshForwards {
     }
 }
 
-/// SSH command builder for ControlMaster connections
+/// 用于 ControlMaster 连接的 SSH 命令构建器
 pub struct SshCommandBuilder {
     socket_path: PathBuf,
     host: String,
@@ -45,7 +45,7 @@ pub struct SshCommandBuilder {
     identity_file: Option<String>,
     forward_agent: bool,
     forwards: SshForwards,
-    /// GAP-41: ProxyJump chain (bastion hosts).
+    /// GAP-41:ProxyJump 链(堡垒机)。
     jump_hosts: Vec<String>,
 }
 
@@ -78,21 +78,21 @@ impl SshCommandBuilder {
         self
     }
 
-    /// GAP-5.4: request `-o ForwardAgent=yes` so the local ssh-agent is
-    /// forwarded to the remote host (enables passwordless remote `git push`
-    /// etc. after `ssh-add`). Default off (trust risk on untrusted hosts).
+    /// GAP-5.4:请求 `-o ForwardAgent=yes`,把本地 ssh-agent
+    /// 转发到远端主机(使 `ssh-add` 之后远端 `git push`
+    /// 等免密可用)。默认关闭(不受信任主机上有信任风险)。
     pub fn with_forward_agent(mut self, on: bool) -> Self {
         self.forward_agent = on;
         self
     }
 
-    /// GAP-40: local/remote port forwards and X11 forwarding.
+    /// GAP-40:本地/远程端口转发与 X11 转发。
     pub fn with_forwards(mut self, forwards: SshForwards) -> Self {
         self.forwards = forwards;
         self
     }
 
-    /// GAP-41: `-J host1,host2` jump host chain.
+    /// GAP-41:`-J host1,host2` 跳板机链。
     pub fn with_jump_hosts(mut self, hosts: Vec<String>) -> Self {
         self.jump_hosts = hosts;
         self
@@ -110,26 +110,26 @@ impl SshCommandBuilder {
             "ControlPersist=600".to_string(),
             "-o".to_string(),
             "ExitOnForwardFailure=yes".to_string(),
-            // Bound connection timeout so unreachable hosts fail within 10s
-            // instead of hanging indefinitely (the exit handler grace period
-            // will catch and surface the error).
+            // 限定连接超时,使不可达主机在 10 秒内失败,
+            // 而不是无限挂起(退出处理器的宽限期
+            // 会捕获并显示该错误)。
             "-o".to_string(),
             "ConnectTimeout=10".to_string(),
         ];
 
-        // GAP-5.4: forward the local ssh-agent to the remote host when asked.
+        // GAP-5.4:按需把本地 ssh-agent 转发到远端主机。
         if self.forward_agent {
             cmd.push("-o".to_string());
             cmd.push("ForwardAgent=yes".to_string());
         }
 
-        // GAP-41: ProxyJump chain.
+        // GAP-41:ProxyJump 链。
         if !self.jump_hosts.is_empty() {
             cmd.push("-J".to_string());
             cmd.push(self.jump_hosts.join(","));
         }
 
-        // GAP-40: port forwards + X11 (dynamic `-D` remains GAP-5.2 `ssh tunnel`).
+        // GAP-40:端口转发 + X11(动态 `-D` 仍属 GAP-5.2 的 `ssh tunnel`)。
         for spec in &self.forwards.local {
             cmd.push("-L".to_string());
             cmd.push(spec.clone());
@@ -185,7 +185,7 @@ mod tests {
             .iter()
             .position(|a| a == "ForwardAgent=yes")
             .expect("ForwardAgent=yes should be present");
-        // Must be preceded by `-o`.
+        // 必须前置于 `-o`。
         assert_eq!(cmd[i - 1], "-o");
     }
 

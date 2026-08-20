@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# PureTerm bash completion
+# PureTerm bash 补全
 
 _pureterm() {
     local cur prev words cword

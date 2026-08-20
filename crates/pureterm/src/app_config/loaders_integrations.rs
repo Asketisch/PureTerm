@@ -14,8 +14,8 @@ use super::parse_helpers::parse_trigger_action;
 use super::AppConfig;
 
 impl AppConfig {
-    /// Load the `[mcp]` table (GAP-7.10). A missing/malformed table yields
-    /// `Default` (all tools, 5000-line capture cap). See `McpConfig`.
+    /// 加载 `[mcp]` 表（GAP-7.10）。缺失/畸形表返回 `Default`
+    ///（全部工具、5000 行捕获上限）。参见 `McpConfig`。
     pub fn load_mcp(path: &Path) -> McpConfig {
         let mut cfg = McpConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -30,7 +30,7 @@ impl AppConfig {
             return cfg;
         };
         if let Some(n) = table.get("default_capture_lines").and_then(|v| v.as_integer()) {
-            // Floor at 1 — a 0/negative cap would make capture_pane useless.
+            // 下限为 1 —— 0/负上限会让 capture_pane 无意义。
             cfg.default_capture_lines = (n.max(1)) as usize;
         }
         if let Some(arr) = table.get("enabled_tools").and_then(|v| v.as_array()) {
@@ -42,7 +42,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-47: load `[applescript]` table.
+    /// GAP-47：加载 `[applescript]` 表。
     pub fn load_applescript(path: &Path) -> AppleScriptConfig {
         let mut cfg = AppleScriptConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -62,7 +62,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-48: load `[url_scheme]` table.
+    /// GAP-48：加载 `[url_scheme]` 表。
     pub fn load_url_scheme(path: &Path) -> UrlSchemeConfig {
         let mut cfg = UrlSchemeConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -85,9 +85,9 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[lsp]` table (GAP-35). A missing/malformed table yields
-    /// `Default` (`enabled = false`). `[lsp.servers]` maps language ids to
-    /// server binaries; MVP reads `rust` only.
+    /// 加载 `[lsp]` 表（GAP-35）。缺失/畸形表返回 `Default`
+    ///（`enabled = false`）。`[lsp.servers]` 把语言 id 映射到服务端
+    /// 二进制；MVP 只读取 `rust`。
     pub fn load_lsp(path: &Path) -> LspConfig {
         let mut cfg = LspConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -117,14 +117,13 @@ impl AppConfig {
         cfg
     }
 
-    /// Load `[[keyboard.bindings]]` from the TOML config.
+    /// 从 TOML 配置加载 `[[keyboard.bindings]]`。
     ///
-    /// Each entry has `key`, `mods` (optional), and `action` fields in
-    /// Alacritty-compatible format. Returns raw strings for the keymap
-    /// module to parse into typed `Binding` structs.
+    /// 每条含 `key`、`mods`（可选）和 `action` 字段，采用与
+    /// Alacritty 兼容的格式。返回原始字符串，由 keymap 模块解析成
+    /// 类型化的 `Binding` 结构体。
     ///
-    /// Failure-tolerant: missing or malformed bindings are silently
-    /// skipped; an empty Vec is returned if the table is absent.
+    /// 失败容忍：缺失或畸形的绑定被静默跳过；表缺失时返回空 Vec。
     pub fn load_keybindings(path: &Path) -> Vec<RawBinding> {
         let contents = match std::fs::read_to_string(path) {
             Ok(c) => c,
@@ -174,9 +173,9 @@ impl AppConfig {
         result
     }
 
-    /// GAP-6.4: Load the user's `[[commands]]` array from the toml config.
+    /// GAP-6.4：从 toml 配置加载用户的 `[[commands]]` 数组。
     ///
-    /// Each entry is `{ id, title, command, key?, mods? }`:
+    /// 每条为 `{ id, title, command, key?, mods? }`：
     /// ```toml
     /// [[commands]]
     /// id = "deploy.staging"
@@ -185,10 +184,9 @@ impl AppConfig {
     /// command = "ssh staging 'cd app && ./deploy.sh'"
     /// ```
     ///
-    /// Failure-tolerant, mirroring `load_keybindings`: a missing file or
-    /// `[[commands]]` table returns an empty Vec; entries missing required
-    /// fields are skipped (with a `warn`). Duplicate `id`s collapse to the
-    /// last definition (later wins).
+    /// 失败容忍，镜像 `load_keybindings`：文件缺失或 `[[commands]]` 表
+    /// 缺失时返回空 Vec；缺必填字段的条目被跳过（带 `warn`）。重复的
+    /// `id` 收敛到最后一个定义（后者胜出）。
     pub fn load_custom_commands(path: &Path) -> Vec<CustomCommand> {
         let contents = match std::fs::read_to_string(path) {
             Ok(c) => c,
@@ -255,7 +253,7 @@ impl AppConfig {
                 key,
                 mods,
             };
-            // Dedup by id: later definition overrides an earlier one.
+            // 按 id 去重：后定义覆盖先定义。
             if let Some(existing) = result.iter_mut().find(|e| e.id == cmd.id) {
                 log::warn!(
                     "load_custom_commands: duplicate id '{}' — later entry overrides",
@@ -272,44 +270,43 @@ impl AppConfig {
         result
     }
 
-    /// GAP-10: Load the user's `[[triggers]]` array from the toml config.
+    /// GAP-10：从 toml 配置加载用户的 `[[triggers]]` 数组。
     ///
-    /// Each entry compiles a regex `pattern` matched against terminal output
-    /// and fires one `action` on match. Supported actions: `highlight`,
-    /// `notify`, `send_text`, `exec`, `set_variable`, `set_mark`, `fold`.
-    /// `command`/`args`/`text`/`value`/`title` are template-expanded before
-    /// dispatch (`{match}`, `$1`..`$9`, `${var:NAME}`, `\n\r\t\xNN`):
+    /// 每条编译一个正则 `pattern`，对终端输出匹配，命中后触发一个
+    /// `action`。支持的动作：`highlight`、`notify`、`send_text`、
+    /// `exec`、`set_variable`、`set_mark`、`fold`。`command`/`args`/
+    /// `text`/`value`/`title` 在分发前做模板展开
+    ///（`{match}`、`$1`..`$9`、`${var:NAME}`、`\n\r\t\xNN`）：
     /// ```toml
     /// [[triggers]]
     /// name = "error-spot"
     /// pattern = "(?i)error:|panic:"
-    /// action = "highlight"          # optional: color = "#ff5555"
+    /// action = "highlight"          # 可选：color = "#ff5555"
     ///
     /// [[triggers]]
     /// name = "sudo-reply"
     /// pattern = "\\[sudo\\] password"
     /// action = "send_text"
-    /// text = "mypassword\r"         # optional: pane_id = 3 (default = matching pane)
+    /// text = "mypassword\r"         # 可选：pane_id = 3（默认 = 匹配的面板）
     ///
     /// [[triggers]]
     /// name = "build-done"
     /// pattern = "Built in \\d+s"
-    /// action = "notify"             # optional: title = "Build complete"
+    /// action = "notify"             # 可选：title = "构建完成"
     ///
     /// [[triggers]]
     /// name = "open-link"
     /// pattern = "https://example\\.com/(\\S+)"
     /// action = "exec"
     /// command = "open"
-    /// args = ["$1"]                 # templates expanded: $1 = capture group 1
-    /// route = "toast"               # "toast" (default) | "pane"
+    /// args = ["$1"]                 # 模板展开：$1 = 捕获组 1
+    /// route = "toast"               # "toast"（默认）| "pane"
     /// ```
     ///
-    /// Failure-tolerant, mirroring `load_custom_commands`: a missing file or
-    /// `[[triggers]]` table returns an empty Vec; entries missing a required
-    /// field (`name`/`pattern`/`action`) or with an unparseable regex are
-    /// skipped (with a `warn`) — config is untrusted and must never panic the
-    /// app. Duplicate `name`s collapse to the last definition (later wins).
+    /// 失败容忍，镜像 `load_custom_commands`：文件缺失或 `[[triggers]]`
+    /// 表缺失时返回空 Vec；缺必填字段（`name`/`pattern`/`action`）或正则
+    /// 无法解析的条目被跳过（带 `warn`）——配置不可信，绝不能让应用
+    /// panic。重复的 `name` 收敛到最后一个定义（后者胜出）。
     pub fn load_triggers(path: &Path) -> Vec<CompiledTrigger> {
         let contents = match std::fs::read_to_string(path) {
             Ok(c) => c,
@@ -373,7 +370,7 @@ impl AppConfig {
             };
             let cfg = TriggerConfig { name: name.clone(), pattern, action };
             let compiled = CompiledTrigger { cfg, re };
-            // Dedup by name: later definition overrides an earlier one.
+            // 按 name 去重：后定义覆盖先定义。
             if let Some(existing) = result.iter_mut().find(|e| e.cfg.name == name) {
                 log::warn!(
                     "load_triggers: duplicate name '{}' — later entry overrides",

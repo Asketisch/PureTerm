@@ -52,14 +52,14 @@ impl KeybindingsState {
         Self { bindings }
     }
 
-    /// Replay this page's state onto `doc`. Currently a no-op because the
-    /// keybindings page is read-only — bindings are added/removed in the
-    /// user's TOML by hand. If we ever expose an editor here, this needs
-    /// to merge `self.bindings` into `keyboard.bindings` the same way
-    /// `SshState::sync_to_doc` does for ssh.profiles (preserve unknown
-    /// fields by `(key, mods)` identity).
+    /// 把本页状态重放到 `doc` 上。目前为空操作,因为
+    /// 快捷键页是只读的——绑定由用户手动
+    /// 在 TOML 中增删。若将来在此暴露编辑器,需要
+    /// 把 `self.bindings` 合并进 `keyboard.bindings`,方式同
+    /// `SshState::sync_to_doc` 处理 ssh.profiles(按 `(key, mods)`
+    /// 身份保留未知字段)。
     pub fn apply(&self, _doc: &mut toml_edit::DocumentMut) {
-        // Intentionally empty.
+        // 有意留空。
     }
 }
 

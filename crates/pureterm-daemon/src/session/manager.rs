@@ -23,13 +23,13 @@ use super::pump::spawn_pump;
 use super::{SessionHandle, SessionInfo, SessionManager};
 
 impl SessionManager {
-    /// Spawn a new local-PTY session. Returns its id.
+    /// 拉起一个新的本地 PTY 会话。返回其 id。
     ///
-    /// `cwd`, when `Some`, becomes the shell's startup directory (via
-    /// `tty::Options::working_directory`). The OSC 7 cwd-reporting hook is
-    /// always injected so the GUI can inherit this shell's working directory
-    /// when spawning new tabs/panes. Tagged with the session id so concurrent
-    /// sessions get distinct temp zdotdirs.
+    /// `cwd` 为 `Some` 时作为 shell 的启动目录(经
+    /// `tty::Options::working_directory`)。OSC 7 cwd 上报钩子
+    /// 总是注入,使 GUI 拉起新标签页/窗格时能继承该
+    /// shell 的工作目录。以会话 id 作标签,使并发
+    /// 会话得到互不相同的临时 zdotdir。
     pub fn create_local(
         &self,
         cols: u16,
@@ -44,10 +44,10 @@ impl SessionManager {
             WindowSize { num_lines: rows, num_cols: cols, cell_width: 8, cell_height: 16 };
         tty::setup_env();
         let mut options = tty::Options::default();
-        // GAP-15: OSC 7 cwd + OSC 133 shell-integration marks. The daemon has
-        // no config access, so integration is always-on here (mirrors how OSC 7
-        // was already always-on); the GUI's `[shell_integration]` knobs gate
-        // only the direct (non-daemon) PTY fallback path.
+        // GAP-15:OSC 7 cwd + OSC 133 shell 集成标记。守护进程
+        // 无法读配置,因此集成在此永远开启(镜像 OSC 7
+        // 此前也永远开启的做法);GUI 的 `[shell_integration]` 开关
+        // 只门控直连(非守护)PTY 回退路径。
         options
             .env
             .extend(crate::shell_integration::prepare_shell_env(
@@ -55,10 +55,10 @@ impl SessionManager {
                 crate::shell_integration::ShellIntegrationOpts::all_on(),
             ));
         options.working_directory = cwd;
-        // GAP-7.5: when an explicit argv is given (cold resume of an agent via
-        // e.g. `claude --resume <id>`), spawn that command instead of the
-        // default shell. `tty::Options.shell` accepts any program + args, so
-        // no separate fork-and-exec path is needed.
+        // GAP-7.5:显式给出 argv 时(经如 `claude --resume <id>`
+        // 冷恢复 agent),拉起该命令而非默认
+        // shell。`tty::Options.shell` 接受任意程序 + 参数,因此
+        // 无需单独的 fork-and-exec 路径。
         if let Some(argv) = &argv {
             if !argv.is_empty() {
                 let program = argv[0].clone();
@@ -113,10 +113,10 @@ impl SessionManager {
         Ok(id)
     }
 
-    /// Spawn a new SSH-PTY session (GAP-5.1 M3). The daemon owns the `ssh -tt`
-    /// child + PTY master, so the remote shell survives GUI restart. `password`
-    /// (resolved + unlocked by the GUI) drives `SSH_ASKPASS`; `None` lets ssh
-    /// prompt via the PTY (key/agent auth).
+    /// 拉起新的 SSH PTY 会话(GAP-5.1 M3)。守护进程持有 `ssh -tt`
+    /// 子进程 + PTY master,远端 shell 因此能在 GUI 重启后存活。
+    /// `password`(由 GUI 解锁)驱动 `SSH_ASKPASS`;`None` 让 ssh
+    /// 经 PTY 提示(密钥/agent 认证)。
     pub fn create_ssh(
         &self,
         host: &str,
@@ -134,8 +134,8 @@ impl SessionManager {
         let id = new_session_id();
 
         discovery::ensure_dirs()?;
-        // Per-session ControlMaster socket dir so concurrent SSH sessions don't
-        // collide on the multiplex socket.
+        // 每会话独立的 ControlMaster socket 目录,避免并发 SSH 会话
+        // 在多路复用 socket 上冲突。
         let ssh_socket_dir = discovery::sessions_dir().join(format!("ssh-{id}"));
         std::fs::create_dir_all(&ssh_socket_dir)?;
         let user_seg = user.unwrap_or("");
@@ -153,7 +153,7 @@ impl SessionManager {
             builder = builder.with_identity_file(k);
         }
         builder = builder.with_forwards(forwards);
-        // GAP-5.4: forward the local ssh-agent to the remote host when asked.
+        // GAP-5.4:按需把本地 ssh-agent 转发到远端主机。
         let agent_sock = if forward_agent {
             builder = builder.with_forward_agent(true);
             agent_sock::resolve_agent_sock(agent_sock_override.map(Path::new))
@@ -211,7 +211,7 @@ impl SessionManager {
         Ok(id)
     }
 
-    /// GAP-43: write a text file for a live session.
+    /// GAP-43:为存活会话写一个文本文件。
     pub fn write_file(&self, sid: &str, path: &str, content: &str) -> io::Result<()> {
         let sessions = self.sessions.lock().unwrap();
         let handle = sessions
@@ -233,7 +233,7 @@ impl SessionManager {
         }
     }
 
-    /// GAP-43: find paths by name under a directory.
+    /// GAP-43:在目录下按名称查找路径。
     pub fn find_files(
         &self,
         sid: &str,
@@ -261,7 +261,7 @@ impl SessionManager {
         }
     }
 
-    /// GAP-43: read a file for a live session (local `read` or remote `ssh -S head`).
+    /// GAP-43:为存活会话读文件(本地 `read` 或远端 `ssh -S head`)。
     pub fn read_file(
         &self,
         sid: &str,
@@ -288,8 +288,8 @@ impl SessionManager {
         }
     }
 
-    /// GAP-43: list a directory for a live session (local `read_dir` or remote
-    /// `ssh -S` over the session's ControlMaster socket).
+    /// GAP-43:为存活会话列举目录(本地 `read_dir` 或经会话
+    /// ControlMaster socket 的远端 `ssh -S`)。
     pub fn list_dir(&self, sid: &str, path: &str) -> io::Result<Vec<remote_fs::FileEntry>> {
         let sessions = self.sessions.lock().unwrap();
         let handle = sessions
@@ -314,12 +314,12 @@ impl SessionManager {
         }
     }
 
-    /// GAP-6.6: fetch a session handle by id (for pipe-pane control).
+    /// GAP-6.6:按 id 取会话句柄(供 pipe-pane 控制)。
     pub fn session_handle(&self, sid: &str) -> Option<Arc<Mutex<SessionHandle>>> {
         self.sessions.lock().unwrap().get(sid).cloned()
     }
 
-    /// GAP-6.6: session ids that currently have an active pipe-pane tap.
+    /// GAP-6.6:当前存在活动 pipe-pane 管道的会话 id。
     pub fn pipe_status(&self) -> Vec<String> {
         self.sessions
             .lock()
@@ -335,7 +335,7 @@ impl SessionManager {
             .collect()
     }
 
-    /// Enumerate live sessions as serializable descriptors.
+    /// 把存活会话枚举为可序列化描述符。
     pub fn list(&self) -> Vec<SessionInfo> {
         let now = Instant::now();
         self.sessions
@@ -344,7 +344,7 @@ impl SessionManager {
             .values()
             .map(|h| {
                 let h = h.lock().unwrap();
-                // GAP-7.3: compute idle durations from the pump/CPU-tick timestamps.
+                // GAP-7.3:从泵/CPU tick 时间戳计算空闲时长。
                 let pty_idle_secs = h
                     .last_output_at
                     .lock()
@@ -369,17 +369,17 @@ impl SessionManager {
             .collect()
     }
 
-    /// Path of a session's data socket (the GUI connects here after `attach`).
+    /// 会话数据 socket 的路径(GUI 在 `attach` 之后连接此处)。
     pub fn data_path(&self, id: &str) -> Option<PathBuf> {
         self.sessions.lock().unwrap().get(id).map(|h| h.lock().unwrap().data_socket_path.clone())
     }
 
-    /// GAP-7.3: sample every non-hibernated session's child CPU time and, if it
-    /// advanced since the last sample, refresh `last_cpu_active_at` (so
-    /// `cpu_idle_secs` reflects real CPU inactivity). Called by the daemon's
-    /// periodic CPU tick (`runtime::run`). Snapshots the session list, then
-    /// samples outside the session lock so the (blocking) ps/proc read doesn't
-    /// block `list`/`attach`/control traffic.
+    /// GAP-7.3:采样所有未休眠会话的子进程 CPU 时间,若自上次
+    /// 采样以来有前进则刷新 `last_cpu_active_at`(使
+    /// `cpu_idle_secs` 反映真实 CPU 不活动)。由守护进程的
+    /// 周期 CPU tick(`runtime::run`)调用。先快照会话列表,
+    /// 再在会话锁之外采样,使(阻塞的)ps/proc 读取不
+    /// 阻塞 `list`/`attach`/控制流量。
     pub fn sample_cpu_pass(&self) {
         let now = Instant::now();
         let targets: Vec<(String, u32, Arc<Mutex<Instant>>, Arc<AtomicBool>)> = {
@@ -406,8 +406,8 @@ impl SessionManager {
             let advanced = {
                 let mut samples = self.cpu_samples.lock().unwrap();
                 let prev = samples.insert(id, sample);
-                // First-ever sample counts as "active" (don't let a freshly
-                // created session read as CPU-idle before it has run).
+                // 首次采样计为“活动”(别让新建
+                // 会话在尚未运行时就被读作 CPU 空闲)。
                 prev.map_or(true, |p| p.total() != sample.total())
             };
             if advanced {
@@ -418,24 +418,24 @@ impl SessionManager {
         }
     }
 
-    /// Kill a session's child and remove it from the registry.
+    /// 杀掉会话的子进程并从注册表移除。
     pub fn kill(&self, id: &str) -> bool {
         let handle = self.sessions.lock().unwrap().remove(id);
         if let Some(handle) = handle {
             unsafe {
                 libc::kill(handle.lock().unwrap().child_pid as i32, libc::SIGHUP);
             }
-            // `handle` drops here -> joins pump + removes the data socket.
+            // `handle` 在此丢弃 → join 泵 + 移除数据 socket。
             true
         } else {
             false
         }
     }
 
-    /// GAP-7.3: SIGSTOP the session's child (hibernate). The PTY stays open —
-    /// SIGSTOP freezes scheduling but doesn't close fds — so `resume` can
-    /// SIGCONT it back. Idempotent (already-hibernated is a no-op). Returns
-    /// `false` if the session is unknown.
+    /// GAP-7.3:对会话子进程 SIGSTOP(休眠)。PTY 保持打开——
+    /// SIGSTOP 冻结调度但不关闭 fd——因此 `resume` 可以
+    /// SIGCONT 唤醒它。幂等(已休眠则空操作)。会话未知
+    /// 返回 `false`。
     pub fn hibernate(&self, id: &str) -> bool {
         let map = self.sessions.lock().unwrap();
         let Some(handle) = map.get(id) else { return false };
@@ -443,21 +443,21 @@ impl SessionManager {
         if h.hibernated.load(Ordering::SeqCst) {
             return true;
         }
-        // SAFETY: SIGSTOP is async-signal-safe; child_pid is our own forked
-        // child (never a recycled foreign pid during this handle's lifetime).
+        // SAFETY:SIGSTOP 是 async-signal-safe 的;child_pid 是我们自己
+        // fork 的子进程(该句柄生命周期内绝不是被回收的外来 pid)。
         unsafe { libc::kill(h.child_pid as i32, libc::SIGSTOP) };
         h.hibernated.store(true, Ordering::SeqCst);
         drop(h);
         drop(map);
-        // Drop the cached CPU sample so the first post-resume sample counts as
-        // "active" (a stale sample would keep cpu_idle_secs high right after resume).
+        // 丢弃缓存的 CPU 采样,使恢复后的首次采样计为
+        // “活动”(过期采样会让恢复后立刻的 cpu_idle_secs 偏高)。
         self.cpu_samples.lock().unwrap().remove(id);
         true
     }
 
-    /// GAP-7.3: SIGCONT a hibernated session's child (resume). Idempotent.
-    /// Refreshes the idle timestamps so a freshly-resumed session isn't
-    /// immediately re-judged idle. Returns `false` if the session is unknown.
+    /// GAP-7.3:对已休眠会话的子进程 SIGCONT(恢复)。幂等。
+    /// 刷新空闲时间戳,使刚恢复的会话不会被
+    /// 立即重新判定为空闲。会话未知返回 `false`。
     pub fn resume(&self, id: &str) -> bool {
         let map = self.sessions.lock().unwrap();
         let Some(handle) = map.get(id) else { return false };

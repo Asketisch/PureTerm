@@ -12,5 +12,5 @@
 
 #[path = "alacritty/renderer/mod.rs"]
 pub mod renderer;
-/// T-core-shaper: per-glyph shaping trait + cluster mapping + advance.
+/// T-core-shaper:逐字形整形 trait + 聚簇映射 + 步进。
 pub mod shaper;

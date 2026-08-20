@@ -1,11 +1,11 @@
-//! T-core-shaper: Real Harfbuzz implementation via rustybuzz.
+//! T-core-shaper:经 rustybuzz 的真正 Harfbuzz 实现。
 //!
-//! This module provides a full UAX #29 grapheme clusterer and Harfbuzz
-//! shaper backed by `rustybuzz`. It handles complex scripts (Arabic,
-//! Devanagari, etc.), ligatures, and per-glyph advances.
+//! 本模块提供完整的 UAX #29 字素聚簇器与由
+//! `rustybuzz` 支撑的 Harfbuzz 整形器。处理复杂文字(阿拉伯、
+//! 天城体等)、连字与逐字形步进。
 //!
-//! v1 MonospaceShaper is kept as fallback; RustyBuzzShaper becomes the
-//! default once font loading is wired through.
+//! v1 的 MonospaceShaper 保留为回退;待字体加载接通后
+//! RustyBuzzShaper 成为默认。
 
 use std::sync::Arc;
 
@@ -13,18 +13,18 @@ use rustybuzz::{Face, Feature, Language, ShapePlan, UnicodeBuffer};
 
 use super::{ShapedGlyph, ShapedRun, Shaper};
 
-// Note: unicode-script and unicode-bidi are available for downstream callers
-// (e.g. the bidi resolver in `crates/pureterm/src/bidi.rs`) but the
-// shaper itself only needs rustybuzz. We intentionally do not pull those
-// into this module's import surface.
+// 注意:unicode-script 与 unicode-bidi 供下游调用方使用
+// (如 `crates/pureterm/src/bidi.rs` 的 bidi 解析器),但
+// 整形器本身只需要 rustybuzz。我们有意不把它们
+// 拉进本模块的导入面。
 
-/// A font face wrapper for rustybuzz. Holds a reference-counted blob of
-/// font data and exposes a `Face` for shaping.
+/// rustybuzz 的字面包装。持有引用计数的字体数据
+/// blob,并暴露供整形使用的 `Face`。
 #[derive(Clone)]
 pub struct FontFace {
-    /// Raw font bytes (OTF/TTF).
+    /// 原始字体字节(OTF/TTF)。
     data: Arc<Vec<u8>>,
-    /// Face index in the font file (for TTC collections).
+    /// 字体文件中的字面索引(用于 TTC 集合)。
     face_index: u32,
 }
 
@@ -45,38 +45,38 @@ impl FontFace {
         }
     }
 
-    /// Create a FontFace with a specific face index (for TTC collections).
+    /// 用指定字面索引创建 FontFace(用于 TTC 集合)。
     pub fn with_face_index(data: Arc<Vec<u8>>, face_index: u32) -> Self {
         Self { data, face_index }
     }
 
-    /// Create a rustybuzz `Face` from this font face. Returns `None` if
-    /// the font data is invalid.
+    /// 从此字面创建 rustybuzz `Face`。字体数据
+    /// 无效时返回 `None`。
     pub fn face(&self) -> Option<Face<'_>> {
         Face::from_slice(&self.data, self.face_index)
     }
 
-    /// Number of glyphs in this face.
+    /// 此字面的字形数。
     pub fn num_glyphs(&self) -> u32 {
         self.face().map(|f| f.number_of_glyphs() as u32).unwrap_or(0)
     }
 
-    /// Get the units-per-em for this font (used to scale advances).
+    /// 取该字体的 units-per-em(用于缩放步进)。
     pub fn units_per_em(&self) -> u16 {
         self.face().map(|f| f.units_per_em() as u16).unwrap_or(1024)
     }
 }
 
-/// Configuration for a RustyBuzz shaper instance.
+/// RustyBuzz 整形器实例的配置。
 #[derive(Clone, Debug)]
 pub struct RustyBuzzConfig {
-    /// The primary font face to use for shaping.
+    /// 整形使用的主字面。
     pub font_face: Option<FontFace>,
-    /// Fallback font faces ordered by priority (CJK JP → CJK KR → CJK SC → emoji).
+    /// 按优先级排序的回退字面(CJK JP → CJK KR → CJK SC → emoji)。
     pub fallback_faces: Vec<FontFace>,
-    /// Language tag for script-specific features (e.g., "en-US").
+    /// 文字特性所用的语言标签(如 "en-US")。
     pub language: String,
-    /// Whether to enable OpenType features (ligatures, contextual forms, etc.).
+    /// 是否启用 OpenType 特性(连字、上下文形等)。
     pub enable_features: bool,
 }
 
@@ -91,13 +91,13 @@ impl Default for RustyBuzzConfig {
     }
 }
 
-/// A real Harfbuzz shaper backed by rustybuzz.
+/// 由 rustybuzz 支撑的真正 Harfbuzz 整形器。
 ///
-/// This is the v2 implementation that replaces `MonospaceShaper`. It:
-/// 1. Segments input into grapheme clusters (UAX #29)
-/// 2. Determines script per cluster for font fallback
-/// 3. Shapes each cluster with the appropriate font face
-/// 4. Returns per-glyph advances and offsets
+/// 这是替代 `MonospaceShaper` 的 v2 实现。它:
+/// 1. 把输入切分为字素聚簇(UAX #29)
+/// 2. 按聚簇判定文字以做字体回退
+/// 3. 用合适的字面整形每个聚簇
+/// 4. 返回逐字形的步进与偏移
 #[derive(Clone)]
 pub struct RustyBuzzShaper {
     config: RustyBuzzConfig,
@@ -119,13 +119,13 @@ impl RustyBuzzShaper {
         Self { config }
     }
 
-    /// Shape a single string using rustybuzz. Returns a `ShapedRun`.
+    /// 用 rustybuzz 整形单个字符串。返回 `ShapedRun`。
     ///
-    /// The algorithm:
-    /// 1. Build a UnicodeBuffer from the input string
-    /// 2. Set language and direction
-    /// 3. Run rustybuzz shaping with OpenType features
-    /// 4. Compute per-glyph advances from the shaped output
+    /// 算法:
+    /// 1. 从输入字符串构建 UnicodeBuffer
+    /// 2. 设置语言与方向
+    /// 3. 带 OpenType 特性运行 rustybuzz 整形
+    /// 4. 从整形输出计算逐字形步进
     pub fn shape_with_face(
         &self,
         input: &str,
@@ -141,30 +141,30 @@ impl RustyBuzzShaper {
 
         let units_per_em = face.units_per_em() as f32;
         if units_per_em == 0.0 {
-            // Degenerate font — fall back to monospace behavior.
+            // 退化字体——回退到等宽行为。
             return self.monospace_fallback(input, font_cell_width);
         }
 
-        // Build a shaping buffer.
+        // 构建整形缓冲。
         let mut buffer = UnicodeBuffer::new();
         buffer.push_str(input);
         buffer.set_direction(rustybuzz::Direction::LeftToRight);
 
-        // Set language for script-specific features.
+        // 为文字特性设置语言。
         if let Ok(lang) = self.config.language.parse::<Language>() {
             buffer.set_language(lang);
         }
-        // Guess script (rustybuzz picks the dominant script in the buffer).
+        // 猜测文字(rustybuzz 取缓冲中占主导的文字)。
         buffer.guess_segment_properties();
 
-        // Apply OpenType features if enabled.
+        // 启用时应用 OpenType 特性。
         let features: Vec<Feature> = if self.config.enable_features {
             self.get_opentype_features(face)
         } else {
             Vec::new()
         };
 
-        // Create a ShapePlan and run the shaper.
+        // 创建 ShapePlan 并运行整形器。
         let plan = ShapePlan::new(
             face,
             buffer.direction(),
@@ -174,7 +174,7 @@ impl RustyBuzzShaper {
         );
         let glyph_buffer = rustybuzz::shape_with_plan(face, &plan, buffer);
 
-        // Extract shaped results.
+        // 提取整形结果。
         let mut glyphs = Vec::new();
         let mut cluster_to_cell = Vec::new();
         let mut cell_index: u32 = 0;
@@ -190,9 +190,9 @@ impl RustyBuzzShaper {
                 rustybuzz::GlyphPosition::default()
             };
 
-            // Convert font units to pixels. font_cell_width represents the
-            // pixel width of a single cell; we map the font's em to one
-            // cell (since the renderer can further scale).
+            // 把字体单位换算为像素。font_cell_width 表示
+            // 单个单元格的像素宽;我们把字体的 em 映射为
+            // 一个单元格(渲染器可再缩放)。
             let scale = font_cell_width / units_per_em;
             let x_advance = position.x_advance as f32 * scale;
             let y_advance = position.y_advance as f32 * scale;
@@ -218,21 +218,21 @@ impl RustyBuzzShaper {
         }
     }
 
-    /// Get OpenType features for the given face.
+    /// 取给定字面的 OpenType 特性。
     fn get_opentype_features(&self, _face: &Face<'_>) -> Vec<Feature> {
-        // Common features that most fonts support. rustybuzz automatically
-        // applies these by default; we expose this hook for plugins to
-        // override the feature set in v3.
+        // 多数字体支持的常见特性。rustybuzz 默认
+        // 自动应用它们;此处暴露该钩子供 v3 的插件
+        // 覆盖特性集。
         Vec::new()
     }
 
-    /// Monospace fallback when no font face is available.
+    /// 无可用字面时的等宽回退。
     fn monospace_fallback(&self, input: &str, cell_width: f32) -> ShapedRun {
         super::MonospaceShaper::new().shape(input, cell_width)
     }
 
-    /// Shape with font fallback: try the primary face first, then fall back
-    /// to each fallback face for characters not supported.
+    /// 带字体回退整形:先试主字面,不支持的字符
+    /// 再依次回退到各回退字面。
     pub fn shape_with_fallback(
         &self,
         input: &str,
@@ -244,13 +244,13 @@ impl RustyBuzzShaper {
             }
         }
 
-        // No primary face — fall back to monospace, which gives
-        // grapheme-cluster-aware shaping without per-glyph font selection.
+        // 无主字面——回退到等宽,它提供
+        // 字素聚簇感知的整形但没有逐字形字体选择。
         self.monospace_fallback(input, font_cell_width)
     }
 
-    /// Shape each character individually with font fallback. This is slower
-    /// but ensures every character gets rendered by the best available font.
+    /// 逐字符带字体回退整形。更慢,
+    /// 但确保每个字符都由最佳可用字体渲染。
     fn shape_per_char_fallback(
         &self,
         input: &str,
@@ -261,7 +261,7 @@ impl RustyBuzzShaper {
         let mut cell_index: u32 = 0;
 
         for (cluster_start, ch) in input.char_indices() {
-            // Try each font face until one supports this character.
+            // 依次尝试每个字面,直到某个支持该字符。
             let mut shaped = false;
 
             if let Some(ref primary) = self.config.font_face {
@@ -301,7 +301,7 @@ impl RustyBuzzShaper {
                 }
             }
 
-            // Ultimate fallback: use monospace shaper.
+            // 最终回退:用等宽整形器。
             if !shaped {
                 let mono = super::MonospaceShaper::new().shape(&ch.to_string(), font_cell_width);
                 for mut g in mono.glyphs {
@@ -320,9 +320,9 @@ impl RustyBuzzShaper {
         }
     }
 
-    /// Check if a face supports a given character.
+    /// 检查字面是否支持给定字符。
     fn char_supported(face: &Face<'_>, ch: char) -> bool {
-        // A face supports a char if the cmap lookup returns a non-zero glyph id.
+        // cmap 查到非零字形 id 即视为支持。
         let gid = face.glyph_index(ch).map(|g| g.0).unwrap_or(0);
         gid != 0
     }
@@ -338,7 +338,7 @@ impl Shaper for RustyBuzzShaper {
 mod tests {
     use super::*;
 
-    /// Test that RustyBuzzShaper handles empty input.
+    /// 测试 RustyBuzzShaper 处理空输入。
     #[test]
     fn test_empty_input() {
         let config = RustyBuzzConfig::default();
@@ -348,12 +348,12 @@ mod tests {
         assert!(run.cluster_to_cell.is_empty());
     }
 
-    /// Test that ASCII input produces one glyph per character.
+    /// 测试 ASCII 输入每字符产出一个字形。
     #[test]
     fn test_ascii_shape() {
         let config = RustyBuzzConfig::default();
         let shaper = RustyBuzzShaper::new(config);
-        // Without a font face, falls back to monospace behavior.
+        // 无字面时回退到等宽行为。
         let run = shaper.shape("hello", 7.0);
         assert_eq!(run.glyphs.len(), 5);
         for (i, g) in run.glyphs.iter().enumerate() {
@@ -362,18 +362,18 @@ mod tests {
         }
     }
 
-    /// Test that combining marks are handled correctly.
+    /// 测试组合附标被正确处理。
     #[test]
     fn test_combining_marks() {
         let config = RustyBuzzConfig::default();
         let shaper = RustyBuzzShaper::new(config);
-        // "a" + combining acute accent → 1 cluster in monospace fallback.
+        // "a" + 组合尖音符 → 等宽回退中为 1 个聚簇。
         let run = shaper.shape("a\u{0301}", 7.0);
         assert_eq!(run.glyphs.len(), 1);
         assert_eq!(run.glyphs[0].x_advance, 7.0);
     }
 
-    /// Test that CJK characters get wide advance in monospace fallback.
+    /// 测试 CJK 字符在等宽回退中获得宽步进。
     #[test]
     fn test_cjk_wide_advance() {
         let config = RustyBuzzConfig::default();
@@ -385,7 +385,7 @@ mod tests {
         }
     }
 
-    /// Test that mixed ASCII + CJK produces correct advances.
+    /// 测试 ASCII + CJK 混排产生正确步进。
     #[test]
     fn test_mixed_ascii_cjk() {
         let config = RustyBuzzConfig::default();
@@ -397,14 +397,14 @@ mod tests {
         assert_eq!(run.glyphs[2].x_advance, 7.0); // ASCII: 1 cell
     }
 
-    /// Test that RustyBuzzShaper is Send + Sync (required for renderer).
+    /// 测试 RustyBuzzShaper 是 Send + Sync(渲染器所需)。
     #[test]
     fn test_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<RustyBuzzShaper>();
     }
 
-    /// Test that FontFace Debug is implemented (Arc<Vec<u8>> doesn't auto-Debug).
+    /// 测试 FontFace 实现了 Debug(Arc<Vec<u8>> 不会自动 Debug)。
     #[test]
     fn test_font_face_debug() {
         let data = Arc::new(vec![0u8; 100]);
@@ -412,7 +412,7 @@ mod tests {
         let _ = format!("{:?}", face); // Must not panic.
     }
 
-    /// Test that an invalid font falls back gracefully to monospace.
+    /// 测试非法字体优雅回退到等宽。
     #[test]
     fn test_invalid_font_falls_back() {
         let data = Arc::new(vec![0u8; 16]); // not a real font
@@ -424,8 +424,8 @@ mod tests {
         };
         let shaper = RustyBuzzShaper::new(config);
         let run = shaper.shape("hi", 7.0);
-        // Even if the font fails to parse, we should get a ShapedRun back.
-        // (The fallback path ensures shape() never panics.)
+        // 即使字体解析失败,也应取回 ShapedRun。
+        // (回退路径保证 shape() 绝不 panic。)
         assert!(!run.glyphs.is_empty() || run.glyphs.is_empty()); // never panics
     }
 }

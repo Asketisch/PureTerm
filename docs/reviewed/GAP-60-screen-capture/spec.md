@@ -1,6 +1,6 @@
 ---
 gap: GAP-60
-title: Screen Capture
+title: 屏幕捕获
 category: 视觉
 plan_type: feature
 priority: P4

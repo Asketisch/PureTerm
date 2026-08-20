@@ -47,3 +47,5 @@ graphify-out/.graphify_uncached.txt
 .claude/settings.local.json
 .codex/
 .superpowers/
+.reflect/
+.zcode/

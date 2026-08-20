@@ -1,15 +1,15 @@
-//! GAP-24: the single shared system-stat publisher.
+//! GAP-24: 全局唯一的系统状态发布器。
 //!
-//! One long-lived `iced::stream::channel` task owns the only `sysinfo::System` /
-//! `Networks` + `battery::Manager`, samples at the configured cadence, holds
-//! ~120-sample ring buffers, and emits one `Message::StatusBarStats` per sample.
-//! This mirrors the mainstream terminal singleton-publisher pattern (one
-//! timer feeds every consumer) and the in-repo `config_watcher.rs` subscription pattern.
+//! 由单个长驻的 `iced::stream::channel` 任务持有唯一的 `sysinfo::System` /
+//! `Networks` 与 `battery::Manager`,按配置的采样周期取样并保留
+//! 约 120 个样本的环形缓冲区,每次采样发出一个 `Message::StatusBarStats`。
+//! 这参考了主流终端单例发布器的模式(一个
+//! 定时器投喂所有订阅者),也沿用仓库内 `config_watcher.rs` 的订阅模式。
 //!
-//! The publisher's own sleep loop is the SOLE sampler; `StatusBarTick` does not
-//! trigger sampling — this decouples metric cadence (perf-relevant) from the git
-//! subprocess cadence (UX-relevant) and guarantees at most one sample per
-//! interval regardless of render rate.
+//! 发布器自身的休眠循环是唯一采样者;`StatusBarTick` 不
+//! 触发采样——将指标节奏(与性能相关)与 git
+//! 子进程节奏(与 UX 相关)解耦,并保证每次
+//! 渲染间隔最多只采样一次。
 
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -23,7 +23,7 @@ use super::stats::{StatSnapshot, StatsKey};
 
 const HISTORY_CAP: usize = 120;
 
-/// Subscription that streams a `StatSnapshot` per sample at the configured cadence.
+/// 按配置的采样周期,通过订阅流式下发每个 `StatSnapshot`。
 pub fn stats_subscription(cfg: crate::app_config::StatusBarConfig) -> Subscription<Message> {
     Subscription::run_with(StatsKey(cfg), |key: &StatsKey| stats_stream(key.0.clone()))
 }
@@ -37,12 +37,12 @@ fn stats_stream(cfg: crate::app_config::StatusBarConfig) -> impl iced::futures::
 
         let mut sys = sysinfo::System::new_all();
         let mut nets = sysinfo::Networks::new_with_refreshed_list();
-        // NOTE: `battery::Manager` is NOT constructed here — on macOS it holds an
-        // `Rc<IoKitManager>` (!Send), so keeping it across an `.await` would make
-        // this future !Send. It is re-created per sample inside a sync IIFE below.
+        // 注意:`battery::Manager` 不能在此处构造——在 macOS 上它持有一个
+        // `Rc<IoKitManager>`(!Send),跨 `.await` 持有会令
+        // 该 future 变为 !Send,因此改为在下方同步 IIFE 内每次采样重新创建。
 
-        // Prime CPU so the first post-sleep delta is meaningful (sysinfo needs
-        // two refreshes to compute a usage delta).
+        // 预热 CPU,使首次休眠后的差值有意义(sysinfo 需要
+        // 两次刷新才能算出发用量差值)。
         sys.refresh_cpu_usage();
 
         let mut cpu_hist: VecDeque<f32> = VecDeque::with_capacity(HISTORY_CAP);
@@ -51,7 +51,7 @@ fn stats_stream(cfg: crate::app_config::StatusBarConfig) -> impl iced::futures::
         let mut dn_hist: VecDeque<f32> = VecDeque::with_capacity(HISTORY_CAP);
         let mut last_net: (u64, u64) = (0, 0);
 
-        // Sleep one interval before the first real sample.
+        // 首次正式采样前先休眠一个间隔。
         tokio::time::sleep(interval).await;
 
         loop {
@@ -59,7 +59,7 @@ fn stats_stream(cfg: crate::app_config::StatusBarConfig) -> impl iced::futures::
             sys.refresh_cpu_usage();
             nets.refresh_list();
 
-            // CPU: mean of per-core usages.
+            // CPU:各核心使用率的平均值。
             let cpu_pct = if sys.cpus().is_empty() {
                 0.0
             } else {
@@ -74,7 +74,7 @@ fn stats_stream(cfg: crate::app_config::StatusBarConfig) -> impl iced::futures::
                 0.0
             };
 
-            // Network bytes/sec from cumulative-counter deltas (skip loopback).
+            // 网络字节/秒:由累计计数器差值换算(跳过回环接口)。
             let (cur_up, cur_dn): (u64, u64) = nets
                 .iter()
                 .filter(|(name, _)| !is_loopback(name))
@@ -84,9 +84,9 @@ fn stats_stream(cfg: crate::app_config::StatusBarConfig) -> impl iced::futures::
             let dn_bps = cur_dn.saturating_sub(last_net.1) as f32 / dt;
             last_net = (cur_up, cur_dn);
 
-            // Battery: scoped IIFE so the !Send Manager (Rc<IoKitManager> on
-            // macOS) is dropped before the `.send`/`sleep` awaits keep the
-            // future Send. Re-created per sample (cheap at the configured cadence).
+            // 电池:使用作用域 IIFE,让 !Send 的 Manager(macOS 上的
+            // `Rc<IoKitManager>`)在 `.send`/`sleep` 的 await 之前被释放,
+            // 从而保持 future 为 Send。每次采样重新创建(按配置节奏开销很小)。
             let (battery_pct, battery_charging) = (|| {
                 let mgr = battery::Manager::new().ok()?;
                 let mut it = mgr.batteries().ok()?;
@@ -131,7 +131,7 @@ fn push_cap(q: &mut VecDeque<f32>, v: f32) {
     q.push_back(v);
 }
 
-/// Heuristic loopback-interface filter (covers `lo`, `lo0`, `loopback`).
+/// 启发式回环接口过滤器(覆盖 `lo`、`lo0`、`loopback`)。
 fn is_loopback(name: &str) -> bool {
     name == "lo" || name == "lo0" || name == "loopback" || name.starts_with("lo")
 }

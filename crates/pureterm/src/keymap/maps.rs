@@ -5,11 +5,11 @@
 
 use super::action::Action;
 
-// ── Palette ID → Action mapping ─────────────────────────────────────────
+// ── Palette ID → Action 映射 ──────────────────────────────────────────────
 
-/// Map a command palette builtin ID string to an `Action`.
-/// Returns `None` for palette-only entries (like "settings") that have
-/// inline dispatch logic.
+/// 把命令面板的内置 ID 字符串映射为 `Action`。
+/// 对仅有面板入口(如 "settings")且
+/// 走内联分派的条目返回 `None`。
 pub fn action_from_palette_id(id: &str) -> Option<Action> {
     match id {
         "new_tab" => Some(Action::NewTab),
@@ -35,13 +35,13 @@ pub fn action_from_palette_id(id: &str) -> Option<Action> {
     }
 }
 
-// ── ContextMenuItem → Action mapping ────────────────────────────────────
+// ── ContextMenuItem → Action 映射 ─────────────────────────────────────────
 
 use crate::iced_app::ContextMenuItem;
 
-/// Map a context menu item to an `Action`.
-/// Returns `None` for items that need `tab_id` context (CloseTab,
-/// MoveToNewWindow, CloseOtherTabs, etc.).
+/// 把上下文菜单项映射为 `Action`。
+/// 需要 `tab_id` 上下文(CloseTab、
+/// MoveToNewWindow、CloseOtherTabs 等)的条目返回 `None`。
 pub fn action_from_context_menu(item: ContextMenuItem) -> Option<Action> {
     match item {
         ContextMenuItem::SplitHorizontal => Some(Action::SplitHorizontal),
@@ -54,7 +54,7 @@ pub fn action_from_context_menu(item: ContextMenuItem) -> Option<Action> {
         ContextMenuItem::MovePaneToNewWindow => Some(Action::MovePaneToNewWindow),
         #[cfg(unix)]
         ContextMenuItem::NewSshTab => Some(Action::OpenSshDialog),
-        // Tab-level items need tab_id context — not convertible to Action
+        // 标签页级条目需要 tab_id 上下文——无法转换为 Action
         ContextMenuItem::CloseTab
         | ContextMenuItem::CloseOtherTabs
         | ContextMenuItem::CloseTabsToLeft

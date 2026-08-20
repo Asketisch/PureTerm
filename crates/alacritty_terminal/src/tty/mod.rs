@@ -1,4 +1,4 @@
-//! TTY related functionality.
+//! TTY 相关功能。
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -18,37 +18,37 @@ pub mod windows;
 #[cfg(windows)]
 pub use self::windows::*;
 
-/// Configuration for the `Pty` interface.
+/// `Pty` 接口的配置。
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Options {
-    /// Shell options.
+    /// Shell 选项。
     ///
-    /// [`None`] will use the default shell.
+    /// [`None`] 使用默认 shell。
     pub shell: Option<Shell>,
 
-    /// Shell startup directory.
+    /// Shell 启动目录。
     pub working_directory: Option<PathBuf>,
 
-    /// Drain the child process output before exiting the terminal.
+    /// 退出终端前排空子进程输出。
     pub drain_on_exit: bool,
 
-    /// Extra environment variables.
+    /// 额外环境变量。
     pub env: HashMap<String, String>,
 
-    /// Specifies whether the Windows shell arguments should be escaped.
+    /// 指定 Windows shell 参数是否应被转义。
     ///
-    /// - When `true`: Arguments will be escaped according to the standard C runtime rules.
-    /// - When `false`: Arguments will be passed raw without additional escaping.
+    /// - 为 `true`:按标准 C 运行时规则转义参数。
+    /// - 为 `false`:原样传递参数,不做额外转义。
     #[cfg(target_os = "windows")]
     pub escape_args: bool,
 }
 
-/// Shell options.
+/// Shell 选项。
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Shell {
-    /// Path to a shell program to run on startup.
+    /// 启动时运行的 shell 程序路径。
     pub(crate) program: String,
-    /// Arguments passed to shell.
+    /// 传给 shell 的参数。
     pub(crate) args: Vec<String>,
 }
 
@@ -58,17 +58,17 @@ impl Shell {
     }
 }
 
-/// Stream read and/or write behavior.
+/// 流的读和/或写行为。
 ///
-/// This defines an abstraction over polling's interface in order to allow either
-/// one read/write object or a separate read and write object.
+/// 这是对轮询接口的抽象,允许单一读写对象
+/// 或分离的读、写对象。
 pub trait EventedReadWrite {
     type Reader: io::Read;
     type Writer: io::Write;
 
-    /// # Safety
+    /// # 安全性
     ///
-    /// The underlying sources must outlive their registration in the `Poller`.
+    /// 底层源必须比其在 `Poller` 中的注册活得久。
     unsafe fn register(&mut self, _: &Arc<Poller>, _: Event, _: PollMode) -> io::Result<()>;
     fn reregister(&mut self, _: &Arc<Poller>, _: Event, _: PollMode) -> io::Result<()>;
     fn deregister(&mut self, _: &Arc<Poller>) -> io::Result<()>;
@@ -77,44 +77,44 @@ pub trait EventedReadWrite {
     fn writer(&mut self) -> &mut Self::Writer;
 }
 
-/// Events concerning TTY child processes.
+/// 与 TTY 子进程相关的事件。
 #[derive(Debug, PartialEq, Eq)]
 pub enum ChildEvent {
-    /// Indicates the child has exited.
+    /// 指示子进程已退出。
     Exited(Option<ExitStatus>),
 }
 
-/// A pseudoterminal (or PTY).
+/// 伪终端(PTY)。
 ///
-/// This is a refinement of EventedReadWrite that also provides a channel through which we can be
-/// notified if the PTY child process does something we care about (other than writing to the TTY).
-/// In particular, this allows for race-free child exit notification on UNIX (cf. `SIGCHLD`).
+/// 这是 EventedReadWrite 的细化,额外提供一条通道,PTY 子进程做了
+/// 我们关心的(写 TTY 之外的)事情时经它通知我们。特别是,这在 UNIX 上
+/// 支持无竞态的子进程退出通知(对比 `SIGCHLD`)。
 pub trait EventedPty: EventedReadWrite {
-    /// Tries to retrieve an event.
+    /// 尝试取一个事件。
     ///
-    /// Returns `Some(event)` on success, or `None` if there are no events to retrieve.
+    /// 成功返回 `Some(event)`,无可取事件时返回 `None`。
     fn next_child_event(&mut self) -> Option<ChildEvent>;
 }
 
-/// Setup environment variables.
+/// 设置环境变量。
 pub fn setup_env() {
-    // Default to 'alacritty' terminfo if it is available, otherwise
-    // default to 'xterm-256color'. May be overridden by user's config
-    // below.
+    // 可用时默认用 'alacritty' terminfo,否则
+    // 用 'xterm-256color'。可被下方用户配置
+    // 覆盖。
     let terminfo = if terminfo_exists("alacritty") { "alacritty" } else { "xterm-256color" };
     unsafe { env::set_var("TERM", terminfo) };
 
-    // Advertise 24-bit color support.
+    // 宣告支持 24 位色。
     unsafe { env::set_var("COLORTERM", "truecolor") };
 }
 
-/// Check if a terminfo entry exists on the system.
+/// 检查系统上是否存在某 terminfo 条目。
 fn terminfo_exists(terminfo: &str) -> bool {
-    // Get first terminfo character for the parent directory.
+    // 取 terminfo 首字符作为父目录名。
     let first = terminfo.get(..1).unwrap_or_default();
     let first_hex = format!("{:x}", first.chars().next().unwrap_or_default() as usize);
 
-    // Return true if the terminfo file exists at the specified location.
+    // terminfo 文件存在于指定位置时返回 true。
     macro_rules! check_path {
         ($path:expr) => {
             if $path.join(first).join(terminfo).exists()
@@ -149,6 +149,6 @@ fn terminfo_exists(terminfo: &str) -> bool {
     check_path!(PathBuf::from("/usr/share/terminfo"));
     check_path!(PathBuf::from("/boot/system/data/terminfo"));
 
-    // No valid terminfo path has been found.
+    // 未找到合法的 terminfo 路径。
     false
 }

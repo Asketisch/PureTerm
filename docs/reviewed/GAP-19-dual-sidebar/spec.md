@@ -1,6 +1,6 @@
 ---
 gap: GAP-19
-title: Dual Sidebar
+title: 双侧边栏
 category: UI/外壳
 plan_type: feature
 priority: P1

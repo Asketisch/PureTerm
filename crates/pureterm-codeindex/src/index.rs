@@ -1,4 +1,4 @@
-//! Workspace indexer + query API.
+//! 工作区索引器 + 查询 API。
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -71,13 +71,13 @@ pub struct IndexStats {
 pub struct CodeIndex {
     root: PathBuf,
     db: Connection,
-    /// Shared handle (atomics inside) so progress is observable while a scan
-    /// runs under an outer lock — see GAP-03 B3 fix in the glue.
+    /// 共享句柄(内含原子量),使扫描在外层锁下运行时
+    /// 进度仍可被观察——见胶水层中 GAP-03 B3 的修复。
     pub progress: Arc<IndexProgress>,
 }
 
 impl CodeIndex {
-    /// Open (or create) an index database for `root`.
+    /// 为 `root` 打开(或创建)索引数据库。
     pub fn open(root: impl AsRef<Path>) -> Result<Self, IndexError> {
         let root = root.as_ref().canonicalize()?;
         let db_path = db_path_for_root(&root)?;
@@ -97,8 +97,8 @@ impl CodeIndex {
         &self.root
     }
 
-    /// Full workspace scan. Skips unchanged files by content hash.
-    /// TODO(GAP-03): Merkle tree incremental sync.
+    /// 全工作区扫描。按内容哈希跳过未变更文件。
+    /// TODO(GAP-03):Merkle 树增量同步。
     pub fn index_workspace(&self) -> Result<IndexStats, IndexError> {
         let files: Vec<PathBuf> = WalkDir::new(&self.root)
             .into_iter()
@@ -160,7 +160,7 @@ impl CodeIndex {
         Ok(IndexFileResult::Indexed { chunks: n })
     }
 
-    /// Keyword search via SQLite FTS5. Embedding/semantic search is TODO.
+    /// 经 SQLite FTS5 的关键词搜索。嵌入/语义搜索为 TODO。
     pub fn search_code(&self, query: &str, limit: usize) -> Result<Vec<SearchHit>, IndexError> {
         let q = fts_query(query);
         if q.is_empty() {
@@ -190,9 +190,9 @@ impl CodeIndex {
     }
 
     pub fn find_symbol(&self, name: &str, limit: usize) -> Result<Vec<SymbolHit>, IndexError> {
-        // Escape LIKE wildcards so the user's `name` is matched literally. The query
-        // below declares `ESCAPE '\'`; without this, `%`/`_`/`\` in the input acted as
-        // wildcards (e.g. searching "100%" matched everything). (GAP-03 B2 fix.)
+        // 转义 LIKE 通配符,使用户的 `name` 按字面匹配。下面的
+        // 查询声明了 `ESCAPE '\'`;若不转义,输入中的 `%`/`_`/`\` 会
+        // 充当通配符(例如搜索 "100%" 匹配一切)。(GAP-03 B2 修复。)
         let escaped = name
             .replace('\\', "\\\\")
             .replace('%', "\\%")
@@ -322,7 +322,7 @@ fn should_skip_dir(path: &Path) -> bool {
         })
 }
 
-/// Escape user tokens for FTS5 prefix query: `foo bar` → `"foo"* OR "bar"*`.
+/// 为 FTS5 前缀查询转义用户词元:`foo bar` → `"foo"* OR "bar"*`。
 fn fts_query(raw: &str) -> String {
     raw.split_whitespace()
         .filter_map(|t| {
@@ -380,7 +380,7 @@ mod tests {
         assert_eq!(ctx.language, "rust");
         assert!(ctx.chunks.len() >= 2);
 
-        // Second index should skip unchanged files.
+        // 第二次索引应跳过未变更文件。
         let stats2 = idx.index_workspace().unwrap();
         assert_eq!(stats2.files_skipped, stats2.files_scanned);
     }
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(fts_query("   "), "");
     }
 
-    // Regression for GAP-03 B2: `_`/`%` in the symbol name are matched literally.
+    // GAP-03 B2 回归:符号名中的 `_`/`%` 按字面匹配。
     #[test]
     fn find_symbol_escapes_like_wildcards() {
         let tmp = tempfile::tempdir().unwrap();
@@ -412,7 +412,7 @@ mod tests {
         );
     }
 
-    // Regression for GAP-03 B3: progress is a shared handle readable without the index.
+    // GAP-03 B3 回归:进度是共享句柄,无需索引锁即可读取。
     #[test]
     fn progress_handle_is_shareable() {
         use std::sync::Arc;

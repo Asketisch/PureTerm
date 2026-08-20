@@ -35,7 +35,7 @@ components:
     priority: P1
     effort: L (10–15 d)
   - gap: t-core-plugin-runtime
-    title: Plugin runtime (wasmtime + ABI + provides)
+    title: 插件运行时（wasmtime + ABI + provides）
     priority: P2
     effort: L (12–18 d)
 moved_to_todo: 2026-07-02

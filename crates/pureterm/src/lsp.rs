@@ -1,4 +1,4 @@
-//! GAP-35: LSP client bridge — spawn language server, didOpen, diagnostics, hover, completion.
+//! GAP-35:LSP 客户端桥——启动语言服务器、didOpen、诊断、悬停、补全。
 
 use std::path::{Path, PathBuf};
 
@@ -11,9 +11,9 @@ pub struct LspState {
     last_completions: Vec<String>,
 }
 
-/// Nearest ancestor (including `cwd`) containing `Cargo.toml` or `.git`,
-/// falling back to `cwd` itself. Used to pick a stable LSP workspace root so
-/// the language server isn't re-spawned on every `cd` within a project (BUG-1).
+/// 包含 `Cargo.toml` 或 `.git` 的最近祖先(包括 `cwd`),
+/// 回退到 `cwd` 本身。用于挑选稳定的 LSP 工作区根,
+/// 使语言服务器不会在项目内每次 `cd` 时重启(BUG-1)。
 pub fn project_root_for(cwd: &Path) -> PathBuf {
     for ancestor in cwd.ancestors() {
         if ancestor.join("Cargo.toml").exists() || ancestor.join(".git").exists() {
@@ -66,16 +66,16 @@ impl LspState {
         }
     }
 
-    /// NOTE: not yet wired into the UI — GAP-35 defers the hover tooltip to a
-    /// later iteration. Kept here so the wiring is a one-call change.
+    /// 注意:尚未接入 UI——GAP-35 把悬停提示推迟到
+    /// 后续迭代。保留在这里,让接入只需一处调用。
     pub fn hover_at(&self, path: &Path, line: u32, character: u32) -> Option<String> {
         self.client
             .as_ref()
             .and_then(|c| c.hover(path, line, character).ok().flatten())
     }
 
-    /// NOTE: not yet wired into the UI — GAP-35 defers the completion popup to a
-    /// later iteration. Kept here so the wiring is a one-call change.
+    /// 注意:尚未接入 UI——GAP-35 把补全弹窗推迟到
+    /// 后续迭代。保留在这里,让接入只需一处调用。
     pub fn completion_at(
         &mut self,
         path: &Path,
@@ -97,7 +97,7 @@ impl LspState {
         }
     }
 
-    /// Cached result of the last `completion_at`; unused until the popup ships.
+    /// 上次 `completion_at` 的缓存结果;在弹窗上线前暂未使用。
     pub fn last_completions(&self) -> &[String] {
         &self.last_completions
     }
@@ -108,7 +108,7 @@ impl LspState {
 
     pub fn summary(&self) -> Option<DiagnosticSummary> {
         let client = self.client.as_ref()?;
-        // Don't trust cached diagnostics once the server is gone (BUG-3).
+        // 服务器已消失后不要信任缓存的诊断(BUG-3)。
         if !client.is_alive() {
             return None;
         }

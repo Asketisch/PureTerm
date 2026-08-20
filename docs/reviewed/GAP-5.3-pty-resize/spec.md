@@ -1,6 +1,6 @@
 ---
 gap: GAP-5.3
-title: PTY Resize
+title: PTY 缩放
 category: SSH/网络
 plan_type: feature
 priority: P2
@@ -9,7 +9,7 @@ status: done
 closed: 2026-06-29
 ---
 
-# PTY Resize（Smallest Screen Wins）
+# PTY 缩放（小屏优先）
 
 ## 概述
 

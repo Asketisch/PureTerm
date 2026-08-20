@@ -1,6 +1,6 @@
 ---
 gap: GAP-31
-title: Quake-style Dock
+title: Quake 式坞
 category: UI/外壳
 plan_type: feature
 priority: P3

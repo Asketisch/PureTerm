@@ -1,18 +1,18 @@
-//! `puretermd` — persistent PTY daemon (GAP-5.1).
+//! `puretermd` — 常驻 PTY 守护进程(GAP-5.1)。
 //!
-//! Owns local and (M3) SSH PTY sessions so that closing the PureTerm GUI does
-//! not kill the running shell/SSH child. The GUI is a thin client that mirrors
-//! a session's PTY bytes over a Unix-domain data plane.
+//! 持有本地与(M3)SSH PTY 会话,使关闭 PureTerm GUI 不会
+//! 杀死正在运行的 shell/SSH 子进程。GUI 是瘦客户端,经 Unix 域
+//! 数据面镜像会话的 PTY 字节。
 //!
-//! Architecture (see the GAP-5.1 plan):
-//! - `discovery` — stable socket path + data dir + single-instance lock
-//! - `frame`     — data-plane length-prefixed tagged-frame codec
-//! - `control`   — JSON-RPC 2.0 control plane (`session.*`, `daemon.*`)
-//! - `session`   — `SessionManager` owning each PTY + the per-session pump
-//! - `ring_buffer` — fixed-capacity scrollback ring (M2 replay source)
-//! - `runtime`   — multi-thread tokio entry + run helpers
+//! 架构(见 GAP-5.1 方案):
+//! - `discovery` — 稳定 socket 路径 + 数据目录 + 单实例锁
+//! - `frame`     — 数据面长度前缀带标签帧编解码器
+//! - `control`   — JSON-RPC 2.0 控制面(`session.*`、`daemon.*`)
+//! - `session`   — 持有各 PTY 与每会话泵的 `SessionManager`
+//! - `ring_buffer` — 固定容量回滚环(M2 回放源)
+//! - `runtime`   — 多线程 tokio 入口 + 运行辅助
 //!
-//! The control plane reuses the transport-agnostic types from `pureterm-jsonrpc`.
+//! 控制面复用 `pureterm-jsonrpc` 的传输无关类型。
 
 pub mod autostart;
 pub mod control;

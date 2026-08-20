@@ -1,4 +1,4 @@
-//! The main event loop which performs I/O on the pseudoterminal.
+//! 对伪终端执行 I/O 的主事件循环。
 
 use std::borrow::Cow;
 use std::collections::VecDeque;
@@ -24,32 +24,32 @@ use crate::term::Term;
 use crate::{thread, tty};
 use vte::ansi;
 
-/// Max bytes to read from the PTY before forced terminal synchronization.
+/// 强制终端同步前,一次从 PTY 读取的最大字节数。
 pub(crate) const READ_BUFFER_SIZE: usize = 0x10_0000;
 
-/// Max bytes to read from the PTY while the terminal is locked.
-// PureTerm: reduced from u16::MAX (65535) to 4096 to prevent render thread starvation
-// under heavy PTY output. The render thread needs the data lock to snapshot the grid,
-// and holding it for 65535 bytes of parsing caused multi-millisecond blocks.
+/// 终端锁定时一次从 PTY 读取的最大字节数。
+// PureTerm:从 u16::MAX(65535)降到 4096,防止重度 PTY 输出下
+// 渲染线程饥饿。渲染线程拿数据锁才能快照网格,持有
+// 该锁 65535 字节的解析会造成毫秒级阻塞。
 const MAX_LOCKED_READ: usize = 4096;
 
-/// Messages that may be sent to the `EventLoop`.
+/// 可发往 `EventLoop` 的消息。
 #[derive(Debug)]
 pub enum Msg {
-    /// Data that should be written to the PTY.
+    /// 应写入 PTY 的数据。
     Input(Cow<'static, [u8]>),
 
-    /// Indicates that the `EventLoop` should shut down, as Alacritty is shutting down.
+    /// 指示 `EventLoop` 关闭——Alacritty 正在关闭。
     Shutdown,
 
-    /// Instruction to resize the PTY.
+    /// 调整 PTY 大小的指令。
     Resize(WindowSize),
 }
 
-/// The main event loop.
+/// 主事件循环。
 ///
-/// Handles all the PTY I/O and runs the PTY parser which updates terminal
-/// state.
+/// 处理全部 PTY I/O,并运行更新终端状态
+/// 的 PTY 解析器。
 pub struct EventLoop<T: tty::EventedPty, U: EventListener> {
     poll: Arc<Poller>,
     pty: T,
@@ -66,7 +66,7 @@ where
     T: tty::EventedPty + event::OnResize + Send + 'static,
     U: EventListener + Send + 'static,
 {
-    /// Create a new event loop.
+    /// 创建新事件循环。
     pub fn new(
         terminal: Arc<FairMutex<Term<U>>>,
         event_proxy: U,
@@ -92,9 +92,9 @@ where
         EventLoopSender { sender: self.tx.clone(), poller: self.poll.clone() }
     }
 
-    /// Drain the channel.
+    /// 排空通道。
     ///
-    /// Returns `false` when a shutdown message was received.
+    /// 收到关闭消息时返回 `false`。
     fn drain_recv_channel(&mut self, state: &mut State) -> bool {
         while let Some(msg) = self.rx.recv() {
             match msg {
@@ -120,19 +120,19 @@ where
         let mut unprocessed = 0;
         let mut processed = 0;
 
-        // Reserve the next terminal lock for PTY reading.
+        // 为 PTY 读取预留下一把终端锁。
         let _terminal_lease = Some(self.terminal.lease());
         let mut terminal = None;
 
         loop {
-            // Read from the PTY.
+            // 从 PTY 读取。
             match self.pty.reader().read(&mut buf[unprocessed..]) {
-                // This is received on Windows/macOS when no more data is readable from the PTY.
+                // Windows/macOS 上 PTY 无法再读到数据时收到。
                 Ok(0) if unprocessed == 0 => break,
                 Ok(got) => unprocessed += got,
                 Err(err) => match err.kind() {
                     ErrorKind::Interrupted | ErrorKind::WouldBlock => {
-                        // Go back to mio if we're caught up on parsing and the PTY would block.
+                        // 若解析跟得上且 PTY 会阻塞,回到 mio。
                         if unprocessed == 0 {
                             break;
                         }
@@ -141,29 +141,29 @@ where
                 },
             }
 
-            // Attempt to lock the terminal.
+            // 尝试锁定终端。
             let terminal = match &mut terminal {
                 Some(terminal) => terminal,
                 None => terminal.insert(match self.terminal.try_lock_unfair() {
-                    // Force block if we are at the buffer size limit.
+                    // 达到缓冲容量时强制阻塞。
                     None if unprocessed >= READ_BUFFER_SIZE => self.terminal.lock_unfair(),
                     None => continue,
                     Some(terminal) => terminal,
                 }),
             };
 
-            // Write a copy of the bytes to the ref test file.
+            // 把字节副本写到 ref 测试文件。
             if let Some(writer) = &mut writer {
                 writer.write_all(&buf[..unprocessed]).unwrap();
             }
 
-            // Parse the incoming bytes.
+            // 解析输入字节。
             state.parser.advance(&mut **terminal, &buf[..unprocessed]);
 
-            // PureTerm GAP-1.2: DECSCL (CSI Ps " p) — vte does not handle this.
+            // PureTerm GAP-1.2:DECSCL(CSI Ps " p)——vte 不处理。
             crate::decscl::scan_and_apply(&mut **terminal, &buf[..unprocessed]);
 
-            // Scan for OSC 133 shell integration marks.
+            // 扫描 OSC 133 shell 集成标记。
             let marks = scan_osc133(&buf[..unprocessed]);
             if !marks.is_empty() {
                 let cursor_row = terminal.grid().cursor.point.line.0 as usize;
@@ -178,13 +178,13 @@ where
                 }
             }
 
-            // Scan for OSC 7 CWD reporting.
+            // 扫描 OSC 7 CWD 上报。
             if let Some(cwd) = scan_osc7(&buf[..unprocessed]) {
                 self.event_proxy.send_event(Event::CwdChanged(cwd));
             }
 
-            // GAP-09: scan OSC 9 / 99 / 777 desktop notifications. Skip payloads
-            // with neither a title nor a body (spec: empty notifications are void).
+            // GAP-09:扫描 OSC 9 / 99 / 777 桌面通知。跳过
+            // 既无标题又无内容的载荷(规范:空通知无效)。
             for raw in scan_osc_notify(&buf[..unprocessed]) {
                 let body = raw.body.unwrap_or_default();
                 if body.is_empty() && raw.title.is_none() {
@@ -199,15 +199,15 @@ where
                 }));
             }
 
-            // T-core-graphics: scan Sixel / Kitty graphics / iTerm2 inline
-            // image sequences. The scanner forwards complete single-chunk
-            // images; the GUI-side ImageStore reassembles chunked Kitty
-            // sequences that span a read boundary.
+            // T-core-graphics:扫描 Sixel / Kitty 图形 / iTerm2 内联
+            // 图像序列。扫描器转发完整单块
+            // 图像;跨读取边界的分块 Kitty 序列由 GUI 侧
+            // ImageStore 重组。
             let cursor_row = terminal.grid().cursor.point.line.0 as usize;
             let cursor_col = terminal.grid().cursor.point.column.0 as u16;
             for raw in scan_graphics(&buf[..unprocessed]) {
-                // Default the placement to "below the cursor, sized to the
-                // image" when the protocol did not specify cell coordinates.
+                // 协议未指定单元格坐标时,默认放置为“光标之下、
+                // 与图像等大”。
                 let mut placement = raw.placement.clone();
                 if placement.cols == 0 && raw.width > 0 {
                     placement.cols = raw.width.min(u16::MAX as u32) as u16;
@@ -230,12 +230,10 @@ where
                 }));
             }
 
-            // T-core-plugin-runtime v3: parser hook. Scan for
-            // `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` sequences
-            // and forward each as `Event::PluginOsc`. The host dispatches
-            // on `name` to route `payload` to the plugin's `HostFn::Parser`
-            // callback (wired in `iced_app.rs` once the plugin loader is
-            // instantiated).
+            // T-core-plugin-runtime v3:解析器钩子。扫描
+            // `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` 序列,
+            // 各转发为 `Event::PluginOsc`。宿主按 `name` 把 `payload`
+            // 路由到插件的 `HostFn::Parser` 回调(加载器实例化后在 `iced_app.rs` 接线)。
             for event in scan_plugin_osc(&buf[..unprocessed]) {
                 self.event_proxy.send_event(event);
             }
@@ -243,13 +241,13 @@ where
             processed += unprocessed;
             unprocessed = 0;
 
-            // Assure we're not blocking the terminal too long unnecessarily.
+            // 确保不会无谓阻塞终端过久。
             if processed >= MAX_LOCKED_READ {
                 break;
             }
         }
 
-        // Queue terminal redraw unless all processed bytes were synchronized.
+        // 排队终端重绘,除非所有处理字节都已同步。
         if state.parser.sync_bytes_count() < processed && processed > 0 {
             self.event_proxy.send_event(Event::Wakeup);
         }
@@ -297,7 +295,7 @@ where
             let poll_opts = PollMode::Level;
             let mut interest = PollingEvent::readable(0);
 
-            // Register TTY through EventedRW interface.
+            // 通过 EventedRW 接口注册 TTY。
             if let Err(err) = unsafe { self.pty.register(&self.poll, interest, poll_opts) } {
                 error!("Event loop registration error: {err}");
                 return (self, state);
@@ -312,7 +310,7 @@ where
             };
 
             'event_loop: loop {
-                // Wakeup the event loop when a synchronized update timeout was reached.
+                // 同步更新超时时唤醒事件循环。
                 let handler = state.parser.sync_timeout();
                 let timeout =
                     handler.sync_timeout().map(|st| st.saturating_duration_since(Instant::now()));
@@ -328,14 +326,14 @@ where
                     }
                 }
 
-                // Handle synchronized update timeout.
+                // 处理同步更新超时。
                 if events.is_empty() && self.rx.peek().is_none() {
                     state.parser.stop_sync(&mut *self.terminal.lock());
                     self.event_proxy.send_event(Event::Wakeup);
                     continue;
                 }
 
-                // Handle channel events, if there are any.
+                // 处理通道事件(若有)。
                 if !self.drain_recv_channel(&mut state) {
                     break;
                 }
@@ -360,18 +358,17 @@ where
 
                         tty::PTY_READ_WRITE_TOKEN => {
                             if event.is_interrupt() {
-                                // Don't try to do I/O on a dead PTY.
+                                // 不要尝试在死 PTY 上做 I/O。
                                 continue;
                             }
 
                             if event.readable {
                                 if let Err(err) = self.pty_read(&mut state, &mut buf, pipe.as_mut())
                                 {
-                                    // On Linux, a `read` on the master side of a PTY can fail
-                                    // with `EIO` if the client side hangs up.  In that case,
-                                    // just loop back round for the inevitable `Exited` event.
-                                    // This sucks, but checking the process is either racy or
-                                    // blocking.
+                                    // Linux 上,主端 PTY 的 `read` 在客户挂断时会以
+                                    // `EIO` 失败。那种情况下,直接循环等即将到来的
+                                    // `Exited` 事件。这不太理想,但检查进程要么有竞态要么
+                                    // 阻塞。
                                     #[cfg(target_os = "linux")]
                                     if err.raw_os_error() == Some(libc::EIO) {
                                         continue;
@@ -393,17 +390,17 @@ where
                     }
                 }
 
-                // Register write interest if necessary.
+                // 需要时注册写兴趣。
                 let needs_write = state.needs_write();
                 if needs_write != interest.writable {
                     interest.writable = needs_write;
 
-                    // Re-register with new interest.
+                    // 以新兴趣重新注册。
                     self.pty.reregister(&self.poll, interest, poll_opts).unwrap();
                 }
             }
 
-            // The evented instances are not dropped here so deregister them explicitly.
+            // evented 实例不在此处 drop,因此显式注销。
             let _ = self.pty.deregister(&self.poll);
 
             (self, state)
@@ -411,7 +408,7 @@ where
     }
 }
 
-/// Helper type which tracks how much of a buffer has been written.
+/// 辅助类型,跟踪缓冲已写入量。
 struct Writing {
     source: Cow<'static, [u8]>,
     written: usize,
@@ -426,7 +423,7 @@ impl event::Notify for Notifier {
         B: Into<Cow<'static, [u8]>>,
     {
         let bytes = bytes.into();
-        // Terminal hangs if we send 0 bytes through.
+        // 传 0 字节会让终端挂起。
         if bytes.is_empty() {
             return;
         }
@@ -443,10 +440,10 @@ impl event::OnResize for Notifier {
 
 #[derive(Debug)]
 pub enum EventLoopSendError {
-    /// Error polling the event loop.
+    /// 轮询事件循环时出错。
     Io(io::Error),
 
-    /// Error sending a message to the event loop.
+    /// 向事件循环发消息时出错。
     Send(mpsc::SendError<Msg>),
 }
 
@@ -481,10 +478,10 @@ impl EventLoopSender {
     }
 }
 
-/// All of the mutable state needed to run the event loop.
+/// 运行事件循环所需的全部可变状态。
 ///
-/// Contains list of items to write, current write state, etc. Anything that
-/// would otherwise be mutated on the `EventLoop` goes here.
+/// 含待写条目列表、当前写状态等。任何本应变更
+/// `EventLoop` 的内容都放在这里。
 #[derive(Default)]
 pub struct State {
     write_list: VecDeque<Cow<'static, [u8]>>,
@@ -574,24 +571,24 @@ impl<T> PeekableReceiver<T> {
 }
 
 // ---------------------------------------------------------------------------
-// OSC 133 shell integration scanner
+// OSC 133 shell 集成扫描器
 // ---------------------------------------------------------------------------
 
-/// A raw OSC 133 mark extracted from the PTY byte stream.
+/// 从 PTY字节流提取的原始 OSC 133 标记。
 struct RawMark {
     kind: ShellMarkKind,
     exit_code: Option<i32>,
     duration_us: Option<u64>,
-    /// Exact command text (hex-decoded), only for CommandStart (B) marks the
-    /// shell annotated with `cmd=<hex>`. See `ShellMark::command`.
+    /// 精确命令文本(hex 解码),仅适用于带 `cmd=<hex>` 注释的
+    /// CommandStart(B)标记。见 `ShellMark::command` 字段。
     command: Option<String>,
 }
 
-/// Decode a hex-encoded UTF-8 string (the `cmd=` param a shell sends in the B
-/// mark). Hex is scanner-safe — its alphabet `[0-9a-f]` contains no `;`, so the
-/// `;`-delimited param split in [`scan_osc133`] can't be corrupted by command
-/// text. Returns `None` on odd length, a non-hex digit, or invalid UTF-8 (a
-/// malformed mark is dropped, not panicked).
+/// 解码 hex 编码的 UTF-8 字符串(shell 在 B 标记里发送的
+/// `cmd=` 参数)。Hex 是扫描安全的——其字母表 `[0-9a-f]` 不含
+/// `;`,因此 [`scan_osc133`] 中以 `;` 分隔的参数无法被命令
+/// 文本破坏。长度为奇数、含非 hex 字符或非法 UTF-8 时
+/// 返回 `None`(畸形标记被丢弃而非 panic)。
 fn decode_hex(s: &str) -> Option<String> {
     let b = s.as_bytes();
     if b.len() % 2 != 0 {
@@ -606,16 +603,15 @@ fn decode_hex(s: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-/// Scan raw bytes for OSC 133 sequences: `\x1b]133;X[;params]\x07` or `\x1b]133;X[;params]\x1b\\`.
-///
-/// PureTerm: returns `SmallVec<[_; 4]>` because most PTY reads contain zero or one
-/// shell-integration mark; the inline buffer keeps the no-mark case on the stack.
+/// 在原始字节中扫描 OSC 133 序列:`\x1b]133;X[;params]\x07` 或 `\x1b]133;X[;params]\x1b\\`(ST 终止)。
+/// PureTerm:返回 `SmallVec<[_; 4]>`,因为多数 PTY 读取包含零或一
+/// 个 shell 集成标记;内联缓冲使无标记情况留在栈上。
 fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
     let mut marks: SmallVec<[RawMark; 4]> = SmallVec::new();
     let prefix = b"\x1b]133;";
     let mut i = 0;
     while i + prefix.len() < buf.len() {
-        // Find next OSC 133 prefix
+        // 找下一个 OSC 133 前缀
         if let Some(pos) = memchr::memchr(prefix[0], &buf[i..]) {
             let start = i + pos;
             if buf[start..].starts_with(prefix) {
@@ -637,17 +633,17 @@ fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
                 let mut exit_code = None;
                 let mut duration_us = None;
                 let mut command = None;
-                // Scan params until terminator
+                // 扫描参数直到终止符
                 let mut p = after + 1;
                 let params_start = p;
                 while p < buf.len() {
                     match buf[p] {
                         0x07 => {
-                            // BEL terminator
+                            // BEL 终止符
                             break;
                         }
                         0x1b if p + 1 < buf.len() && buf[p + 1] == b'\\' => {
-                            // ST terminator
+                            // ST 终止符
                             break;
                         }
                         _ => p += 1,
@@ -658,8 +654,8 @@ fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
                     if !params.is_empty() {
                         let params_str = std::str::from_utf8(params).unwrap_or("");
                         for part in params_str.split(';') {
-                            // D carries exit/duration; B carries the command
-                            // (hex-encoded so it survives the `;`-delimited params).
+                            // D 携带退出/时长;B 携带命令
+                            // (hex 编码,使其能跨 `;`-分隔参数存活)。
                             match kind {
                                 ShellMarkKind::OutputEnd => {
                                     if let Some(val) = part.strip_prefix("exit=") {
@@ -681,7 +677,7 @@ fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
                     i = p + 1;
                     continue;
                 }
-                // No terminator found — sequence spans buffer boundary, skip
+                // 未找到终止符——序列跨越缓冲边界,跳过
                 i = start + 1;
                 continue;
             }
@@ -757,13 +753,13 @@ mod tests_osc133 {
 
     #[test]
     fn scan_command_start_carries_hex_command() {
-        // "hi" hex-encodes to 6869.
+        // "hi" hex 编码为 6869。
         let buf = b"\x1b]133;B;cmd=6869\x07";
         let marks = scan_osc133(buf);
         assert_eq!(marks.len(), 1);
         assert_eq!(marks[0].kind, ShellMarkKind::CommandStart);
         assert_eq!(marks[0].command.as_deref(), Some("hi"));
-        // exit/duration are not carried on B.
+        // 退出/时长不在 B 上携带。
         assert!(marks[0].exit_code.is_none());
         assert!(marks[0].duration_us.is_none());
     }
@@ -803,7 +799,7 @@ mod tests_osc7 {
 
     #[test]
     fn scan_st_terminated() {
-        // PureTerm's injected OSC 7 hook uses ST (\x1b\\), not BEL.
+        // PureTerm 注入的 OSC 7 钩子用 ST(`\x1b\\`),不用 BEL。
         let buf = b"\x1b]7;file://myhost/tmp\x1b\\";
         assert_eq!(scan_osc7(buf).as_deref(), Some("/tmp"));
     }
@@ -822,7 +818,7 @@ mod tests_osc7 {
 
     #[test]
     fn scan_incomplete_at_buffer_end_returns_none() {
-        // Truncated OSC 7 (no terminator) must not produce a path.
+        // 截断的 OSC 7(无终止符)不得产出路径。
         let buf = b"\x1b]7;file://host/partial";
         assert!(scan_osc7(buf).is_none());
     }
@@ -847,7 +843,7 @@ mod tests_osc_notify {
         scan_osc_notify(buf).into_iter().collect()
     }
 
-    // ---- OSC 9 (iTerm2 legacy: single string body, last-wins) ----
+    // ---- OSC 9(iTerm2 遗留:单一字符串主体,后写入胜出)----
 
     #[test]
     fn osc9_bel_terminated() {
@@ -874,11 +870,11 @@ mod tests_osc_notify {
         assert_eq!(r[0].body.as_deref(), Some("second"));
     }
 
-    // ---- OSC 99 (kitty, chunked) ----
+    // ---- OSC 99(kitty,分块)----
 
     #[test]
     fn osc99_simple_title() {
-        // Empty metadata, single payload -> title (p defaults to title).
+        // 空元数据、单一载荷 → 标题(p 默认为 title)。
         let r = notif(b"\x1b]99;;Hello\x1b\\");
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].source, NotifySource::Osc99);
@@ -889,8 +885,8 @@ mod tests_osc_notify {
 
     #[test]
     fn osc99_title_body_chunked() {
-        // Two chunks sharing `i=job1`: d=0 holds the title, the body chunk
-        // (default d=1) flushes one merged notification.
+        // 两个共享 `i=job1` 的块:d=0 持有标题,
+        // 主体块(默认 d=1)合并为单条通知
         let buf = b"\x1b]99;i=job1:d=0;Deploy started\x1b\\\x1b]99;i=job1:p=body;pushing\x1b\\";
         let r = notif(buf);
         assert_eq!(r.len(), 1);
@@ -901,7 +897,7 @@ mod tests_osc_notify {
 
     #[test]
     fn osc99_base64_payload() {
-        // e=1 means the payload is base64; "SGVsbG8=" decodes to "Hello".
+        // e=1 表示载荷是 base64;"SGVsbG8=" 解码为 "Hello"。
         let r = notif(b"\x1b]99;e=1;SGVsbG8=\x07");
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].title.as_deref(), Some("Hello"));
@@ -916,12 +912,12 @@ mod tests_osc_notify {
 
     #[test]
     fn osc99_unknown_payload_type_skipped() {
-        // p=icon is not handled in v1 -> graceful no-op, no notification.
+        // v1 不处理 p=icon → 优雅地空操作,不通知。
         let r = notif(b"\x1b]99;p=icon;/tmp/x.png\x1b\\");
         assert!(r.is_empty());
     }
 
-    // ---- OSC 777 (urxvt: notify;title;body) ----
+    // ---- OSC 777(urxvt 通知:标题;正文) ----
 
     #[test]
     fn osc777_bel_terminated() {
@@ -949,17 +945,17 @@ mod tests_osc_notify {
 
     #[test]
     fn osc777_non_notify_skipped() {
-        // First field must be "notify".
+        // 第一个字段必须是 "notify"。
         let r = notif(b"\x1b]777;set_xtitle;a;b\x07");
         assert!(r.is_empty());
     }
 
-    // ---- cross-cutting ----
+    // ---- 横切关注 ----
 
     #[test]
     fn mixed_osc9_and_osc777() {
-        // OSC 777 is emitted inline; OSC 9 is last-wins so it is emitted at the
-        // buffer end — both scanners fire on the same buffer (order-insensitive).
+        // OSC 777 内联发出;OSC 9 后写入胜出,因此在
+        // 缓冲末尾发出——两个扫描器对同一缓冲生效(顺序无关)。
         let r = notif(b"\x1b]9;a\x07\x1b]777;notify;T;B\x07");
         assert_eq!(r.len(), 2);
         assert!(r.iter().any(|n| n.source == NotifySource::Osc9));
@@ -968,19 +964,19 @@ mod tests_osc_notify {
 
     #[test]
     fn no_terminator_skipped() {
-        // Cross-buffer (no terminator) -> nothing this read.
+        // 跨缓冲(无终止符)→ 本次读无产物。
         assert!(notif(b"\x1b]9;hello").is_empty());
         assert!(notif(b"\x1b]99;;half").is_empty());
     }
 
     #[test]
     fn split_across_reads_is_dropped() {
-        // Documents the v1 limitation: `scan_osc_notify` is stateless across PTY
-        // reads — the read loop resets `unprocessed`, so partial bytes are NOT
-        // retained. A notification whose terminator lands in the next read is
-        // dropped (the head half has no terminator; the tail half has no ESC).
-        // Same limitation as `scan_osc7`/`scan_osc133` — see the `scan_osc_notify`
-        // doc comment.
+        // 记录 v1 限制:`scan_osc_notify` 跨 PTY 读无状态
+        // ——读循环重置 `unprocessed`,因此部分字节不会
+        // 被保留。终止符落在下一次读中的通知被丢弃
+        //(头部无终止符;尾部无 ESC)。
+        // 与 `scan_osc7`/`scan_osc133` 同——见 `scan_osc_notify`
+        // 文档注释。
         let head = b"\x1b]9;Build complete, but split"; // no terminator
         let tail = b" across the read\x07"; // no ESC
         assert!(notif(head).is_empty(), "no terminator -> nothing this read");
@@ -994,10 +990,10 @@ mod tests_osc_notify {
 
     #[test]
     fn sanitize_id_strips_invalid_chars() {
-        // kitty spec: ids restricted to [a-zA-Z0-9_-+.]; invalid chars filtered.
+        // kitty 规范:id 限定为 [a-zA-Z0-9_-+.];非法字符被过滤。
         assert_eq!(sanitize_notify_id("a!b@c"), "abc");
         assert_eq!(sanitize_notify_id("job-1.2_3"), "job-1.2_3");
-        // i=0 is special-cased at the caller (treated as no id) -> not here.
+        // i=0 在调用方被特例(视为无 id)——不在此处理。
     }
 
     #[test]
@@ -1011,9 +1007,9 @@ mod tests_osc_notify {
 
 #[cfg(test)]
 mod tests_pty_write_arc {
-    //! Verify that `Event::PtyWrite` payloads are wrapped in `Arc<String>` so
-    //! multi-window fan-out clones a pointer (atomic increment) instead of
-    //! duplicating the heap allocation.
+    //! 验证 `Event::PtyWrite` 载荷包装在 `Arc<String>` 中,使
+    //! 多窗口扇出克隆指针(原子计数)而非复制
+    //! 堆分配。
 
     use super::*;
     use std::sync::Arc;
@@ -1022,18 +1018,18 @@ mod tests_pty_write_arc {
     fn pty_write_clone_shares_allocation() {
         let event = Event::PtyWrite(Arc::new("\x1b[?6c".to_string()));
 
-        // Clone the event 100 times — this simulates a 100-window fan-out.
+        // 克隆事件 100 次——模拟 100 窗口扇出。
         let clones: Vec<_> = (0..100).map(|_| event.clone()).collect();
 
-        // Every clone holds the same underlying `String` via `Arc`.
-        // The original + 100 clones = 101 strong references.
+        // 每个克隆经 `Arc` 持有同一底层 `String`。
+        // 原始 + 100 克隆 = 101 个强引用。
         if let Event::PtyWrite(text) = &event {
             assert_eq!(Arc::strong_count(text), 101, "fan-out must share Arc");
         } else {
             panic!("unexpected variant");
         }
 
-        // All clones deref to the same bytes — no per-clone heap copy.
+        // 所有克隆解引用同一字节——无每克隆堆复制。
         for clone in &clones {
             if let Event::PtyWrite(text) = clone {
                 assert_eq!(text.as_str(), "\x1b[?6c");
@@ -1044,8 +1040,8 @@ mod tests_pty_write_arc {
     }
 }
 
-/// Scan raw bytes for the last OSC 7 sequence: `\x1b]7;file://host/path\x07` or `\x1b]7;...\x1b\\`.
-/// Returns the decoded path (percent-decoded) if found, or `None`.
+/// 扫描原始字节中最后一条 OSC 7 序列:`\x1b]7;file://host/path\x07` 或 `\x1b]7;...\x1b\\`。
+/// 若找到返回解码后的路径(百分号解码),否则返回 `None`。
 fn scan_osc7(buf: &[u8]) -> Option<String> {
     let prefix = b"\x1b]7;";
     let mut i = 0;
@@ -1056,7 +1052,7 @@ fn scan_osc7(buf: &[u8]) -> Option<String> {
             let start = i + pos;
             if buf[start..].starts_with(prefix) {
                 let url_start = start + prefix.len();
-                // Scan params until BEL or ST terminator (mirrors scan_osc133).
+                // 扫描参数直到 BEL 或 ST 终止符(镜像 scan_osc133)。
                 let mut p = url_start;
                 let mut terminated = false;
                 while p < buf.len() {
@@ -1079,7 +1075,7 @@ fn scan_osc7(buf: &[u8]) -> Option<String> {
                 if terminated {
                     continue;
                 }
-                // No terminator — sequence may span a buffer boundary; skip prefix.
+                // 无终止符——序列可能跨缓冲边界;跳过前缀。
                 i = start + 1;
                 continue;
             }
@@ -1092,13 +1088,13 @@ fn scan_osc7(buf: &[u8]) -> Option<String> {
     last_url.and_then(extract_osc7_path)
 }
 
-/// Extract the path component from an OSC 7 URL payload (`file://host/path`).
+/// 从 OSC 7 URL 载荷(`file://host/path`)提取路径部分。
 fn extract_osc7_path(url: &[u8]) -> Option<String> {
     let url_str = std::str::from_utf8(url).ok()?;
-    // file://host/path — find third slash
+    // file://host/path —— 找第三个斜杠
     if let Some(idx) = url_str.find("://") {
         let after_scheme = &url_str[idx + 3..];
-        // Skip host part (everything up to the first /)
+        // 跳过主机部分(到第一个 `/` 之前)
         if let Some(slash_pos) = after_scheme.find('/') {
             let path = &after_scheme[slash_pos..];
             return Some(percent_decode(path));
@@ -1107,7 +1103,7 @@ fn extract_osc7_path(url: &[u8]) -> Option<String> {
     None
 }
 
-/// Simple percent-decode for URL paths.
+/// URL 路径的简易百分号解码。
 fn percent_decode(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let bytes = input.as_bytes();
@@ -1136,67 +1132,67 @@ fn hex_val(b: u8) -> Option<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// T-core-graphics: Sixel / Kitty graphics / iTerm2 inline image scanner
+// T-core-graphics:Sixel / Kitty 图形 / iTerm2 内联图像扫描器
 // ---------------------------------------------------------------------------
 
-/// T-core-graphics: one fully-reassembled graphics image extracted from a PTY
-/// read. The scanner hands complete images to the event loop; partial chunked
-/// sequences that span the read boundary are dropped (the read loop resets
-/// `unprocessed`, so a multi-chunk Kitty image split across two reads is
-/// emitted as one image with a `more` flag — see the E2E note below). The
-/// renderer is responsible for re-decoding / re-blitting on re-emit.
+/// T-core-graphics:一次从 PTY 读中完整重组出的图形图像。扫描器把完整图像
+/// 交给事件循环;跨读取边界的分块序列会被丢弃(读循环
+/// 重置 `unprocessed`,跨两次读的 Kitty 分块图像以 `more` 标志
+/// 作为单张图像发出——见下方 E2E 说明)。渲染器负责
+/// 在重发时重新解码/重新 blit。
+/// 渲染器负责在重发时重新解码/重新 blit。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawGraphics {
     protocol: GraphicsProtocol,
     format: GraphicsFormat,
     width: u32,
     height: u32,
-    /// Decoded RGBA pixel buffer, or `None` to mean "still encoded" (PNG).
+    /// 已解码 RGBA 像素缓冲,或 `None` 表示“仍为编码”(PNG)。
     pixels: Option<Vec<u8>>,
-    /// Still-encoded payload (e.g. raw PNG bytes for `format = Png`).
+    /// 仍为编码的载荷(如 `format = Png` 时的原始 PNG 字节)。
     encoded: Vec<u8>,
-    /// Grid placement (col/row/cells). For an explicit placement use
-    /// `(col, row, cols, rows) = (0, 0, w_in_cells, h_in_cells)` if the
-    /// protocol did not specify one.
+    /// 网格放置(列/行/单元格)。显式放置请用
+    /// `(col, row, cols, rows) = (0, 0, w_in_cells, h_in_cells)` —— 若
+    /// 协议未指定。
     placement: GraphicsPlacement,
 }
 
-/// T-core-graphics: detect and reassemble graphics images in a PTY buffer.
+/// T-core-graphics:在 PTY 缓冲中检测并重组图形图像。
 ///
-/// Supported:
-/// - **Sixel** (`\x1bPq ... \x1b\\`) — DEC sixel pixel stream, single image
-///   per DCS. v1 only forwards the raw pixel bytes (decoded RGBA stays in
-///   the renderer).
-/// - **Kitty graphics** (`\x1b_G ... \x1b\\`) — `;`-separated `key=value`
-///   params, base64 payload. v1 recognizes `a=T` (transmit-and-use), `a=A`
-///   (transmit-and-use, chunked), `q=1` (quiet), `f=32` (RGBA), `f=100` (PNG),
-///   `c=`/`r=` (cols/rows in cells), `i=` (image id), and the chunk markers
-///   `m=0` (more chunks follow) / `m=1` (final).
-/// - **iTerm2 inline** (`\x1b]1337;File=...`) — `;`-separated `key=value`
-///   params, base64 payload. v1 only recognizes `inline=1`.
+/// 受支持:
+/// - **Sixel**(`\x1bPq ... \x1b\\`)——DEC 六位像素流,每 DCS 一张图。
+/// v1 仅转发原始像素字节(解码 RGBA 留在
+/// 渲染器内)。
+/// - **Kitty graphics**(`\x1b_G ... \x1b\\`)——`;` 分隔的 `key=value`
+/// 参数 + base64 载荷。v1 识别 `a=T`(发送并使用)、`a=A`
+///(发送并使用、分块)、`q=1`(静默)、`f=32`(RGBA)、`f=100`(PNG)、
+/// `c=`/`r=`(单元格列/行)、`i=`(图像 id)及分块标记
+/// `m=0`(还有更多块)/`m=1`(最终)。
+/// - **iTerm2 inline**(`\x1b]1337;File=...`)——`;` 分隔的 `key=value`
+/// 参数 + base64 载荷。v1 仅识别 `inline=1`。
 ///
-/// The scanner is intentionally **stateless across PTY reads** in v1
-/// (matches `scan_osc7`/`scan_osc133`): a chunked Kitty image whose chunks
-/// straddle the read boundary is dropped. Single-chunk images always pass
-/// because a `kitty +kitten icat` write is small enough to land in one
-/// `read(2)` call in practice. The GUI-side [`ImageStore`] (in the
-/// `pureterm` crate) is the cross-read reassembly point for full Kitty
-/// chunking.
+/// v1 中扫描器刻意**跨 PTY 读无状态**(与 `scan_osc7`/`scan_osc133`
+/// 一致):跨读取边界的 Kitty 分块图像会被丢弃。单块图像总能
+/// 通过,因为 `kitty +kitten icat` 写入足够小,实际总能
+/// 落在一次 `read(2)` 内。GUI 侧的 [`ImageStore`]
+///(在 `pureterm` crate 内)是完整 Kitty 分块跨读
+/// 重组点。
+/// 分块。
 fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
     let mut out: SmallVec<[RawGraphics; 2]> = SmallVec::new();
     let mut i = 0usize;
 
     while i < buf.len() {
-        // Find the next ESC.
+        // 找下一个 ESC。
         let Some(pos) = memchr::memchr(0x1b, &buf[i..]) else { break };
         let start = i + pos;
         let after = &buf[start..];
 
         if let Some(rest) = after.strip_prefix(b"\x1bPq") {
-            // Sixel DCS — start at the byte after "Pq" (could be raster
-            // attributes "Pan;Pad;Ph;Pv" or just pixel data; the renderer
-            // is the source of truth on raster attrs). Forward raw bytes
-            // up to the next ST (`\x1b\\`).
+            // Sixel DCS——从 "Pq" 之后的字节起(可能是光栅
+            // 属性 "Pan;Pad;Ph;Pv" 或直接是像素数据;光栅
+            // 属性的真理之源是渲染器)。把原始字节前
+            // 传到下一个 ST(`\x1b\\`)。
             let payload_start = start + 3;
             if let Some(end_offset) = find_st(payload_start, buf) {
                 let raw = &buf[payload_start..end_offset];
@@ -1225,10 +1221,9 @@ fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
         }
 
         if let Some(_rest) = after.strip_prefix(b"\x1b_G") {
-            // Kitty graphics APC — format:
-            //   ESC _ <key>=<val>;...;<key>=<val>;BASE64PAYLOAD ESC \\
-            // v1: only `a=T` (transmit-and-use, single chunk) and `a=A`
-            // (transmit-and-use, chunked; v1 emits when m=1).
+            // Kitty graphics APC——格式:ESC _ <key>=<val>;...;BASE64PAYLOAD 后跟 ESC \\
+            // v1:仅 `a=T`(发送并使用,单块)与 `a=A`
+            // (发送并使用,分块;v1 在 m=1 时发出)。
             let payload_start = start + 3;
             if let Some(end_offset) = find_st(payload_start, buf) {
                 let raw = &buf[payload_start..end_offset];
@@ -1242,7 +1237,7 @@ fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
         }
 
         if let Some(_rest) = after.strip_prefix(b"\x1b]1337;File=") {
-            // iTerm2 inline image: `]1337;File=key=val;...;base64`
+            // iTerm2 inline 图像:`]1337;File=key=val;...;base64`
             let payload_start = start + b"\x1b]1337;File=".len();
             if let Some(end_offset) = find_st_or_bel(payload_start, buf) {
                 let raw = &buf[payload_start..end_offset];
@@ -1264,8 +1259,8 @@ fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
     out
 }
 
-/// Find the next ST (`\x1b\\`) at or after `start`. Returns the offset of the
-/// `\x1b`, or `None` if the buffer ends before a terminator.
+/// 在 `start` 处或之后找下一个 ST(`\x1b\\`)。返回该 `\x1b`
+/// 的偏移;若缓冲在终止符前结束返回 `None`。
 fn find_st(start: usize, buf: &[u8]) -> Option<usize> {
     let mut p = start;
     while p + 1 < buf.len() {
@@ -1277,8 +1272,8 @@ fn find_st(start: usize, buf: &[u8]) -> Option<usize> {
     None
 }
 
-/// Find the next BEL (`\x07`) or ST (`\x1b\\`) at or after `start`. Returns
-/// the offset of the terminator byte (the BEL or the `\x1b`).
+/// 在 `start` 处或之后找下一个 BEL(`\x07`)或 ST(`\x1b\\`)。返回
+/// 终止符字节(BEL 或 `\x1b`)的偏移。
 fn find_st_or_bel(start: usize, buf: &[u8]) -> Option<usize> {
     let mut p = start;
     while p < buf.len() {
@@ -1291,15 +1286,15 @@ fn find_st_or_bel(start: usize, buf: &[u8]) -> Option<usize> {
     None
 }
 
-/// Split a Kitty graphics body into `;`-separated params, base64-decode the
-/// trailing payload, and return a [`RawGraphics`] for `a=T` / final-`m=1`
-/// chunk. Returns `None` for `a=q` (query), `m=0` (more chunks), or
-/// malformed input.
+/// 把 Kitty graphics 主体拆为 `;` 分隔的参数,base64 解码
+/// 末尾载荷,对 `a=T` / 最终 `m=1` 块返回 [`RawGraphics
+///(见同名结构)。`a=q`(查询)、`m=0`(还有更多块)或
+/// 畸形输入返回 `None`。
 fn parse_kitty_graphics(body: &[u8]) -> Option<RawGraphics> {
     let s = std::str::from_utf8(body).ok()?;
     let mut parts = s.split(';');
-    // First segment is the param string (e.g. "a=T,f=100,i=42,c=80,r=24").
-    // Trailing segment is the base64 payload.
+    // 首段是参数字符串(如 "a=T,f=100,i=42,c=80,r=24")。
+    // 末段是 base64 载荷。
     let params_str = parts.next()?;
     let mut a = '?';
     let mut format = GraphicsFormat::Rgba;
@@ -1330,7 +1325,7 @@ fn parse_kitty_graphics(body: &[u8]) -> Option<RawGraphics> {
         return None;
     }
     if more == 0 {
-        // more chunks follow; defer to the GUI-side reassembler.
+        // 还有更多块;推迟到 GUI 侧重组器。
         return None;
     }
     let payload_b64 = parts.next()?;
@@ -1340,8 +1335,7 @@ fn parse_kitty_graphics(body: &[u8]) -> Option<RawGraphics> {
         GraphicsFormat::Rgb => (cols as u32, rows as u32),
         GraphicsFormat::Png => png_dimensions(&decoded).unwrap_or((0, 0)),
     };
-    // The spec: `encoded` is empty when `pixels` is `Some` (RGBA / RGB
-    // decoded inline); only `format = Png` keeps the encoded payload.
+    // 规范:`pixels` 为 `Some`(RGBA / RGB 已内联解码)时 `encoded` 为空;仅 `format = Png` 保留编码的载荷。
     let (pixels, encoded) = match format {
         GraphicsFormat::Rgba => (Some(decoded), Vec::new()),
         GraphicsFormat::Rgb => (None, decoded), // v1: RGB stays encoded
@@ -1365,15 +1359,14 @@ fn parse_kitty_graphics(body: &[u8]) -> Option<RawGraphics> {
     })
 }
 
-/// Parse an iTerm2 `File=...` body. Recognized subset: `inline=1`,
-/// `width=N`, `height=N` (cell sizes).
-///
-/// iTerm2 separates params with `;` and the payload with `:` (the spec
-/// uses both — Kaku and iTerm2 source confirm the colon is the params /
-/// payload boundary; the spec document says the same).
+/// 解析 iTerm2 `File=...` 主体。可识别子集:`inline=1`、
+/// `width=N`、`height=N`(单元格尺寸)。
+/// iTerm2 用 `;` 分隔参数,用 `:` 分隔载荷(规范
+/// 两者都用——Kaku 与 iTerm2 源码确认冒号是参数/载荷
+/// 边界;规范文档亦同)。
 fn parse_iterm2_inline(body: &[u8]) -> Option<RawGraphics> {
     let s = std::str::from_utf8(body).ok()?;
-    // Split on the FIRST `:` to separate params from the base64 payload.
+    // 首个 `:` 处切分,把参数与 base64 载荷分开。
     let (params_str, payload_b64) = s.split_once(':')?;
     let mut inline = false;
     let mut cols: u16 = 0;
@@ -1419,10 +1412,10 @@ fn parse_iterm2_inline(body: &[u8]) -> Option<RawGraphics> {
     })
 }
 
-/// Minimal RFC 4648 base64 decoder (alphabet `A-Za-z0-9+/`, `=` padding).
-/// Returns `None` on invalid input length, padding position, or non-alphabet
-/// bytes. Whitespace is rejected — the scanner feeds this from raw PTY bytes
-/// and any whitespace in a base64 payload is a protocol bug, not a feature.
+/// 极简 RFC 4648 base64 解码器(字母表 `A-Za-z0-9+/`,`=` 填充)。
+/// 长度非法、填充位置错或字母表外字节时返回 `None`。
+/// 拒绝空白——扫描器喂入的是 PTY 原始字节,base64 载荷
+/// 中的任何空白都是协议 bug,而非特性。
 fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     fn val(b: u8) -> Option<u8> {
         match b {
@@ -1462,28 +1455,28 @@ fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Decode a PNG's first IHDR chunk to extract `(width, height)` as
-/// big-endian `u32`s. Returns `None` for non-PNG data, truncated buffers,
-/// or a missing IHDR chunk. Avoids pulling in the `png` crate for this
-/// single use; the renderer uses `image::codecs::png::PngDecoder` for the
-/// full decode.
+/// 解码 PNG 的首块 IHDR 以大端 `u32` 取出 `(width, height)`。
+/// 非 PNG 数据、截断缓冲或缺失 IHDR 块返回 `None`。避免
+/// 为这一处用途引入 `png` crate;渲染器用 `image::codecs::png::PngDecoder`
+/// 做完整解码。
+/// 做完整解码。
 fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
     if png.len() < 24 || &png[0..8] != b"\x89PNG\r\n\x1a\n" {
         return None;
     }
-    // IHDR is always the first chunk: 4-byte length, 4-byte type, 4-byte W, 4-byte H.
+    // IHDR 始终是第一块:4 字节长度 + 4 字节类型 + 4 字节宽 + 4 字节高。
     let w = u32::from_be_bytes(png[16..20].try_into().ok()?);
     let h = u32::from_be_bytes(png[20..24].try_into().ok()?);
     Some((w, h))
 }
 
-/// GAP-09: one notification scanned off the raw PTY buffer, before the
-/// occasion/source defaults are applied. OSC 99 chunked payloads sharing the
-/// same `i` are merged into a single entry (see `scan_osc_notify`).
+/// GAP-09:从原始 PTY 缓冲扫描出的一条通知,在应用
+/// occasion/source 之前。共享同一 `i` 的 OSC 99 分块载荷会被
+/// 合并为一条(见 `scan_osc_notify`)。
 
-/// GAP-09: one notification scanned off the raw PTY buffer, before the
-/// occasion/source defaults are applied. OSC 99 chunked payloads sharing the
-/// same `i` are merged into a single entry (see `scan_osc_notify`).
+/// GAP-09:从原始 PTY 缓冲扫描出的一条通知,在应用
+/// occasion/source 默认值之前。共享同一 `i` 的 OSC 99 分块载荷会被
+/// 合并为一条(见 `scan_osc_notify`)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RawNotification {
     source: NotifySource,
@@ -1493,44 +1486,44 @@ struct RawNotification {
     occasion: Option<NotifyOccasion>,
 }
 
-/// GAP-09: scan raw bytes for OSC 9 / OSC 99 / OSC 777 notification sequences.
+/// GAP-09:扫描原始字节中的 OSC 9 / OSC 99 / OSC 777 通知序列。
 ///
-/// - OSC 9  (iTerm2 legacy):  `\x1b]9;<message>\x07|ST` — single body, **last-wins**
-///   within the buffer (mirrors `scan_osc7`).
-/// - OSC 99 (kitty, chunked): `\x1b]99;<metadata>;<payload>\x07|ST` — `:`-separated
-///   `key=value` metadata. v1 parses `p` (title|body), `i` (id), `d` (0=hold/1=flush),
-///   `e` (1=base64), `o` (occasion). Same-`i` chunks merge; flush on `d=1`. Unknown
-///   payload types (`icon`/`close`/`buttons`/`?`/`alive`) are graceful no-ops (spec
-///   forward-compat). Cross-buffer chunking (a `d=0` chunk in one PTY read, `d=1` in
-///   the next) flushes as a separate notification in v1 — the GUI-side store dedups
-///   by `id` as the safety net.
-/// - OSC 777 (urxvt):          `\x1b]777;notify;<title>;<body>\x07|ST` — stateless.
+/// - OSC 9(iTerm2 遗留):`\x1b]9;<message>\x07|ST`——单一正文,**后写入胜出**
+///(镜像 `scan_osc7`)。
+/// - OSC 99(kitty,分块):`\x1b]99;<metadata>;<payload>\x07|ST`——`:` 分隔的
+/// `key=value` 元数据。v1 解析 `p`(title|body)、`i`(id)、`d`(0=保留/1=冲刷)、
+/// `e`(1=base64)、`o`(occasion)。同一 `i` 块合并;`d=1` 时冲刷。未知
+/// 载荷类型(`icon`/`close`/`buttons`/`?`/`alive`)被优雅地空操作(规范前向
+/// 兼容)。跨缓冲分块(一次 PTY 读里 `d=0`、下一次里 `d=1`)在 v1 中
+/// 由 GUI 侧存储按 `id` 去重兜底。
+/// 兜底机制即按 `id` 去重。
+/// - OSC 777(urxvt):`\x1b]777;notify;<title>;<body>\x07|ST`——无状态。
 ///
-/// All three accept BOTH `\x07` (BEL) and `\x1b\\` (ST) terminators (mirrors
-/// `scan_osc133`). Cross-buffer (no terminator) sequences are skipped; the
-/// partial bytes are NOT retained across reads (the read loop resets
-/// `unprocessed`), so a notification split across two PTY reads is dropped.
-/// This matches the `scan_osc7`/`scan_osc133` limitation and is rare in
-/// practice (notifications are small, single `write`). See
+/// 三种都同时接受 `\x07`(BEL)与 `\x1b\\`(ST)终止符(镜像
+/// `scan_osc133`)。跨缓冲(无终止符)序列被跳过;部分
+/// 字节不会跨读保留(读循环重置
+/// `unprocessed`),因此跨两次 PTY 读的通知会被丢弃。
+/// 这与 `scan_osc7`/`scan_osc133` 限制一致,实践中罕见
+///(通知都很小,一次 `write` 即可)。见
 /// `split_across_reads_is_dropped`.
 fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
     let mut out: SmallVec<[RawNotification; 2]> = SmallVec::new();
-    // OSC 9 is last-wins within the buffer (mirrors scan_osc7).
+    // OSC 9 在缓冲内后写入胜出(镜像 scan_osc7)。
     let mut last_osc9: Option<String> = None;
-    // OSC 99 chunked entries keyed by sanitized `i`, kept in insertion order so
-    // end-of-buffer flush is deterministic (a HashMap would not be).
+    // OSC 99 按净化后的 `i` 键控的分块条目,按插入顺序保留
+    // 以便缓冲末尾冲刷是确定性的(HashMap 则不行)。
     let mut pending: Vec<(String, RawNotification)> = Vec::new();
 
     let mut i = 0usize;
     while i < buf.len() {
-        // Find the next ESC.
+        // 找下一个 ESC。
         let Some(pos) = memchr::memchr(0x1b, &buf[i..]) else { break };
         let start = i + pos;
         let after_esc = &buf[start..];
 
-        // Identify the OSC type and payload start (offset just after the prefix).
-        // Prefixes are distinguishable: `\x1b]9;` requires `;` right after `9`,
-        // while `\x1b]99;` has a second `9` — so order of checks is irrelevant.
+        // 识别 OSC 类型与载荷起点(前缀后紧接的偏移)。
+        // 各前缀可区分:`\x1b]9;` 要求 `9` 之后紧跟 `;`,
+        // 而 `\x1b]99;` 有第二个 `9`——因此检查顺序无关。
         let (source, payload_start): (NotifySource, usize) = if after_esc.starts_with(b"\x1b]777;") {
             (NotifySource::Osc777, start + b"\x1b]777;".len())
         } else if after_esc.starts_with(b"\x1b]99;") {
@@ -1542,7 +1535,7 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
             continue;
         };
 
-        // Scan the payload until BEL (0x07) or ST (\x1b\\). Mirrors scan_osc133.
+        // 扫描载荷直到 BEL(0x07)或 ST(\\x1b\\\\)。镜像 scan_osc133。
         let mut p = payload_start;
         let mut term_len = 0usize;
         let mut found = false;
@@ -1562,11 +1555,11 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
             }
         }
         if !found {
-            // Cross-buffer (no terminator) sequence — skip this ESC and continue
-            // scanning the rest of THIS buffer. The partial payload is NOT retained
-            // for the next read, so a notification split across two PTY reads is
-            // dropped (see the `scan_osc_notify` doc comment + the
-            // `split_across_reads_is_dropped` test).
+            // 跨缓冲(无终止符)序列——跳过本 ESC,继续
+            // 扫描本缓冲其余部分。部分载荷不会保留到
+            // 下一次读,因此跨两次 PTY 读的通知
+            // 会被丢弃(见 `scan_osc_notify` 文档注释 +
+            // `split_across_reads_is_dropped` 测试)。
             i = start + 1;
             continue;
         }
@@ -1583,7 +1576,7 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
             NotifySource::Osc777 => {
                 let s = payload_to_string(payload_bytes);
                 let parts: Vec<&str> = s.split(';').collect();
-                // Canonical urxvt: `notify;<title>;<body>` (3 fields after prefix).
+                // 规范 urxvt:`notify;<title>;<body>`(前缀后 3 个字段)。
                 if parts.first() == Some(&"notify") && parts.len() >= 3 {
                     let title = (!parts[1].is_empty()).then(|| parts[1].to_string());
                     let body = (!parts[2].is_empty()).then(|| parts[2].to_string());
@@ -1600,12 +1593,12 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
             }
             NotifySource::Osc99 => {
                 let s = payload_to_string(payload_bytes);
-                // Mandatory two `;`-fields: `<metadata>;<text>` (metadata may be empty).
+                // 必填的两 `;` 字段:`<metadata>;<text>`(metadata 可空)。
                 let (meta_str, text) = match s.split_once(';') {
                     Some((m, t)) => (m, t),
                     None => (s.as_str(), ""),
                 };
-                // Parse `:`-separated `key=value` metadata (keys are single chars).
+                // 解析 `:` 分隔的 `key=value` 元数据(键是单字符)。
                 let mut p_type = "title";
                 let mut id_raw: Option<&str> = None;
                 let mut done = true; // d defaults to 1
@@ -1629,7 +1622,7 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
                         _ => {}
                     }
                 }
-                // Decode base64 payload if requested.
+                // 需要时解码 base64 载荷。
                 let decoded = if encoded {
                     match decode_base64(text) {
                         Some(b) => String::from_utf8_lossy(&b).into_owned(),
@@ -1641,12 +1634,12 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
                 } else {
                     text.to_string()
                 };
-                // Only title/body payloads are handled; others are no-ops.
+                // 只处理 title/body 载荷;其它空操作。
                 if p_type != "title" && p_type != "body" {
                     i = next_i;
                     continue;
                 }
-                // Resolve id: sanitize, treat empty / "0" as None (spec: i=0 unused).
+                // 解析 id:净化,空 / "0" 视为 None(规范:i=0 未用)。
                 let id = id_raw.and_then(|r| {
                     let s = sanitize_notify_id(r);
                     (!s.is_empty() && s != "0").then_some(s)
@@ -1680,7 +1673,7 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
                         out.push(e);
                     }
                 } else {
-                    // No id -> single-shot (done is effectively true).
+                    // 无 id → 单次发射(可视 done 为真)。
                     let mut e = RawNotification {
                         source: NotifySource::Osc99,
                         title: None,
@@ -1701,7 +1694,7 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
         i = next_i;
     }
 
-    // Emit the winning OSC 9 (last-wins) as a single notification.
+    // 把胜出的 OSC 9(后写入胜出)作为单条通知发出。
     if let Some(body) = last_osc9 {
         out.push(RawNotification {
             source: NotifySource::Osc9,
@@ -1711,7 +1704,7 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
             occasion: None,
         });
     }
-    // Flush any OSC 99 chunks held with d=0 that never closed this read.
+    // 冲刷本读内 d=0 仍未收尾的 OSC 99 分块。
     for (_, e) in pending {
         out.push(e);
     }
@@ -1719,21 +1712,21 @@ fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
     out
 }
 
-/// GAP-09: lossy UTF-8 conversion of a raw payload slice.
+/// GAP-09:把原始载荷字节有损地转为 UTF-8。
 fn payload_to_string(b: &[u8]) -> String {
     String::from_utf8_lossy(b).into_owned()
 }
 
-/// GAP-09: sanitize a kitty OSC 99 `i` identifier to `[a-zA-Z0-9_-+.]` (spec
-/// anti-injection rule — ids may be echoed back in response escapes later).
+/// GAP-09:把 kitty OSC 99 的 `i` 标识符净化为 `[a-zA-Z0-9_-+.]`(规范
+/// 防注入规则——id 以后可能在响应转义序列中回显)。
 fn sanitize_notify_id(raw: &str) -> String {
     raw.chars()
         .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '+'))
         .collect()
 }
 
-/// GAP-09: decode a standard (RFC 4648) base64 payload (used by kitty OSC 99 `e=1`).
-/// Returns `None` on any invalid character. Padding is optional.
+/// GAP-09:解码标准(RFC 4648)base64 载荷(用于 kitty OSC 99 的 `e=1`)。
+/// 遇任何非法字符返回 `None`。填充可选。
 fn decode_base64(s: &str) -> Option<Vec<u8>> {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let val = |b: u8| TABLE.iter().position(|&t| t == b).map(|p| p as u32);
@@ -1754,28 +1747,28 @@ fn decode_base64(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// T-core-plugin-runtime v3: scan for `OSC 1337;PureTerm-Plugin-<name>;<payload>`
-/// sequences and emit each as an `Event::PluginOsc`. The host dispatches on
-/// `name` to route `payload` to the plugin's `HostFn::Parser` callback.
+/// T-core-plugin-runtime v3:扫描 `OSC 1337;PureTerm-Plugin-<name>;<payload>`
+/// 序列,各作为 `Event::PluginOsc` 发出。宿主按
+/// `name` 分派把 `payload` 路由到插件的 `HostFn::Parser` 回调。
 ///
-/// Wire format:
-///   `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07`  (BEL terminator)
-///   `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x1b\\` (ST terminator)
+/// 线协议:
+///   `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07`  (BEL 终止)
+///   `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x1b\\` (ST 终止)
 ///
-/// `<name>` must match `[a-zA-Z0-9_-]+` (the plugin manifest's name, which
-/// the loader already validates). `<payload>` is the raw bytes up to the
-/// terminator — not base64, not hex, just the literal bytes (plugins that
-/// need binary safety can base64-encode the payload themselves).
+/// `<name>` 必须匹配 `[a-zA-Z0-9_-]+`(插件清单的 name,加载器
+/// 已做校验)。`<payload>` 是终止符前的原始字节
+/// ——不 base64、不十六进制,只是字面字节(需要
+/// 二进制安全的插件可自行 base64)。
 ///
-/// Sequences that span a buffer boundary are skipped (same limitation as
-/// `scan_osc7` / `scan_osc133` — rare in practice, and the next PTY read
-/// will re-deliver the prefix).
+/// 跨缓冲边界序列被跳过(同 `scan_osc7` / `scan_osc133`
+/// 限制——实践中罕见,下次 PTY 读会重新投递
+/// 前缀)。
 fn scan_plugin_osc(buf: &[u8]) -> SmallVec<[Event; 2]> {
     let mut out: SmallVec<[Event; 2]> = SmallVec::new();
     let prefix = b"\x1b]1337;PureTerm-Plugin-";
     let mut i = 0;
     while i + prefix.len() < buf.len() {
-        // Find the next OSC 1337 plugin prefix.
+        // 找下一个 OSC 1337 插件前缀。
         let Some(pos) = memchr::memchr(prefix[0], &buf[i..]) else {
             break;
         };
@@ -1789,7 +1782,7 @@ fn scan_plugin_osc(buf: &[u8]) -> SmallVec<[Event; 2]> {
             break;
         }
 
-        // Scan the plugin name until `;`.
+        // 扫描插件名直到 `;`。
         let mut name_end = after_prefix;
         while name_end < buf.len() && buf[name_end] != b';' {
             let c = buf[name_end];
@@ -1799,8 +1792,8 @@ fn scan_plugin_osc(buf: &[u8]) -> SmallVec<[Event; 2]> {
             name_end += 1;
         }
         if name_end >= buf.len() || buf[name_end] != b';' {
-            // Malformed name (invalid char or no `;`). Skip past this
-            // prefix occurrence and keep scanning.
+            // 名称非法(含无效字符)或无 `;`。跳过此次
+            // 前缀出现,继续扫描。
             i = start + 1;
             continue;
         }
@@ -1812,7 +1805,7 @@ fn scan_plugin_osc(buf: &[u8]) -> SmallVec<[Event; 2]> {
             continue;
         }
 
-        // Scan the payload until BEL or ST.
+        // 扫描载荷直到 BEL 或 ST。
         let payload_start = name_end + 1;
         let mut p = payload_start;
         while p < buf.len() {
@@ -1823,7 +1816,7 @@ fn scan_plugin_osc(buf: &[u8]) -> SmallVec<[Event; 2]> {
             }
         }
         if p >= buf.len() {
-            // No terminator — sequence spans buffer boundary, skip.
+            // 无终止符——序列跨缓冲边界,跳过。
             i = start + 1;
             continue;
         }
@@ -1875,7 +1868,7 @@ mod tests_plugin_osc {
 
     #[test]
     fn skips_malformed_name() {
-        // Name contains `!` — invalid char, sequence is skipped.
+        // 名称含 `!`——非法字符,跳过该序列。
         let buf = b"\x1b]1337;PureTerm-Plugin-bad!name;x\x07";
         let events = scan_plugin_osc(buf);
         assert!(events.is_empty());
@@ -1890,7 +1883,7 @@ mod tests_plugin_osc {
 
     #[test]
     fn skips_unterminated_sequence() {
-        // No BEL or ST — spans buffer boundary.
+        // 无 BEL 或 ST——跨缓冲边界。
         let buf = b"\x1b]1337;PureTerm-Plugin-x;payload-without-terminator";
         let events = scan_plugin_osc(buf);
         assert!(events.is_empty());
@@ -1912,14 +1905,14 @@ mod tests_plugin_osc {
 #[cfg(test)]
 #[cfg(unix)]
 mod tests_evented_socketpair {
-    //! M0 spike (GAP-5.1): prove `EventLoop` is fd-agnostic.
+    //! M0 spike(GAP-5.1):证明 `EventLoop` 与 fd 无关。
     //!
-    //! A bidirectional Unix stream socketpair (NOT a kernel PTY) satisfies the
-    //! `EventedPty` contract, so the future `DaemonPty` — which mirrors a
-    //! daemon-owned PTY's bytes over a socket into the GUI — can plug into
-    //! `PtyEventLoop` WITHOUT touching `event_loop.rs`. If this test fails, the
-    //! daemon architecture must fall back to the daemon owning the `Term` grid
-    //! (the much larger option a).
+    //! 双向 Unix stream socketpair(非内核 PTY)满足
+    //! `EventedPty` 契约,因此未来的 `DaemonPty`——把守护 PTY 字节经 socket
+    //! 镜像进 GUI——可在**不修改 `event_loop.rs`** 的情况下接入
+    //! `PtyEventLoop`。若本测试失败,守护架构必须回退为
+    //! 让守护持有 `Term` 网格(代价大得多的方案 a)。
+    //! 故本测试用于锁定当前设计,防止意外回退。
 
     use super::*;
     use crate::event::OnResize;
@@ -1935,9 +1928,9 @@ mod tests_evented_socketpair {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    /// An `EventedPty` backed by a Unix stream socketpair (the read/write
-    /// channel) plus a self-pipe (child-exit notification), instead of a kernel
-    /// PTY. The trait impls mirror `tty::unix::Pty` byte-for-byte.
+    /// 由 Unix stream socketpair(读/写通道)+ self-pipe
+    ///(子进程退出通知)支撑的 `EventedPty`,取代内核 PTY。该 trait
+    /// 实现与 `tty::unix::Pty` 逐字节一致。
     struct SocketPairPty {
         file: File,
         signals: UnixStream,
@@ -2016,14 +2009,14 @@ mod tests_evented_socketpair {
 
     impl OnResize for SocketPairPty {
         fn on_resize(&mut self, _window_size: WindowSize) {
-            // The future DaemonPty forwards a RESIZE frame over the data plane
-            // instead of ioctl-ing a real PTY fd. For this spike we only record
-            // that the path is exercised without a real PTY fd.
+            // 未来的 DaemonPty 经数据面转发 RESIZE 帧
+            // 而不是对真 PTY fd 做 ioctl。本 spike 仅记录
+            // 这条路径被演练过(无真 PTY fd)。
             self.resize_count.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    /// Event listener that records every event into a shared buffer.
+    /// 事件监听器:把每个事件记录进共享缓冲。
     #[derive(Clone)]
     struct RecordingListener(Arc<Mutex<Vec<Event>>>);
 
@@ -2035,16 +2028,16 @@ mod tests_evented_socketpair {
 
     #[test]
     fn event_loop_socketpair_satisfies_evented_pty() {
-        // Read/write channel: the test writes PTY bytes into `feed`; the loop
-        // reads them off `file` (the other socketpair end).
+        // 读写通道:测试把 PTY 字节写入 `feed`;循环从
+        // `file`(另一端 socketpair)读出。
         let (mut feed, ours) = UnixStream::pair().expect("socketpair");
         ours.set_nonblocking(true).expect("set_nonblocking");
 
-        // SAFETY: `ours` owns a valid fd; ownership transfers to the `File`.
+        // SAFETY:`ours` 拥有有效 fd;所有权移交给 `File`。
         let file = unsafe { File::from_raw_fd(ours.into_raw_fd()) };
 
-        // Child-exit self-pipe: the test writes 1 byte into `sig_send` to
-        // signal exit; the loop reads it via `next_child_event`.
+        // 子进程退出 self-pipe:测试向 `sig_send` 写 1 字节
+        // 发出退出信号;循环经 `next_child_event` 读取。
         let (signals, mut sig_send) = UnixStream::pair().expect("signal pair");
         signals.set_nonblocking(true).expect("signals nonblocking");
 
@@ -2063,8 +2056,8 @@ mod tests_evented_socketpair {
         let sender = event_loop.channel();
         let handle = event_loop.spawn();
 
-        // Exercise the resize path (Msg::Resize -> on_resize). It must NOT
-        // require a real PTY fd; the no-op impl above just counts.
+        // 演练 resize 路径(Msg::Resize -> on_resize)。不应
+        // 依赖真实 PTY fd;上方的 no-op 实现只做计数。
         sender
             .send(Msg::Resize(WindowSize {
                 num_lines: 24,
@@ -2074,24 +2067,24 @@ mod tests_evented_socketpair {
             }))
             .expect("send resize");
 
-        // Let the loop enter its poller and process the resize.
+        // 让循环进入 poller 并处理这次 resize。
         std::thread::sleep(Duration::from_millis(50));
 
-        // Feed PTY output bytes through the socket.
+        // 通过 socket 喂入 PTY 输出字节。
         feed.write_all(b"hello world\r\n").expect("write output");
         feed.flush().expect("flush");
 
-        // Give the loop time to read + parse the bytes into the grid.
+        // 给循环留出时间读取并解析字节到网格。
         std::thread::sleep(Duration::from_millis(100));
 
-        // Signal child exit via the self-pipe -> next_child_event -> Exited.
+        // 经 self-pipe 发出子进程退出信号(next_child_event -> Exited)。
         sig_send.write_all(&[1u8]).expect("write exit byte");
 
-        // The loop breaks after terminal.exit(); join waits for full teardown.
+        // terminal.exit() 之后循环退出;join 等待完整拆除。
         let (loop_back, _state) = handle.join().expect("event loop thread panicked");
         drop(loop_back);
 
-        // Assert the parse path fired.
+        // 断言解析路径已触发。
         let recorded = recorded.lock().unwrap();
         assert!(
             recorded.iter().any(|e| matches!(e, Event::Wakeup)),
@@ -2103,7 +2096,7 @@ mod tests_evented_socketpair {
         );
         drop(recorded);
 
-        // Assert the parsed bytes actually landed in the terminal grid.
+        // 断言解析出的字节确实落到了终端网格中。
         let term = terminal.lock();
         let grid = term.grid();
         let mut text = String::new();
@@ -2115,7 +2108,7 @@ mod tests_evented_socketpair {
         assert!(text.contains("hello world"), "grid should contain parsed output");
         drop(term);
 
-        // Assert on_resize was exercised without a real PTY fd.
+        // 断言 on_resize 在无真实 PTY fd 的情况下被演练到。
         assert_eq!(resize_count.load(Ordering::Relaxed), 1, "resize should fire once");
     }
 }
@@ -2128,34 +2121,34 @@ mod tests_graphics {
         scan_graphics(buf).into_iter().collect()
     }
 
-    // ---- Sixel ----
+    // ---- Sixel(6 比图像)----
 
     #[test]
     fn sixel_raw_payload_preserved() {
-        // DCS = ESC P, "Pq" indicates sixel.
+        // DCS = ESC P;"Pq" 表示 sixel。
         let buf = b"text\x1bPq#0;2;100;100\x1b\\after";
         let r = g(buf);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].protocol, GraphicsProtocol::Sixel);
         assert_eq!(r[0].format, GraphicsFormat::Rgb);
-        // Raw pixel data forwarded verbatim; renderer decodes.
+        // 原始像素数据原样透传;由渲染器解码。
         assert!(r[0].encoded.starts_with(b"#0;2;100;100"));
         assert!(r[0].pixels.is_none());
     }
 
     #[test]
     fn sixel_no_st_drops() {
-        // No ST terminator — the scanner must not loop forever; it bails.
+        // 无 ST 终止符——扫描器不能死循环,直接放弃。
         let buf = b"\x1bPq#0;2;100;100";
         let r = g(buf);
         assert!(r.is_empty());
     }
 
-    // ---- Kitty graphics ----
+    // ---- Kitty 图形协议 ----
 
     #[test]
     fn kitty_transmit_and_use_rgba() {
-        // 2x2 RGBA, all opaque red. Base64 of
+        // 2x2 RGBA,全不透明红色。以下像素数组的 Base64:
         //   [255, 0, 0, 255, 255, 0, 0, 255] = "/wAA//8AAP8="
         let payload = "/wAA//8AAP8=";
         let buf = format!("\x1b_Ga=T,f=32,i=1,c=2,r=2;{}\x1b\\", payload);
@@ -2175,7 +2168,7 @@ mod tests_graphics {
 
     #[test]
     fn kitty_chunked_dropped_in_v1() {
-        // m=0 → more chunks follow → scanner defers.
+        // m=0 → 还有后续分块 → 扫描器延后处理。
         let buf = b"\x1b_Ga=T,f=32,i=1,m=0;AAAA\x1b\\";
         let r = g(buf);
         assert!(r.is_empty());
@@ -2183,7 +2176,7 @@ mod tests_graphics {
 
     #[test]
     fn kitty_final_chunk_emitted() {
-        // m=1 → last chunk → emit.
+        // m=1 → 最后一个分块 → 立即发出。
         let buf = b"\x1b_Ga=T,f=32,i=1,m=1;AAAA\x1b\\";
         let r = g(buf);
         assert_eq!(r.len(), 1);
@@ -2191,9 +2184,9 @@ mod tests_graphics {
 
     #[test]
     fn kitty_png_passthrough() {
-        // PNG header (8 bytes) + IHDR (24 bytes). 4x3 image, base64 of the
-        // 16-byte header+IHDR (we don't need a valid PNG, just one whose
-        // first 24 bytes pass png_dimensions).
+        // PNG 头(8 字节)+ IHDR(24 字节)。4x3 图像,取
+        // 16 字节头+IHDR 的 base64(无需合法 PNG,只要前 24 字节
+        // 能通过 png_dimensions 检查即可)。
         let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x04\x00\x00\x00\x03";
         let b64 = base64_encode(png);
         let buf = format!("\x1b_Ga=T,f=100,i=7;{}\x1b\\", b64);
@@ -2208,17 +2201,17 @@ mod tests_graphics {
 
     #[test]
     fn kitty_query_action_dropped() {
-        // a=q (query) — not a transmission, ignore.
+        // a=q(查询)——非传输,忽略。
         let buf = b"\x1b_Ga=q,i=1;AAAA\x1b\\";
         let r = g(buf);
         assert!(r.is_empty());
     }
 
-    // ---- iTerm2 inline image ----
+    // ---- iTerm2 内联图像 ----
 
     #[test]
     fn iterm2_inline_png() {
-        // Same synthetic PNG header as the kitty test.
+        // 与 kitty 测试相同的合成 PNG 头。
         let png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x04\x00\x00\x00\x03";
         let b64 = base64_encode(png);
         let buf = format!("\x1b]1337;File=inline=1;width=10;height=5:{}\x07", b64);
@@ -2233,13 +2226,13 @@ mod tests_graphics {
 
     #[test]
     fn iterm2_non_inline_dropped() {
-        // inline=0 → file save, not an inline image.
+        // inline=0 → 保存文件,而非内联图像。
         let buf = b"\x1b]1337;File=inline=0:AAAA\x07";
         let r = g(buf);
         assert!(r.is_empty());
     }
 
-    // ---- cross-cutting ----
+    // ---- 交叉场景 ----
 
     #[test]
     fn empty_buffer_yields_no_images() {
@@ -2249,7 +2242,7 @@ mod tests_graphics {
 
     #[test]
     fn mixed_protocols_extracted_in_order() {
-        // Sixel then Kitty. Order in the buffer is preserved in the output.
+        // 先 Sixel 后 Kitty;输出顺序与缓冲区中的顺序一致。
         let buf = b"\x1bPqAAA\x1b\\\x1b_Ga=T,f=32,i=9,c=1,r=1;AAAA\x1b\\";
         let r = g(buf);
         assert_eq!(r.len(), 2);
@@ -2257,7 +2250,7 @@ mod tests_graphics {
         assert_eq!(r[1].protocol, GraphicsProtocol::Kitty);
     }
 
-    // ---- helpers ----
+    // ---- 辅助函数 ----
 
     fn base64_encode(input: &[u8]) -> String {
         const ALPH: &[u8; 64] =

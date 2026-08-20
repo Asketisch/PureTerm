@@ -1,30 +1,30 @@
-//! GAP-53: Interactive notebooks — `.pureterm` JSON cell format + cell engine.
+//! GAP-53:交互式记事本 —— `.pureterm` JSON 单元格格式 + 单元格引擎。
 //!
-//! ## Format
+//! ## 格式
 //!
-//! Notebooks are JSON files with a list of cells. Each cell is one of:
+//! 记事本是包含单元格列表的 JSON 文件。每个单元格是以下之一:
 //!
-//! - `markdown` — body text (rendered by the UI).
-//! - `code` — `language` + `source` (executed by the cell engine).
-//! - `output` — pre-rendered `text` (the engine appends one of these
-//!   after a `code` cell finishes).
+//! - `markdown` —— 正文文本(由 UI 渲染)。
+//! - `code` —— `language` + `source`(由单元格引擎执行)。
+//! - `output` —— 预渲染的 `text`(引擎在 `code` 单元格
+//!   执行结束后追加一条)。
 //!
-//! Saving a notebook preserves all three cell types in order.
+//! 保存记事本会按顺序保留全部三种单元格类型。
 //!
-//! ## Cell engine
+//! ## 单元格引擎
 //!
-//! [`Notebook::execute_cell`] runs a `code` cell by spawning a shell
-//! and collecting its stdout / stderr into an `output` cell. The engine
-//! is deliberately minimal — no PTY, no streaming, no kernel — but
-//! enough to give the CLI / settings UI something to demo without
-//! pulling in a full notebook kernel crate.
+//! [`Notebook::execute_cell`] 通过启动一个 shell 运行 `code` 单元格,
+//! 并把其 stdout / stderr 收集进 `output` 单元格。该引擎
+//! 刻意保持最小 —— 无 PTY、无流式、无内核 —— 但
+//! 足以让 CLI / 设置界面有东西可演示,而无需
+//! 引入完整的记事本内核 crate。
 
 use std::path::Path;
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 
-/// `[notebooks]` config.
+/// `[notebooks]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NotebooksConfig {
     pub enabled: bool,
@@ -45,7 +45,7 @@ pub enum NotebookCell {
 }
 
 impl NotebookCell {
-    /// Short human label used by `pureterm notebook show` / palette.
+    /// 供 `pureterm notebook show` / 调色板使用的简短名称。
     pub fn kind(&self) -> &'static str {
         match self {
             NotebookCell::Markdown { .. } => "markdown",
@@ -76,16 +76,16 @@ impl Notebook {
         std::fs::write(path, raw).map_err(|e| e.to_string())
     }
 
-    /// Run a `code` cell and return the resulting `output` cell.
+    /// 运行一个 `code` 单元格,返回生成的 `output` 单元格。
     ///
-    /// - `language` is informational only — the engine always spawns
-    ///   the user's `$SHELL` (or `/bin/sh` as a fallback) to run the
-    ///   source text. The intent is "run this snippet", not "interpret
-    ///   it as a typed kernel".
-    /// - The captured text includes both stdout and stderr. The exit
-    ///   code is **not** stored on the output cell — instead, the caller
-    ///   can compare the returned [`CellExecution`] against the
-    ///   notebook if it cares.
+    /// - `language` 仅作展示 —— 引擎始终用
+    ///   用户的 `$SHELL`(或回退到 `/bin/sh`)运行
+    ///   源码文本。意图是「运行这段代码」,而非「按
+    ///   类型化内核来解释它」。
+    /// - 捕获的文本同时包含 stdout 与 stderr。退出码
+    ///   **不会**存进 output 单元格 —— 而是由调用方
+    ///   拿返回的 [`CellExecution`] 与记事本对比,
+    ///   若需要的话。
     pub fn execute_cell(&self, index: usize) -> Result<CellExecution, String> {
         let cell = self
             .cells
@@ -103,7 +103,7 @@ impl Notebook {
         })
     }
 
-    /// Append a new cell to the end of the notebook and return its index.
+    /// 在记事本末尾追加一个新单元格,返回其索引。
     pub fn append(&mut self, cell: NotebookCell) -> usize {
         let idx = self.cells.len();
         self.cells.push(cell);
@@ -111,7 +111,7 @@ impl Notebook {
     }
 }
 
-/// Result of running a single `code` cell.
+/// 运行单个 `code` 单元格的结果。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CellExecution {
     pub cell_index: usize,
@@ -120,7 +120,7 @@ pub struct CellExecution {
 }
 
 impl CellExecution {
-    /// The stdout/stderr text captured from the cell.
+    /// 从单元格捕获的 stdout / stderr 文本。
     pub fn text(&self) -> &str {
         match &self.output {
             NotebookCell::Output { text } => text,
@@ -129,8 +129,8 @@ impl CellExecution {
     }
 }
 
-/// Spawn the user's shell, run `source`, and return an `output` cell
-/// with the combined stdout + stderr.
+/// 启动用户的 shell,运行 `source`,返回一个
+/// 合并了 stdout + stderr 的 `output` 单元格。
 pub(crate) fn run_shell(source: &str) -> Result<NotebookCell, String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
     let output = Command::new(&shell)

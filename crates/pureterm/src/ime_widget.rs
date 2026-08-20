@@ -1,14 +1,11 @@
-//! A zero-cost wrapper widget that activates the OS input method (IME) for
-//! the terminal pane. The built-in `Shader` widget never calls
-//! `shell.request_input_method()`, so without this wrapper the OS IME is
-//! never enabled and CJK input does not work.
+//! 一个零开销的包装组件,用于为终端面板激活操作系统输入法(IME)。
+//! 内置的 `Shader` 组件从不调用 `shell.request_input_method()`,因此没有
+//! 这个包装,OS IME 永远不会被启用,CJK 输入无法工作。
 //!
-//! T-core-shaper v3: the [`cluster_to_cursor_position`] helper maps a
-//! preedit byte offset to a pixel rectangle for the IME composition
-//! window. It's exercised by the inline `cluster_demo` tests below —
-//! no display, no iced runtime required, so it lives in the same
-//! `cargo test -p pureterm --bin pureterm` invocation as the rest of
-//! the cluster↔cell plumbing.
+//! T-core-shaper v3:[`cluster_to_cursor_position`] 辅助函数把 preedit
+//! 字节偏移映射为 IME 组合窗口的像素矩形。它由下方内联的 `cluster_demo`
+//! 测试验证 —— 无需显示器、无需 iced 运行时,因此与其余
+//! cluster↔cell 管道同属 `cargo test -p pureterm --bin pureterm` 调用。
 
 use iced::advanced::widget::{Tree, Widget};
 use iced::advanced::{Clipboard, Layout, Shell};
@@ -19,19 +16,16 @@ use pureterm_alacritty_runtime::shaper::ShapedRun;
 #[cfg(test)]
 use pureterm_alacritty_runtime::shaper::Shaper as _;
 
-/// T-core-shaper v3: compute the IME composition cursor's screen-space
-/// pixel rectangle for a given preedit byte offset inside a previously
-/// shaped run.
+/// T-core-shaper v3:计算给定 preedit 字节偏移(位于先前已 shape 的 run 内)
+/// 在 IME 组合光标处的屏幕空间像素矩形。
 ///
-/// - `run`: the [`ShapedRun`] covering the current row (typically the
-///   prompt row during composition).
-/// - `byte_offset`: the byte position of the preedit cursor inside the
-///   underlying input string. 0 = before the first cluster.
-/// - `col_origin`: the screen column where the run starts (so the
-///   rectangle is in pane coordinates).
-/// - `cell_w` / `cell_h`: the cell dimensions in logical px.
+/// - `run`:覆盖当前行的 [`ShapedRun`](通常为组合期间的提示符行)。
+/// - `byte_offset`:preedit 光标在底层输入字符串中的字节位置。0 = 在第一个
+///   cluster 之前。
+/// - `col_origin`:run 开始的屏幕列(使矩形位于面板坐标系中)。
+/// - `cell_w` / `cell_h`:逻辑像素下的单元格尺寸。
 ///
-/// Returns `None` when the run is empty (no glyphs shaped).
+/// 当 run 为空(未 shape 出字形)时返回 `None`。
 pub fn cluster_to_cursor_position(
     run: &ShapedRun,
     byte_offset: usize,
@@ -49,7 +43,7 @@ pub fn cluster_to_cursor_position(
     })
 }
 
-/// Wrapper that activates IME with `Purpose::Terminal` on every `update` call.
+/// 每次 `update` 调用时以 `Purpose::Terminal` 激活 IME 的包装组件。
 pub struct ImeWrapper<'a, Message, Theme, Renderer> {
     content: Element<'a, Message, Theme, Renderer>,
 }
@@ -116,14 +110,14 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        // Delegate to inner widget first
+        // 先委托给内部组件
         self.content.as_widget_mut().update(
             &mut tree.children[0],
             event, layout, cursor, renderer, clipboard, shell, viewport,
         );
 
-        // Always request IME activation with Terminal purpose.
-        // Without this, the OS never enables the input method for our window.
+        // 总是以 Terminal 用途请求启用 IME。
+        // 没有这一步,OS 永远不会为我们的窗口启用输入法。
         shell.request_input_method::<String>(&InputMethod::Enabled {
             cursor: Rectangle::default(),
             purpose: Purpose::Terminal,
@@ -182,13 +176,12 @@ where
     }
 }
 
-// --- T-core-shaper v3: cluster↔cell reverse-lookup demo ---
+// --- T-core-shaper v3:cluster↔cell 反查 demo ---
 //
-// These tests are the unit-test half of checklist B.5 ("ime_widget.rs
-// 撤销/重做 cluster↔cell 反查 demo"). The visual half is exercised by
-// the e2e flow described in `cluster_demo_e2e_documentation` below —
-// rendering an actual iced widget requires a display, so it stays as a
-// guide rather than a `#[test]`.
+// 这些测试是核对表 B.5("ime_widget.rs 撤销/重做 cluster↔cell 反查 demo")
+// 的单测部分。可视部分由下面 `cluster_demo_e2e_documentation` 描述的
+// e2e 流程验证 —— 渲染真正的 iced 组件需要显示器,所以它保留为
+// 指南而非 `#[test]`。
 #[cfg(test)]
 mod cluster_demo {
     use super::*;
@@ -199,7 +192,7 @@ mod cluster_demo {
     }
 
     fn shape_cjk() -> ShapedRun {
-        // "你" is U+4F60 (3 UTF-8 bytes), wide → 2 cells.
+        // "你" 是 U+4F60(3 个 UTF-8 字节),宽字符 → 2 个单元格。
         MonospaceShaper::new().shape("a你b", 8.0)
     }
 
@@ -215,34 +208,34 @@ mod cluster_demo {
     #[test]
     fn ascii_middle_byte_lands_on_correct_cell() {
         let run = shape_ascii();
-        // "ls -la" → clusters: l(0), s(1), space(2), -(3), l(4), a(5).
-        // Byte 2 (start of " ") → cell 2.
+        // "ls -la" → 集群:l(0), s(1), 空格(2), -(3), l(4), a(5)。
+        // 字节 2(" " 开头)→ cell 2。
         let r = cluster_to_cursor_position(&run, 2, 0, 8.0, 16.0).unwrap();
-        assert_eq!(r.x, 16.0); // col 2 * 8 px
+        assert_eq!(r.x, 16.0); // 第 2 列 * 8 px
     }
 
     #[test]
     fn ascii_byte_past_end_returns_last_cell() {
         let run = shape_ascii();
-        // "ls -la" has 6 chars; byte 100 is past the end.
-        // cluster_byte_to_cell returns Some(last_cell) (no None) since the
-        // last glyph's cluster (5) <= 100.
+        // "ls -la" 有 6 个字符;字节 100 已越界。
+        // cluster_byte_to_cell 返回 Some(last_cell)(不会返回 None),因为
+        // 最后一个字形的 cluster(5)<= 100。
         let r = cluster_to_cursor_position(&run, 100, 0, 8.0, 16.0).unwrap();
-        // Last cell index in cluster_to_cell is 5 → x = 5 * 8 = 40.
+        // cluster_to_cell 中最末单元格索引为 5 → x = 5 * 8 = 40。
         assert_eq!(r.x, 40.0);
     }
 
     #[test]
     fn cjk_wide_char_occupies_two_cells() {
         let run = shape_cjk();
-        // "a你b" → clusters: a(0,1 cell), 你(1,2 cells), b(3,1 cell).
-        // Byte 0 (before 'a') → cell 0.
+        // "a你b" → 集群:a(0,1 格), 你(1,2 格), b(3,1 格)。
+        // 字节 0('a' 之前)→ cell 0。
         let r0 = cluster_to_cursor_position(&run, 0, 0, 8.0, 16.0).unwrap();
         assert_eq!(r0.x, 0.0);
-        // Byte 1 (start of "你") → cell 1.
+        // 字节 1("你" 开头)→ cell 1。
         let r1 = cluster_to_cursor_position(&run, 1, 0, 8.0, 16.0).unwrap();
         assert_eq!(r1.x, 8.0);
-        // Byte 4 (start of "b") → cell 3 (a=1 + 你=2 = 3 cells consumed).
+        // 字节 4("b" 开头)→ cell 3(a=1 + 你=2 = 已占 3 格)。
         let r3 = cluster_to_cursor_position(&run, 4, 0, 8.0, 16.0).unwrap();
         assert_eq!(r3.x, 24.0);
     }
@@ -259,30 +252,26 @@ mod cluster_demo {
     #[test]
     fn col_origin_shifts_rectangle() {
         let run = shape_ascii();
-        // Origin at column 10 → x = (10 + cell) * cell_w.
+        // 原点在第 10 列 → x = (10 + cell) * cell_w。
         let r = cluster_to_cursor_position(&run, 2, 10, 8.0, 16.0).unwrap();
         assert_eq!(r.x, (10.0 + 2.0) * 8.0);
     }
 
-    /// T-core-shaper v3: documentation-only description of the visual
-    /// half of the demo. Not a `#[test]` because rendering an iced
-    /// widget requires a display surface (X11/Wayland/macOS); running
-    /// `iced::run` headless would need a full mock renderer. The unit
-    /// tests above cover the core cluster-to-cell arithmetic; this
-    /// doc-comment is the contract for the visual integration.
+    /// T-core-shaper v3:demo 可视半部分的纯文档说明。不是 `#[test]`,因为
+    /// 渲染 iced 组件需要显示表面(X11/Wayland/macOS);无头运行 `iced::run`
+    /// 需要完整的 mock 渲染器。上面的单元测试覆盖 cluster→cell 算术核心;
+    /// 本文档注释是可视集成的契约。
     #[allow(dead_code)]
     fn cluster_demo_e2e_documentation() {
-        // 1. Boot `pureterm` on a host with a display.
-        // 2. Run a unicode-test emitter in the terminal pane.
-        // 3. The terminal pane's IME wrapper receives a composing event
-        //    with a `preedit: Some("…")` byte stream.
-        // 4. For each byte offset in the preedit stream, call
-        //    `cluster_to_cursor_position(&run, offset, col, cell_w, cell_h)`
-        //    and feed the resulting `Rectangle` to
-        //    `shell.request_input_method(Enabled { cursor, .., preedit })`.
-        // 5. Visually confirm the OS IME composition window tracks the
-        //    cluster position — for CJK input the cursor sits over the
-        //    middle of the wide character (cell * cell_w), not at a
-        //    byte boundary.
+        // 1. 在带显示的宿主机上启动 `pureterm`。
+        // 2. 在终端面板里运行一个 unicode 测试发射器。
+        // 3. 终端面板的 IME 包装器收到一个带 `preedit: Some("…")` 字节流的
+        //    组合事件。
+        // 4. 对 preedit 流中的每个字节偏移,调用
+        //    `cluster_to_cursor_position(&run, offset, col, cell_w, cell_h)`,
+        //    并把结果 `Rectangle` 喂给
+        //    `shell.request_input_method(Enabled { cursor, .., preedit })`。
+        // 5. 目视确认 OS IME 组合窗口跟随 cluster 位置 —— 对 CJK 输入,光标
+        //    停在宽字符的中间(cell * cell_w),而不是字节边界。
     }
 }

@@ -1,10 +1,10 @@
-//! Socket method registry — maps method names to handler functions.
+//! Socket 方法注册表——将方法名映射到处理函数。
 //!
-//! The `SocketRouter` holds a `HashMap<String, Handler>` where each handler
-//! receives optional params and an `AppSnapshot`, and returns a JSON result
-//! (or error) plus an optional side effect for the main loop to execute.
+//! `SocketRouter` 持有 `HashMap<String, Handler>`,每个处理器
+//! 接收可选参数与一个 `AppSnapshot`,返回 JSON 结果
+//! (或错误)以及一个供主循环执行的可选副作用。
 //!
-//! GAP-6.1: 30+ JSON-RPC methods across 8 namespaces.
+//! GAP-6.1:覆盖 8 个命名空间的 30+ 个 JSON-RPC 方法。
 //!
 //! 模块拆分(满足 CLAUDE.md 文件行数规范,各文件 < 500 行):
 //! - [`types`]:副作用枚举 `IpcSideEffect` 与只读快照 `AppSnapshot` 等数据类型。
@@ -33,25 +33,25 @@ use serde_json::Value;
 
 use super::protocol::{JsonRpcError, JsonRpcResponse, ERROR_INVALID_PARAMS};
 
-// ── Handler type ─────────────────────────────────────────────────────────
+// ── 处理器类型 ────────────────────────────────────────────────────────────────
 
-/// A method handler: receives optional params + snapshot, returns
-/// (JSON result or error, optional side effect).
+/// 方法处理器:接收可选参数 + 快照,返回
+/// (JSON 结果或错误,以及可选副作用)。
 pub(super) type Handler = Box<
     dyn Fn(Option<Value>, &AppSnapshot) -> (Result<Value, JsonRpcError>, Option<IpcSideEffect>)
         + Send
         + Sync,
 >;
 
-// ── SocketRouter ─────────────────────────────────────────────────────────
+// ── SocketRouter(方法注册表) ──────────────────────────────────────────────────
 
-/// Method registry. Construct once, wrap in `Arc`, share across tasks.
+/// 方法注册表。构造一次,包上 `Arc`,在多个任务间共享。
 pub struct SocketRouter {
     handlers: HashMap<String, Handler>,
 }
 
 impl SocketRouter {
-    /// Create a new router with all built-in methods registered (30+ methods).
+    /// 创建一个注册了全部内置方法的新路由器(30+ 个方法)。
     pub fn new() -> Arc<Self> {
         let mut router = Self { handlers: HashMap::new() };
         router.register_system();
@@ -61,7 +61,7 @@ impl SocketRouter {
         Arc::new(router)
     }
 
-    /// Register a method handler.
+    /// 注册一个方法处理器。
     fn register(
         &mut self,
         method: impl Into<String>,
@@ -73,7 +73,7 @@ impl SocketRouter {
         self.handlers.insert(method.into(), Box::new(handler));
     }
 
-    /// Register a no-op method that returns a note (for platform stubs).
+    /// 注册一个返回提示信息的空操作方法(用于平台桩)。
     fn register_noop(&mut self, method: &str, note: &str) {
         let note = note.to_string();
         self.handlers.insert(
@@ -82,16 +82,16 @@ impl SocketRouter {
         );
     }
 
-    /// List all registered method names (for help / discovery).
+    /// 列出所有已注册的方法名(用于帮助/发现)。
     pub fn list_methods(&self) -> Vec<&str> {
         let mut methods: Vec<&str> = self.handlers.keys().map(|s| s.as_str()).collect();
         methods.sort();
         methods
     }
 
-    /// Dispatch a request: look up the handler and call it.
+    /// 分发请求:查找对应的处理器并调用。
     ///
-    /// Returns `(response, optional_side_effect)`.
+    /// 返回 `(响应,可选副作用)`。
     pub fn dispatch(
         &self,
         id: u64,
@@ -102,7 +102,7 @@ impl SocketRouter {
         match self.handlers.get(method) {
             Some(handler) => {
                 let (result, effect) = handler(params, snap);
-                // Special: system.methods returns the method list from the router.
+                // 特殊分支:system.methods 需要从路由器返回方法列表。
                 let response = match result {
                     Ok(v) if v.get("__list_methods__").is_some() => {
                         let methods: Vec<&str> = self.list_methods();
@@ -123,13 +123,13 @@ impl SocketRouter {
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────
+// ── 工具函数 ─────────────────────────────────────────────────────────────────
 
-/// Extract a tab/pane index from params.
+/// 从参数中提取标签页/窗格索引。
 ///
-/// Accepts `{"index": N}` or bare number as params.
-/// Falls back to active tab index if no index given.
-/// Returns error if index is out of bounds.
+/// 接受 `{"index": N}` 或裸数字作为参数。
+/// 未给出索引时,回退到当前活动标签页。
+/// 索引越界时返回错误。
 pub(super) fn extract_index(params: Option<Value>, max: usize) -> Result<usize, JsonRpcError> {
     if max == 0 {
         return Err(JsonRpcError {
@@ -158,7 +158,7 @@ pub(super) fn extract_index(params: Option<Value>, max: usize) -> Result<usize, 
     Ok(idx)
 }
 
-/// Simple ISO timestamp without external chrono dependency.
+/// 不依赖外部 chrono 的简易 ISO 时间戳。
 pub(super) fn chrono_now_iso() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()

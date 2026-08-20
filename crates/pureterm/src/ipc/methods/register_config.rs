@@ -13,7 +13,7 @@ use super::{SocketRouter, extract_index, chrono_now_iso};
 impl SocketRouter {
     /// 注册 config.* / ssh.* / debug.* 方法(SSH 在非 unix 平台注册为 noop)。
     pub(super) fn register_config(&mut self) {
-        // ── config.* (4 methods) ──────────────────────────────────────
+        // ── config.* 命名空间(4 个方法) ──────────────────────────────────────────────
         self.register("config.get", |params, _snap| {
             let key = params
                 .as_ref()
@@ -65,8 +65,8 @@ impl SocketRouter {
         });
 
         self.register("config.set", |_params, _snap| {
-            // Config mutation must go through mutate_config to preserve SSH profiles
-            // and other sections. Direct key-value set via IPC is deferred.
+            // 配置变更必须经 mutate_config,以保留 SSH 配置
+            // 等其他段落。经 IPC 直接按键值设置暂缓实现。
             (
                 Ok(serde_json::json!({
                     "note": "config.set: not yet supported via IPC; use pureterm-settings or edit toml"
@@ -75,7 +75,7 @@ impl SocketRouter {
             )
         });
 
-        // ── ssh.* (3 methods) ─────────────────────────────────────────
+        // ── ssh.* 命名空间(3 个方法) ─────────────────────────────────────────────────
         #[cfg(unix)]
         {
             self.register("ssh.list_profiles", |_params, snap| {
@@ -142,9 +142,9 @@ impl SocketRouter {
             });
 
             self.register("ssh.disconnect", |params, _snap| {
-                // GAP-5.6: real disconnect. Optional { "pane_id": <u64> };
-                // defaults to the active pane. The iced loop flags the pane
-                // user-initiated-close and writes `exit\r`.
+                // GAP-5.6:真正的断开。可选 { "pane_id": <u64> };
+                // 缺省作用于当前窗格。iced 主循环把该窗格标记为
+                // 用户主动关闭并写入 `exit\r`。
                 let pane_id = params
                     .and_then(|p| p.get("pane_id").and_then(|v| v.as_u64()));
                 (
@@ -153,10 +153,10 @@ impl SocketRouter {
                 )
             });
 
-            // GAP-5.6: read-only Socket API surface for SSH connection state.
-            // Returns every SSH pane's state (connected / reconnecting /
-            // failed / ...) plus typed failure_kind + session_id + host, so
-            // agents / MCP / CLI can observe connectivity without the GUI.
+            // GAP-5.6:SSH 连接状态的只读 Socket API 表面。
+            // 返回每个 SSH 窗格的状态(connected / reconnecting /
+            // failed / ...),外加类型化的 failure_kind + session_id + host,
+            // 使 agents / MCP / CLI 无需 GUI 即可观察连接状态。
             self.register("ssh.state", |_params, snap| {
                 let panes: Vec<Value> = snap
                     .ssh_pane_states
@@ -186,7 +186,7 @@ impl SocketRouter {
             });
         }
 
-        // Non-unix stubs for ssh.* methods
+        // 非 unix 平台为 ssh.* 方法注册的桩
         #[cfg(not(unix))]
         {
             self.register_noop("ssh.list_profiles", "SSH not available on this platform");
@@ -195,7 +195,7 @@ impl SocketRouter {
             self.register_noop("ssh.state", "SSH not available on this platform");
         }
 
-        // ── debug.* (2 methods) ───────────────────────────────────────
+        // ── debug.* 命名空间(2 个方法) ───────────────────────────────────────────────
         self.register("debug.ping", |_params, _snap| {
             (Ok(serde_json::json!({"pong": true, "ts": chrono_now_iso()})), None)
         });

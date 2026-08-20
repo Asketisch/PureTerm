@@ -27,14 +27,14 @@ mod tests {
         let bs = vec![binding("tmux", true, &["tmux", "attach", "-t", "{checkpoint}"])];
         let argv = cold_resume_argv_from(&bs, "tmux", "sid-123", "/cwd", |_| AuthDecision::Approved);
         let argv = argv.expect("auto binding + authorized token → Some");
-        // {checkpoint} interpolated to "work"; session_id/cwd unused by this shell.
+        // {checkpoint} 被插值为 "work";此 shell 不使用 session_id/cwd。
         assert_eq!(argv, vec!["tmux", "attach", "-t", "work"]);
     }
 
     #[test]
     fn cold_resume_argv_from_auto_no_token_returns_none() {
         let bs = vec![binding("tmux", true, &["tmux", "attach"])];
-        // auto binding but no token → None (cold-resume never prompts).
+        // 自动绑定但无 token → None(冷恢复从不弹提示)。
         assert_eq!(
             cold_resume_argv_from(&bs, "tmux", "sid", "/cwd", |_| AuthDecision::NeedsPrompt),
             None
@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn cold_resume_argv_from_non_auto_returns_none() {
         let bs = vec![binding("tmux", false, &["tmux", "attach"])];
-        // non-auto binding, even authorized → None (only auto qualifies for cold-resume).
+        // 非自动绑定,即使已授权 → None(仅自动绑定符合冷恢复条件)。
         assert_eq!(
             cold_resume_argv_from(&bs, "tmux", "sid", "/cwd", |_| AuthDecision::Approved),
             None
@@ -118,8 +118,8 @@ mod tests {
         assert_eq!(interpolate(&argv, &vars), vec!["/home/u/tmux-work"]);
     }
 
-    /// `tempfile::NamedTempFile` gives an isolated, auto-cleaned path for
-    /// round-tripping the config CRUD without touching the user's real config.
+    /// `tempfile::NamedTempFile` 提供隔离且自动清理的路径,
+    /// 用于往返测试配置的增删改查,不触碰用户的真实配置。
     fn empty_temp_config() -> tempfile::NamedTempFile {
         tempfile::NamedTempFile::new().unwrap()
     }
@@ -190,15 +190,15 @@ mod tests {
         assert_eq!(bs.len(), 1);
         assert_eq!(bs[0].checkpoint, "side");
 
-        // Removing a missing key returns false and is a no-op.
+        // 删除不存在的键返回 false,且不产生任何影响。
         assert!(!remove_binding(path, "tmux", "missing").unwrap());
         assert_eq!(list_bindings(path).len(), 1);
     }
 
     #[test]
     fn set_binding_preserves_unrelated_sections() {
-        // The mutate_config scoped-write guarantee: writing [[resume.bindings]]
-        // must leave every other TOML section (vault.agents, scalars) intact.
+        // mutate_config 的局部写入保证:写入 [[resume.bindings]]
+        // 不得改动其他 TOML 段(vault.agents、标量)。
         let tmp = empty_temp_config();
         let path = tmp.path();
         let original = r#"
@@ -214,14 +214,14 @@ size = 14
 
         set_binding(path, "tmux", "work", &["tmux".into()], true).unwrap();
 
-        // vault.agents survived.
+        // vault.agents 段保留完好。
         let agents = AppConfig::load_vault_agents(path);
         assert_eq!(agents.len(), 1);
         assert_eq!(agents[0].kind, "claude-code");
-        // resume binding landed.
+        // resume 绑定已写入。
         let bs = list_bindings(path);
         assert_eq!(bs.len(), 1);
-        // The [font] scalar survived (raw text check).
+        // [font] 标量段保留完好(原始文本校验)。
         let rewritten = std::fs::read_to_string(path).unwrap();
         assert!(rewritten.contains("family = \"monospace\""));
         assert!(rewritten.contains("size = 14"));
@@ -229,8 +229,8 @@ size = 14
 
     #[test]
     fn cli_parses_resume_set_variadic_shell_with_hyphen_value() {
-        // `--shell` is variadic with allow_hyphen_values so an argv element
-        // like `-t` is captured as a value, not mistaken for a flag.
+        // `--shell` 是可变的且启用 allow_hyphen_values,因此 argv 中
+        // 形如 `-t` 的元素会被当作值捕获,而不会被误认为标志。
         use clap::Parser;
         use crate::cli::{Cli, Command, SurfaceSub};
         let cli = Cli::try_parse_from([
@@ -304,7 +304,7 @@ size = 14
         let tokens = dir.path().join("resume-tokens.json");
 
         let secret = ensure_secret_at(&key);
-        // Fresh: no tokens → needs prompt.
+        // 全新状态:无 token → 需要弹提示。
         let loaded = load_tokens_at(&tokens);
         assert!(loaded.is_empty());
         assert_eq!(
@@ -312,7 +312,7 @@ size = 14
             AuthDecision::NeedsPrompt
         );
 
-        // Approve → persist → reload → approved.
+        // 授权 → 持久化 → 重新加载 → 已授权。
         let t = compute_token(&secret, "tmux", "work", &["tmux".into()]);
         let mut v = loaded.clone();
         v.push(t);
@@ -328,17 +328,17 @@ size = 14
     fn token_bound_to_exact_payload() {
         let secret = [0x42u8; 32];
         let approved = vec![compute_token(&secret, "tmux", "work", &["attach".into()])];
-        // Same payload → approved.
+        // 相同负载 → 已授权。
         assert_eq!(
             authorize_with(&secret, &approved, "tmux", "work", &["attach".into()]),
             AuthDecision::Approved
         );
-        // Different shell → needs prompt (token bound to exact shell).
+        // 不同 shell → 需要弹提示(token 绑定到精确的 shell)。
         assert_eq!(
             authorize_with(&secret, &approved, "tmux", "work", &["detach".into()]),
             AuthDecision::NeedsPrompt
         );
-        // Different checkpoint → needs prompt.
+        // 不同 checkpoint → 需要弹提示。
         assert_eq!(
             authorize_with(&secret, &approved, "tmux", "side", &["attach".into()]),
             AuthDecision::NeedsPrompt

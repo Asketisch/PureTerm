@@ -1,11 +1,11 @@
-//! GAP-39: Serial & Telnet connections MVP.
+//! GAP-39:串口与 Telnet 连接 MVP。
 //!
-//! Spawns external `telnet` / `nc` / `cu` when available; profile fields on
-//! `SshProfile` reuse the `session_type` discriminator.
+//! 可用时拉起外部 `telnet` / `nc` / `cu`;`SshProfile` 上的配置字段
+//! 复用 `session_type` 判别字段。
 
 use std::process::Command;
 
-/// Session transport kind (extends SSH profiles).
+/// 会话传输类型(扩展 SSH 配置档)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum SessionType {
     #[default]
@@ -24,7 +24,7 @@ impl SessionType {
     }
 }
 
-/// Serial line parameters.
+/// 串口行参数。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SerialSettings {
     pub port: String,
@@ -46,8 +46,8 @@ impl Default for SerialSettings {
     }
 }
 
-/// Build argv to spawn a telnet/serial session in a PTY wrapper.
-/// Returns `None` when no suitable binary exists.
+/// 构造在 PTY 包装器中拉起 telnet/串口会话的 argv。
+/// 没有合适的二进制时返回 `None`。
 pub fn spawn_argv(
     kind: SessionType,
     host: &str,

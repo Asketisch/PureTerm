@@ -1,8 +1,8 @@
-//! Optional indexing progress counters (status bar / MCP diagnostics).
+//! 可选的索引进度计数器(状态栏 / MCP 诊断)。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-/// Shared progress snapshot for background indexing (GUI status-bar stub).
+/// 供后台索引使用的共享进度快照(GUI 状态栏桩)。
 #[derive(Debug, Default)]
 pub struct IndexProgress {
     indexed: AtomicU32,
@@ -36,7 +36,7 @@ impl IndexProgress {
         )
     }
 
-    /// Percent complete 0–100 when `total > 0` and indexing is active.
+    /// `total > 0` 且索引进行中时返回 0–100 的完成百分比。
     pub fn percent(&self) -> Option<u8> {
         if !self.is_running() {
             return None;

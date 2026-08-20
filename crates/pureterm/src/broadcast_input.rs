@@ -1,12 +1,12 @@
-//! GAP-13: Broadcast Input — send keystrokes to multiple terminal panes.
+//! GAP-13:广播输入——把按键发送到多个终端窗格。
 //!
-//! Toggle via `ToggleBroadcastInput` (default ⌘⌃B). Scope: current tab / all tabs
-//! in the active window. Status bar shows `BROADCAST` when active.
+//! 经 `ToggleBroadcastInput` 切换(默认 ⌘⌃B)。范围:当前标签页 /
+//! 活动窗口的全部标签页。激活时状态栏显示 `BROADCAST`。
 
 use crate::iced_app::{Tab, TabId, Window};
 use crate::split_tree::{Pane, PaneId, Surface};
 
-/// `[broadcast_input]` config.
+/// `[broadcast_input]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BroadcastConfig {
     pub enabled: bool,
@@ -18,17 +18,17 @@ impl Default for BroadcastConfig {
     }
 }
 
-/// Which panes receive duplicated keyboard input.
+/// 接收重复键盘输入的窗格范围。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BroadcastScope {
-    /// All terminal panes in the active tab (excluding Web panes).
+    /// 活动标签页中的全部终端窗格(不含 Web 窗格)。
     #[default]
     CurrentTab,
-    /// All terminal panes in every tab of the active window.
+    /// 活动窗口每个标签页中的全部终端窗格。
     AllTabs,
 }
 
-/// Runtime broadcast state (config gate in [`BroadcastConfig`]).
+/// 运行时广播状态(开关由 [`BroadcastConfig`] 控制)。
 #[derive(Debug, Clone, Default)]
 pub struct BroadcastState {
     pub enabled: bool,
@@ -42,7 +42,7 @@ impl BroadcastState {
     }
 }
 
-/// Collect terminal pane ids that should receive broadcast keystrokes.
+/// 收集应接收广播按键的终端窗格 id。
 pub fn collect_target_panes(
     window: &Window,
     active_tab: TabId,
@@ -75,7 +75,7 @@ pub fn collect_target_panes(
     out
 }
 
-/// Write `bytes` to every pane in `targets` (best-effort).
+/// 把 `bytes` 写入 `targets` 中的每个窗格(尽力而为)。
 pub fn write_to_panes(tabs: &[Tab], targets: &[PaneId], bytes: &[u8]) {
     for tab in tabs {
         for id in targets {

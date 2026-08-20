@@ -22,9 +22,9 @@ impl I18n {
         }
     }
 
-    /// Current locale code (e.g. "en", "zh"). Used by page `apply()` to
-    /// write back the locale that's actually in effect, not the one
-    /// the page was loaded with.
+    /// 当前 locale 代码(如 "en"、"zh")。供页面 `apply()`
+    /// 写回实际生效的 locale,而不是页面
+    /// 加载时的那个。
     pub fn current_locale(&self) -> &str {
         &self.locale
     }
@@ -41,13 +41,13 @@ impl I18n {
             .unwrap_or_else(|| key.to_string())
     }
 
-    /// Localize a key with `{name}` placeholders substituted by `args`.
-    /// Unknown placeholders are left in place. Missing args leave the
-    /// placeholder in place (so the resulting text is still readable
-    /// during incremental translations).
+    /// 本地化一个键,并用 `args` 替换 `{name}` 占位符。
+    /// 未知占位符原样保留。缺失的参数也把
+    /// 占位符留在原地(使结果文本在增量翻译
+    /// 期间仍然可读)。
     ///
-    /// PureTerm: SSH dialog / settings panel / command palette use
-    /// this to interpolate profile names, error messages, etc.
+    /// PureTerm:SSH 对话框 / 设置面板 / 命令面板用它
+    /// 插值配置档名、错误消息等。
     pub fn t_fmt(&self, key: &str, args: &[(&str, &str)]) -> String {
         let mut s = self.t(key);
         for (k, v) in args {
@@ -115,10 +115,10 @@ impl PickMapping {
 fn builtin_en() -> HashMap<String, String> {
     let mut m = HashMap::new();
 
-    // App
+    // 应用
     m.insert("app.title".into(), "PureTerm Settings".into());
 
-    // Sidebar
+    // 侧边栏
     m.insert("sidebar.general".into(), "General".into());
     m.insert("sidebar.appearance".into(), "Appearance".into());
     m.insert("sidebar.colors".into(), "Colors".into());
@@ -126,7 +126,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("sidebar.ssh_profiles".into(), "SSH Profiles".into());
     m.insert("sidebar.shortcuts".into(), "Shortcuts".into());
 
-    // Page titles
+    // 页面标题
     m.insert("page.general".into(), "General".into());
     m.insert("page.appearance".into(), "Appearance".into());
     m.insert("page.colors".into(), "Colors".into());
@@ -134,7 +134,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("page.ssh_profiles".into(), "SSH Profiles".into());
     m.insert("page.keybindings".into(), "Keyboard Shortcuts".into());
 
-    // General page
+    // 通用页
     m.insert("general.section.language".into(), "Language".into());
     m.insert("general.language".into(), "Language".into());
     m.insert("general.section.shell".into(), "Shell".into());
@@ -148,7 +148,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("general.live_reload".into(), "Live config reload".into());
     m.insert("general.ipc_socket".into(), "IPC socket".into());
 
-    // Appearance page
+    // 外观页
     m.insert("appearance.section.font".into(), "Font".into());
     m.insert("appearance.family".into(), "Family".into());
     m.insert("appearance.placeholder.font".into(), "e.g. JetBrains Mono".into());
@@ -174,7 +174,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("appearance.clear".into(), "Clear".into());
     m.insert("appearance.no_image".into(), "(no image selected)".into());
 
-    // Colors page
+    // 颜色页
     m.insert("colors.section.primary".into(), "Primary".into());
     m.insert("colors.foreground".into(), "Text Color".into());
     m.insert("colors.background".into(), "Background".into());
@@ -183,7 +183,7 @@ fn builtin_en() -> HashMap<String, String> {
     // PureTerm: 取色器触发按钮文案。
     m.insert("colors.picker_button".into(), "Pick".into());
 
-    // Terminal page
+    // 终端页
     m.insert("terminal.section.scrolling".into(), "Scrolling".into());
     m.insert("terminal.history".into(), "History (lines)".into());
     m.insert("terminal.scroll_multiplier".into(), "Scroll multiplier".into());
@@ -196,7 +196,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("terminal.bell_duration".into(), "Duration (ms)".into());
     m.insert("terminal.bell_color".into(), "Color".into());
 
-    // SSH page
+    // SSH 页
     m.insert("ssh.add_profile".into(), "+ Add Profile".into());
     m.insert("ssh.delete".into(), "Delete".into());
     m.insert("ssh.name".into(), "Name".into());
@@ -213,14 +213,14 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("ssh.select_profile".into(), "Select a profile".into());
     m.insert("ssh.no_profiles".into(), "No profiles. Click '+ Add Profile' to create one.".into());
 
-    // Keybindings page
+    // 快捷键页
     m.insert("keybindings.key".into(), "Key".into());
     m.insert("keybindings.modifiers".into(), "Modifiers".into());
     m.insert("keybindings.action".into(), "Action".into());
     m.insert("keybindings.empty".into(), "No custom keyboard bindings configured.".into());
     m.insert("keybindings.default_hint".into(), "Default bindings are built into PureTerm.".into());
 
-    // Footer
+    // 页脚
     m.insert("footer.save".into(), "Save".into());
     m.insert("footer.revert".into(), "Revert".into());
     m.insert("footer.saved".into(), "Saved".into());
@@ -229,7 +229,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("footer.revert_failed".into(), "Revert failed: ".into());
     m.insert("footer.unsaved_changes".into(), "Unsaved changes".into());
 
-    // Pick list display labels (config values stay English in TOML)
+    // 选择列表的展示标签(配置值在 TOML 中保持英文)
     m.insert("pick_list.osc52.Disabled".into(), "Disabled".into());
     m.insert("pick_list.osc52.OnlyCopy".into(), "Only Copy".into());
     m.insert("pick_list.osc52.OnlyPaste".into(), "Only Paste".into());
@@ -244,7 +244,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("pick_list.cursor.Underline".into(), "Underline".into());
     m.insert("pick_list.cursor.Beam".into(), "Beam".into());
 
-    // PureTerm: blur style pick list
+    // PureTerm:模糊样式选择列表
     m.insert("pick_list.blur_style.System".into(), "System Default".into());
     m.insert("pick_list.blur_style.Titlebar".into(), "Titlebar (Light)".into());
     m.insert("pick_list.blur_style.Selection".into(), "Selection".into());
@@ -253,7 +253,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("pick_list.blur_style.HUDWindow".into(), "HUD (Dark)".into());
     m.insert("pick_list.blur_style.FullScreenUI".into(), "Full Screen (Heavy)".into());
 
-    // Tab context menu
+    // 标签页右键菜单
     m.insert("context_menu.close_tab".into(), "Close Tab".into());
     m.insert("context_menu.close_other_tabs".into(), "Close Other Tabs".into());
     m.insert("context_menu.close_tabs_left".into(), "Close Tabs to the Left".into());
@@ -263,13 +263,13 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("context_menu.rename_tab".into(), "Rename Tab".into());
     m.insert("context_menu.change_tab_color".into(), "Change Tab Color".into());
 
-    // Tab UI
+    // 标签页 UI
     m.insert("tab.rename_placeholder".into(), "Tab name".into());
     m.insert("tab.clear_color".into(), "Clear".into());
     m.insert("tab.search_placeholder".into(), "Search tabs...".into());
     m.insert("tab.no_match".into(), "No matching tabs".into());
 
-    // PureTerm: SSH connection dialog (main UI, not settings page)
+    // PureTerm:SSH 连接对话框(主 UI,非设置页)
     m.insert("ssh.dialog.title".into(), "New SSH Connection".into());
     m.insert("ssh.dialog.empty".into(), "No SSH profiles configured.".into());
     m.insert("ssh.dialog.empty_hint".into(), "Edit ~/.config/pureterm/pureterm.toml — add an [[ssh.profiles]] section.".into());
@@ -278,7 +278,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("ssh.dialog.button.cancel".into(), "Cancel".into());
     m.insert("ssh.dialog.button.open_settings".into(), "Open SSH Settings".into());
 
-    // PureTerm: SSH settings side panel (right-side editor)
+    // PureTerm:SSH 设置侧面板(右侧编辑器)
     m.insert("ssh.panel.title".into(), "SSH Profiles".into());
     m.insert("ssh.panel.add".into(), "+ New".into());
     m.insert("ssh.panel.editing".into(), "Editing #{idx}".into());
@@ -294,7 +294,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("ssh.panel.profile_not_found".into(), "Profile not found".into());
     m.insert("ssh.new_profile".into(), "New Profile {n}".into());
 
-    // PureTerm: Master password section
+    // PureTerm:主密码区
     m.insert("ssh.master.title".into(), "Master Password".into());
     m.insert("ssh.master.placeholder".into(), "Enter master password".into());
     m.insert("ssh.master.unlocked".into(), "Credential store unlocked".into());
@@ -305,7 +305,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("ssh.master.unlock".into(), "Unlock / Setup".into());
     m.insert("ssh.master.reunlock".into(), "Re-unlock".into());
 
-    // PureTerm: Command palette
+    // PureTerm:命令面板
     m.insert("palette.title".into(), "Command Palette (⌘⇧P)".into());
     m.insert("palette.title.profiles".into(), "Pick SSH Profile".into());
     m.insert("palette.placeholder".into(), "Type to search…".into());
@@ -314,7 +314,7 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("palette.hint.actions".into(), "↑↓ to move · Enter to run · Esc to close".into());
     m.insert("palette.hint.profiles".into(), "Enter to connect · Esc to back out".into());
 
-    // PureTerm: Command palette — builtin action labels/hints/search
+    // PureTerm:命令面板——内置动作标签/提示/搜索
     m.insert("palette.action.new_tab.label".into(), "New Tab".into());
     m.insert("palette.action.new_tab.hint".into(), "Open a fresh local tab".into());
     m.insert("palette.action.new_tab.search".into(), "new tab open local".into());
@@ -349,16 +349,16 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("palette.action.ssh_list.hint".into(), "Browse SSH profiles".into());
     m.insert("palette.action.ssh_list.search".into(), "ssh list profiles show".into());
 
-    // PureTerm: Context menu (main UI)
+    // PureTerm:右键菜单(主 UI)
     m.insert("context_menu.new_ssh_tab".into(), "New SSH Tab…".into());
 
-    // PureTerm: SSH errors
+    // PureTerm:SSH 错误
     m.insert("ssh.error.invalid_profile".into(), "Invalid profile index: {idx}".into());
     m.insert("ssh.error.manager_not_init".into(), "SSH manager not initialized".into());
     m.insert("ssh.error.start_session".into(), "Failed to start SSH session: {err}".into());
     m.insert("ssh.error.spawn_failed".into(), "ssh spawn failed: {err}".into());
 
-    // PureTerm: Tab title templates
+    // PureTerm:标签页标题模板
     m.insert("tab.title.format".into(), "Tab {n}".into());
     m.insert("tab.title.ssh".into(), "SSH: {name}".into());
     m.insert("tab.title.ssh_locked".into(), "🔒 SSH: {name}".into());
@@ -369,10 +369,10 @@ fn builtin_en() -> HashMap<String, String> {
 fn builtin_zh() -> HashMap<String, String> {
     let mut m = HashMap::new();
 
-    // App
+    // 应用
     m.insert("app.title".into(), "PureTerm 设置".into());
 
-    // Sidebar
+    // 侧边栏
     m.insert("sidebar.general".into(), "通用".into());
     m.insert("sidebar.appearance".into(), "外观".into());
     m.insert("sidebar.colors".into(), "颜色".into());
@@ -380,7 +380,7 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("sidebar.ssh_profiles".into(), "SSH 配置".into());
     m.insert("sidebar.shortcuts".into(), "快捷键".into());
 
-    // Page titles
+    // 页面标题
     m.insert("page.general".into(), "通用".into());
     m.insert("page.appearance".into(), "外观".into());
     m.insert("page.colors".into(), "颜色".into());
@@ -388,7 +388,7 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("page.ssh_profiles".into(), "SSH 配置".into());
     m.insert("page.keybindings".into(), "键盘快捷键".into());
 
-    // General page
+    // 通用页
     m.insert("general.section.language".into(), "语言".into());
     m.insert("general.language".into(), "语言".into());
     m.insert("general.section.shell".into(), "Shell".into());
@@ -402,7 +402,7 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("general.live_reload".into(), "实时重载配置".into());
     m.insert("general.ipc_socket".into(), "IPC 套接字".into());
 
-    // Appearance page
+    // 外观页
     m.insert("appearance.section.font".into(), "字体".into());
     m.insert("appearance.family".into(), "字体族".into());
     m.insert("appearance.placeholder.font".into(), "例如 JetBrains Mono".into());
@@ -428,7 +428,7 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("appearance.clear".into(), "清除".into());
     m.insert("appearance.no_image".into(), "（未选择图片）".into());
 
-    // Colors page
+    // 颜色页
     m.insert("colors.section.primary".into(), "主要".into());
     m.insert("colors.foreground".into(), "文字颜色".into());
     m.insert("colors.background".into(), "背景色".into());
@@ -437,7 +437,7 @@ fn builtin_zh() -> HashMap<String, String> {
     // PureTerm: 取色器触发按钮文案。
     m.insert("colors.picker_button".into(), "取色".into());
 
-    // Terminal page
+    // 终端页
     m.insert("terminal.section.scrolling".into(), "滚动".into());
     m.insert("terminal.history".into(), "历史行数".into());
     m.insert("terminal.scroll_multiplier".into(), "滚动倍率".into());
@@ -450,7 +450,7 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("terminal.bell_duration".into(), "持续时间 (ms)".into());
     m.insert("terminal.bell_color".into(), "颜色".into());
 
-    // SSH page
+    // SSH 页
     m.insert("ssh.add_profile".into(), "+ 添加配置".into());
     m.insert("ssh.delete".into(), "删除".into());
     m.insert("ssh.name".into(), "名称".into());
@@ -467,14 +467,14 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("ssh.select_profile".into(), "选择一个配置".into());
     m.insert("ssh.no_profiles".into(), "暂无配置。点击「+ 添加配置」创建。".into());
 
-    // Keybindings page
+    // 快捷键页
     m.insert("keybindings.key".into(), "按键".into());
     m.insert("keybindings.modifiers".into(), "修饰键".into());
     m.insert("keybindings.action".into(), "动作".into());
     m.insert("keybindings.empty".into(), "未配置自定义键盘快捷键。".into());
     m.insert("keybindings.default_hint".into(), "默认快捷键已内置于 PureTerm。".into());
 
-    // Footer
+    // 页脚
     m.insert("footer.save".into(), "保存".into());
     m.insert("footer.revert".into(), "还原".into());
     m.insert("footer.saved".into(), "已保存".into());
@@ -483,7 +483,7 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("footer.revert_failed".into(), "还原失败：".into());
     m.insert("footer.unsaved_changes".into(), "有未保存的更改".into());
 
-    // Pick list display labels
+    // 选择列表的展示标签
     m.insert("pick_list.osc52.Disabled".into(), "禁用".into());
     m.insert("pick_list.osc52.OnlyCopy".into(), "仅复制".into());
     m.insert("pick_list.osc52.OnlyPaste".into(), "仅粘贴".into());
@@ -507,7 +507,7 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("pick_list.blur_style.HUDWindow".into(), "HUD（深色）".into());
     m.insert("pick_list.blur_style.FullScreenUI".into(), "全屏（重）".into());
 
-    // Tab context menu
+    // 标签页右键菜单
     m.insert("context_menu.close_tab".into(), "关闭标签页".into());
     m.insert("context_menu.close_other_tabs".into(), "关闭其他标签页".into());
     m.insert("context_menu.close_tabs_left".into(), "关闭左侧标签页".into());
@@ -517,7 +517,7 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("context_menu.rename_tab".into(), "重命名标签页".into());
     m.insert("context_menu.change_tab_color".into(), "修改标签页颜色".into());
 
-    // Tab UI
+    // 标签页 UI
     m.insert("tab.rename_placeholder".into(), "标签页名称".into());
     m.insert("tab.clear_color".into(), "清除".into());
     m.insert("tab.search_placeholder".into(), "搜索标签页...".into());
@@ -655,7 +655,7 @@ mod tests {
     #[test]
     fn t_unknown_key_returns_key() {
         let i = I18n::new();
-        // Unknown keys should round-trip the input rather than crash.
+        // 未知键应原样往返输入而非崩溃。
         let v = i.t("missing.example.key");
         assert_eq!(v, "missing.example.key");
     }
@@ -678,11 +678,11 @@ mod tests {
 
     #[test]
     fn missing_in_both_locales_returns_key() {
-        // Renamed from `locale_fallback_when_key_missing` — the previous name
-        // implied it tested the zh -> en fallback path, but the key is missing
-        // in BOTH locales, so it actually exercises `unwrap_or_else` (unknown
-        // key round-trip), not the `or_else` fallback branch. The real
-        // fallback is covered by `locale_fallback_zh_missing_uses_en` below.
+        // 从 `locale_fallback_when_key_missing` 改名——原名
+        // 暗示它测试 zh -> en 回退路径,但该键在两个
+        // locale 里都缺失,实际走的是 `unwrap_or_else`(未知
+        // 键往返),而非 `or_else` 回退分支。真正的
+        // 回退由下面的 `locale_fallback_zh_missing_uses_en` 覆盖。
         let mut i = I18n::new();
         i.set_locale("zh");
         let v = i.t("missing.key");
@@ -691,14 +691,14 @@ mod tests {
 
     #[test]
     fn locale_fallback_zh_missing_uses_en() {
-        // Construct a divergent table: en has "only_en_test" but zh does not.
-        // In zh locale, `t("only_en_test")` should fall back to the en value
-        // via the `.or_else` branch — this is the only test that actually
-        // exercises the locale-fallback code path.
+        // 构造一张有差异的表:en 有 "only_en_test" 而 zh 没有。
+        // 在 zh locale 下,`t("only_en_test")` 应经 `.or_else`
+        // 分支回退到 en 的值——这是唯一真正走到
+        // locale 回退代码路径的测试。
         let mut en = HashMap::new();
         en.insert("only_en_test".to_string(), "OnlyInEnglish".to_string());
         let mut zh = HashMap::new();
-        // intentionally omit "only_en_test" from zh
+        // 有意不在 zh 中放 "only_en_test"
         let mut translations = HashMap::new();
         translations.insert("en".to_string(), en);
         translations.insert("zh".to_string(), zh);
@@ -711,9 +711,9 @@ mod tests {
 
     #[test]
     fn t_known_key_returns_specific_value() {
-        // Strengthened: previously only checked `v.contains("{n}")`, which
-        // is true for BOTH en ("Tab {n}") and zh ("标签页 {n}"). Pin the
-        // exact en value to actually verify the lookup hits the en map.
+        // 已加强:此前只检查 `v.contains("{n}")`,对 en("Tab {n}")与
+        // zh(“标签页 {n}”)都为真。此处固定精确的
+        // en 值,以真正验证查找命中 en 表。
         let i = I18n::new();
         assert_eq!(i.t("tab.title.format"), "Tab {n}");
     }

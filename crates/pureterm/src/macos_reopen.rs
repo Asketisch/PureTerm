@@ -4,8 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use objc2::runtime::{AnyClass, AnyObject, Imp};
 use objc2::{ffi, MainThreadMarker};
 
-/// Set to `true` when macOS calls `applicationShouldHandleReopen:hasVisibleWindows:`
-/// on the delegate (Dock icon click).
+/// 当 macOS 在委托上调用 `applicationShouldHandleReopen:hasVisibleWindows:`
+///(即点击 Dock 图标)时置为 `true`。
 static DOCK_REOPEN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "C" fn handle_reopen(
@@ -18,8 +18,8 @@ unsafe extern "C" fn handle_reopen(
     true
 }
 
-/// Add `applicationShouldHandleReopen:hasVisibleWindows:` to winit's delegate class.
-/// Must be called on the main thread, AFTER winit has set its delegate.
+/// 给 winit 的委托类添加 `applicationShouldHandleReopen:hasVisibleWindows:`。
+/// 必须在主线程、且 winit 已设置委托之后调用。
 pub fn add_reopen_method() {
     let Some(_mtm) = MainThreadMarker::new() else {
         return;
@@ -42,8 +42,8 @@ pub fn add_reopen_method() {
     }
 }
 
-/// Check whether the Dock icon was clicked, consuming the flag.
-/// Returns `true` exactly once per Dock click.
+/// 检查 Dock 图标是否被点击,并消费该标志。
+/// 每次 Dock 点击恰好返回一次 `true`。
 pub fn consume_dock_reopen() -> bool {
     DOCK_REOPEN_REQUESTED.swap(false, Ordering::SeqCst)
 }

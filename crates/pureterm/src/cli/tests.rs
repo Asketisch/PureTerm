@@ -14,9 +14,9 @@ fn parse(args: &[&str]) -> Cli {
 
 #[test]
 fn bare_args_fail_to_parse() {
-    // Documents the contract that main.rs must guard `args().count() == 1`
-    // before calling clap, otherwise bare `pureterm` errors instead of
-    // launching the GUI.
+    // 记录契约:main.rs 必须在调用 clap 前守护 `args().count() == 1`,否则
+    // 裸 `pureterm` 会报错而不是
+    // 启动 GUI。
     assert!(Cli::try_parse_from(["pureterm"]).is_err());
 }
 
@@ -94,7 +94,7 @@ fn surface_send_text_carries_text() {
     );
 }
 
-// GAP-7.9: `--pane-id` targets a specific pane (None ⇒ active at exec).
+// GAP-7.9:`--pane-id` 指向特定窗格(None ⇒ 执行时活动窗格)。
 #[test]
 fn surface_send_text_carries_pane_id() {
     let cli = parse(&["surface", "send-text", "--text", "ls", "--pane-id", "7"]);
@@ -107,7 +107,7 @@ fn surface_send_text_carries_pane_id() {
     );
 }
 
-// GAP-7.9: `surface.snapshot` forwards capture params.
+// GAP-7.9:`surface.snapshot` 透传捕获参数。
 #[test]
 fn surface_snapshot_serializes_params() {
     let cli = parse(&[
@@ -125,7 +125,7 @@ fn surface_snapshot_serializes_params() {
     );
 }
 
-// GAP-7.9: bare `surface.snapshot` sends no params (server defaults apply).
+// GAP-7.9:裸 `surface.snapshot` 不发送参数(采用服务端默认值)。
 #[test]
 fn surface_snapshot_no_params() {
     let cli = parse(&["surface", "snapshot"]);
@@ -166,7 +166,7 @@ fn ssh_connect_carries_index() {
 #[cfg(unix)]
 #[test]
 fn ssh_connect_positional_target_is_daemon_direct() {
-    // `pureterm ssh connect user@host` -> daemon-direct (target set, no GUI-IPC index).
+    // `pureterm ssh connect user@host` -> 直连守护进程(设置了 target,无 GUI-IPC 索引)。
     let cli = parse(&["ssh", "connect", "admin@10.0.0.5", "--port", "2222"]);
     let Command::Ssh { cmd: SshSub::Connect { target, index, port, identity, .. } } = cli.command
     else {

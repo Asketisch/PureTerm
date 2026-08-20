@@ -1,18 +1,18 @@
-# Example plugin 2: IPC method `plugin.hello(name)`.
+# 示例插件 2:IPC 方法 `plugin.hello(name)`。
 #
-# This plugin registers an `IpcMethod` Provides capability. The host
-# exposes a JSON-RPC method `plugin.hello` that delegates to the
-# plugin's `handle` export. Clients call it via the IPC socket:
+# 本插件注册 `IpcMethod` Provides 能力。宿主
+# 暴露 JSON-RPC 方法 `plugin.hello`,委托给
+# 插件的 `handle` 导出。客户端经 IPC socket 调用:
 #
 #   echo '{"jsonrpc":"2.0","method":"plugin.hello","params":{"name":"world"},"id":1}' \
 #     | pureterm ipc -
 #
-# Build:
+# 构建:
 #   cd examples/plugins/ipc-hello
 #   cargo build --release --target wasm32-wasip1
 #   cp ../../../target/wasm32-wasip1/release/ipc_hello.wasm .
 #
-# Install:
+# 安装:
 #   pureterm plugin install ./ipc_hello.wasm
 
 [plugin]
@@ -26,5 +26,5 @@ abi_version = 1
 ipc_method = "plugin.hello"
 
 [plugin.entry_points]
-# The host looks up this export when dispatching `plugin.hello`.
+# 宿主分发 `plugin.hello` 时查找此导出。
 handle = "handle"

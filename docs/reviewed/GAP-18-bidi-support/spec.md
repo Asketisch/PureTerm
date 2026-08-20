@@ -1,6 +1,6 @@
 ---
 gap: GAP-18
-title: BiDi Support
+title: BiDi 支持
 category: 终端交互
 plan_type: feature
 priority: P3

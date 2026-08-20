@@ -26,7 +26,7 @@ enum StatusMessage {
     RevertFailed(String),
 }
 
-/// Reusable settings state — can be embedded in any Iced daemon.
+/// 可复用的设置状态——可嵌入任意 Iced 守护进程。
 pub struct SettingsState {
     config_path: PathBuf,
     document: toml_edit::DocumentMut,
@@ -43,10 +43,10 @@ pub struct SettingsState {
     pub main_window: Option<window::Id>,
     color_picker_window: Option<window::Id>,
     pending_color_target: Option<ColorPickerTarget>,
-    /// Color value when the picker was opened (used to restore on cancel).
+    /// 打开取色器时的颜色值(用于取消时恢复)。
     picker_original_hex: Option<String>,
-    /// Live preview value while user is adjusting the picker.
-    /// Only written to state/TOML on confirm.
+    /// 用户调整取色器时的实时预览值。
+    /// 仅在确认时写入状态/TOML。
     picker_preview_hex: Option<String>,
 }
 
@@ -54,11 +54,11 @@ pub struct SettingsState {
 pub enum Message {
     NavigateTo(Page),
     Save,
-    /// Emitted by `Message::Save` after a successful write through
-    /// `config_io::mutate_config`. Carries the new file mtime so the
-    /// embedding application (PureTermApp) can record a "self just
-    /// wrote at T" window and suppress the notify-watcher self-reload
-    /// triggered by its own save. Standalone settings binary ignores it.
+    /// 由 `Message::Save` 在经 `config_io::mutate_config` 成功写入后发出。
+    /// 携带新文件 mtime,使嵌入方
+    /// 应用(PureTermApp)能记录“自己刚在 T 时刻写过”的窗口,
+    /// 并抑制由自身保存触发的 notify 监视器自重载。
+    /// 独立设置二进制会忽略它。
     SavedAt(SystemTime),
     Revert,
     General(GeneralMsg),
@@ -124,14 +124,14 @@ impl SettingsState {
                 Task::none()
             }
             Message::Save => {
-                // Section-scoped save: reload the latest on-disk document
-                // under an advisory file lock, then ask each page state
-                // to replay its in-memory values onto that fresh doc.
-                // This prevents the historical "open settings → main
-                // process writes ssh.profiles → close settings → save
-                // → just-added profile gets rolled back" scenario, and
-                // also prevents the SSH-field-loss bug (sync_to_doc now
-                // merges rather than replaces — see ssh_profiles.rs).
+                // 分节保存:在建议性文件锁下重新加载最新的磁盘文档,
+                // 再让每个页面状态把其内存值重放到这份新文档上。
+                // 这防止了历史上的“打开设置 → 主
+                // 进程写入 ssh.profiles → 关闭设置 → 保存
+                // → 刚添加的配置档被回滚”场景,也
+                // 防止 SSH 字段丢失缺陷(sync_to_doc 现在做
+                // 合并而非替换——见 ssh_profiles.rs)。
+                // 合并而非替换——见 ssh_profiles.rs)。
                 let path = self.config_path.clone();
                 let general = self.general.clone();
                 let appearance = self.appearance.clone();
@@ -142,10 +142,10 @@ impl SettingsState {
                 let locale = self.i18n.current_locale().to_string();
 
                 let result = config_io::mutate_config(&path, |doc| {
-                    // The locale lives in [pureterm] and is normally
-                    // written by the LocaleChanged handler in this file.
-                    // Re-apply here so a stale on-disk locale doesn't
-                    // shadow the in-effect one.
+                    // locale 位于 [pureterm] 且通常
+                    // 由本文件中的 LocaleChanged 处理器写入。
+                    // 此处再应用一次,防止过期的磁盘 locale
+                    // 遮蔽生效中的 locale。
                     config_io::set_string(doc, &["pureterm"], "locale", &locale);
                     general.apply(doc);
                     appearance.apply(doc);
@@ -160,10 +160,10 @@ impl SettingsState {
                     Ok(mtime) => {
                         self.dirty = false;
                         self.status_msg = Some(StatusMessage::Saved);
-                        // Refresh in-memory doc snapshot so a later
-                        // Revert (which reads `self.document` indirectly
-                        // by re-reading disk) and any UI inspection sees
-                        // the same bytes we just wrote.
+                        // 刷新内存中的文档快照,使后续的
+                        // Revert(经重读磁盘间接读取 `self.document`)
+                        // 与任何 UI 检视都能看到
+                        // 我们刚写入的同一份字节。
                         if let Ok(fresh) = config_io::load_document(&path) {
                             self.document = fresh;
                         }
@@ -178,10 +178,10 @@ impl SettingsState {
                 }
             }
             Message::SavedAt(_) => {
-                // No-op for the standalone settings daemon. The embedded
-                // settings window (PureTermApp) intercepts this BEFORE
-                // routing into SettingsState::update so it can record
-                // `last_self_write` for the notify-watcher debounce.
+                // 对独立设置守护进程是空操作。内嵌的
+                // 设置窗口(PureTermApp)会在路由进
+                // SettingsState::update 之前拦截它,以便记录
+                // `last_self_write` 供 notify 监视器去抖。
                 Task::none()
             }
             Message::Revert => {
@@ -208,9 +208,9 @@ impl SettingsState {
                     if let Some(code) = self.i18n.locale_code_for_display(display).map(|s| s.to_string()) {
                         self.i18n.set_locale(&code);
                         config_io::set_string(&mut self.document, &["pureterm"], "locale", &code);
-                        // Mirror the new locale into the General page state so
-                        // `GeneralState::apply` writes the in-effect locale
-                        // back, not the one loaded when settings opened.
+                        // 把新 locale 镜像进 General 页状态,使
+                        // `GeneralState::apply` 写回的是生效中的 locale,
+                        // 而不是打开设置时加载的那个。
                         self.general.locale = code;
                     }
                 }
@@ -226,11 +226,11 @@ impl SettingsState {
                 Task::none()
             }
             Message::Colors(msg) => {
-                // Handle color picker lifecycle messages specially so that
-                // the picker uses a preview/confirm flow:
-                // - OpenColorPicker: snapshot the current value
-                // - HueSatChanged/ValueChanged: only update the preview, never commit
-                // - ColorPickerResult: commit the preview and close the window
+                // 特殊处理取色器生命周期消息,使取色器
+                // 走“预览/确认”流程:
+                // - OpenColorPicker:快照当前值
+                // - HueSatChanged/ValueChanged:只更新预览,绝不提交
+                // - ColorPickerResult:提交预览并关闭窗口
                 if let ColorsMsg::OpenColorPicker(target) = &msg {
                     let current_hex = match target {
                         ColorPickerTarget::Bell => self.terminal.bell_color.clone(),
@@ -259,7 +259,7 @@ impl SettingsState {
 
                 if matches!(msg, ColorsMsg::HueSatChanged(..) | ColorsMsg::ValueChanged(..)) {
                     if let Some(target) = &self.pending_color_target {
-                        // Compute new hex from current preview, don't touch state/TOML
+                        // 从当前预览计算新 hex,不触碰状态/TOML
                         let current = self
                             .picker_preview_hex
                             .clone()
@@ -369,7 +369,7 @@ impl SettingsState {
         if let Some(picker_id) = self.color_picker_window {
             if picker_id == window {
                 if let Some(target) = &self.pending_color_target {
-                    // Show live preview while the picker is open, not the committed value
+                    // 取色器打开期间显示实时预览,而非已提交的值
                     let hex = self
                         .picker_preview_hex
                         .clone()
@@ -513,7 +513,7 @@ impl SettingsState {
     }
 }
 
-/// Run settings as a standalone daemon (for the independent binary).
+/// 以独立守护进程运行设置(供独立二进制使用)。
 pub fn run(config_path: PathBuf) -> iced::Result {
     struct SettingsApp {
         state: SettingsState,

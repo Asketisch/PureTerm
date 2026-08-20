@@ -52,8 +52,8 @@ pub(super) fn spawn_pump<P: PumpablePty + Send + 'static>(
         .expect("spawn session pump")
 }
 
-/// Tear down a session's poll registrations. Generic so it works for any
-/// `PumpablePty` (local or SSH).
+/// 拆除一个会话的轮询注册。泛型化,使其对任何
+/// `PumpablePty`(本地或 SSH)都适用。
 fn cleanup_pump<P: PumpablePty>(
     poll: &Poller,
     pty: &P,
@@ -67,7 +67,7 @@ fn cleanup_pump<P: PumpablePty>(
     }
 }
 
-/// The pump loop. See module docs.
+/// 泵循环。见模块文档。
 fn run_pump<P: PumpablePty + Send + 'static>(
     pty: P,
     listener: UnixListener,
@@ -96,12 +96,12 @@ fn run_pump<P: PumpablePty + Send + 'static>(
         return;
     }
 
-    // GAP-5.1 M5: multi-attach fan-out. Every attached GUI client is a
-    // `Subscriber` with its own outbound frame queue, so several tabs/windows
-    // can share one session. The ring is the scrollback source replayed as
-    // SCROLLBACK frames on each new attach; live output is broadcast as OUTPUT
-    // frames to every subscriber's queue. A lagging subscriber whose queue
-    // exceeds `SUB_BACKPRESSURE_CAP` is dropped rather than blocking the pump.
+    // GAP-5.1 M5:多挂接扇出。每个挂接的 GUI 客户端都是一个
+    // 拥有独立出站帧队列的 `Subscriber`,因此多个标签页/窗口
+    // 可共享同一会话。环是回滚来源,在每次新挂接时重放为
+    // SCROLLBACK 帧;实时输出作为 OUTPUT 帧
+    // 广播到每个订阅者的队列。队列超过
+    // `SUB_BACKPRESSURE_CAP` 的滞后订阅者会被丢弃而非阻塞泵。
     let mut subscribers: Vec<Subscriber> = Vec::new();
     let mut ring = RingBuffer::default();
     let mut current_pty_size = (initial_cols.max(1), initial_rows.max(1));
@@ -126,7 +126,7 @@ fn run_pump<P: PumpablePty + Send + 'static>(
         for ev in events.iter() {
             match ev.key {
                 LISTENER_KEY => {
-                    // Multi-attach: accept every pending connection.
+                    // 多挂接:接受每个待处理的连接。
                     while let Ok((stream, _)) = listener.accept() {
                         let _ = stream.set_nonblocking(true);
                         if unsafe {
@@ -145,7 +145,7 @@ fn run_pump<P: PumpablePty + Send + 'static>(
                                 cols: current_pty_size.0,
                                 rows: current_pty_size.1,
                             };
-                            // M2: replay scrollback history as SCROLLBACK frames.
+                            // M2:把回滚历史重放为 SCROLLBACK 帧。
                             for wire in scrollback_frames(&ring) {
                                 sub.queue.push_back(wire);
                             }
@@ -158,16 +158,16 @@ fn run_pump<P: PumpablePty + Send + 'static>(
                         ring.push(&buf[..n]);
                         broadcast_output(&mut subscribers, &buf[..n]);
                         flush_subscribers(&mut subscribers);
-                        // GAP-6.6: pipe-pane tap — best-effort feed PTY output to
-                        // the spawned command's stdin task. try_send-style
-                        // (UnboundedSender::send never blocks); a dead task
-                        // (child exited) just yields Err, which we ignore.
+                        // GAP-6.6:pipe-pane 管道——尽力把 PTY 输出喂给
+                        // 拉起命令的 stdin 任务。try_send 风格
+                        //(UnboundedSender::send 永不阻塞);已死任务
+                        //(子进程退出)只会得到 Err,忽略之。
                         if let Ok(feeder) = pipe_feeder.lock() {
                             if let Some(tx) = feeder.as_ref() {
                                 let _ = tx.send(buf[..n].to_vec());
                             }
                         }
-                        // GAP-7.3: record PTY activity for idle detection.
+                        // GAP-7.3:记录 PTY 活动,供空闲检测。
                         if let Ok(mut t) = last_output_at.lock() {
                             *t = Instant::now();
                         }
@@ -181,8 +181,8 @@ fn run_pump<P: PumpablePty + Send + 'static>(
                     MasterRead::WouldBlock => {}
                 },
                 SUBSCRIBER_KEY => {
-                    // Shared key: drain input from every subscriber, drop the
-                    // closed/errored ones, then flush any newly-writable queues.
+                    // 共享键:排空每个订阅者的输入,丢弃已
+                    // 关闭/出错者,再冲刷新变为可写的队列。
                     let mut to_drop: Vec<usize> = Vec::new();
                     let mut resize_pending = false;
                     for (i, sub) in subscribers.iter_mut().enumerate() {

@@ -1,15 +1,15 @@
-//! GAP-31: Quake-style dock — slide terminal from screen top via hotkey.
+//! GAP-31:Quake 风格停靠——热键从屏幕顶端滑出终端。
 
 use iced::window;
 use iced::{Point, Size, Task};
 
 use crate::iced_app::Message;
 
-/// `[quake]` config.
+/// `[quake]` 配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct QuakeDockConfig {
     pub enabled: bool,
-    /// Fraction of screen height (0.0–1.0).
+    /// 占屏幕高度的比例(0.0–1.0)。
     pub height_fraction: f32,
     pub animation_ms: u32,
 }
@@ -27,7 +27,7 @@ impl Default for QuakeDockConfig {
 #[derive(Clone, Debug, Default)]
 pub struct QuakeDockState {
     pub visible: bool,
-    /// Saved window position when hidden (for restore).
+    /// 隐藏时保存的窗口位置(用于恢复)。
     pub saved_position: Option<Point>,
     pub saved_size: Option<Size>,
 }
@@ -39,8 +39,8 @@ impl QuakeDockState {
     }
 }
 
-/// Apply quake show/hide to the main window. MVP: instant resize + y offset
-/// (full animation deferred).
+/// 对主窗口应用 quake 显示/隐藏。MVP:即时调整尺寸 + y 偏移
+///(完整动画留待后续)。
 pub fn apply_quake_toggle(
     window_id: window::Id,
     state: &mut QuakeDockState,

@@ -1,10 +1,10 @@
-//! GAP-47 / GAP-48: shared automation bridge — `pureterm://` URL parsing and
-//! IPC dispatch for the CLI (`pureterm script …`), MCP (`open_url`), and the
-//! macOS URL handler.
+//! GAP-47 / GAP-48:共享自动化桥——`pureterm://` URL 解析与
+//! IPC 分发,供 CLI(`pureterm script …`)、MCP(`open_url`)与
+//! macOS URL 处理器使用。
 //!
-//! AppleScript callers use `osascript` → `do shell script "pureterm script …"`.
-//! The full NSAppleEventManager bridge is deferred; this module is the MVP
-//! surface those scripts target.
+//! AppleScript 调用方经 `osascript` → `do shell script "pureterm script …"` 触发。
+//! 完整的 NSAppleEventManager 桥后续再做;本模块是脚本所针对的
+//! MVP 表面。
 
 use std::path::PathBuf;
 
@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 
 use crate::ipc::client::send_rpc;
 
-/// One automation action parsed from a `pureterm://` URL or CLI/MCP request.
+/// 从 `pureterm://` URL 或 CLI/MCP 请求解析出的自动化动作。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AutomationAction {
     NewTab,
@@ -23,15 +23,15 @@ pub enum AutomationAction {
         index: Option<usize>,
     },
     SendText { text: String, pane_id: Option<u64> },
-    /// Ad-hoc SSH tab in the running GUI (`pureterm://ssh/user@host:22`).
+    /// 在运行中的 GUI 里打开即席 SSH 标签页(`pureterm://ssh/user@host:22`)。
     #[cfg(unix)]
     SshOpen { target: String, port: Option<u16> },
-    /// New tab intended to start in `cwd` (best-effort: tab is created; cwd
-    /// follows shell startup / OSC 7).
+    /// 新建标签页,意图在 `cwd` 启动(尽力而为:标签页会创建;cwd
+    /// 跟随 shell 启动 / OSC 7)。
     Open { cwd: Option<String> },
 }
 
-/// Parse `pureterm://…` into an [`AutomationAction`].
+/// 把 `pureterm://…` 解析为 [`AutomationAction`]。
 pub fn parse_pureterm_url(raw: &str) -> Result<AutomationAction, String> {
     let trimmed = raw.trim();
     let rest = trimmed
@@ -182,7 +182,7 @@ fn percent_decode(input: &str) -> String {
     out
 }
 
-/// Execute an action against the running GUI via the Socket API.
+/// 经 Socket API 对运行中的 GUI 执行一个动作。
 pub fn execute_action(
     action: &AutomationAction,
     socket: Option<PathBuf>,
@@ -235,7 +235,7 @@ fn action_to_rpc(action: &AutomationAction) -> Result<(&'static str, Option<Valu
     })
 }
 
-/// Build an ephemeral [`SshProfile`] from a CLI/URL target string.
+/// 从 CLI/URL 目标字符串构建一个临时的 [`SshProfile`]。
 #[cfg(unix)]
 pub fn ssh_profile_from_target(target: &str, port_override: Option<u16>) -> Result<crate::ssh::config::SshProfile, String> {
     let (spec, port) = split_ssh_host_port(target.trim(), port_override)?;
@@ -262,7 +262,7 @@ pub fn ssh_profile_from_target(target: &str, port_override: Option<u16>) -> Resu
     })
 }
 
-/// GAP-47: `pureterm script get-cwd` — print cwd from `shell.context`.
+/// GAP-47:`pureterm script get-cwd`——从 `shell.context` 打印 cwd。
 pub fn fetch_cwd(socket: Option<PathBuf>, pane_id: Option<u64>, json: bool) -> Result<(), String> {
     let mut obj = serde_json::Map::new();
     if let Some(id) = pane_id {

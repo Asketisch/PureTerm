@@ -1,15 +1,15 @@
-//! GAP-6.6: wait-for — named channel/lock store for cross-shell synchronization
-//! (tmux `wait-for`).
+//! GAP-6.6:wait-for——跨 shell 同步的命名通道/锁存储
+//!(tmux 的 `wait-for`)。
 //!
-//! `wait-for <name>` parks the caller until someone signals the name;
-//! `wait-for -S <name>` wakes every current waiter on that name. `-L`/`-U`
-//! reuse the same store as a mutex (`unlock` releases exactly one waiter,
-//! FIFO).
+//! `wait-for <name>` 使调用方驻留,直到有人signal 该名字;
+//! `wait-for -S <name>` 唤醒该名字下所有当前等待者。`-L`/`-U`
+//! 把同一存储当互斥量用(`unlock` 恰好释放一个等待者,
+//! 先进先出)。
 //!
-//! The store lives on the daemon (long-lived). `wait-for` blocks the caller's
-//! RPC task, but each control connection runs in its own tokio task, so one
-//! blocked waiter can't stall the accept loop or other connections — matching
-//! tmux's behavior.
+//! 存储位于(长寿命的)守护进程上。`wait-for` 阻塞调用方的
+//! RPC 任务,但每条控制连接运行在各自的 tokio 任务里,因此
+//! 一个被阻塞的等待者不会拖停 accept 循环或其它连接——与
+//! tmux 行为一致。
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -19,8 +19,8 @@ use tokio::sync::{oneshot, Mutex};
 
 use crate::control::ControlState;
 
-/// GAP-6.6: handle a `wait_for.*` request. `wait`/`lock` park the caller
-/// (async); `signal`/`unlock` return immediately.
+/// GAP-6.6:处理 `wait_for.*` 请求。`wait`/`lock` 使调用方
+/// 驻留(异步);`signal`/`unlock` 立即返回。
 pub async fn handle(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcResponse {
     let id = request.id;
     let channel = match request
@@ -34,7 +34,7 @@ pub async fn handle(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRe
     };
 
     match request.method.as_str() {
-        // Park until signaled (or the daemon shuts down, which drops senders).
+        // 驻留直到被 signal(或守护进程关闭,senders 随之丢弃)。
         "wait_for.wait" | "wait_for.lock" => {
             let (tx, rx) = oneshot::channel();
             state
@@ -48,7 +48,7 @@ pub async fn handle(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRe
             let kind = if request.method == "wait_for.lock" { "locked" } else { "waited" };
             JsonRpcResponse::ok(id, serde_json::json!({ kind: channel }))
         }
-        // Wake every current waiter on the channel (tmux `-S`).
+        // 唤醒该通道下所有当前等待者(tmux `-S`)。
         "wait_for.signal" => {
             let waiters = state
                 .wait_channels
@@ -62,7 +62,7 @@ pub async fn handle(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRe
             }
             JsonRpcResponse::ok(id, serde_json::json!({ "signaled": n, "channel": channel }))
         }
-        // Release exactly one waiter, FIFO (tmux `-U` mutex semantics).
+        // 恰好释放一个等待者,FIFO(tmux `-U` 互斥语义)。
         "wait_for.unlock" => {
             let tx = {
                 let mut chans = state.wait_channels.lock().await;
@@ -83,8 +83,8 @@ pub async fn handle(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRe
     }
 }
 
-// Silence the unused-import lint when the store type is referenced only via
-// `ControlState` in signatures above.
+// 当存储类型仅经由上方签名中的 `ControlState` 被引用时,
+// 静默未使用导入 lint。
 #[allow(dead_code)]
 type _Store = Arc<Mutex<HashMap<String, Vec<oneshot::Sender<()>>>>>;
 
@@ -146,7 +146,7 @@ mod tests {
 
     #[tokio::test]
     async fn wait_is_woken_by_signal() {
-        // A parked waiter must complete (not hang) once another task signals.
+        // 被驻留的等待者在另一任务 signal 后必须完成(不得挂死)。
         let st = Arc::new(state());
         let st_wait = st.clone();
         let waiter = tokio::spawn(async move {
@@ -157,7 +157,7 @@ mod tests {
             );
             handle(&req, &st_wait).await
         });
-        // Let the waiter register before signaling.
+        // 让等待者先注册再 signal。
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         let sig = JsonRpcRequest::with_params(
             6,
@@ -175,7 +175,7 @@ mod tests {
 
     #[tokio::test]
     async fn unlock_releases_exactly_one_waiter() {
-        // Two lockers park; one unlock releases exactly one (FIFO).
+        // 两个锁者驻留;一次 unlock 恰好释放一个(FIFO)。
         let st = Arc::new(state());
         let mut handles = Vec::new();
         for i in 0..2u64 {
@@ -197,7 +197,7 @@ mod tests {
         );
         let resp = handle(&unlock, &st).await;
         assert_eq!(resp.result.unwrap()["released"], true);
-        // Exactly one of the two should resolve quickly.
+        // 两者中恰好一个应快速完成。
         let mut done = 0;
         for h in handles {
             if tokio::time::timeout(std::time::Duration::from_millis(200), h)

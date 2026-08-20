@@ -1,7 +1,7 @@
 use proc_macro::TokenStream;
 use syn::{Data, DataStruct, DeriveInput, Error, Fields, parse_macro_input};
 
-/// Error if the derive was used on an unsupported type.
+/// 在不支持的类型上使用该派生时的错误。
 const UNSUPPORTED_ERROR: &str = "ConfigDeserialize must be used on an enum or struct with fields";
 
 mod de_enum;

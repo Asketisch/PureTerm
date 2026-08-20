@@ -15,12 +15,12 @@ use crate::index::{Boundary, Column, Direction, Line, Point, Side};
 use crate::term::Term;
 use crate::term::cell::{Cell, Flags, LineLength};
 
-/// Used to match equal brackets, when performing a bracket-pair selection.
+/// 括号对选择时,用于匹配成对的相等括号。
 const BRACKET_PAIRS: [(char, char); 4] = [('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
 
 pub type Match = RangeInclusive<Point>;
 
-/// Terminal regex search state.
+/// 终端正则搜索状态。
 #[derive(Clone, Debug)]
 pub struct RegexSearch {
     left_fdfa: LazyDfa,
@@ -30,12 +30,12 @@ pub struct RegexSearch {
 }
 
 impl RegexSearch {
-    /// Build the forward and backward search DFAs.
+    /// 构建正向与反向搜索 DFA。
     pub fn new(search: &str) -> Result<RegexSearch, Box<BuildError>> {
-        // Setup configs for both DFA directions.
+        // 为两个 DFA 方向设置配置。
         //
-        // Bounds are based on Regex's meta engine:
-        // https://github.com/rust-lang/regex/blob/061ee815ef2c44101dba7b0b124600fcb03c1912/regex-automata/src/meta/wrappers.rs#L581-L599
+        // 边界值取自 Regex 的 meta 引擎:
+        // 出处:https://github.com/rust-lang/regex/blob/061ee815ef2c44101dba7b0b124600fcb03c1912/regex-automata/src/meta/wrappers.rs#L581-L599
         let has_uppercase = search.chars().any(|c| c.is_uppercase());
         let syntax_config = SyntaxConfig::new().case_insensitive(!has_uppercase);
         let config =
@@ -43,7 +43,7 @@ impl RegexSearch {
         let max_size = config.get_cache_capacity();
         let thompson_config = ThompsonConfig::new().nfa_size_limit(Some(max_size));
 
-        // Create DFAs to find start/end in right-to-left search.
+        // 创建用于从右向左搜索定位起/终点的 DFA。
         let left_rdfa = LazyDfa::new(
             search,
             config.clone(),
@@ -62,7 +62,7 @@ impl RegexSearch {
             has_empty,
         )?;
 
-        // Create DFAs to find start/end in left-to-right search.
+        // 创建用于从左向右搜索定位起/终点的 DFA。
         let right_fdfa = LazyDfa::new(
             search,
             config.clone(),
@@ -78,7 +78,7 @@ impl RegexSearch {
     }
 }
 
-/// Runtime-evaluated DFA.
+/// 运行时求值的 DFA。
 #[derive(Clone, Debug)]
 struct LazyDfa {
     dfa: DFA,
@@ -106,7 +106,7 @@ impl LazyDfa {
             config.match_kind(MatchKind::LeftmostFirst)
         };
 
-        // Create the DFA.
+        // 创建 DFA。
         let dfa =
             Builder::new().configure(config).syntax(syntax).thompson(thompson).build(search)?;
 
@@ -117,7 +117,7 @@ impl LazyDfa {
 }
 
 impl<T> Term<T> {
-    /// Get next search match in the specified direction.
+    /// 获取指定方向上的下一个搜索匹配。
     pub fn search_next(
         &self,
         regex: &mut RegexSearch,
@@ -136,7 +136,7 @@ impl<T> Term<T> {
         }
     }
 
-    /// Find the next match to the right of the origin.
+    /// 查找起点右侧的下一个匹配。
     fn next_match_right(
         &self,
         regex: &mut RegexSearch,
@@ -147,7 +147,7 @@ impl<T> Term<T> {
         let start = self.line_search_left(origin);
         let mut end = start;
 
-        // Limit maximum number of lines searched.
+        // 限制搜索的最大行数。
         end = match max_lines {
             Some(max_lines) => {
                 let line = (start.line + max_lines).grid_clamp(self, Boundary::None);
@@ -158,14 +158,14 @@ impl<T> Term<T> {
 
         let mut regex_iter = RegexIter::new(start, end, Direction::Right, self, regex).peekable();
 
-        // Check if there's any match at all.
+        // 检查是否存在任何匹配。
         let first_match = regex_iter.peek()?.clone();
 
         let regex_match = regex_iter
             .find(|regex_match| {
                 let match_point = Self::match_side(regex_match, side);
 
-                // If the match's point is beyond the origin, we're done.
+                // 若匹配点越过起点,则搜索完成。
                 match_point.line < start.line
                     || match_point.line > origin.line
                     || (match_point.line == origin.line && match_point.column >= origin.column)
@@ -175,7 +175,7 @@ impl<T> Term<T> {
         Some(regex_match)
     }
 
-    /// Find the next match to the left of the origin.
+    /// 查找起点左侧的下一个匹配。
     fn next_match_left(
         &self,
         regex: &mut RegexSearch,
@@ -186,7 +186,7 @@ impl<T> Term<T> {
         let start = self.line_search_right(origin);
         let mut end = start;
 
-        // Limit maximum number of lines searched.
+        // 限制搜索的最大行数。
         end = match max_lines {
             Some(max_lines) => {
                 let line = (start.line - max_lines).grid_clamp(self, Boundary::None);
@@ -197,14 +197,14 @@ impl<T> Term<T> {
 
         let mut regex_iter = RegexIter::new(start, end, Direction::Left, self, regex).peekable();
 
-        // Check if there's any match at all.
+        // 检查是否存在任何匹配。
         let first_match = regex_iter.peek()?.clone();
 
         let regex_match = regex_iter
             .find(|regex_match| {
                 let match_point = Self::match_side(regex_match, side);
 
-                // If the match's point is beyond the origin, we're done.
+                // 若匹配点越过起点,则搜索完成。
                 match_point.line > start.line
                     || match_point.line < origin.line
                     || (match_point.line == origin.line && match_point.column <= origin.column)
@@ -214,7 +214,7 @@ impl<T> Term<T> {
         Some(regex_match)
     }
 
-    /// Get the side of a match.
+    /// 获取匹配范围的指定一侧。
     fn match_side(regex_match: &Match, side: Side) -> Point {
         match side {
             Side::Right => *regex_match.end(),
@@ -222,41 +222,41 @@ impl<T> Term<T> {
         }
     }
 
-    /// Find the next regex match to the left of the origin point.
+    /// 查找起点左侧的下一个正则匹配。
     ///
-    /// The origin is always included in the regex.
+    /// 起点始终包含在正则匹配范围内。
     pub fn regex_search_left(
         &self,
         regex: &mut RegexSearch,
         start: Point,
         end: Point,
     ) -> Option<Match> {
-        // Find start and end of match.
+        // 查找匹配的起点与终点。
         let match_start = self.regex_search(start, end, &mut regex.left_fdfa)?;
         let match_end = self.regex_search(match_start, start, &mut regex.left_rdfa)?;
 
         Some(match_start..=match_end)
     }
 
-    /// Find the next regex match to the right of the origin point.
+    /// 查找起点右侧的下一个正则匹配。
     ///
-    /// The origin is always included in the regex.
+    /// 起点始终包含在正则匹配范围内。
     pub fn regex_search_right(
         &self,
         regex: &mut RegexSearch,
         start: Point,
         end: Point,
     ) -> Option<Match> {
-        // Find start and end of match.
+        // 查找匹配的起点与终点。
         let match_end = self.regex_search(start, end, &mut regex.right_fdfa)?;
         let match_start = self.regex_search(match_end, start, &mut regex.right_rdfa)?;
 
         Some(match_start..=match_end)
     }
 
-    /// Find the next regex match.
+    /// 查找下一个正则匹配。
     ///
-    /// This will always return the side of the first match which is farthest from the start point.
+    /// 总是返回首个匹配中离起点最远的一侧。
     fn regex_search(&self, start: Point, end: Point, regex: &mut LazyDfa) -> Option<Point> {
         match self.regex_search_internal(start, end, regex) {
             Ok(regex_match) => regex_match,
@@ -268,9 +268,9 @@ impl<T> Term<T> {
         }
     }
 
-    /// Find the next regex match.
+    /// 查找下一个正则匹配。
     ///
-    /// To automatically log regex complexity errors, use [`Self::regex_search`] instead.
+    /// 若要自动记录正则复杂度错误,请改用 [`Self::regex_search`]。
     fn regex_search_internal(
         &self,
         start: Point,
@@ -281,13 +281,13 @@ impl<T> Term<T> {
         let screen_lines = self.screen_lines() as i32;
         let last_column = self.last_column();
 
-        // Advance the iterator.
+        // 按方向选择 next/prev 以推进迭代器。
         let next = match regex.direction {
             Direction::Right => GridIterator::next,
             Direction::Left => GridIterator::prev,
         };
 
-        // Get start state for the DFA.
+        // 获取 DFA 的起始状态。
         let regex_anchored = if regex.match_all { Anchored::Yes } else { Anchored::No };
         let input = Input::new(&[]).anchored(regex_anchored);
         let mut state = regex.dfa.start_state_forward(&mut regex.cache, &input).unwrap();
@@ -305,7 +305,7 @@ impl<T> Term<T> {
         let mut last_point = point;
         let mut consumed_bytes = 0;
 
-        // Reset the regex state to restart the search.
+        // 重置正则状态以重新开始搜索。
         macro_rules! reset_state {
             () => {{
                 state = regex.dfa.start_state_forward(&mut regex.cache, &input)?;
@@ -315,13 +315,13 @@ impl<T> Term<T> {
         }
 
         'outer: loop {
-            // Convert char to array of bytes.
+            // 把字符转换为字节数组。
             let mut buf = [0; 4];
             let utf8_len = c.encode_utf8(&mut buf).len();
 
-            // Pass char to DFA as individual bytes.
+            // 以逐字节方式把字符送入 DFA。
             for i in 0..utf8_len {
-                // Inverse byte order when going left.
+                // 向左搜索时反转字节顺序。
                 let byte = match regex.direction {
                     Direction::Right => buf[i],
                     Direction::Left => buf[utf8_len - i - 1],
@@ -331,64 +331,64 @@ impl<T> Term<T> {
                 consumed_bytes += 1;
 
                 if i == 0 && state.is_match() {
-                    // Matches require one additional BYTE of lookahead, so we check the match state
-                    // for the first byte of every new character to determine if the last character
-                    // was a match.
+                    // 匹配需要额外 1 字节的超前,因此在每个新字符的
+                    // 第一个字节处检查匹配状态,以判断上一个字符是否
+                    // 构成匹配。
                     regex_match = Some(last_point);
                 } else if state.is_dead() {
                     if consumed_bytes == 2 {
-                        // Reset search if we found an empty match.
+                        // 发现空匹配时重置搜索。
                         //
-                        // With an unanchored search, a dead state only occurs after the end of a
-                        // match has been found. While we want to abort after the first match has
-                        // ended, we don't want empty matches since we cannot highlight them.
+                        // 非锚定搜索中,死状态只会在找到匹配终点之后
+                        // 出现。我们希望首个匹配结束就中止,但不想要空
+                        // 匹配,因为空匹配无法高亮显示。
                         //
-                        // So once we encounter an empty match, we reset our parser state and clear
-                        // the match, effectively starting a new search one character farther than
-                        // before.
+                        // 因此一旦遇到空匹配,就重置解析器状态并清空
+                        // 匹配,相当于从比之前远一个字符处重新
+                        // 开始新一轮搜索。
                         //
-                        // An empty match requires consuming `2` bytes, since the first byte will
-                        // report the match for the empty string, while the second byte then
-                        // reports the dead state indicating the first character isn't part of the
-                        // match.
+                        // 空匹配需要消耗 2 个字节:第一个字节
+                        // 报告空字符串的匹配,第二个字节随即
+                        // 报告死状态,表明第一个字符并不属于匹配的一部分。
+                        // (消耗计数达到 2 才能确认是空匹配而非误报)。
                         reset_state!();
 
-                        // Retry this character if first byte caused failure.
+                        // 若第一个字节导致失败,则重试该字符。
                         //
-                        // After finding an empty match, we want to advance the search start by one
-                        // character. So if the first character has multiple bytes and the dead
-                        // state isn't reached at `i == 0`, then we continue with the rest of the
-                        // loop to advance the parser by one character.
+                        // 找到空匹配后,我们希望把搜索起点推进一个
+                        // 字符。因此若第一个字符是多字节且死状态未在
+                        // `i == 0` 时到达,就继续循环其余部分,让解析器
+                        // 向前推进一个字符。
                         if i == 0 {
                             continue 'outer;
                         }
                     } else {
-                        // Abort on dead state.
+                        // 遇到死状态即中止。
                         break 'outer;
                     }
                 }
             }
 
-            // Stop once we've reached the target point.
+            // 到达目标点即停止。
             if point == end || done {
-                // When reaching the end-of-input, we need to notify the parser that no look-ahead
-                // is possible and check for state changes.
+                // 到达输入末尾时,需通知解析器无法再超前,
+                // 并检查状态变化。
                 state = regex.dfa.next_eoi_state(&mut regex.cache, state)?;
                 if state.is_match() {
                     regex_match = Some(point);
                 } else if state.is_dead() && consumed_bytes == 1 {
-                    // Ignore empty matches.
+                    // 忽略空匹配。
                     regex_match = None;
                 }
 
                 break;
             }
 
-            // Advance grid cell iterator.
+            // 推进网格单元迭代器。
             let mut cell = match next(&mut iter) {
                 Some(Indexed { cell, .. }) => cell,
                 None => {
-                    // Wrap around to other end of the scrollback buffer.
+                    // 环绕到滚动缓冲区的另一端。
                     let line = topmost_line - point.line + screen_lines - 1;
                     let start = Point::new(line, last_column - point.column);
                     iter = self.grid.iter_from(start);
@@ -396,7 +396,7 @@ impl<T> Term<T> {
                 },
             };
 
-            // Check for completion before potentially skipping over fullwidth characters.
+            // 在可能跳过全角字符之前,先检查是否已完成。
             done = iter.point() == end;
 
             self.skip_fullwidth(&mut iter, &mut cell, regex.direction);
@@ -406,19 +406,19 @@ impl<T> Term<T> {
 
             last_point = mem::replace(&mut point, iter.point());
 
-            // Handle linebreaks.
+            // 处理换行。
             if (last_point.column == last_column && point.column == Column(0) && !last_wrapped)
                 || (last_point.column == Column(0) && point.column == last_column && !wrapped)
             {
-                // When reaching the end-of-input, we need to notify the parser that no
-                // look-ahead is possible and check if the current state is still a match.
+                // 到达输入末尾时,需通知解析器无法再超前,
+                // 并检查当前状态是否仍为匹配。
                 state = regex.dfa.next_eoi_state(&mut regex.cache, state)?;
                 if state.is_match() {
                     regex_match = Some(last_point);
                 }
 
                 match regex_match {
-                    // Stop if we found a non-empty match before the linebreak.
+                    // 若在换行前找到非空匹配则停止。
                     Some(_) if (!state.is_dead() || consumed_bytes > 1) && consumed_bytes != 0 => {
                         break;
                     },
@@ -432,7 +432,7 @@ impl<T> Term<T> {
         Ok(regex_match)
     }
 
-    /// Advance a grid iterator over fullwidth characters.
+    /// 让网格迭代器跨越全角字符前进。
     fn skip_fullwidth<'a>(
         &self,
         iter: &'a mut GridIterator<'_, Cell>,
@@ -440,8 +440,8 @@ impl<T> Term<T> {
         direction: Direction,
     ) {
         match direction {
-            // In the alternate screen buffer there might not be a wide char spacer after a wide
-            // char, so we only advance the iterator when the wide char is not in the last column.
+            // 备用屏幕缓冲区中,宽字符后面可能没有宽字符占位,
+            // 所以仅当宽字符不在最后一列时才推进迭代器。
             Direction::Right
                 if cell.flags.contains(Flags::WIDE_CHAR)
                     && iter.point().column < self.last_column() =>
@@ -468,11 +468,11 @@ impl<T> Term<T> {
         }
     }
 
-    /// Find next matching bracket.
+    /// 查找下一个匹配的括号。
     pub fn bracket_search(&self, point: Point) -> Option<Point> {
         let start_char = self.grid[point].c;
 
-        // Find the matching bracket we're looking for
+        // 找到我们寻找的配对括号
         let (forward, end_char) = BRACKET_PAIRS.iter().find_map(|(open, close)| {
             if open == &start_char {
                 Some((true, *close))
@@ -485,21 +485,21 @@ impl<T> Term<T> {
 
         let mut iter = self.grid.iter_from(point);
 
-        // For every character match that equals the starting bracket, we
-        // ignore one bracket of the opposite type.
+        // 对每一个等于起始括号的字符匹配,我们
+        // 忽略一个反向类型的括号(成对跳过)。
         let mut skip_pairs = 0;
 
         loop {
-            // Check the next cell
+            // 检查下一个单元
             let cell = if forward { iter.next() } else { iter.prev() };
 
-            // Break if there are no more cells
+            // 没有更多单元则跳出
             let cell = match cell {
                 Some(cell) => cell,
                 None => break,
             };
 
-            // Check if the bracket matches
+            // 检查括号是否匹配(且成对跳过计数为 0)
             if cell.c == end_char && skip_pairs == 0 {
                 return Some(cell.point);
             } else if cell.c == start_char {
@@ -512,11 +512,11 @@ impl<T> Term<T> {
         None
     }
 
-    /// Find left end of semantic block.
+    /// 查找语义块的左端。
     #[must_use]
     pub fn semantic_search_left(&self, point: Point) -> Point {
         match self.inline_search_left(point, self.semantic_escape_chars()) {
-            // If we found a match, reverse for at least one cell, skipping over wide cell spacers.
+            // 若找到匹配,至少回退一个单元,并跳过宽单元占位。
             Ok(point) => {
                 let wide_spacer = Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER;
                 self.grid
@@ -528,7 +528,7 @@ impl<T> Term<T> {
         }
     }
 
-    /// Find right end of semantic block.
+    /// 查找语义块的右端。
     #[must_use]
     pub fn semantic_search_right(&self, point: Point) -> Point {
         match self.inline_search_right(point, self.semantic_escape_chars()) {
@@ -537,9 +537,9 @@ impl<T> Term<T> {
         }
     }
 
-    /// Searching to the left, find the next character contained in `needles`.
+    /// 向左搜索,查找 `needles` 中包含的下一个字符。
     pub fn inline_search_left(&self, mut point: Point, needles: &str) -> Result<Point, Point> {
-        // Limit the starting point to the last line in the history
+        // 把起点限制在历史中的最后一行
         point.line = max(point.line, self.topmost_line());
 
         let mut iter = self.grid.iter_from(point);
@@ -561,15 +561,15 @@ impl<T> Term<T> {
         Err(point)
     }
 
-    /// Searching to the right, find the next character contained in `needles`.
+    /// 向右搜索,查找 `needles` 中包含的下一个字符。
     pub fn inline_search_right(&self, mut point: Point, needles: &str) -> Result<Point, Point> {
-        // Limit the starting point to the last line in the history
+        // 把起点限制在历史中的最后一行
         point.line = max(point.line, self.topmost_line());
 
         let wide_spacer = Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER;
         let last_column = self.columns() - 1;
 
-        // Immediately stop if start point in on line break.
+        // 若起点位于换行处则立即停止。
         if point.column == last_column && !self.grid[point].flags.contains(Flags::WRAPLINE) {
             return Err(point);
         }
@@ -589,7 +589,7 @@ impl<T> Term<T> {
         Err(point)
     }
 
-    /// Find the beginning of the current line across linewraps.
+    /// 跨越自动换行查找当前行的开头。
     pub fn line_search_left(&self, mut point: Point) -> Point {
         while point.line > self.topmost_line()
             && self.grid[point.line - 1i32][self.last_column()].flags.contains(Flags::WRAPLINE)
@@ -602,7 +602,7 @@ impl<T> Term<T> {
         point
     }
 
-    /// Find the end of the current line across linewraps.
+    /// 跨越自动换行查找当前行的结尾。
     pub fn line_search_right(&self, mut point: Point) -> Point {
         while point.line + 1 < self.screen_lines()
             && self.grid[point.line][self.last_column()].flags.contains(Flags::WRAPLINE)
@@ -615,15 +615,15 @@ impl<T> Term<T> {
         point
     }
 
-    /// Extract the logical line text for smart selection and compute byte offset for click.
+    /// 为智能选区提取逻辑行文本,并计算点击位置的字节偏移。
     ///
-    /// Returns `(text, byte_offset, line_start_point, char_columns)` where `char_columns`
-    /// maps each UTF-8 char index to its grid column (used for byte→Point conversion).
+    /// 返回四元组,其中 `char_columns`
+    /// 把每个 UTF-8 字符下标映射到其网格列(用于 byte→Point 换算)。
     pub fn smart_selection_line_text(
         &self,
         point: Point,
     ) -> Option<(String, usize, Point, Vec<(usize, Line, Column)>)> {
-        // Find the start of the logical line (follow WRAPLINE backwards).
+        // 查找逻辑行的起点(沿 WRAPLINE 向后)。
         let mut line_start = point;
         while line_start.line > self.topmost_line()
             && self.grid[line_start.line - 1i32][self.last_column()]
@@ -633,7 +633,7 @@ impl<T> Term<T> {
             line_start.line -= 1;
         }
 
-        // Find the end of the logical line (follow WRAPLINE forwards).
+        // 查找逻辑行的终点(沿 WRAPLINE 向前)。
         let mut line_end = point;
         while line_end.line + 1 < self.screen_lines()
             && self.grid[line_end.line][self.last_column()]
@@ -643,7 +643,7 @@ impl<T> Term<T> {
             line_end.line += 1;
         }
 
-        // Extract text and track char→(byte_offset, line, column) mapping.
+        // 提取文本并记录 char→(byte_offset, line, column) 映射。
         let mut text = String::new();
         let mut char_columns: Vec<(usize, Line, Column)> = vec![(0, line_start.line, Column(0))];
         let mut byte_offset = 0;
@@ -660,7 +660,7 @@ impl<T> Term<T> {
 
                 let char_byte_start = text.len();
 
-                // Match the click position.
+                // 匹配点击位置。
                 if line == point.line && col == point.column {
                     byte_offset = char_byte_start;
                 }
@@ -669,7 +669,7 @@ impl<T> Term<T> {
 
                 char_columns.push((char_byte_start, line, col));
 
-                // Handle wide chars: also match on the spacer cell.
+                // 处理宽字符:占位单元也视为同一点击位置。
                 if cell.flags.contains(Flags::WIDE_CHAR)
                     && line == point.line
                     && col + 1 == point.column
@@ -683,7 +683,7 @@ impl<T> Term<T> {
     }
 }
 
-/// Iterator over regex matches.
+/// 正则匹配的迭代器。
 pub struct RegexIter<'a, T> {
     point: Point,
     end: Point,
@@ -704,7 +704,7 @@ impl<'a, T> RegexIter<'a, T> {
         Self { point: start, done: false, end, direction, term, regex }
     }
 
-    /// Skip one cell, advancing the origin point to the next one.
+    /// 跳过一个单元,把起点推进到下一个位置。
     fn skip(&mut self) {
         self.point = self.term.expand_wide(self.point, self.direction);
 
@@ -714,7 +714,7 @@ impl<'a, T> RegexIter<'a, T> {
         };
     }
 
-    /// Get the next match in the specified direction.
+    /// 获取指定方向上的下一个匹配。
     fn next_match(&mut self) -> Option<Match> {
         match self.direction {
             Direction::Right => self.term.regex_search_right(self.regex, self.point, self.end),
@@ -731,7 +731,7 @@ impl<T> Iterator for RegexIter<'_, T> {
             return None;
         }
 
-        // Since the end itself might be a single cell match, we search one more time.
+        // 终点本身可能是单单元匹配,所以再多搜索一次。
         if self.point == self.end {
             self.done = true;
         }
@@ -740,10 +740,10 @@ impl<T> Iterator for RegexIter<'_, T> {
 
         self.point = *regex_match.end();
         if self.point == self.end {
-            // Stop when the match terminates right on the end limit.
+            // 匹配恰好终止于终点限制时停止。
             self.done = true;
         } else {
-            // Move the new search origin past the match.
+            // 把新的搜索起点移到匹配之后。
             self.skip();
         }
 
@@ -770,7 +770,7 @@ mod tests {
             123\
         ");
 
-        // Check regex across wrapped and unwrapped lines.
+        // 验证跨换行与未换行行的正则匹配。
         let mut regex = RegexSearch::new("Ala.*123").unwrap();
         let start = Point::new(Line(1), Column(0));
         let end = Point::new(Line(4), Column(2));
@@ -790,7 +790,7 @@ mod tests {
             123\
         ");
 
-        // Check regex across wrapped and unwrapped lines.
+        // 验证跨换行与未换行行的正则匹配。
         let mut regex = RegexSearch::new("Ala.*123").unwrap();
         let start = Point::new(Line(4), Column(2));
         let end = Point::new(Line(1), Column(0));
@@ -807,13 +807,13 @@ mod tests {
             critty\
         ");
 
-        // Greedy stopped at linebreak.
+        // 贪婪匹配在换行处停止。
         let mut regex = RegexSearch::new("Ala.*critty").unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(25));
         assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=end));
 
-        // Greedy stopped at dead state.
+        // 贪婪匹配在死状态处停止。
         let mut regex = RegexSearch::new("Ala[^y]*critty").unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(15));
@@ -858,7 +858,7 @@ mod tests {
             xxx\
         ");
 
-        // Make sure the cell containing the linebreak is not skipped.
+        // 确保包含换行的单元不会被跳过。
         let mut regex = RegexSearch::new("te.*123").unwrap();
         let start = Point::new(Line(1), Column(0));
         let end = Point::new(Line(0), Column(0));
@@ -875,7 +875,7 @@ mod tests {
             testing123\
         ");
 
-        // Make sure the cell containing the linebreak is not skipped.
+        // 确保包含换行的单元不会被跳过。
         let mut regex = RegexSearch::new("te.*123").unwrap();
         let start = Point::new(Line(0), Column(2));
         let end = Point::new(Line(1), Column(9));
@@ -887,7 +887,7 @@ mod tests {
     fn skip_dead_cell() {
         let term = mock_term("alacritty");
 
-        // Make sure dead state cell is skipped when reversing.
+        // 确保反向搜索时跳过死状态单元。
         let mut regex = RegexSearch::new("alacrit").unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(6));
@@ -898,7 +898,7 @@ mod tests {
     fn reverse_search_dead_recovery() {
         let term = mock_term("zooo lense");
 
-        // Make sure the reverse DFA operates the same as a forward DFA.
+        // 确保反向 DFA 的行为与正向 DFA 一致。
         let mut regex = RegexSearch::new("zoo").unwrap();
         let start = Point::new(Line(0), Column(9));
         let end = Point::new(Line(0), Column(0));
@@ -970,7 +970,7 @@ mod tests {
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(4));
 
-        // Ensure ending without a match doesn't loop indefinitely.
+        // 确保无匹配结束时不会无限循环。
         let mut regex = RegexSearch::new("x").unwrap();
         assert_eq!(term.regex_search_right(&mut regex, start, end), None);
 
@@ -978,7 +978,7 @@ mod tests {
         let match_end = Point::new(Line(0), Column(5));
         assert_eq!(term.regex_search_right(&mut regex, start, match_end), None);
 
-        // Ensure match is captured when only partially inside range.
+        // 确保匹配只部分位于范围内时仍能被捕获。
         let mut regex = RegexSearch::new("jarr🦇").unwrap();
         assert_eq!(term.regex_search_right(&mut regex, start, end), Some(start..=match_end));
     }
@@ -1153,7 +1153,7 @@ mod tests {
             def\
         ");
 
-        // Bottom to top.
+        // 自下而上。
         let mut regex = RegexSearch::new("abc").unwrap();
         let start = Point::new(Line(1), Column(0));
         let end = Point::new(Line(0), Column(2));
@@ -1161,7 +1161,7 @@ mod tests {
         let match_end = Point::new(Line(0), Column(2));
         assert_eq!(term.regex_search_right(&mut regex, start, end), Some(match_start..=match_end));
 
-        // Top to bottom.
+        // 自上而下。
         let mut regex = RegexSearch::new("def").unwrap();
         let start = Point::new(Line(0), Column(2));
         let end = Point::new(Line(1), Column(0));
@@ -1190,7 +1190,7 @@ mod tests {
         #[rustfmt::skip]
         let term = mock_term("https://github.com");
 
-        // Bottom to top.
+        // 自下而上。
         let mut regex = RegexSearch::new("/github.com|https://github.com").unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(17));
@@ -1202,7 +1202,7 @@ mod tests {
         #[rustfmt::skip]
         let term = mock_term("rust");
 
-        // Bottom to top.
+        // 自下而上。
         let mut regex = RegexSearch::new(";*|rust").unwrap();
         let start = Point::new(Line(0), Column(0));
         let end = Point::new(Line(0), Column(3));
@@ -1217,13 +1217,13 @@ mod tests {
             def test\
         ");
 
-        // Start at last character.
+        // 从最后一个字符开始。
         let start = term.semantic_search_left(Point::new(Line(0), Column(7)));
         let end = term.semantic_search_right(Point::new(Line(0), Column(7)));
         assert_eq!(start, Point::new(Line(0), Column(5)));
         assert_eq!(end, Point::new(Line(0), Column(7)));
 
-        // Start at first character.
+        // 从第一个字符开始。
         let start = term.semantic_search_left(Point::new(Line(1), Column(0)));
         let end = term.semantic_search_right(Point::new(Line(1), Column(0)));
         assert_eq!(start, Point::new(Line(1), Column(0)));

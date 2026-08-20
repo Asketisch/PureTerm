@@ -1,51 +1,51 @@
-//! GAP-7.5: persistence of agent session ids (Claude Code / Codex / ...) for
-//! cold resume (`claude --resume <id>`) after the agent process has died or the
-//! daemon has restarted and lost the live PTY.
+//! GAP-7.5:agent 会话 id(Claude Code / Codex / ...)的持久化,
+//! 用于 agent 进程已死或守护进程重启丢失实时 PTY 后的
+//! 冷恢复(`claude --resume <id>`)。
 //!
-//! The hook shim fires `agent.session_started { session_id, kind, cwd }` on the
-//! agent's SessionStart event (see `feed_client::notify_session_started`); the
-//! GUI appends a record here. On restore, `session_restore` reads the pane's
-//! `agent_session_id` + `agent_kind` and respawns via the kind's
+//! hook shim 在 agent 的 SessionStart 事件(见
+//! `feed_client::notify_session_started`)时发出 `agent.session_started { session_id, kind, cwd }`;
+//! GUI 在此追加记录。恢复时,`session_restore` 读取窗格的
+//! `agent_session_id` + `agent_kind`,并按 kind 的
 //! `resume_command`.
 //!
-//! One JSON file per agent kind under `<data_dir>/agents/`, bounded to the most
-//! recent `MAX_RECORDS_PER_KIND` records (FIFO by `last_seen`). Atomic write
-//! mirrors `session_restore::save_atomic`. Pure file I/O — no Unix-socket
-//! dependency — so cold-resume persistence works on Windows too.
+//! `<data_dir>/agents/` 下每个 agent kind 一个 JSON 文件,
+//! 只保留最近的 `MAX_RECORDS_PER_KIND` 条(FIFO,按 `last_seen`)。原子写入
+//! 镜像 `session_restore::save_atomic`。纯文件 I/O —— 无 Unix socket
+//! 依赖 —— 因此冷恢复持久化在 Windows 上同样可用。
 
 use std::path::{Path, PathBuf};
 
-/// One persisted agent session observation.
+/// 一条已持久化的 agent 会话观测。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AgentSessionRecord {
     pub session_id: String,
     pub kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
-    /// Unix epoch seconds of when the SessionStart hook was received by the
-    /// GUI. The shim is fire-and-forget and clock-less w.r.t. this store, so
-    /// the caller (GUI) stamps it.
+    /// GUI 收到 SessionStart hook 时的 Unix 纪元秒。
+    /// shim 对这个存储来说是发射后不管、不持时钟的,
+    /// 因此由调用方(GUI)打时间戳。
     #[serde(default)]
     pub last_seen: u64,
 }
 
-/// Max records kept per agent kind (most recent by `last_seen`).
+/// 每个 agent kind 保留的最大记录数(按 `last_seen` 取最新的)。
 const MAX_RECORDS_PER_KIND: usize = 16;
 
-/// Path of the per-kind agent session store: `<data_dir>/agents/<kind>-sessions.json`.
-/// Lives in the daemon's persistent, owner-only (0o700) data dir.
+/// 每种 kind 的 agent 会话存储路径:`<data_dir>/agents/<kind>-sessions.json`。
+/// 位于守护进程持久化、仅属主(0o700)的数据目录中。
 pub fn path_for(kind: &str) -> PathBuf {
     pureterm_daemon::discovery::data_dir().join("agents").join(format!("{kind}-sessions.json"))
 }
 
-/// Load the records for a kind. `[]` if missing/unparseable (fresh start).
+/// 加载某个 kind 的记录。缺失 / 无法解析时为 `[]`(全新开始)。
 pub fn load(kind: &str) -> Vec<AgentSessionRecord> {
     load_from(&path_for(kind))
 }
 
-/// Append a record for its kind, deduping by `session_id` (refreshes
-/// `last_seen`) and pruning to the most recent `MAX_RECORDS_PER_KIND`.
-/// Atomic + best-effort (a failed write never crashes the GUI).
+/// 为其 kind 追加记录,按 `session_id` 去重(刷新
+/// `last_seen`),并裁剪到最近的 `MAX_RECORDS_PER_KIND` 条。
+/// 原子且尽力而为(写入失败绝不崩溃 GUI)。
 pub fn append(rec: AgentSessionRecord) {
     append_to(&path_for(&rec.kind), rec);
 }
@@ -73,7 +73,7 @@ fn append_to(path: &Path, rec: AgentSessionRecord) {
         return;
     }
     let mut records = load_from(path);
-    // Dedup by session_id: refresh last_seen (and fill cwd if previously empty).
+    // 按 session_id 去重:刷新 last_seen(之前为空时补填 cwd)。
     if let Some(existing) = records.iter_mut().find(|r| r.session_id == rec.session_id) {
         existing.last_seen = rec.last_seen;
         if existing.cwd.is_none() {
@@ -82,7 +82,7 @@ fn append_to(path: &Path, rec: AgentSessionRecord) {
     } else {
         records.push(rec);
     }
-    // Keep most-recent MAX_RECORDS_PER_KIND.
+    // 只保留最近的 MAX_RECORDS_PER_KIND 条。
     records.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
     records.truncate(MAX_RECORDS_PER_KIND);
 
@@ -170,7 +170,7 @@ mod tests {
         }
         let loaded = load_from(&p);
         assert_eq!(loaded.len(), MAX_RECORDS_PER_KIND);
-        // Most recent kept (last_seen = highest).
+        // 保留最新的(last_seen 最大)。
         assert_eq!(loaded[0].last_seen, (MAX_RECORDS_PER_KIND + 4) as u64);
     }
 

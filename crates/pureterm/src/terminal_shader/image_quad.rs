@@ -10,16 +10,16 @@ use pureterm_alacritty_runtime::renderer::image_atlas::{
     AtlasDirty as ImageAtlasDirty, ImageAtlas, ImagePlacement,
 };
 
-/// T-core-graphics v2: image quad pass state.
+/// T-core-graphics v2:图像四边形(image quad)渲染阶段状态。
 ///
-/// The image atlas is the CPU-side RGBA bitmap that backs Sixel /
-/// chunked-graphics / inline images. The render thread uploads dirty
-/// regions to the GPU once per frame (see `take_dirty_data()`).
+/// 图像图集是支撑 Sixel / 分块图形 / 内联图像的 CPU 侧 RGBA 位图。
+/// 渲染线程每帧上传一次
+/// 脏区域到 GPU(见 `take_dirty_data()`)。
 ///
-/// v2 limitation: the GPU quad-rendering pipeline (vertex + fragment
-/// shader pair that samples the image atlas with bilinear filtering)
-/// is wired in v3. For now `ImageQuadState` only owns the CPU side;
-/// callers can read placements but not yet draw them.
+/// v2 限制:GPU 四边形渲染管线(顶点 + 片元
+/// 着色器对,以双线性过滤采样图像图集)
+/// 在 v3 中接入。当前 `ImageQuadState` 只持有 CPU 侧;
+/// 调用方可读取位置,但尚不能绘制。
 pub struct ImageQuadState {
     pub atlas: ImageAtlas,
 }
@@ -31,24 +31,24 @@ impl ImageQuadState {
         }
     }
 
-    /// Insert a decoded RGBA image into the atlas. Returns the
-    /// `ImagePlacement` the GPU quad pass will sample from.
+    /// 把解码后的 RGBA 图像插入图集。返回
+    /// GPU 四边形渲染阶段将采样的 `ImagePlacement`。
     pub fn insert(&mut self, id: u64, rgba: std::sync::Arc<Vec<u8>>, w: u32, h: u32) -> Option<ImagePlacement> {
         self.atlas.insert(id, rgba, w, h)
     }
 
-    /// Remove an image (chunked-graphics `d=d`, scrollback prune, etc.).
+    /// 移除一张图像(分块图形 `d=d`、回滚裁剪等)。
     pub fn remove(&mut self, id: u64) -> bool {
         self.atlas.remove(id)
     }
 
-    /// Look up the GPU placement for an already-cached image.
+    /// 查找已缓存图像的 GPU 位置。
     pub fn get(&mut self, id: u64) -> Option<ImagePlacement> {
         self.atlas.get(id)
     }
 
-    /// Returns the dirty upload payload if any. The render thread is
-    /// responsible for `queue.write_texture` to the image atlas.
+    /// 返回有待上传的脏负载(若有)。渲染线程负责
+    /// 对图像图集执行 `queue.write_texture`。
     pub fn take_dirty_data(&mut self) -> Option<ImageAtlasDirty> {
         self.atlas.take_dirty_data()
     }
@@ -68,28 +68,28 @@ impl Default for ImageQuadState {
     }
 }
 
-/// T-core-graphics v3: per-image draw description consumed by the image
-/// quad pass. The host (`TerminalProgram::draw`) builds a `Vec<ImageQuadDraw>`
-/// each frame based on what's visible in the current viewport; the renderer
-/// then emits 4 vertices + 6 indices per entry, mapping the GPU atlas UV
-/// range to the screen-space rectangle `(col*cell_w, row*cell_h,
-/// cols*cell_w, rows*cell_h)`.
+/// T-core-graphics v3:图像四边形渲染阶段消费的逐图绘制描述。
+/// 宿主(`TerminalProgram::draw`)根据当前视口可见内容
+/// 每帧构建 `Vec<ImageQuadDraw>`;渲染器随后
+/// 为每个条目发出 4 个顶点 + 6 个索引,把 GPU 图集 UV 范围
+/// 映射到屏幕空间矩形 `(col*cell_w, row*cell_h, cols*cell_w, rows*cell_h)`。
 ///
-/// `image_id` is the `GraphicsPlacement.id` from the original
-/// `Event::GraphicsImage` — when the same id re-transmits (chunked-graphics
-/// `a=T,i=…`), the atlas entry is replaced and the new `ImagePlacement` UVs are used.
+///
+/// `image_id` 来自原始事件的 `GraphicsPlacement.id`:
+/// `Event::GraphicsImage` —— 同一 id 重传时(分块图形
+/// `a=T,i=…`),图集条目被替换,并采用新的 `ImagePlacement` UV。
 #[derive(Debug, Clone)]
 pub struct ImageQuadDraw {
     pub image_id: u32,
-    /// Grid-relative top-left column (logical px = col * cell_w).
+    /// 相对网格的左上角列(逻辑像素 = col * cell_w)。
     pub col: u16,
-    /// Grid-relative top-left row (logical px = row * cell_h).
+    /// 相对网格的左上角行(逻辑像素 = row * cell_h)。
     pub row: u16,
-    /// Image width in cells.
+    /// 图像宽度(以单元格计)。
     pub cols: u16,
-    /// Image height in cells.
+    /// 图像高度(以单元格计)。
     pub rows: u16,
-    /// Z-order — newer images overlay older ones. Monotonically increasing
-    /// at insertion time on the CPU side (see `ImageStore::insert`).
+    /// Z 序 —— 较新的图像覆盖较旧的。在 CPU 侧插入时
+    /// 单调递增(见 `ImageStore::insert`)。
     pub z: u32,
 }

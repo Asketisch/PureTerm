@@ -1,12 +1,12 @@
-//! GAP-56: X11-style focus-follows-mouse for split panes.
+//! GAP-56:类 X11 的“鼠标跟随聚焦”,作用于拆分窗格。
 
 use std::time::{Duration, Instant};
 
-/// `[focus_follows_mouse]` config.
+/// `[focus_follows_mouse]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FocusFollowsMouseConfig {
     pub enabled: bool,
-    /// Delay before switching focus on hover (ms).
+    /// 悬停后切换聚焦前的延迟(毫秒)。
     pub delay_ms: u64,
 }
 

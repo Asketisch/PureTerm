@@ -1,21 +1,20 @@
-//! GAP-51: block-based output data model + per-pane store.
+//! GAP-51：基于块的输出数据模型 + 每 pane 存储。
 //!
-//! When `[block_output].enabled = true`, each OSC 133 D mark appends an
-//! [`OutputBlock`] with grid-sliced output text. [`BlockSumTree`] provides
-//! O(log n) row lookup; the Blocks sidebar lists, filters, and searches blocks.
+//! 当 `[block_output].enabled = true` 时，每个 OSC 133 D 标记会追加一个带网格
+//! 切片输出文本的 [`OutputBlock`]。[`BlockSumTree`] 提供 O(log n) 的行查找；
+//! Blocks 侧边栏用来列出、筛选与搜索块。
 //!
-//! `BlockFilter` is the single source of truth for view-side filtering: callers
-//! (sidebar view) build a `BlockFilter { exit, query }` and ask the store for a
-//! filtered slice — the view layer no longer inlines its own filter loop.
+//! `BlockFilter` 是视图侧过滤的唯一事实来源：调用方（侧边栏视图）构造一个
+//! `BlockFilter { exit, query }` 并向存储索要过滤后的切片——视图层不再内联
+//! 自己的过滤循环。
 
 use crate::shell_state::FinishedCommand;
 
-/// Max blocks retained per pane (newest kept).
+/// 每个 pane 保留的最大块数（保留最新）。
 pub const BLOCK_STORE_MAX: usize = 256;
 
-/// Where a block came from. Today only commands; reserved for future AI
-/// annotations (e.g. an AI suggestion / explanation that lives alongside the
-/// command it comments on).
+/// 块的来源。当前只有命令；为未来的 AI 标注预留（例如与命令并存的
+/// AI 建议/解释）。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BlockKind {
     #[default]
@@ -23,27 +22,25 @@ pub enum BlockKind {
     AiAnnotation,
 }
 
-/// Side-channel metadata for a freshly-finalized block — session / cwd / started
-/// time. Lives apart from `FinishedCommand` (which is shell-state-owned) so the
-/// store API can evolve without touching the shell state machine.
+/// 新完成块的旁路元数据——会话 / cwd / 开始时间。与 `FinishedCommand`
+///（归 shell 状态所有）分开存放，使存储 API 可以在不动 shell 状态机的情况下演进。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BlockMeta {
-    /// Top-level PureTerm session id (string form, captured at push time).
+    /// 顶层 PureTerm 会话 id（字符串形式，压栈时捕获）。
     pub session_id: Option<String>,
-    /// Last-known OSC 7 cwd for the pane (cached in `pane_cwds`).
+    /// 该 pane 最近一次已知的 OSC 7 cwd（缓存在 `pane_cwds` 中）。
     pub cwd: Option<String>,
-    /// UNIX-epoch microseconds at the OSC 133 B (CommandStart) mark — the
-    /// "command started" timestamp. `None` if the B mark never arrived.
+    /// OSC 133 B（CommandStart）标记处的 UNIX 纪元微秒数——即“命令开始”
+    /// 时间戳。B 标记从未到达时为 `None`。
     pub started_at_us: Option<u64>,
 }
 
-/// Captured-block payload returned by [`crate::surface_snapshot::
-/// capture_row_range_async`]. Carries everything `PaneBlockStore::push` needs
-/// so the iced loop can finish the append in a single `Message` handler
-/// without re-reading the grid (`text` is already sliced off-main).
+/// [`crate::surface_snapshot::capture_row_range_async`] 返回的已捕获块负载。
+/// 携带 `PaneBlockStore::push` 所需的全部信息，使 iced 循环可以在单个
+/// `Message` 处理器中完成追加，无需重新读取网格（`text` 已在主线程之外切片）。
 ///
-/// `start_row` / `end_row` are frozen at OSC 133 D-mark time so a later grid
-/// scroll can't desync the recorded span from the captured text.
+/// `start_row` / `end_row` 在 OSC 133 D 标记时刻冻结，后续网格滚动不会使
+/// 记录的区间与捕获的文本失同步。
 #[derive(Clone, Debug)]
 pub struct BlockCaptureRequest {
     pub pane_id: u64,
@@ -54,7 +51,7 @@ pub struct BlockCaptureRequest {
     pub text: Option<String>,
 }
 
-/// Metadata for one command/output block boundary.
+/// 一个命令/输出块边界的元数据。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutputBlock {
     pub id: u64,
@@ -62,24 +59,24 @@ pub struct OutputBlock {
     pub command: Option<String>,
     pub exit_code: Option<i32>,
     pub duration_us: Option<u64>,
-    /// Grid row of the command line (OSC 133 B mark).
+    /// 命令行所在网格行（OSC 133 B 标记）。
     pub command_row: usize,
-    /// Grid row of output start (OSC 133 C mark), when present.
+    /// 输出开始的网格行（OSC 133 C 标记），存在时才有值。
     pub output_start_row: Option<usize>,
-    /// Grid row of output end (OSC 133 D mark).
+    /// 输出结束的网格行（OSC 133 D 标记）。
     pub output_end_row: usize,
-    /// Captured grid text for the output region (grid slice).
+    /// 输出区域的已捕获网格文本（网格切片）。
     pub output_text: Option<String>,
-    // ── new in v1 (min closure) ──
-    /// Top-level PureTerm session id (e.g. `puretermd` session).
+    // ── v1 新增（最小闭环）──
+    /// 顶层 PureTerm 会话 id（例如 `puretermd` 会话）。
     pub session_id: Option<String>,
-    /// Working directory at the time the block was finalized (from OSC 7).
+    /// 块完成时的工作目录（来自 OSC 7）。
     pub cwd: Option<String>,
-    /// UNIX-epoch microseconds at OSC 133 B (CommandStart).
+    /// OSC 133 B（CommandStart）处的 UNIX 纪元微秒数。
     pub started_at_us: Option<u64>,
-    /// Block provenance. Defaults to `Command`; reserved for future AI entries.
+    /// 块来源。默认为 `Command`；为未来的 AI 条目预留。
     pub kind: BlockKind,
-    /// Free-form tags (AI context, labels). Empty by default.
+    /// 自由格式标签（AI 上下文、标签）。默认为空。
     pub tags: Vec<String>,
 }
 
@@ -96,9 +93,8 @@ impl OutputBlock {
         self.duration_us.map(|us| us / 1000)
     }
 
-    /// Case-insensitive substring search across `command` + `output_text`.
-    /// Used by [`PaneBlockStore::filtered`] as the single source of truth for
-    /// "does this block match the query".
+    /// 在 `command` + `output_text` 上做不区分大小写的子串搜索。
+    /// 由 [`PaneBlockStore::filtered`] 用作“该块是否匹配查询”的唯一事实来源。
     pub fn has_text(&self, query_lower: &str) -> bool {
         if query_lower.is_empty() {
             return true;
@@ -113,24 +109,23 @@ impl OutputBlock {
     }
 }
 
-/// Prefix-sum index over block row spans — O(log n) lookup by grid row.
+/// 块行区间的前缀和索引——按网格行 O(log n) 查找。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BlockSumTree {
-    /// Cumulative end row for each block (monotonic).
+    /// 每个块的累计结束行（单调递增）。
     end_rows: Vec<usize>,
 }
 
 impl BlockSumTree {
-    /// Push a new block's `output_end_row`. O(1) amortized; the tree stays
-    /// monotonically aligned with `PaneBlockStore.blocks` (which drops from the
-    /// front on overflow, calling [`BlockSumTree::drop_prefix`] to stay in
-    /// sync).
+    /// 压入新块的 `output_end_row`。摊还 O(1)；树与 `PaneBlockStore.blocks`
+    /// 保持单调对齐（溢出时从头部丢弃，并调用 [`BlockSumTree::drop_prefix`]
+    /// 保持同步）。
     pub fn push(&mut self, output_end_row: usize) {
         self.end_rows.push(output_end_row);
     }
 
-    /// Drop the first `n` entries (called when `blocks` overflows
-    /// `BLOCK_STORE_MAX`). O(n) but only runs on overflow.
+    /// 丢弃前 `n` 条（当 `blocks` 超过 `BLOCK_STORE_MAX` 时调用）。O(n)
+    /// 但只在溢出时运行。
     pub fn drop_prefix(&mut self, n: usize) {
         if n == 0 {
             return;
@@ -139,8 +134,8 @@ impl BlockSumTree {
         self.end_rows.drain(0..end);
     }
 
-    /// Find the index of the block whose `[command_row, output_end_row]`
-    /// contains `row` (i.e. the block that owns that grid line). O(log n).
+    /// 查找 `[command_row, output_end_row]` 区间包含 `row` 的块索引
+    ///（即拥有该网格行的块）。O(log n)。
     pub fn block_index_for_row(&self, row: usize) -> Option<usize> {
         if self.end_rows.is_empty() {
             return None;
@@ -150,7 +145,7 @@ impl BlockSumTree {
     }
 }
 
-/// Per-pane append-only block list with sum-tree row index.
+/// 每 pane 的只追加块列表，带前缀和树行索引。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PaneBlockStore {
     blocks: Vec<OutputBlock>,
@@ -158,8 +153,8 @@ pub struct PaneBlockStore {
     next_id: u64,
 }
 
-/// Combined filter applied by [`PaneBlockStore::filtered`]. Empty `query`
-/// means "no text filter"; the exit filter is always applied.
+/// [`PaneBlockStore::filtered`] 应用的组合过滤器。空 `query` 表示
+/// “无文本过滤”；退出码过滤始终生效。
 #[derive(Clone, Debug, Default)]
 pub struct BlockFilter<'a> {
     pub exit: BlockExitFilter,
@@ -167,13 +162,13 @@ pub struct BlockFilter<'a> {
 }
 
 impl PaneBlockStore {
-    /// Append a finalized command (with side-channel `meta` and grid `output_text`)
-    /// as a new block. Returns a reference to the freshly-stored block.
+    /// 把一条已完成的命令（含旁路 `meta` 与网格 `output_text`）追加为新块。
+    /// 返回新存块的引用。
     ///
-    /// `output_text` is captured off the GUI thread (see `surface_snapshot::
-    /// capture_row_range_async`) — when that future resolves, the caller passes
-    /// the resulting `Option<String>` here. `None` simply leaves `output_text`
-    /// unset (e.g. SSH pane with no local grid).
+    /// `output_text` 在 GUI 线程之外捕获（见 `surface_snapshot::
+    /// capture_row_range_async`）——当该 future 完成时，调用方把得到的
+    /// `Option<String>` 传进来。`None` 只是保持 `output_text` 不设置
+    ///（例如没有本地网格的 SSH pane）。
     pub fn push(
         &mut self,
         pane_id: u64,
@@ -203,7 +198,7 @@ impl PaneBlockStore {
         };
         self.blocks.push(block);
         self.index.push(output_end_row);
-        // Trim from the front (and keep the sum-tree in lock-step).
+        // 从头部修剪（并让前缀和树保持同步）。
         if self.blocks.len() > BLOCK_STORE_MAX {
             let drop_n = self.blocks.len() - BLOCK_STORE_MAX;
             self.blocks.drain(0..drop_n);
@@ -237,11 +232,9 @@ impl PaneBlockStore {
         self.blocks.get(idx).filter(|b| b.command_row <= row)
     }
 
-    /// Apply `filter` (exit + optional case-insensitive substring over
-    /// `command` + `output_text`). Returns matching blocks in insertion order
-    /// (oldest first). This is the single source of truth for "Blocks sidebar
-    /// list" — the view layer renders whatever this returns, no second
-    /// filtering pass.
+    /// 应用 `filter`（退出码 + 在 `command` + `output_text` 上的可选不区分大小写
+    /// 子串）。按插入顺序（最老在前）返回匹配的块。“Blocks 侧边栏列表”以此
+    /// 为唯一事实来源——视图层直接渲染其返回值，不做第二次过滤。
     pub fn filtered(&self, filter: &BlockFilter<'_>) -> Vec<&OutputBlock> {
         let q_lower;
         let q_trim: &str = match filter.query {
@@ -258,9 +251,8 @@ impl PaneBlockStore {
             .collect()
     }
 
-    /// Convenience for callers that don't need a separate query and just want
-    /// "exit + free-form substring" over command/output_text. Empty `query`
-    /// disables the text filter.
+    /// 供不需要独立查询的调用方使用：只需对 command/output_text 做“退出码 +
+    /// 自由子串”。空 `query` 禁用文本过滤。
     #[allow(dead_code)]
     pub fn search_blocks(&self, query: &str, exit_filter: BlockExitFilter) -> Vec<&OutputBlock> {
         self.filtered(&BlockFilter {
@@ -270,7 +262,7 @@ impl PaneBlockStore {
     }
 }
 
-/// Exit-code filter for the Blocks sidebar.
+/// Blocks 侧边栏的退出码过滤器。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BlockExitFilter {
     #[default]
@@ -340,8 +332,7 @@ mod tests {
 
     #[test]
     fn push_increments_sum_tree() {
-        // Two blocks: [0..=5] and [6..=20]. Row 10 must hit block #1 (id=1,
-        // command_row=6).
+        // 两个块：[0..=5] 与 [6..=20]。行 10 必须命中块 #1（id=1，command_row=6）。
         let mut store = PaneBlockStore::default();
         store.push(1, &cmd("first", 0, 0), 5, None, None, &meta());
         store.push(1, &cmd("second", 0, 6), 20, None, None, &meta());
@@ -371,9 +362,8 @@ mod tests {
 
     #[test]
     fn push_trims_to_max_and_drops_oldest() {
-        // After overflow the OLDEST block must be gone and the sum-tree must
-        // reflect that — `block_index_for_row` should not return a stale
-        // (out-of-range) index.
+        // 溢出后最老的块必须被移除，前缀和树也必须反映这一点——
+        // `block_index_for_row` 不应返回过期的（越界）索引。
         let mut store = PaneBlockStore::default();
         let c = FinishedCommand {
             text: None,
@@ -382,8 +372,8 @@ mod tests {
             pane_row_at_b: 0,
             started_at_us: None,
         };
-        // Push BLOCK_STORE_MAX + 3 blocks with monotonically increasing
-        // output_end_row and command_row, so the oldest 3 fall off.
+        // 压入 BLOCK_STORE_MAX + 3 个块，output_end_row 与 command_row 单调递增，
+        // 使最老的 3 个被淘汰。
         for i in 0..(BLOCK_STORE_MAX + 3) {
             let mut c = c.clone();
             c.pane_row_at_b = i;
@@ -391,14 +381,14 @@ mod tests {
             store.push(1, &c, i + 1, None, None, &meta());
         }
         assert_eq!(store.len(), BLOCK_STORE_MAX);
-        // The first remaining block's id must be 3 (0,1,2 dropped).
+        // 第一个保留块的 id 必须是 3（0、1、2 已被丢弃）。
         assert_eq!(store.blocks()[0].id, 3);
         assert_eq!(store.blocks()[0].command_row, 3);
-        // Rows before the first remaining block should not be found.
+        // 第一个保留块之前的行不应被找到。
         assert!(store.block_containing_row(2).is_none());
-        // Row 3 should hit the first remaining block.
+        // 行 3 应命中第一个保留块。
         assert!(store.block_containing_row(3).is_some());
-        // The last block's end_row matches its push.
+        // 最后一个块的 end_row 与压栈时一致。
         let last = store.last().unwrap();
         assert_eq!(last.output_end_row, BLOCK_STORE_MAX + 3);
     }
@@ -429,33 +419,33 @@ mod tests {
         store.push(1, &c3, 19, None, Some("needle in haystack\n".into()), &meta());
         store.push(1, &c4, 25, None, Some("plain hay\n".into()), &meta());
 
-        // Exit-only: FailuresOnly → 2 (c2, c4).
+        // 仅按退出码：FailuresOnly → 2（c2、c4）。
         let f = BlockFilter { exit: BlockExitFilter::FailuresOnly, query: None };
         assert_eq!(store.filtered(&f).len(), 2);
 
-        // Query-only: "needle" → 1 (c3 only — c2 has "error" not "needle").
+        // 仅按查询："needle" → 1（只有 c3——c2 是 "error" 而非 "needle"）。
         let f = BlockFilter { exit: BlockExitFilter::All, query: Some("needle") };
         assert_eq!(store.filtered(&f).len(), 1);
 
-        // Combined: FailuresOnly + "hay" → 1 (c4: haystack/hay in output_text + exit 1).
-        // (c2 is also failure but its output_text is "error", not "hay".)
+        // 组合：FailuresOnly + "hay" → 1（c4：output_text 含 haystack/hay 且退出码为 1）。
+        //（c2 也是失败，但其 output_text 是 "error"，不含 "hay"。）
         let f = BlockFilter { exit: BlockExitFilter::FailuresOnly, query: Some("hay") };
         let hits = store.filtered(&f);
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].command.as_deref(), Some("echo hay"));
 
-        // Whitespace-only query: no text filter applied (treated as empty).
+        // 纯空白查询：不应用文本过滤（视为空）。
         let f = BlockFilter { exit: BlockExitFilter::All, query: Some("   ") };
         assert_eq!(store.filtered(&f).len(), 4);
 
-        // Case-insensitive: "NEEDLE" matches c3.
+        // 不区分大小写："NEEDLE" 能匹配 c3。
         let f = BlockFilter { exit: BlockExitFilter::All, query: Some("NEEDLE") };
         assert_eq!(store.filtered(&f).len(), 1);
     }
 
     #[test]
     fn search_matches_output_text() {
-        // Kept for legacy callers (sidebar used to call this).
+        // 为遗留调用方保留（侧边栏以前调用此函数）。
         let mut store = PaneBlockStore::default();
         store.push(
             1,

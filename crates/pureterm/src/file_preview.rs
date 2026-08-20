@@ -1,13 +1,13 @@
-//! GAP-34: File preview — image/PDF/text path detection + open helper.
+//! GAP-34:文件预览——图片/PDF/文本路径检测 + 打开辅助。
 //!
-//! Detects the preview kind (image/PDF/text) from a file extension and opens it
-//! via the platform handler. On macOS QuickLook (`qlmanage -p`) is preferred for
-//! images/PDFs; text/unknown fall back to the default `open` handler.
-//! Wired into the app via `Cmd+Y` (`Message::PreviewFile`).
+//! 根据文件扩展名检测预览类型(图片/PDF/文本)并
+//! 经平台处理器打开。macOS 上图片/PDF 优先用 QuickLook(`qlmanage -p`),
+//! 文本/未知类型回退到默认 `open` 处理器。
+//! 经 `Cmd+Y`(`Message::PreviewFile`)接入应用。
 
 use std::path::Path;
 
-/// Detected preview kind for a filesystem path.
+/// 文件系统路径的已检测预览类型。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PreviewKind {
     Text,
@@ -16,7 +16,7 @@ pub enum PreviewKind {
     Unknown,
 }
 
-/// `[file_preview]` config.
+/// `[file_preview]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FilePreviewConfig {
     pub enabled: bool,
@@ -44,10 +44,10 @@ pub fn detect_kind(path: &Path) -> PreviewKind {
     }
 }
 
-/// Open a file preview via the platform handler.
+/// 经平台处理器打开文件预览。
 ///
-/// macOS: QuickLook (`qlmanage -p`) for images/PDFs; `open` for text/unknown.
-/// Linux: `xdg-open`. Other platforms: unsupported.
+/// macOS:图片/PDF 用 QuickLook(`qlmanage -p`);文本/未知用 `open`。
+/// Linux:`xdg-open`。其他平台:不支持。
 pub fn open_preview(path: &Path, cfg: &FilePreviewConfig) -> Result<(), String> {
     if !cfg.enabled {
         return Err("file_preview disabled".into());

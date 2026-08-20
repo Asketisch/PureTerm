@@ -1,14 +1,14 @@
-//! GAP-32: GitHub PR status via the `gh` CLI.
+//! GAP-32:通过 `gh` CLI 获取 GitHub PR 状态。
 //!
-//! Deliberately HTTP-light: we shell out to `gh` (reusing the user's existing
-//! `gh auth`) instead of pulling in `reqwest`/`octocrab`, so there is no in-app
-//! token management and no new network dependency. If `gh` is absent, unauthed,
-//! or the repo isn't on GitHub, the feature degrades to "no PR" — never an error
-//! the GUI has to propagate.
+//! 刻意避免重 HTTP 依赖:调用 `gh`(复用用户已有的
+//! `gh auth`),而非引入 `reqwest` / `octocrab`,因此应用内
+//! 没有令牌管理,也没有新增网络依赖。若 `gh` 缺失、未认证,
+//! 或仓库不在 GitHub 上,该功能退化为「无 PR」—— 绝不会成为
+//! GUI 必须向上传播的错误。
 //!
-//! [`PrInfo`] / [`PrCheckRollup`] are referenced by
-//! [`crate::status_bar::git::GitStatus`] (its `pr` field) so the status-bar PR
-//! pill and the Git overlay panel share one source of truth.
+//! [`PrInfo`] / [`PrCheckRollup`] 被
+//! [`crate::status_bar::git::GitStatus`](其 `pr` 字段)引用,
+//! 使状态栏 PR 胶囊与 Git 悬浮面板共享同一事实来源。
 
 use std::process::Stdio;
 
@@ -16,7 +16,7 @@ use tokio::process::Command;
 
 use crate::iced_app::Message;
 
-/// Roll-up of a linked PR's CI check statuses.
+/// 关联 PR 的 CI 检查状态汇总。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PrCheckRollup {
     pub success: u32,
@@ -25,7 +25,7 @@ pub struct PrCheckRollup {
     pub total: u32,
 }
 
-/// Minimal linked-PR info parsed from `gh pr view --json number,state,headRefName,url,statusCheckRollup`.
+/// 从 `gh pr view --json number,state,headRefName,url,statusCheckRollup` 解析出的最小 PR 信息。
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PrInfo {
     pub number: u64,
@@ -36,15 +36,15 @@ pub struct PrInfo {
     pub checks: PrCheckRollup,
 }
 
-/// Spawn a `gh pr view` for the current branch's PR (GAP-32). Mirrors
-/// [`crate::status_bar::git::spawn_git_status`]: runs off the GUI thread via
-/// `Task::perform`, maps to [`Message::GhPrResult`]. Degrades gracefully — a
-/// missing/unauthed `gh` or a branch with no PR yields `None` + a banner string,
-/// never an error.
+/// 为当前分支的 PR 生成 `gh pr view`(GAP-32)。镜像
+/// [`crate::status_bar::git::spawn_git_status`]:通过
+/// `Task::perform` 在 GUI 线程外运行,映射到 [`Message::GhPrResult`]。优雅降级 ——
+/// `gh` 缺失 / 未认证或分支无 PR 时,产出 `None` + 一条横幅字符串,
+/// 而不报错。
 pub fn spawn_gh_pr(cwd: String) -> iced::Task<Message> {
     iced::Task::perform(
         async move {
-            // 1) cheap probe: is `gh` invokable at all?
+            // 1) 廉价探测:`gh` 本身能否调用?
             let probe = std::process::Command::new("gh")
                 .arg("--version")
                 .stdin(Stdio::null())
@@ -54,8 +54,8 @@ pub fn spawn_gh_pr(cwd: String) -> iced::Task<Message> {
             if probe.is_err() {
                 return (cwd, None, Some("gh not installed".to_string()));
             }
-            // 2) `gh pr view` resolves the current branch's PR (exits non-zero
-            //    when there is none, when unauthed, or outside a GitHub repo).
+            // 2) `gh pr view` 解析当前分支的 PR(分支不存在、未认证
+            //    或不在 GitHub 仓库内时以非零码退出)。
             let out = Command::new("gh")
                 .args([
                     "pr", "view", "--json", "number,state,headRefName,url,statusCheckRollup",
@@ -85,12 +85,12 @@ pub fn spawn_gh_pr(cwd: String) -> iced::Task<Message> {
     )
 }
 
-/// Spawn `git log -5` for the panel's "recent commits" block (GAP-32). Maps to
-/// [`Message::GitPanelLogResult`]. Only fired while the panel is open.
+/// 为面板的「最近提交」区块生成 `git log -5`(GAP-32)。映射到
+/// [`Message::GitPanelLogResult`]。仅当面板打开时触发。
 pub fn spawn_git_log(cwd: String) -> iced::Task<Message> {
     iced::Task::perform(
         async move {
-            // %h short sha, %x09 TAB, %s subject — one commit per line.
+            // %h 短哈希、%x09 制表符、%s 主题 —— 每行一条提交。
             let out = Command::new("git")
                 .args(["-C", &cwd, "log", "-5", "--format=%h%x09%s"])
                 .stdin(Stdio::null())
@@ -113,10 +113,10 @@ pub fn spawn_git_log(cwd: String) -> iced::Task<Message> {
     )
 }
 
-/// Parse the `gh pr view --json …` blob into [`PrInfo`] (pure, unit-tested).
-/// `statusCheckRollup` is bucketed defensively: a completed `SUCCESS`/`NEUTRAL`/
-/// `SKIPPED` conclusion ⇒ success, a failure-ish conclusion ⇒ failure, an absent
-/// conclusion (still running/queued) ⇒ pending. Missing fields never error.
+/// 把 `gh pr view --json …` 的 JSON 解析为 [`PrInfo`](纯函数,有单元测试)。
+/// `statusCheckRollup` 防御式分桶:已完成的 `SUCCESS` / `NEUTRAL` / `SKIPPED`
+/// 结论 ⇒ 成功;失败类结论 ⇒ 失败;结论缺失
+/// (仍在运行 / 排队)⇒ 待定。缺失字段绝不报错。
 pub fn parse_gh_pr_json(s: &str) -> Option<PrInfo> {
     let v: serde_json::Value = serde_json::from_str(s).ok()?;
     let number = v.get("number")?.as_u64()?;
@@ -192,7 +192,7 @@ mod tests {
     fn parse_empty_or_garbage_is_none() {
         assert_eq!(parse_gh_pr_json(""), None);
         assert_eq!(parse_gh_pr_json("not json"), None);
-        // Missing required `number` ⇒ None.
+        // 缺少必需的 `number` ⇒ None。
         assert_eq!(parse_gh_pr_json(r#"{"state":"OPEN"}"#), None);
     }
 }

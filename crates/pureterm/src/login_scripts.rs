@@ -1,4 +1,4 @@
-//! GAP-42: SSH login scripts — run commands after shell prompt.
+//! GAP-42:SSH 登录脚本——shell 提示符出现后运行命令。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -7,9 +7,9 @@ use alacritty_terminal::event::Notify;
 use alacritty_terminal::event_loop::Notifier;
 use crate::terminal_context::TerminalContext;
 
-/// Run login commands sequentially on a background thread. Each command is
-/// sent as if typed followed by Enter; a configurable delay separates them
-/// so the remote shell has time to process each line.
+/// 在后台线程上顺序执行登录命令。每条命令按
+/// “输入后跟回车”的方式发送;可配置的延迟把它们隔开,
+/// 让远程 shell 有时间处理每一行。
 pub fn run_login_commands(
     ctx: &Arc<TerminalContext>,
     commands: Vec<String>,
@@ -19,8 +19,8 @@ pub fn run_login_commands(
     if commands.is_empty() {
         return;
     }
-    // Extract a Send-safe notifier clone so the background thread can write
-    // without holding the non-Send Arc<TerminalContext>.
+    // 提取一个可 Send 的 notifier 克隆,使后台线程无需
+    // 持有不可 Send 的 Arc<TerminalContext> 即可写入。
     let Some(notifier) = ctx.pty_notifier() else {
         return;
     };
@@ -29,7 +29,7 @@ pub fn run_login_commands(
         .name("pureterm-login-script".into())
         .spawn(move || {
             let delay = Duration::from_millis(delay_ms.max(1));
-            // Brief pause so the remote shell prompt is ready.
+            // 短暂暂停,等待远程 shell 提示符就绪。
             std::thread::sleep(Duration::from_millis(300));
             for (i, cmd) in commands.iter().enumerate() {
                 if i > 0 {
@@ -37,10 +37,10 @@ pub fn run_login_commands(
                 }
                 let mut line = cmd.clone().into_bytes();
                 line.push(b'\n');
-                // Send the command; ignore errors (PTY may have closed).
+                // 发送命令;忽略错误(PTY 可能已关闭)。
                 notifier.notify(line);
-                // With `Stop` policy we cannot detect exit status without
-                // parsing output, so the policy is advisory only at MVP level.
+                // 采用 `Stop` 策略时,不解析输出就无法检测退出状态,
+                // 因此该策略在 MVP 阶段只是建议性的。
                 let _ = on_error;
             }
         })

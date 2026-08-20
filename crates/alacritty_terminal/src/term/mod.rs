@@ -1,4 +1,4 @@
-//! Exports the `Term` type which is a high-level API for the Grid.
+//! 导出 `Term` 类型,它是 Grid 的高层 API。
 
 use std::fmt::Write as _;
 use std::ops::{Index, IndexMut, Range};
@@ -33,24 +33,24 @@ pub mod cell;
 pub mod color;
 pub mod search;
 
-/// Minimum number of columns.
+/// 最小列数。
 ///
-/// A minimum of 2 is necessary to hold fullwidth unicode characters.
+/// 至少需要 2 列才能容纳全角 Unicode 字符。
 pub const MIN_COLUMNS: usize = 2;
 
-/// Minimum number of visible lines.
+/// 最小可见行数。
 pub const MIN_SCREEN_LINES: usize = 1;
 
-/// Max size of the window title stack.
+/// 窗口标题栈的最大深度。
 const TITLE_STACK_MAX_DEPTH: usize = 4096;
 
-/// Default semantic escape characters.
+/// 默认语义选择分隔字符。
 pub const SEMANTIC_ESCAPE_CHARS: &str = ",│`|:\"' ()[]{}<>\t";
 
-/// Max size of the keyboard modes.
+/// 键盘模式栈的最大深度。
 const KEYBOARD_MODE_STACK_MAX_DEPTH: usize = TITLE_STACK_MAX_DEPTH;
 
-/// Default tab interval, corresponding to terminfo `it` value.
+/// 默认制表位间隔,对应 terminfo 的 `it` 值。
 const INITIAL_TABSTOPS: usize = 8;
 
 bitflags! {
@@ -122,14 +122,14 @@ impl Default for TermMode {
     }
 }
 
-/// Convert a terminal point to a viewport relative point.
+/// 把终端坐标转换为视口相对坐标。
 #[inline]
 pub fn point_to_viewport(display_offset: usize, point: Point) -> Option<Point<usize>> {
     let viewport_line = point.line.0 + display_offset as i32;
     usize::try_from(viewport_line).ok().map(|line| Point::new(line, point.column))
 }
 
-/// Convert a viewport relative point to a terminal point.
+/// 把视口相对坐标转换为终端坐标。
 #[inline]
 pub fn viewport_to_point(display_offset: usize, point: Point<usize>) -> Point {
     let line = Line(point.line as i32) - display_offset;
@@ -138,13 +138,13 @@ pub fn viewport_to_point(display_offset: usize, point: Point<usize>) -> Point {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct LineDamageBounds {
-    /// Damaged line number.
+    /// 受损行号。
     pub line: usize,
 
-    /// Leftmost damaged column.
+    /// 最左受损列。
     pub left: usize,
 
-    /// Rightmost damaged column.
+    /// 最右受损列。
     pub right: usize,
 }
 
@@ -176,17 +176,17 @@ impl LineDamageBounds {
     }
 }
 
-/// Terminal damage information collected since the last [`Term::reset_damage`] call.
+/// 自上次 [`Term::reset_damage`] 调用以来收集的终端受损信息。
 #[derive(Debug)]
 pub enum TermDamage<'a> {
-    /// The entire terminal is damaged.
+    /// 整个终端均受损。
     Full,
 
-    /// Iterator over damaged lines in the terminal.
+    /// 遍历终端中受损行的迭代器。
     Partial(TermDamageIterator<'a>),
 }
 
-/// Iterator over the terminal's viewport damaged lines.
+/// 遍历终端视口内受损行的迭代器。
 #[derive(Clone, Debug)]
 pub struct TermDamageIterator<'a> {
     line_damage: slice::Iter<'a, LineDamageBounds>,
@@ -196,7 +196,7 @@ pub struct TermDamageIterator<'a> {
 impl<'a> TermDamageIterator<'a> {
     pub fn new(line_damage: &'a [LineDamageBounds], display_offset: usize) -> Self {
         let num_lines = line_damage.len();
-        // Filter out invisible damage.
+        // 过滤掉视口外不可见的受损区域。
         let line_damage = &line_damage[..num_lines.saturating_sub(display_offset)];
         Self { display_offset, line_damage: line_damage.iter() }
     }
@@ -216,15 +216,15 @@ impl Iterator for TermDamageIterator<'_> {
     }
 }
 
-/// State of the terminal damage.
+/// 终端受损状态。
 struct TermDamageState {
-    /// Hint whether terminal should be damaged entirely regardless of the actual damage changes.
+    /// 提示是否应无视实际受损变化而整体标记终端受损。
     full: bool,
 
-    /// Information about damage on terminal lines.
+    /// 各行受损信息。
     lines: Vec<LineDamageBounds>,
 
-    /// Old terminal cursor point.
+    /// 旧终端光标位置。
     last_cursor: Point,
 }
 
@@ -238,7 +238,7 @@ impl TermDamageState {
 
     #[inline]
     fn resize(&mut self, num_cols: usize, num_lines: usize) {
-        // Reset point, so old cursor won't end up outside of the viewport.
+        // 重置位置,避免旧光标落在视口之外。
         self.last_cursor = Default::default();
         self.full = true;
 
@@ -249,19 +249,19 @@ impl TermDamageState {
         }
     }
 
-    /// Damage point inside of the viewport.
+    /// 标记视口内某个点受损。
     #[inline]
     fn damage_point(&mut self, point: Point<usize>) {
         self.damage_line(point.line, point.column.0, point.column.0);
     }
 
-    /// Expand `line`'s damage to span at least `left` to `right` column.
+    /// 扩展 `line` 的受损范围,至少覆盖 `left` 到 `right` 列。
     #[inline]
     fn damage_line(&mut self, line: usize, left: usize, right: usize) {
         self.lines[line].expand(left, right);
     }
 
-    /// Reset information about terminal damage.
+    /// 重置终端受损信息。
     fn reset(&mut self, num_cols: usize) {
         self.full = false;
         self.lines.iter_mut().for_each(|line| line.reset(num_cols));
@@ -269,96 +269,96 @@ impl TermDamageState {
 }
 
 pub struct Term<T> {
-    /// Terminal focus controlling the cursor shape.
+    /// 终端焦点状态,控制光标形状。
     pub is_focused: bool,
 
-    /// Cursor for keyboard selection.
+    /// 键盘选区(Vi 模式)光标。
     pub vi_mode_cursor: ViModeCursor,
 
     pub selection: Option<Selection>,
 
-    /// Currently active grid.
+    /// 当前活动的网格。
     ///
-    /// Tracks the screen buffer currently in use. While the alternate screen buffer is active,
-    /// this will be the alternate grid. Otherwise it is the primary screen buffer.
+    /// 跟踪当前使用的屏幕缓冲区。备用屏幕缓冲区活动时
+    /// 它就是备用网格;否则是主屏幕缓冲区。
     grid: Grid<Cell>,
 
-    /// Currently inactive grid.
+    /// 当前未活动的网格。
     ///
-    /// Opposite of the active grid. While the alternate screen buffer is active, this will be the
-    /// primary grid. Otherwise it is the alternate screen buffer.
+    /// 与活动网格相反。备用屏幕缓冲区活动时,
+    /// 它是主网格;否则是备用屏幕缓冲区。
     inactive_grid: Grid<Cell>,
 
-    /// Index into `charsets`, pointing to what ASCII is currently being mapped to.
+    /// `charsets` 的下标,指示当前 ASCII 被映射到哪个字符集。
     active_charset: CharsetIndex,
 
-    /// Tabstops.
+    /// 制表位。
     tabs: TabStops,
 
-    /// Mode flags.
+    /// 模式标志。
     mode: TermMode,
 
-    /// Scroll region.
+    /// 滚动区域。
     ///
-    /// Range going from top to bottom of the terminal, indexed from the top of the viewport.
+    /// 从视口顶部索引的、终端顶部到底部的行范围。
     scroll_region: Range<Line>,
 
-    /// Modified terminal colors.
+    /// 被修改过的终端颜色。
     colors: Colors,
 
-    /// Current style of the cursor.
+    /// 光标当前样式。
     cursor_style: Option<CursorStyle>,
 
-    /// Proxy for sending events to the event loop.
+    /// 向事件循环发送事件的代理。
     event_proxy: T,
 
-    /// Current title of the window.
+    /// 窗口当前标题。
     title: Option<String>,
 
-    /// Stack of saved window titles. When a title is popped from this stack, the `title` for the
-    /// term is set.
+    /// 已保存窗口标题的栈。从栈中弹出一个标题后,
+    /// 就把它设为终端的 `title`。
     title_stack: Vec<Option<String>>,
 
-    /// The stack for the keyboard modes.
+    /// 键盘模式栈。
     keyboard_mode_stack: Vec<KeyboardModes>,
 
-    /// Currently inactive keyboard mode stack.
+    /// 当前未活动的键盘模式栈。
     inactive_keyboard_mode_stack: Vec<KeyboardModes>,
 
-    /// Information about damaged cells.
+    /// 受损单元信息。
     damage: TermDamageState,
 
-    /// Smart selection service for precision-based regex matching.
+    /// 基于精确正则匹配的智能选区服务。
     pub smart_selection: SmartSelectionService,
 
-    /// Config directly for the terminal.
+    /// 终端直接使用的配置。
     config: Config,
 
-    /// GAP-1.2: DECSCL conformance level (CSI Ps " p). Default VT100.
+    /// GAP-1.2: DECSCL 一致性级别(CSI Ps " p)。默认 VT100。
     conformance_level: ConformanceLevel,
 }
 
-/// Configuration options for the [`Term`].
+/// [`Term`] 的配置项。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    /// The maximum amount of scrolling history.
+    /// 最大滚动历史行数。
     pub scrolling_history: usize,
 
-    /// Default cursor style to reset the cursor to.
+    /// 重置光标时使用的默认样式。
     pub default_cursor_style: CursorStyle,
 
-    /// Cursor style for Vi mode.
+    /// Vi 模式光标样式。
     pub vi_mode_cursor_style: Option<CursorStyle>,
 
-    /// The characters which terminate semantic selection.
+    /// 终止语义选区的字符集合。
     ///
-    /// The default value is [`SEMANTIC_ESCAPE_CHARS`].
+    /// 默认值为 [`SEMANTIC_ESCAPE_CHARS`]。
     pub semantic_escape_chars: String,
 
-    /// Whether to enable kitty keyboard protocol.
+    /// 是否启用 kitty 键盘协议。
     pub kitty_keyboard: bool,
 
-    /// OSC52 support mode.
+    /// OSC52 支持模式。
     pub osc52: Osc52,
 }
 
@@ -375,21 +375,21 @@ impl Default for Config {
     }
 }
 
-/// OSC 52 behavior.
+/// OSC 52 行为。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "lowercase"))]
 pub enum Osc52 {
-    /// The handling of the escape sequence is disabled.
+    /// 禁用该转义序列的处理。
     Disabled,
-    /// Only copy sequence is accepted.
+    /// 只接受复制(写入剪贴板)序列。
     ///
-    /// This option is the default as a compromise between entirely
-    /// disabling it (the most secure) and allowing `paste` (the less secure).
+    /// 此选项为默认值,是「完全禁用」(最安全)
+    /// 与「允许粘贴」(安全性较低)之间的折中。
     #[default]
     OnlyCopy,
-    /// Only paste sequence is accepted.
+    /// 只接受粘贴(读取剪贴板)序列。
     OnlyPaste,
-    /// Both are accepted.
+    /// 两者都接受。
     CopyPaste,
 }
 
@@ -403,14 +403,14 @@ impl<T> Term<T> {
         self.grid.scroll_display(scroll);
         self.event_proxy.send_event(Event::MouseCursorDirty);
 
-        // Clamp vi mode cursor to the viewport.
+        // 把 Vi 模式光标约束在视口内。
         let viewport_start = -(self.grid.display_offset() as i32);
         let viewport_end = viewport_start + self.bottommost_line().0;
         let vi_cursor_line = &mut self.vi_mode_cursor.point.line.0;
         *vi_cursor_line = cmp::min(viewport_end, cmp::max(viewport_start, *vi_cursor_line));
         self.vi_mode_recompute_selection();
 
-        // Damage everything if display offset changed.
+        // 显示偏移变化时整体标记受损。
         if old_display_offset != self.grid().display_offset() {
             self.mark_fully_damaged();
         }
@@ -428,7 +428,7 @@ impl<T> Term<T> {
 
         let scroll_region = Line(0)..Line(grid.screen_lines() as i32);
 
-        // Initialize terminal damage, covering the entire terminal upon launch.
+        // 初始化终端受损状态,启动时覆盖整个终端。
         let damage = TermDamageState::new(num_cols, num_lines);
 
         Term {
@@ -455,32 +455,32 @@ impl<T> Term<T> {
         }
     }
 
-    /// GAP-1.2: current DECSCL conformance level.
+    /// GAP-1.2: 当前 DECSCL 一致性级别。
     #[inline]
     pub fn conformance_level(&self) -> ConformanceLevel {
         self.conformance_level
     }
 
-    /// GAP-1.2: apply DECSCL level from CSI Ps " p.
+    /// GAP-1.2: 从 CSI Ps " p 应用 DECSCL 级别。
     #[inline]
     pub fn set_conformance_level(&mut self, level: ConformanceLevel) {
         self.conformance_level = level;
     }
 
-    /// Collect the information about the changes in the lines, which
-    /// could be used to minimize the amount of drawing operations.
+    /// 收集各行变化的信息,
+    /// 用于尽量减少重绘操作量。
     ///
-    /// The user controlled elements, like `Vi` mode cursor and `Selection` are **not** part of the
-    /// collected damage state. Those could easily be tracked by comparing their old and new
-    /// value between adjacent frames.
+    /// 用户可控元素(如 `Vi` 模式光标与 `Selection`)
+    /// **不**属于收集的受损状态;相邻帧之间比较
+    /// 新旧值即可轻松跟踪它们。
     ///
-    /// After reading damage [`reset_damage`] should be called.
+    /// 读取受损信息后应调用 [`reset_damage`]。
     ///
-    /// [`reset_damage`]: Self::reset_damage
+    /// [`reset_damage`]: 见 [`Self::reset_damage`]。
     #[must_use]
     pub fn damage(&mut self) -> TermDamage<'_> {
-        // Ensure the entire terminal is damaged after entering insert mode.
-        // Leaving is handled in the ansi handler.
+        // 进入插入模式后确保整个终端处于受损状态。
+        // 退出插入模式在 ansi handler 中处理。
         if self.mode.contains(TermMode::INSERT) {
             self.mark_fully_damaged();
         }
@@ -491,24 +491,24 @@ impl<T> Term<T> {
             return TermDamage::Full;
         }
 
-        // Add information about old cursor position and new one if they are not the same, so we
-        // cover everything that was produced by `Term::input`.
+        // 若新旧光标位置不同,补充两者的受损信息,
+        // 以覆盖 `Term::input` 产生的所有变化。
         if self.damage.last_cursor != previous_cursor {
-            // Cursor coordinates are always inside viewport even if you have `display_offset`.
+            // 即使有 `display_offset`,光标坐标也总在视口内。
             let point = Point::new(previous_cursor.line.0 as usize, previous_cursor.column);
             self.damage.damage_point(point);
         }
 
-        // Always damage current cursor.
+        // 始终标记当前光标受损。
         self.damage_cursor();
 
-        // NOTE: damage which changes all the content when the display offset is non-zero (e.g.
-        // scrolling) is handled via full damage.
+        // 注意:显示偏移非零时改变全部内容
+        // 的受损(如滚动)通过整体受损处理。
         let display_offset = self.grid().display_offset();
         TermDamage::Partial(TermDamageIterator::new(&self.damage.lines, display_offset))
     }
 
-    /// Resets the terminal damage information.
+    /// 重置终端受损信息。
     pub fn reset_damage(&mut self) {
         self.damage.reset(self.columns());
     }
@@ -518,7 +518,7 @@ impl<T> Term<T> {
         self.damage.full = true;
     }
 
-    /// Set new options for the [`Term`].
+    /// 为 [`Term`] 设置新的配置项。
     pub fn set_options(&mut self, options: Config)
     where
         T: EventListener,
@@ -544,11 +544,11 @@ impl<T> Term<T> {
             self.mode.remove(TermMode::KITTY_KEYBOARD_PROTOCOL);
         }
 
-        // Damage everything on config updates.
+        // 配置更新时整体标记受损。
         self.mark_fully_damaged();
     }
 
-    /// Convert the active selection to a String.
+    /// 把活动选区转换为字符串。
     pub fn selection_to_string(&self) -> Option<String> {
         let selection_range = self.selection.as_ref().and_then(|s| s.to_range(self))?;
         let SelectionRange { start, end, .. } = selection_range;
@@ -577,7 +577,7 @@ impl<T> Term<T> {
         Some(res)
     }
 
-    /// Convert range between two points to a String.
+    /// 把两点之间的范围转换为字符串。
     pub fn bounds_to_string(&self, start: Point, end: Point) -> String {
         let mut res = String::new();
 
@@ -591,7 +591,7 @@ impl<T> Term<T> {
         res.strip_suffix('\n').map(str::to_owned).unwrap_or(res)
     }
 
-    /// Convert a single line in the grid to a String.
+    /// 把网格中的单行转换为字符串。
     fn line_to_string(
         &self,
         line: Line,
@@ -603,7 +603,7 @@ impl<T> Term<T> {
         let grid_line = &self.grid[line];
         let line_length = cmp::min(grid_line.line_length(), cols.end + 1);
 
-        // Include wide char when trailing spacer is selected.
+        // 当尾部占位被选中时,把宽字符也包含进来。
         if grid_line[cols.start].flags.contains(Flags::WIDE_CHAR_SPACER) {
             cols.start -= 1;
         }
@@ -612,7 +612,7 @@ impl<T> Term<T> {
         for column in (cols.start.0..line_length.0).map(Column::from) {
             let cell = &grid_line[column];
 
-            // Skip over cells until next tab-stop once a tab was found.
+            // 遇到制表符后,跳过单元直到下一个制表位。
             if tab_mode {
                 if self.tabs[column] || cell.c != ' ' {
                     tab_mode = false;
@@ -626,10 +626,10 @@ impl<T> Term<T> {
             }
 
             if !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER) {
-                // Push cells primary character.
+                // 压入单元的主字符。
                 text.push(cell.c);
 
-                // Push zero-width characters.
+                // 压入零宽字符。
                 for c in cell.zerowidth().into_iter().flatten() {
                     text.push(*c);
                 }
@@ -643,7 +643,7 @@ impl<T> Term<T> {
             text.push('\n');
         }
 
-        // If wide char is not part of the selection, but leading spacer is, include it.
+        // 若宽字符不在选区内但其前置占位在选区内,也包含它。
         if line_length == self.columns()
             && line_length.0 >= 2
             && grid_line[line_length - 1].flags.contains(Flags::LEADING_WIDE_CHAR_SPACER)
@@ -655,7 +655,7 @@ impl<T> Term<T> {
         text
     }
 
-    /// Terminal content required for rendering.
+    /// 渲染所需的终端内容。
     #[inline]
     pub fn renderable_content(&self) -> RenderableContent<'_>
     where
@@ -664,17 +664,17 @@ impl<T> Term<T> {
         RenderableContent::new(self)
     }
 
-    /// Access to the raw grid data structure.
+    /// 访问原始网格数据结构。
     pub fn grid(&self) -> &Grid<Cell> {
         &self.grid
     }
 
-    /// Mutable access to the raw grid data structure.
+    /// 可变访问原始网格数据结构。
     pub fn grid_mut(&mut self) -> &mut Grid<Cell> {
         &mut self.grid
     }
 
-    /// Resize terminal to new dimensions.
+    /// 把终端调整到新的尺寸。
     pub fn resize<S: Dimensions>(&mut self, size: S) {
         let old_cols = self.columns();
         let old_lines = self.screen_lines();
@@ -689,7 +689,7 @@ impl<T> Term<T> {
 
         debug!("New num_cols is {num_cols} and num_lines is {num_lines}");
 
-        // Move vi mode cursor with the content.
+        // 让 Vi 模式光标随内容一起移动。
         let history_size = self.history_size();
         let mut delta = num_lines as i32 - old_lines as i32;
         let min_delta = cmp::min(0, num_lines as i32 - self.grid.cursor.point.line.0 - 1);
@@ -700,11 +700,11 @@ impl<T> Term<T> {
         self.grid.resize(!is_alt, num_lines, num_cols);
         self.inactive_grid.resize(is_alt, num_lines, num_cols);
 
-        // Invalidate selection and tabs only when necessary.
+        // 仅在必要时使选区与制表位失效。
         if old_cols != num_cols {
             self.selection = None;
 
-            // Recreate tabs list.
+            // 重建制表位列表。
             self.tabs.resize(num_cols);
         } else if let Some(selection) = self.selection.take() {
             let max_lines = cmp::max(num_lines, old_lines) as i32;
@@ -712,7 +712,7 @@ impl<T> Term<T> {
             self.selection = selection.rotate(self, &range, -delta);
         }
 
-        // Clamp vi cursor to viewport.
+        // 把 Vi 光标约束到视口内。
         let vi_point = self.vi_mode_cursor.point;
         let viewport_top = Line(-(self.grid.display_offset() as i32));
         let viewport_bottom = viewport_top + self.bottommost_line();
@@ -720,29 +720,29 @@ impl<T> Term<T> {
             cmp::max(cmp::min(vi_point.line, viewport_bottom), viewport_top);
         self.vi_mode_cursor.point.column = cmp::min(vi_point.column, self.last_column());
 
-        // Reset scrolling region.
+        // 重置滚动区域。
         self.scroll_region = Line(0)..Line(self.screen_lines() as i32);
 
-        // Resize damage information.
+        // 调整受损信息尺寸。
         self.damage.resize(num_cols, num_lines);
     }
 
-    /// Active terminal modes.
+    /// 活动的终端模式。
     #[inline]
     pub fn mode(&self) -> &TermMode {
         &self.mode
     }
 
-    /// Swap primary and alternate screen buffer.
+    /// 交换主屏幕与备用屏幕缓冲区。
     pub fn swap_alt(&mut self) {
         if !self.mode.contains(TermMode::ALT_SCREEN) {
-            // Set alt screen cursor to the current primary screen cursor.
+            // 把备用屏幕光标设为当前主屏幕光标。
             self.inactive_grid.cursor = self.grid.cursor.clone();
 
-            // Drop information about the primary screens saved cursor.
+            // 丢弃主屏幕保存的光标信息。
             self.grid.saved_cursor = self.grid.cursor.clone();
 
-            // Reset alternate screen contents.
+            // 清空备用屏幕内容。
             self.inactive_grid.reset_region(..);
         }
 
@@ -757,10 +757,10 @@ impl<T> Term<T> {
         self.mark_fully_damaged();
     }
 
-    /// Scroll screen down.
+    /// 屏幕向下滚动。
     ///
-    /// Text moves down; clear at bottom
-    /// Expects origin to be in scroll range.
+    /// 文本下移;底部清空。
+    /// 要求起点位于滚动范围内。
     #[inline]
     fn scroll_down_relative(&mut self, origin: Line, mut lines: usize) {
         trace!("Scrolling down relative: origin={origin}, lines={lines}");
@@ -770,25 +770,25 @@ impl<T> Term<T> {
 
         let region = origin..self.scroll_region.end;
 
-        // Scroll selection.
+        // 滚动选区。
         self.selection =
             self.selection.take().and_then(|s| s.rotate(self, &region, -(lines as i32)));
 
-        // Scroll vi mode cursor.
+        // 滚动 Vi 模式光标。
         let line = &mut self.vi_mode_cursor.point.line;
         if region.start <= *line && region.end > *line {
             *line = cmp::min(*line + lines, region.end - 1);
         }
 
-        // Scroll between origin and bottom
+        // 在起点与底部之间滚动
         self.grid.scroll_down(&region, lines);
         self.mark_fully_damaged();
     }
 
-    /// Scroll screen up
+    /// 屏幕向上滚动
     ///
-    /// Text moves up; clear at top
-    /// Expects origin to be in scroll range.
+    /// 文本上移;顶部清空。
+    /// 要求起点位于滚动范围内。
     #[inline]
     fn scroll_up_relative(&mut self, origin: Line, mut lines: usize) {
         trace!("Scrolling up relative: origin={origin}, lines={lines}");
@@ -797,12 +797,12 @@ impl<T> Term<T> {
 
         let region = origin..self.scroll_region.end;
 
-        // Scroll selection.
+        // 滚动选区。
         self.selection = self.selection.take().and_then(|s| s.rotate(self, &region, lines as i32));
 
         self.grid.scroll_up(&region, lines);
 
-        // Scroll vi mode cursor.
+        // 滚动 Vi 模式光标。
         let viewport_top = Line(-(self.grid.display_offset() as i32));
         let top = if region.start == 0 { viewport_top } else { region.start };
         let line = &mut self.vi_mode_cursor.point.line;
@@ -816,11 +816,11 @@ impl<T> Term<T> {
     where
         T: EventListener,
     {
-        // Setting 132 column font makes no sense, but run the other side effects.
-        // Clear scrolling region.
+        // 设置 132 列字体没有意义,但仍执行其余副作用。
+        // 清空滚动区域。
         self.set_scrolling_region(1, None);
 
-        // Clear grid.
+        // 清空网格。
         self.grid.reset_region(..);
         self.mark_fully_damaged();
     }
@@ -833,7 +833,7 @@ impl<T> Term<T> {
         self.event_proxy.send_event(Event::Exit);
     }
 
-    /// Toggle the vi mode.
+    /// 切换 Vi 模式。
     #[inline]
     pub fn toggle_vi_mode(&mut self)
     where
@@ -844,66 +844,66 @@ impl<T> Term<T> {
         if self.mode.contains(TermMode::VI) {
             let display_offset = self.grid.display_offset() as i32;
             if self.grid.cursor.point.line > self.bottommost_line() - display_offset {
-                // Move cursor to top-left if terminal cursor is not visible.
+                // 若终端光标不可见,把光标移到左上角。
                 let point = Point::new(Line(-display_offset), Column(0));
                 self.vi_mode_cursor = ViModeCursor::new(point);
             } else {
-                // Reset vi mode cursor position to match primary cursor.
+                // 重置 Vi 模式光标位置以与主光标一致。
                 self.vi_mode_cursor = ViModeCursor::new(self.grid.cursor.point);
             }
         }
 
-        // Update UI about cursor blinking state changes.
+        // 通知 UI 光标闪烁状态变化。
         self.event_proxy.send_event(Event::CursorBlinkingChange);
     }
 
-    /// Move vi mode cursor.
+    /// 移动 Vi 模式光标。
     #[inline]
     pub fn vi_motion(&mut self, motion: ViMotion)
     where
         T: EventListener,
     {
-        // Require vi mode to be active.
+        // 要求 Vi 模式处于活动状态。
         if !self.mode.contains(TermMode::VI) {
             return;
         }
 
-        // Move cursor.
+        // 移动光标。
         self.vi_mode_cursor = self.vi_mode_cursor.motion(self, motion);
         self.vi_mode_recompute_selection();
     }
 
-    /// Move vi cursor to a point in the grid.
+    /// 把 Vi 光标移到网格中的某一点。
     #[inline]
     pub fn vi_goto_point(&mut self, point: Point)
     where
         T: EventListener,
     {
-        // Move viewport to make point visible.
+        // 移动视口使该点可见。
         self.scroll_to_point(point);
 
-        // Move vi cursor to the point.
+        // 把 Vi 光标移到该点。
         self.vi_mode_cursor.point = point;
 
         self.vi_mode_recompute_selection();
     }
 
-    /// Update the active selection to match the vi mode cursor position.
+    /// 更新活动选区以匹配 Vi 模式光标位置。
     #[inline]
     fn vi_mode_recompute_selection(&mut self) {
-        // Require vi mode to be active.
+        // 要求 Vi 模式处于活动状态。
         if !self.mode.contains(TermMode::VI) {
             return;
         }
 
-        // Update only if non-empty selection is present.
+        // 仅当存在非空选区时更新。
         if let Some(selection) = self.selection.as_mut().filter(|s| !s.is_empty()) {
             selection.update(self.vi_mode_cursor.point, Side::Left);
             selection.include_all();
         }
     }
 
-    /// Scroll display to point if it is outside of viewport.
+    /// 若点位于视口外,滚动显示区到该点。
     pub fn scroll_to_point(&mut self, point: Point)
     where
         T: EventListener,
@@ -920,7 +920,7 @@ impl<T> Term<T> {
         }
     }
 
-    /// Jump to the end of a wide cell.
+    /// 跳到宽单元末尾。
     pub fn expand_wide(&self, mut point: Point, direction: Direction) -> Point {
         let flags = self.grid[point.line][point.column].flags;
 
@@ -958,9 +958,9 @@ impl<T> Term<T> {
         self.config.semantic_escape_chars = semantic_escape_chars.into();
     }
 
-    /// Active terminal cursor style.
+    /// 当前活动的终端光标样式。
     ///
-    /// While vi mode is active, this will automatically return the vi mode cursor style.
+    /// Vi 模式活动期间,自动返回 Vi 模式光标样式。
     #[inline]
     pub fn cursor_style(&self) -> CursorStyle {
         let cursor_style = self.cursor_style.unwrap_or(self.config.default_cursor_style);
@@ -976,7 +976,7 @@ impl<T> Term<T> {
         &self.colors
     }
 
-    /// Insert a linebreak at the current cursor position.
+    /// 在当前光标位置插入换行。
     #[inline]
     fn wrapline(&mut self)
     where
@@ -1002,7 +1002,7 @@ impl<T> Term<T> {
         self.damage_cursor();
     }
 
-    /// Write `c` to the cell at the cursor position.
+    /// 把 `c` 写入光标位置的单元。
     #[inline(always)]
     fn write_at_cursor(&mut self, c: char) {
         let c = self.grid.cursor.charsets[self.active_charset].map(c);
@@ -1013,9 +1013,9 @@ impl<T> Term<T> {
 
         let mut cursor_cell = self.grid.cursor_cell();
 
-        // Clear all related cells when overwriting a fullwidth cell.
+        // 覆写全角单元时清空所有相关单元。
         if cursor_cell.flags.intersects(Flags::WIDE_CHAR | Flags::WIDE_CHAR_SPACER) {
-            // Remove wide char and spacer.
+            // 移除宽字符及其占位。
             let wide = cursor_cell.flags.contains(Flags::WIDE_CHAR);
             let point = self.grid.cursor.point;
             if wide && point.column < self.last_column() {
@@ -1024,7 +1024,7 @@ impl<T> Term<T> {
                 self.grid[point.line][point.column - 1].clear_wide();
             }
 
-            // Remove leading spacers.
+            // 移除前置占位。
             if point.column <= 1 && point.line != self.topmost_line() {
                 let column = self.last_column();
                 self.grid[point.line - 1i32][column].flags.remove(Flags::LEADING_WIDE_CHAR_SPACER);
@@ -1042,7 +1042,7 @@ impl<T> Term<T> {
 
     #[inline]
     fn damage_cursor(&mut self) {
-        // The normal cursor coordinates are always in viewport.
+        // 普通光标坐标总在视口内。
         let point =
             Point::new(self.grid.cursor.point.line.0 as usize, self.grid.cursor.point.column);
         self.damage.damage_point(point);
@@ -1080,24 +1080,24 @@ impl<T> Dimensions for Term<T> {
 }
 
 impl<T: EventListener> Handler for Term<T> {
-    /// A character to be displayed.
+    /// 一个待显示的字符。
     #[inline(never)]
     fn input(&mut self, c: char) {
-        // Number of cells the char will occupy.
+        // 该字符将占用的单元数。
         let width = match c.width() {
             Some(width) => width,
             None => return,
         };
 
-        // Handle zero-width characters.
+        // 处理零宽字符。
         if width == 0 {
-            // Get previous column.
+            // 取前一列。
             let mut column = self.grid.cursor.point.column;
             if !self.grid.cursor.input_needs_wrap {
                 column.0 = column.saturating_sub(1);
             }
 
-            // Put zerowidth characters over first fullwidth character cell.
+            // 把零宽字符叠加在第一个全角字符单元上。
             let line = self.grid.cursor.point.line;
             if self.grid[line][column].flags.contains(Flags::WIDE_CHAR_SPACER) {
                 column.0 = column.saturating_sub(1);
@@ -1107,12 +1107,12 @@ impl<T: EventListener> Handler for Term<T> {
             return;
         }
 
-        // Move cursor to next line.
+        // 把光标移到下一行。
         if self.grid.cursor.input_needs_wrap {
             self.wrapline();
         }
 
-        // If in insert mode, first shift cells to the right.
+        // 若处于插入模式,先把单元右移。
         let columns = self.columns();
         if self.mode.contains(TermMode::INSERT) && self.grid.cursor.point.column + width < columns {
             let line = self.grid.cursor.point.line;
@@ -1129,24 +1129,24 @@ impl<T: EventListener> Handler for Term<T> {
         } else {
             if self.grid.cursor.point.column + 1 >= columns {
                 if self.mode.contains(TermMode::LINE_WRAP) {
-                    // Insert placeholder before wide char if glyph does not fit in this row.
+                    // 若字形放不进本行,在宽字符前插入占位。
                     self.grid.cursor.template.flags.insert(Flags::LEADING_WIDE_CHAR_SPACER);
                     self.write_at_cursor(' ');
                     self.grid.cursor.template.flags.remove(Flags::LEADING_WIDE_CHAR_SPACER);
                     self.wrapline();
                 } else {
-                    // Prevent out of bounds crash when linewrapping is disabled.
+                    // 关闭自动换行时防止越界崩溃。
                     self.grid.cursor.input_needs_wrap = true;
                     return;
                 }
             }
 
-            // Write full width glyph to current cursor cell.
+            // 把全宽字形写入当前光标单元。
             self.grid.cursor.template.flags.insert(Flags::WIDE_CHAR);
             self.write_at_cursor(c);
             self.grid.cursor.template.flags.remove(Flags::WIDE_CHAR);
 
-            // Write spacer to cell following the wide glyph.
+            // 在宽字形后面的单元写入占位。
             self.grid.cursor.point.column += 1;
             self.grid.cursor.template.flags.insert(Flags::WIDE_CHAR_SPACER);
             self.write_at_cursor(' ');
@@ -1211,7 +1211,7 @@ impl<T: EventListener> Handler for Term<T> {
         let cursor = &self.grid.cursor;
         let bg = cursor.template.bg;
 
-        // Ensure inserting within terminal bounds
+        // 确保插入操作在终端边界内
         let count = cmp::min(count, self.columns() - cursor.point.column.0);
 
         let source = cursor.point.column;
@@ -1227,8 +1227,8 @@ impl<T: EventListener> Handler for Term<T> {
             row.swap(destination + offset, source.0 + offset);
         }
 
-        // Cells were just moved out toward the end of the line;
-        // fill in between source and dest with blanks.
+        // 单元刚被移向行尾;
+        // 用空白填充源与目标之间的区域。
         for cell in &mut row[source.0..destination] {
             *cell = bg.into();
         }
@@ -1287,8 +1287,8 @@ impl<T: EventListener> Handler for Term<T> {
             Some('>') => {
                 trace!("Reporting secondary device attributes");
                 let version = version_number(env!("CARGO_PKG_VERSION"));
-                // PureTerm: avoid an extra format machinery allocation; the response
-                // never exceeds 32 bytes.
+                // PureTerm: 避免 format 机制的额外分配;响应
+                // 永远不超过 32 字节。
                 let mut text = String::with_capacity(32);
                 let _ = write!(text, "\x1b[>0;{version};1c");
                 self.event_proxy.send_event(Event::PtyWrite(Arc::new(text)));
@@ -1341,7 +1341,7 @@ impl<T: EventListener> Handler for Term<T> {
         let new_len = self.keyboard_mode_stack.len().saturating_sub(to_pop as usize);
         self.keyboard_mode_stack.truncate(new_len);
 
-        // Reload active mode.
+        // 重新加载活动模式。
         let mode = self.keyboard_mode_stack.last().copied().unwrap_or(KeyboardModes::NO_MODE);
         self.set_keyboard_mode(mode.into(), KeyboardModesApplyBehavior::Replace);
     }
@@ -1389,10 +1389,10 @@ impl<T: EventListener> Handler for Term<T> {
         self.goto(line.0, 0)
     }
 
-    /// Insert tab at cursor position.
+    /// 在光标位置插入制表符。
     #[inline]
     fn put_tab(&mut self, mut count: u16) {
-        // A tab after the last column is the same as a linebreak.
+        // 最后一列之后的制表符等同换行。
         if self.grid.cursor.input_needs_wrap {
             self.wrapline();
             return;
@@ -1421,7 +1421,7 @@ impl<T: EventListener> Handler for Term<T> {
         }
     }
 
-    /// Backspace.
+    /// 退格。
     #[inline]
     fn backspace(&mut self) {
         trace!("Backspace");
@@ -1435,7 +1435,7 @@ impl<T: EventListener> Handler for Term<T> {
         }
     }
 
-    /// Carriage return.
+    /// 回车。
     #[inline]
     fn carriage_return(&mut self) {
         trace!("Carriage return");
@@ -1446,7 +1446,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.grid.cursor.input_needs_wrap = false;
     }
 
-    /// Linefeed.
+    /// 换行。
     #[inline]
     fn linefeed(&mut self) {
         trace!("Linefeed");
@@ -1460,7 +1460,7 @@ impl<T: EventListener> Handler for Term<T> {
         }
     }
 
-    /// Set current position as a tabstop.
+    /// 把当前位置设为制表位。
     #[inline]
     fn bell(&mut self) {
         trace!("Bell");
@@ -1472,28 +1472,28 @@ impl<T: EventListener> Handler for Term<T> {
         trace!("[unimplemented] Substitute");
     }
 
-    /// Run LF/NL.
+    /// 执行 LF/NL(换行/新行)。
     ///
-    /// LF/NL mode has some interesting history. According to ECMA-48 4th
-    /// edition, in LINE FEED mode,
+    /// LF/NL 模式有一段有趣的历史。根据 ECMA-48 第 4
+    /// 版,在换行(LINE FEED)模式下:
     ///
-    /// > The execution of the formatter functions LINE FEED (LF), FORM FEED
-    /// > (FF), LINE TABULATION (VT) cause only movement of the active position in
-    /// > the direction of the line progression.
+    /// > 执行格式控制功能换行(LF)、换页(FF)、
+    /// > 换行制表(VT)时,活动位置仅沿行推进方向
+    /// > 移动。
     ///
-    /// In NEW LINE mode,
+    /// 在新行(NEW LINE)模式下:
     ///
-    /// > The execution of the formatter functions LINE FEED (LF), FORM FEED
-    /// > (FF), LINE TABULATION (VT) cause movement to the line home position on
-    /// > the following line, the following form, etc. In the case of LF this is
-    /// > referred to as the New Line (NL) option.
+    /// > 执行格式控制功能换行(LF)、换页(FF)、
+    /// > 换行制表(VT)时,活动位置移动到下一行、
+    /// > 下一页等处的行首位置;LF 的情况即所称的
+    /// > 新行(NL)选项。
     ///
-    /// Additionally, ECMA-48 4th edition says that this option is deprecated.
-    /// ECMA-48 5th edition only mentions this option (without explanation)
-    /// saying that it's been removed.
+    /// 此外,ECMA-48 第 4 版说明该选项已被弃用;
+    /// 第 5 版仅提及该选项(未作解释),
+    /// 表示它已被移除。
     ///
-    /// As an emulator, we need to support it since applications may still rely
-    /// on it.
+    /// 作为仿真器,由于应用程序可能仍依赖它,
+    /// 我们必须支持它。
     #[inline]
     fn newline(&mut self) {
         self.linefeed();
@@ -1552,7 +1552,7 @@ impl<T: EventListener> Handler for Term<T> {
         let start = cursor.point.column;
         let end = cmp::min(start + count, Column(self.columns()));
 
-        // Cleared cells have current background color set.
+        // 被清空的单元设置当前背景色。
         let bg = self.grid.cursor.template.bg;
         let line = cursor.point.line;
         self.damage.damage_line(line.0 as usize, start.0, end.0);
@@ -1568,7 +1568,7 @@ impl<T: EventListener> Handler for Term<T> {
         let cursor = &self.grid.cursor;
         let bg = cursor.template.bg;
 
-        // Ensure deleting within terminal bounds.
+        // 确保删除操作在终端边界内。
         let count = cmp::min(count, columns);
 
         let start = cursor.point.column.0;
@@ -1583,8 +1583,8 @@ impl<T: EventListener> Handler for Term<T> {
             row.swap(start + offset, end + offset);
         }
 
-        // Clear last `count` cells in the row. If deleting 1 char, need to delete
-        // 1 cell.
+        // 清空行尾的 `count` 个单元(删 1 个字符时
+        // 即删 1 个单元)。
         let end = columns - count;
         for cell in &mut row[end..] {
             *cell = bg.into();
@@ -1685,12 +1685,12 @@ impl<T: EventListener> Handler for Term<T> {
         self.selection = self.selection.take().filter(|s| !s.intersects_range(range));
     }
 
-    /// Set the indexed color value.
+    /// 设置索引色的值。
     #[inline]
     fn set_color(&mut self, index: usize, color: Rgb) {
         trace!("Setting color[{index}] = {color:?}");
 
-        // Damage terminal if the color changed and it's not the cursor.
+        // 颜色变化且不是光标时标记终端受损。
         if index != NamedColor::Cursor as usize && self.colors[index] != Some(color) {
             self.mark_fully_damaged();
         }
@@ -1698,7 +1698,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.colors[index] = Some(color);
     }
 
-    /// Respond to a color query escape sequence.
+    /// 响应颜色查询转义序列。
     #[inline]
     fn dynamic_color_sequence(&mut self, prefix: String, index: usize, terminator: &str) {
         trace!("Requested write of escape sequence for color code {prefix}: color[{index}]");
@@ -1718,12 +1718,12 @@ impl<T: EventListener> Handler for Term<T> {
         ));
     }
 
-    /// Reset the indexed color to original value.
+    /// 把索引色重置为原始值。
     #[inline]
     fn reset_color(&mut self, index: usize) {
         trace!("Resetting color[{index}]");
 
-        // Damage terminal if the color changed and it's not the cursor.
+        // 颜色变化且不是光标时标记终端受损。
         if index != NamedColor::Cursor as usize && self.colors[index].is_some() {
             self.mark_fully_damaged();
         }
@@ -1731,7 +1731,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.colors[index] = None;
     }
 
-    /// Store data into clipboard.
+    /// 把数据存入剪贴板。
     #[inline]
     fn clipboard_store(&mut self, clipboard: u8, base64: &[u8]) {
         if !matches!(self.config.osc52, Osc52::OnlyCopy | Osc52::CopyPaste) {
@@ -1752,7 +1752,7 @@ impl<T: EventListener> Handler for Term<T> {
         }
     }
 
-    /// Load data from clipboard.
+    /// 从剪贴板读取数据。
     #[inline]
     fn clipboard_load(&mut self, clipboard: u8, terminator: &str) {
         if !matches!(self.config.osc52, Osc52::OnlyPaste | Osc52::CopyPaste) {
@@ -1790,13 +1790,13 @@ impl<T: EventListener> Handler for Term<T> {
             ansi::ClearMode::Above => {
                 let cursor = self.grid.cursor.point;
 
-                // If clearing more than one line.
+                // 若清除多于一行。
                 if cursor.line > 1 {
-                    // Fully clear all lines before the current line.
+                    // 完全清空当前行之前的所有行。
                     self.grid.reset_region(..cursor.line);
                 }
 
-                // Clear up to the current column in the current line.
+                // 清空当前行到当前列的位置。
                 let end = cmp::min(cursor.column + 1, Column(self.columns()));
                 for cell in &mut self.grid[cursor.line][..end] {
                     *cell = bg.into();
@@ -1826,7 +1826,7 @@ impl<T: EventListener> Handler for Term<T> {
 
                     self.grid.clear_viewport();
 
-                    // Compute number of lines scrolled by clearing the viewport.
+                    // 计算清空视口所导致的滚动行数。
                     let lines = self.grid.display_offset().saturating_sub(old_offset);
 
                     self.vi_mode_cursor.point.line =
@@ -1843,7 +1843,7 @@ impl<T: EventListener> Handler for Term<T> {
 
                 self.selection = self.selection.take().filter(|s| !s.intersects_range(..Line(0)));
             },
-            // We have no history to clear.
+            // 没有可清空的历史。
             ansi::ClearMode::Saved => (),
         }
 
@@ -1863,7 +1863,7 @@ impl<T: EventListener> Handler for Term<T> {
         }
     }
 
-    /// Reset all important fields in the term struct.
+    /// 重置 term 结构体中的所有重要字段。
     #[inline]
     fn reset_state(&mut self) {
         if self.mode.contains(TermMode::ALT_SCREEN) {
@@ -1882,7 +1882,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.keyboard_mode_stack = Default::default();
         self.inactive_keyboard_mode_stack = Default::default();
 
-        // Preserve vi mode across resets.
+        // 跨重置保留 Vi 模式。
         self.mode &= TermMode::VI;
         self.mode.insert(TermMode::default());
 
@@ -1893,7 +1893,7 @@ impl<T: EventListener> Handler for Term<T> {
     #[inline]
     fn reverse_index(&mut self) {
         trace!("Reversing index");
-        // If cursor is at the top.
+        // 若光标位于顶部。
         if self.grid.cursor.point.line == self.scroll_region.start {
             self.scroll_down(1);
         } else {
@@ -1909,7 +1909,7 @@ impl<T: EventListener> Handler for Term<T> {
         self.grid.cursor.template.set_hyperlink(hyperlink.map(|e| e.into()));
     }
 
-    /// Set a terminal attribute.
+    /// 设置终端属性。
     #[inline]
     fn terminal_attribute(&mut self, attr: Attr) {
         trace!("Setting attribute: {attr:?}");
@@ -1983,7 +1983,7 @@ impl<T: EventListener> Handler for Term<T> {
             },
             NamedPrivateMode::ShowCursor => self.mode.insert(TermMode::SHOW_CURSOR),
             NamedPrivateMode::CursorKeys => self.mode.insert(TermMode::APP_CURSOR),
-            // Mouse protocols are mutually exclusive.
+            // 鼠标协议互斥。
             NamedPrivateMode::ReportMouseClicks => {
                 self.mode.remove(TermMode::MOUSE_MODE);
                 self.mode.insert(TermMode::MOUSE_REPORT_CLICK);
@@ -2001,7 +2001,7 @@ impl<T: EventListener> Handler for Term<T> {
             },
             NamedPrivateMode::ReportFocusInOut => self.mode.insert(TermMode::FOCUS_IN_OUT),
             NamedPrivateMode::BracketedPaste => self.mode.insert(TermMode::BRACKETED_PASTE),
-            // Mouse encodings are mutually exclusive.
+            // 鼠标编码互斥。
             NamedPrivateMode::SgrMouse => {
                 self.mode.remove(TermMode::UTF8_MOUSE);
                 self.mode.insert(TermMode::SGR_MOUSE);
@@ -2182,7 +2182,7 @@ impl<T: EventListener> Handler for Term<T> {
 
     #[inline]
     fn set_scrolling_region(&mut self, top: usize, bottom: Option<usize>) {
-        // Fallback to the last line as default.
+        // 缺省回退到最后一行。
         let bottom = bottom.unwrap_or_else(|| self.screen_lines());
 
         if top >= bottom {
@@ -2190,10 +2190,10 @@ impl<T: EventListener> Handler for Term<T> {
             return;
         }
 
-        // Bottom should be included in the range, but range end is not
-        // usually included. One option would be to use an inclusive
-        // range, but instead we just let the open range end be 1
-        // higher.
+        // 底边界应包含在范围内,但范围终点通常
+        // 不包含在内。一种做法是使用闭区间,
+        // 但这里直接让半开区间终点高 1,
+        // 以包含底边界。
         let start = Line(top as i32 - 1);
         let end = Line(bottom as i32);
 
@@ -2234,7 +2234,7 @@ impl<T: EventListener> Handler for Term<T> {
         trace!("Setting cursor style {style:?}");
         self.cursor_style = style;
 
-        // Notify UI about blinking changes.
+        // 通知 UI 闪烁状态变化。
         self.event_proxy.send_event(Event::CursorBlinkingChange);
     }
 
@@ -2303,15 +2303,15 @@ impl<T: EventListener> Handler for Term<T> {
     }
 }
 
-/// The state of the [`Mode`] and [`PrivateMode`].
+/// [`Mode`] 与 [`PrivateMode`] 的状态。
 #[repr(u8)]
 #[derive(Debug, Clone, Copy)]
 enum ModeState {
-    /// The mode is not supported.
+    /// 模式不受支持。
     NotSupported = 0,
-    /// The mode is currently set.
+    /// 模式当前已设置。
     Set = 1,
-    /// The mode is currently not set.
+    /// 模式当前未设置。
     Reset = 2,
 }
 
@@ -2321,11 +2321,11 @@ impl From<bool> for ModeState {
     }
 }
 
-/// Terminal version for escape sequence reports.
+/// 转义序列报告使用的终端版本号。
 ///
-/// This returns the current terminal version as a unique number based on alacritty_terminal's
-/// semver version. The different versions are padded to ensure that a higher semver version will
-/// always report a higher version number.
+/// 基于 PureTerm 终端 crate 的 semver 版本号,
+/// 返回当前终端版本对应的唯一数字;各位数字
+/// 经填充,确保更高的 semver 版本总是报告更大的数字。
 fn version_number(mut version: &str) -> usize {
     if let Some(separator) = version.rfind('-') {
         version = &version[..separator];
@@ -2358,7 +2358,7 @@ impl TabStops {
         TabStops { tabs: (0..columns).map(|i| i % INITIAL_TABSTOPS == 0).collect() }
     }
 
-    /// Remove all tabstops.
+    /// 移除所有制表位。
     #[inline]
     fn clear_all(&mut self) {
         unsafe {
@@ -2366,7 +2366,7 @@ impl TabStops {
         }
     }
 
-    /// Increase tabstop capacity.
+    /// 扩展制表位容量。
     #[inline]
     fn resize(&mut self, columns: usize) {
         let mut index = self.tabs.len();
@@ -2392,7 +2392,7 @@ impl IndexMut<Column> for TabStops {
     }
 }
 
-/// Terminal cursor rendering information.
+/// 终端光标渲染信息。
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct RenderableCursor {
     pub shape: CursorShape,
@@ -2401,14 +2401,14 @@ pub struct RenderableCursor {
 
 impl RenderableCursor {
     fn new<T>(term: &Term<T>) -> Self {
-        // Cursor position.
+        // 光标位置。
         let vi_mode = term.mode().contains(TermMode::VI);
         let mut point = if vi_mode { term.vi_mode_cursor.point } else { term.grid.cursor.point };
         if term.grid[point].flags.contains(Flags::WIDE_CHAR_SPACER) {
             point.column -= 1;
         }
 
-        // Cursor shape.
+        // 光标形状。
         let shape = if !vi_mode && !term.mode().contains(TermMode::SHOW_CURSOR) {
             CursorShape::Hidden
         } else {
@@ -2419,9 +2419,9 @@ impl RenderableCursor {
     }
 }
 
-/// Visible terminal content.
+/// 可见的终端内容。
 ///
-/// This contains all content required to render the current terminal view.
+/// 包含渲染当前终端视图所需的全部内容。
 pub struct RenderableContent<'a> {
     pub display_iter: GridIterator<'a, Cell>,
     pub selection: Option<SelectionRange>,
@@ -2444,7 +2444,7 @@ impl<'a> RenderableContent<'a> {
     }
 }
 
-/// Terminal test helpers.
+/// 终端测试辅助工具。
 pub mod test {
     use super::*;
 
@@ -2479,11 +2479,11 @@ pub mod test {
         }
     }
 
-    /// Construct a terminal from its content as string.
+    /// 从内容字符串构造一个终端。
     ///
-    /// A `\n` will break line and `\r\n` will break line without wrapping.
+    /// `\n` 会换行,`\r\n` 会换行但不设置换行标志。
     ///
-    /// # Examples
+    /// # 示例
     ///
     /// ```rust
     /// use alacritty_terminal::term::test::mock_term;
@@ -2506,11 +2506,11 @@ pub mod test {
             .max()
             .unwrap_or(0);
 
-        // Create terminal with the appropriate dimensions.
+        // 按合适的尺寸创建终端。
         let size = TermSize::new(num_cols, lines.len());
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Fill terminal with content.
+        // 用内容填充终端。
         for (line, text) in lines.iter().enumerate() {
             let line = Line(line as i32);
             if !text.ends_with('\r') && line + 1 != lines.len() {
@@ -2521,7 +2521,7 @@ pub mod test {
             for c in text.chars().take_while(|c| *c != '\r') {
                 term.grid[line][Column(index)].c = c;
 
-                // Handle fullwidth characters.
+                // 处理全角字符。
                 let width = c.width().unwrap();
                 if width == 2 {
                     term.grid[line][Column(index)].flags.insert(Flags::WIDE_CHAR);
@@ -2555,22 +2555,22 @@ mod tests {
         let size = TermSize::new(5, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 11 lines of scrollback.
+        // 创建 11 行滚动历史。
         for _ in 0..20 {
             term.newline();
         }
 
-        // Scrollable amount to top is 11.
+        // 向上可滚动 11 行。
         term.scroll_display(Scroll::PageUp);
         assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-1), Column(0)));
         assert_eq!(term.grid.display_offset(), 10);
 
-        // Scrollable amount to top is 1.
+        // 向上可滚动 1 行。
         term.scroll_display(Scroll::PageUp);
         assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-2), Column(0)));
         assert_eq!(term.grid.display_offset(), 11);
 
-        // Scrollable amount to top is 0.
+        // 向上可滚动 0 行。
         term.scroll_display(Scroll::PageUp);
         assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-2), Column(0)));
         assert_eq!(term.grid.display_offset(), 11);
@@ -2581,26 +2581,26 @@ mod tests {
         let size = TermSize::new(5, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 11 lines of scrollback.
+        // 创建 11 行滚动历史。
         for _ in 0..20 {
             term.newline();
         }
 
-        // Change display_offset to topmost.
+        // 把 display_offset 改为最顶部。
         term.grid_mut().scroll_display(Scroll::Top);
         term.vi_mode_cursor = ViModeCursor::new(Point::new(Line(-11), Column(0)));
 
-        // Scrollable amount to bottom is 11.
+        // 向下可滚动 11 行。
         term.scroll_display(Scroll::PageDown);
         assert_eq!(term.vi_mode_cursor.point, Point::new(Line(-1), Column(0)));
         assert_eq!(term.grid.display_offset(), 1);
 
-        // Scrollable amount to bottom is 1.
+        // 向下可滚动 1 行。
         term.scroll_display(Scroll::PageDown);
         assert_eq!(term.vi_mode_cursor.point, Point::new(Line(0), Column(0)));
         assert_eq!(term.grid.display_offset(), 0);
 
-        // Scrollable amount to bottom is 0.
+        // 向下可滚动 0 行。
         term.scroll_display(Scroll::PageDown);
         assert_eq!(term.vi_mode_cursor.point, Point::new(Line(0), Column(0)));
         assert_eq!(term.grid.display_offset(), 0);
@@ -2629,7 +2629,7 @@ mod tests {
         grid[Line(2)][Column(4)].flags.insert(Flags::WRAPLINE);
         grid[Line(3)][Column(0)].c = ' ';
 
-        // Multiple lines contain an empty line.
+        // 多行选区中包含空行。
         term.selection = Some(Selection::new(
             SelectionType::Simple,
             Point { line: Line(0), column: Column(0) },
@@ -2640,7 +2640,7 @@ mod tests {
         }
         assert_eq!(term.selection_to_string(), Some(String::from("\"aaa\"\n\n aaa ")));
 
-        // A wrapline.
+        // 跨换行行的选区。
         term.selection = Some(Selection::new(
             SelectionType::Simple,
             Point { line: Line(2), column: Column(0) },
@@ -2678,7 +2678,7 @@ mod tests {
                 Point { line: Line(0), column: Column(1) },
                 Side::Left,
             ));
-            // Smart selection matches quoted string "aa", not just the inner text.
+            // 智能选区匹配带引号的字符串 "aa",而非仅内部文本。
             assert_eq!(term.selection_to_string(), Some(String::from("\"aa\"")));
         }
 
@@ -2746,29 +2746,29 @@ mod tests {
             Side::Left,
         ));
 
-        // The same column.
+        // 同一列。
         if let Some(s) = term.selection.as_mut() {
             s.update(Point { line: Line(3), column: Column(3) }, Side::Right);
         }
         assert_eq!(term.selection_to_string(), Some(String::from("\na\na\na")));
 
-        // The first column.
+        // 第一列。
         if let Some(s) = term.selection.as_mut() {
             s.update(Point { line: Line(3), column: Column(0) }, Side::Left);
         }
         assert_eq!(term.selection_to_string(), Some(String::from("\n\"aa\n\"a\n\"aa")));
 
-        // The last column.
+        // 最后一列。
         if let Some(s) = term.selection.as_mut() {
             s.update(Point { line: Line(3), column: Column(4) }, Side::Right);
         }
         assert_eq!(term.selection_to_string(), Some(String::from("\na\"\na\"\na")));
     }
 
-    /// Check that the grid can be serialized back and forth losslessly.
+    /// 验证网格可以无损地往返序列化。
     ///
-    /// This test is in the term module as opposed to the grid since we want to
-    /// test this property with a T=Cell.
+    /// 此测试放在 term 模块而非 grid 模块,因为我们想
+    /// 在 T=Cell 下测试该属性。
     #[test]
     #[cfg(feature = "serde")]
     fn grid_serde() {
@@ -2795,17 +2795,17 @@ mod tests {
         let size = TermSize::new(10, 20);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 10 lines of scrollback.
+        // 创建 10 行滚动历史。
         for _ in 0..29 {
             term.newline();
         }
 
-        // Change the display area.
+        // 改变显示区域。
         term.scroll_display(Scroll::Top);
 
         assert_eq!(term.grid.display_offset(), 10);
 
-        // Clear the viewport.
+        // 清空视口。
         term.clear_screen(ansi::ClearMode::All);
 
         assert_eq!(term.grid.display_offset(), 10);
@@ -2816,21 +2816,21 @@ mod tests {
         let size = TermSize::new(10, 20);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 10 lines of scrollback.
+        // 创建 10 行滚动历史。
         for _ in 0..29 {
             term.newline();
         }
 
-        // Enable vi mode.
+        // 启用 Vi 模式。
         term.toggle_vi_mode();
 
-        // Change the display area and the vi cursor position.
+        // 改变显示区域与 Vi 光标位置。
         term.scroll_display(Scroll::Top);
         term.vi_mode_cursor.point = Point::new(Line(-5), Column(3));
 
         assert_eq!(term.grid.display_offset(), 10);
 
-        // Clear the viewport.
+        // 清空视口。
         term.clear_screen(ansi::ClearMode::All);
 
         assert_eq!(term.grid.display_offset(), 10);
@@ -2842,17 +2842,17 @@ mod tests {
         let size = TermSize::new(10, 20);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 10 lines of scrollback.
+        // 创建 10 行滚动历史。
         for _ in 0..29 {
             term.newline();
         }
 
-        // Change the display area.
+        // 改变显示区域。
         term.scroll_display(Scroll::Top);
 
         assert_eq!(term.grid.display_offset(), 10);
 
-        // Clear the scrollback buffer.
+        // 清空滚动历史缓冲区。
         term.clear_screen(ansi::ClearMode::Saved);
 
         assert_eq!(term.grid.display_offset(), 0);
@@ -2863,21 +2863,21 @@ mod tests {
         let size = TermSize::new(10, 20);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 10 lines of scrollback.
+        // 创建 10 行滚动历史。
         for _ in 0..29 {
             term.newline();
         }
 
-        // Enable vi mode.
+        // 启用 Vi 模式。
         term.toggle_vi_mode();
 
-        // Change the display area and the vi cursor position.
+        // 改变显示区域与 Vi 光标位置。
         term.scroll_display(Scroll::Top);
         term.vi_mode_cursor.point = Point::new(Line(-5), Column(3));
 
         assert_eq!(term.grid.display_offset(), 10);
 
-        // Clear the scrollback buffer.
+        // 清空滚动历史缓冲区。
         term.clear_screen(ansi::ClearMode::Saved);
 
         assert_eq!(term.grid.display_offset(), 0);
@@ -2889,17 +2889,17 @@ mod tests {
         let size = TermSize::new(7, 17);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Add one line of scrollback.
+        // 添加一行滚动历史。
         term.grid.scroll_up(&(Line(0)..Line(1)), 1);
 
-        // Clear the history.
+        // 清空历史。
         term.clear_screen(ansi::ClearMode::Saved);
 
-        // Make sure that scrolling does not change the grid.
+        // 确保滚动不会改变网格。
         let mut scrolled_grid = term.grid.clone();
         scrolled_grid.scroll_display(Scroll::Top);
 
-        // Truncate grids for comparison.
+        // 截断网格以便比较。
         scrolled_grid.truncate();
         term.grid.truncate();
 
@@ -2911,12 +2911,12 @@ mod tests {
         let size = TermSize::new(5, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 11 lines of scrollback.
+        // 创建 11 行滚动历史。
         for _ in 0..20 {
             term.newline();
         }
 
-        // Enable vi mode.
+        // 启用 Vi 模式。
         term.toggle_vi_mode();
 
         term.scroll_display(Scroll::Top);
@@ -2931,14 +2931,14 @@ mod tests {
         let mut size = TermSize::new(100, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 10 lines of scrollback.
+        // 创建 10 行滚动历史。
         for _ in 0..19 {
             term.newline();
         }
         assert_eq!(term.history_size(), 10);
         assert_eq!(term.grid.cursor.point, Point::new(Line(9), Column(0)));
 
-        // Increase visible lines.
+        // 增加可见行数。
         size.screen_lines = 30;
         term.resize(size);
 
@@ -2951,21 +2951,21 @@ mod tests {
         let mut size = TermSize::new(100, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 10 lines of scrollback.
+        // 创建 10 行滚动历史。
         for _ in 0..19 {
             term.newline();
         }
         assert_eq!(term.history_size(), 10);
         assert_eq!(term.grid.cursor.point, Point::new(Line(9), Column(0)));
 
-        // Enter alt screen.
+        // 进入备用屏幕。
         term.set_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
 
-        // Increase visible lines.
+        // 增加可见行数。
         size.screen_lines = 30;
         term.resize(size);
 
-        // Leave alt screen.
+        // 离开备用屏幕。
         term.unset_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
 
         assert_eq!(term.history_size(), 0);
@@ -2977,14 +2977,14 @@ mod tests {
         let mut size = TermSize::new(100, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 10 lines of scrollback.
+        // 创建 10 行滚动历史。
         for _ in 0..19 {
             term.newline();
         }
         assert_eq!(term.history_size(), 10);
         assert_eq!(term.grid.cursor.point, Point::new(Line(9), Column(0)));
 
-        // Increase visible lines.
+        // 增加可见行数。
         size.screen_lines = 5;
         term.resize(size);
 
@@ -2997,21 +2997,21 @@ mod tests {
         let mut size = TermSize::new(100, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Create 10 lines of scrollback.
+        // 创建 10 行滚动历史。
         for _ in 0..19 {
             term.newline();
         }
         assert_eq!(term.history_size(), 10);
         assert_eq!(term.grid.cursor.point, Point::new(Line(9), Column(0)));
 
-        // Enter alt screen.
+        // 进入备用屏幕。
         term.set_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
 
-        // Increase visible lines.
+        // 增加可见行数。
         size.screen_lines = 5;
         term.resize(size);
 
-        // Leave alt screen.
+        // 离开备用屏幕。
         term.unset_private_mode(NamedPrivateMode::SwapScreenAndSetRestoreCursor.into());
 
         assert_eq!(term.history_size(), 15);
@@ -3022,10 +3022,10 @@ mod tests {
     fn damage_public_usage() {
         let size = TermSize::new(10, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
-        // Reset terminal for partial damage tests since it's initialized as fully damaged.
+        // 重置终端以进行部分受损测试(初始为整体受损)。
         term.reset_damage();
 
-        // Test that we damage input form [`Term::input`].
+        // 测试 [`Term::input`] 输入会产生受损标记。
 
         let left = term.grid.cursor.point.column.0;
         term.input('d');
@@ -3044,7 +3044,7 @@ mod tests {
         assert_eq!(damaged_lines.next(), None);
         term.reset_damage();
 
-        // Create scrollback.
+        // 创建滚动历史。
         for _ in 0..20 {
             term.newline();
         }
@@ -3058,7 +3058,7 @@ mod tests {
         term.scroll_display(Scroll::Delta(10));
         term.reset_damage();
 
-        // No damage when scrolled into viewport.
+        // 滚动进视口后无受损。
         for idx in 0..term.columns() {
             term.goto(idx as i32, idx);
         }
@@ -3068,8 +3068,8 @@ mod tests {
         };
         assert_eq!(damaged_lines.next(), None);
 
-        // Scroll back into the viewport, so we have 2 visible lines which terminal can write
-        // to.
+        // 滚回视口,使终端有 2 行可见行
+        // 可供写入。
         term.scroll_display(Scroll::Delta(-2));
         term.reset_damage();
 
@@ -3097,14 +3097,14 @@ mod tests {
         let size = TermSize::new(10, 10);
         let mut term = Term::new(Config::default(), &size, VoidListener);
         let num_cols = term.columns();
-        // Reset terminal for partial damage tests since it's initialized as fully damaged.
+        // 重置终端以进行部分受损测试(初始为整体受损)。
         term.reset_damage();
 
         term.goto(1, 1);
 
-        // NOTE While we can use `[Term::damage]` to access terminal damage information, in the
-        // following tests we will be accessing `term.damage.lines` directly to avoid adding extra
-        // damage information (like cursor and Vi cursor), which we're not testing.
+        // 注意:虽然可以用 `[Term::damage]` 访问终端受损信息,
+        // 但下面的测试直接访问 `term.damage.lines`,以免
+        // 引入额外受损信息(如光标与 Vi 光标,不在测试范围内)。
 
         assert_eq!(term.damage.lines[0], LineDamageBounds { line: 0, left: 0, right: 0 });
         assert_eq!(term.damage.lines[1], LineDamageBounds { line: 1, left: 1, right: 1 });
@@ -3209,7 +3209,7 @@ mod tests {
         assert!(term.damage.full);
         term.reset_damage();
 
-        // Sequential call to scroll display without doing anything shouldn't damage.
+        // 连续调用滚动显示但无变化时不应产生受损。
         term.scroll_display(Scroll::Top);
         assert!(!term.damage.full);
         term.reset_damage();
@@ -3235,7 +3235,7 @@ mod tests {
         term.reset_damage();
 
         term.set_mode(NamedMode::Insert.into());
-        // Just setting `Insert` mode shouldn't mark terminal as damaged.
+        // 仅设置 `Insert` 模式不应把终端标记为受损。
         assert!(!term.damage.full);
         term.reset_damage();
 
@@ -3244,7 +3244,7 @@ mod tests {
         assert!(term.damage.full);
         term.reset_damage();
 
-        // Setting the same color once again shouldn't trigger full damage.
+        // 再次设置相同颜色不应触发整体受损。
         term.set_color(color_index, Rgb::default());
         assert!(!term.damage.full);
 
@@ -3252,12 +3252,12 @@ mod tests {
         assert!(term.damage.full);
         term.reset_damage();
 
-        // We shouldn't trigger fully damage when cursor gets update.
+        // 更新光标颜色时不应触发整体受损。
         term.set_color(NamedColor::Cursor as usize, Rgb::default());
         assert!(!term.damage.full);
 
-        // However requesting terminal damage should mark terminal as fully damaged in `Insert`
-        // mode.
+        // 但在 `Insert` 模式下请求终端受损应把
+        // 终端标记为整体受损。
         let _ = term.damage();
         assert!(term.damage.full);
         term.reset_damage();
@@ -3266,7 +3266,7 @@ mod tests {
         assert!(term.damage.full);
         term.reset_damage();
 
-        // Keep this as a last check, so we don't have to deal with restoring from alt-screen.
+        // 把它作为最后一项检查,避免处理备用屏幕恢复。
         term.swap_alt();
         assert!(term.damage.full);
         term.reset_damage();
@@ -3281,44 +3281,44 @@ mod tests {
         let size = TermSize::new(7, 17);
         let mut term = Term::new(Config::default(), &size, VoidListener);
 
-        // Title None by default.
+        // 默认标题为 None。
         assert_eq!(term.title, None);
 
-        // Title can be set.
+        // 可以设置标题。
         term.set_title(Some("Test".into()));
         assert_eq!(term.title, Some("Test".into()));
 
-        // Title can be pushed onto stack.
+        // 标题可以压入栈。
         term.push_title();
         term.set_title(Some("Next".into()));
         assert_eq!(term.title, Some("Next".into()));
         assert_eq!(term.title_stack.first().unwrap(), &Some("Test".into()));
 
-        // Title can be popped from stack and set as the window title.
+        // 标题可以从栈弹出并设为窗口标题。
         term.pop_title();
         assert_eq!(term.title, Some("Test".into()));
         assert!(term.title_stack.is_empty());
 
-        // Title stack doesn't grow infinitely.
+        // 标题栈不会无限增长。
         for _ in 0..4097 {
             term.push_title();
         }
         assert_eq!(term.title_stack.len(), 4096);
 
-        // Title and title stack reset when terminal state is reset.
+        // 终端状态重置时标题与标题栈一并重置。
         term.push_title();
         term.reset_state();
         assert_eq!(term.title, None);
         assert!(term.title_stack.is_empty());
 
-        // Title stack pops back to default.
+        // 标题栈可弹回默认(None)。
         term.title = None;
         term.push_title();
         term.set_title(Some("Test".into()));
         term.pop_title();
         assert_eq!(term.title, None);
 
-        // Title can be reset to default.
+        // 标题可以重置为默认。
         term.title = Some("Test".into());
         term.set_title(None);
         assert_eq!(term.title, None);

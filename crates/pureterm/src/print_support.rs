@@ -1,19 +1,17 @@
-//! GAP-61: Print terminal pane.
+//! GAP-61:打印终端面板。
 //!
-//! - macOS: real `NSPrintOperation` integration. Two surfaces:
-//!   1. `print_to_pdf` renders the formatted text into a monospace NSView
-//!      and reads `dataWithPDFInsideRect:` off it, writing the result to
-//!      `output`.
-//!   2. `show_print_dialog` builds the same view, wraps it in
-//!      `NSPrintOperation::printOperationWithView:`, and runs the native
-//!      modal print panel.
-//! - Linux: keep the existing `lpr` path (works for both real printers
-//!   and CUPS-PDF virtual printers, which is what most headless Linux
-//!   users already have).
-//! - Windows: not implemented (returns `Err`).
+//! - macOS:真正的 `NSPrintOperation` 集成。两个入口:
+//!   1. `print_to_pdf` 把格式化文本渲染到等宽 NSView 中,读取其
+//!      `dataWithPDFInsideRect:`,把结果写入 `output`。
+//!   2. `show_print_dialog` 构建同样的视图,包进
+//!      `NSPrintOperation::printOperationWithView:`,并运行原生
+//!      模态打印面板。
+//! - Linux:保留既有 `lpr` 路径(对真实打印机和 CUPS-PDF 虚拟打印机都
+//!   可用,这也是多数无头 Linux 用户已有的环境)。
+//! - Windows:未实现(返回 `Err`)。
 //!
-//! Page geometry is US Letter (8.5" x 11") at 72 DPI; a 0.75" margin
-//! gives a 7.0" x 9.5" body (504 x 684 pt).
+//! 页面几何为 US Letter(8.5" x 11")、72 DPI;0.75" 边距给出
+//! 7.0" x 9.5" 的正文区域(504 x 684 pt)。
 
 use std::path::Path;
 
@@ -24,7 +22,7 @@ use objc2_app_kit::{NSPrintOperation, NSView};
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSData, NSRect, NSSize, NSString};
 
-/// `[print]` config.
+/// `[print]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrintSupportConfig {
     pub enabled: bool,
@@ -42,7 +40,7 @@ impl Default for PrintSupportConfig {
     }
 }
 
-/// Format pane text for printing with optional header/footer.
+/// 格式化面板文本用于打印,可带页眉/页脚。
 pub fn format_for_print(cfg: &PrintSupportConfig, title: &str, body: &str) -> String {
     if !cfg.enabled {
         return body.to_string();
@@ -60,7 +58,7 @@ pub fn format_for_print(cfg: &PrintSupportConfig, title: &str, body: &str) -> St
     out
 }
 
-/// US Letter, 72 DPI; 0.75" margins -> 504x684 pt body.
+/// US Letter,72 DPI;0.75" 边距 → 504x684 pt 正文。
 const PAGE_WIDTH_PT: f64 = 612.0;
 const PAGE_HEIGHT_PT: f64 = 792.0;
 const MARGIN_PT: f64 = 54.0;
@@ -68,15 +66,14 @@ const BODY_HEIGHT_PT: f64 = PAGE_HEIGHT_PT - 2.0 * MARGIN_PT;
 const LINE_HEIGHT_PT: f64 = 12.0;
 const CHARS_PER_LINE: usize = 80;
 
-/// Lay out `text` into page-sized chunks of `CHARS_PER_LINE` columns,
-/// separated by `\n` for now. The print view will only draw the first
-/// `lines_per_page` lines per page; we expose a `lines_for_page` helper
-/// so callers (e.g. multi-page preview) can iterate.
+/// 把 `text` 按 `CHARS_PER_LINE` 列排版成页大小分块,暂时用 `\n` 分隔。
+/// 打印视图每页只绘制前 `lines_per_page` 行;我们暴露 `lines_for_page`
+/// 辅助函数,让调用方(如多页预览)可以遍历。
 pub fn lines_per_page() -> usize {
     (BODY_HEIGHT_PT / LINE_HEIGHT_PT) as usize
 }
 
-/// Wrap `text` to a width of `CHARS_PER_LINE` columns.
+/// 把 `text` 按 `CHARS_PER_LINE` 列宽换行。
 pub fn wrap_to_page_width(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     for raw in text.split('\n') {
@@ -98,9 +95,9 @@ fn char_boundary(s: &str, n: usize) -> usize {
         .unwrap_or_else(|| s.len())
 }
 
-/// macOS: build a transient NSView, draw the formatted text into it,
-/// then either export PDF (`dataWithPDFInsideRect:`) or run the modal
-/// print panel (`NSPrintOperation::printOperationWithView:` + run).
+/// macOS:构建瞬态 NSView,把格式化文本绘制进去,然后要么导出 PDF
+/// (`dataWithPDFInsideRect:`),要么运行模态打印面板
+/// (调用 `NSPrintOperation::printOperationWithView:` + run)。
 #[cfg(target_os = "macos")]
 fn build_view(text: &str) -> Result<Retained<NSView>, String> {
     unsafe {
@@ -126,10 +123,8 @@ fn build_view(text: &str) -> Result<Retained<NSView>, String> {
 
 #[cfg(target_os = "macos")]
 fn draw_text(text: &str) {
-    // Caller has already locked focus; AppKit installs a current
-    // NSGraphicsContext implicitly. Drawing happens in view coordinates
-    // with origin at the bottom-left, so we step upward from the bottom
-    // margin.
+    // 调用方已锁定焦点;AppKit 会隐式安装当前 NSGraphicsContext。
+    // 绘制发生在视图坐标系中,原点在左下角,所以从底部边距向上逐行绘制。
     unsafe {
         let wrapped = wrap_to_page_width(text);
         let lpp = lines_per_page();
@@ -143,14 +138,13 @@ fn draw_text(text: &str) {
     }
 }
 
-/// Render the formatted pane text to a PDF file.
+/// 把格式化后的面板文本渲染为 PDF 文件。
 ///
-/// - macOS: builds a transient NSView, renders monospace text into it
-///   via `NSString::drawAtPoint:`, then reads `dataWithPDFInsideRect:`
-///   and writes the bytes to `output`.
-/// - Linux: returns `Err` and points users at `lpr -P CUPS-PDF` or
-///   `print_pane_default` (which calls lpr directly).
-/// - Windows: not implemented.
+/// - macOS:构建瞬态 NSView,通过 `NSString::drawAtPoint:` 渲染等宽文本,
+///   然后读取 `dataWithPDFInsideRect:` 并把字节写入 `output`。
+/// - Linux:返回 `Err`,并提示用户使用 `lpr -P CUPS-PDF` 或
+///   `print_pane_default`(后者直接调用 lpr)。
+/// - Windows:未实现。
 pub fn print_to_pdf(cfg: &PrintSupportConfig, title: &str, body: &str, output: &Path) -> Result<(), String> {
     if !cfg.enabled {
         return Err("print disabled".into());
@@ -184,8 +178,7 @@ pub fn print_to_pdf(cfg: &PrintSupportConfig, title: &str, body: &str, output: &
     }
 }
 
-/// Show the native print panel and let the user pick a printer / save
-/// as PDF.
+/// 显示原生打印面板,让用户选择打印机 / 另存为 PDF。
 pub fn show_print_dialog(cfg: &PrintSupportConfig, title: &str, body: &str) -> Result<(), String> {
     if !cfg.enabled {
         return Err("print disabled".into());
@@ -194,13 +187,13 @@ pub fn show_print_dialog(cfg: &PrintSupportConfig, title: &str, body: &str) -> R
     #[cfg(target_os = "macos")]
     {
         let view = build_view(&formatted)?;
-        // printOperationWithView: takes a single argument. NSPrintInfo is
-        // taken from the default NSPrintInfo (NSPrintInfo.sharedInstance()).
+        // printOperationWithView: 只接受一个参数。NSPrintInfo 取自默认的
+        // 即 NSPrintInfo(NSPrintInfo.sharedInstance())。
         let op_ptr: *mut NSPrintOperation = unsafe { msg_send![class!(NSPrintOperation), printOperationWithView: &*view] };
         let op: Retained<NSPrintOperation> = unsafe {
             Retained::retain(op_ptr).ok_or_else(|| "retain NSPrintOperation returned null".to_string())?
         };
-        // Pass NULL window so AppKit picks the key window. Synchronous.
+        // 传入 NULL 窗口,让 AppKit 选择 key window。同步执行。
         unsafe {
             let _: () = msg_send![
                 &*op,
@@ -224,8 +217,8 @@ pub fn show_print_dialog(cfg: &PrintSupportConfig, title: &str, body: &str) -> R
     }
 }
 
-/// Cross-platform entry point: macOS gets the native panel, Linux
-/// prints via lpr (works for CUPS-PDF too), Windows returns an error.
+/// 跨平台入口:macOS 用原生面板,Linux 通过 lpr 打印(也适用于
+/// CUPS-PDF),Windows 返回错误。
 pub fn print_pane_default(cfg: &PrintSupportConfig, title: &str, body: &str) -> Result<(), String> {
     if !cfg.enabled {
         return Err("print disabled".into());

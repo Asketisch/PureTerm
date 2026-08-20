@@ -1,24 +1,24 @@
-//! `ChatPanelState` — the pure state machine for the dockable chat panel.
+//! `ChatPanelState` — 可停靠聊天面板的纯状态机模块。
 //!
-//! Holds the conversation, the in-flight turn's generation id (so stale chunks
-//! from a superseded/aborted turn are discarded), and the input draft. The state
-//! machine itself is synchronous and HTTP-free: the app layer drives a provider's
-//! stream and forwards each `ChatEvent` (tagged with the turn's gen) to
-//! [`ChatPanelState::apply_chunk`]. Cancellation (panel close / new turn / Stop)
-//! is app-layer — it drops the stream `Task`, and the provider's `cancel` signal
-//! aborts the HTTP request.
+//! 保存会话、进行中回合的生成 id(用于丢弃已中止/被取代回合的过期块),
+//! 以及输入草稿。状态机本身是同步且不依赖 HTTP 的:应用层驱动提供方的
+//! 流,并将每个 `ChatEvent`(带回合生成 id 标记)转发给
+//! [`ChatPanelState::apply_chunk`]。取消(面板关闭 / 新回合 / 停止)
+//! 属于应用层职责——它丢弃流 `Task`,提供方的 `cancel` 信号
+//! 会中止 HTTP 请求。
+//! 状态机不感知网络细节,全部中止动作皆在应用层完成。
 
 use crate::ai_chat::types::{ChatEvent, ChatMessage, ChatRole};
 
-/// Right-docked AI chat panel state. UI rendering + stream lifecycle live in the
-/// app (`iced_app.rs`); this struct is the testable core.
+/// 右侧停靠的 AI 聊天面板状态。界面渲染与流生命周期在应用
+/// (`iced_app.rs`)中;本结构体是可供测试的核心。
 #[derive(Debug)]
 pub struct ChatPanelState {
     pub open: bool,
     pub messages: Vec<ChatMessage>,
-    /// Draft text in the input box.
+    /// 输入框中的草稿文本。
     pub input: String,
-    /// The generation id of the turn currently streaming, if any.
+    /// 当前正在流式输出的回合的生成 id(若有)。
     inflight_gen: Option<u64>,
     gen_counter: u64,
 }
@@ -56,16 +56,16 @@ impl ChatPanelState {
         self.inflight_gen.is_some()
     }
 
-    /// Abort the in-flight turn without waiting for a terminal stream event.
+    /// 中止进行中的回合,无需等待终止流事件。
     pub fn stop_streaming(&mut self) {
         self.inflight_gen = None;
     }
 
-    /// Mark the in-flight assistant turn as user-stopped. An empty placeholder
-    /// becomes "(stopped)"; a partially-streamed reply gets a trailing
-    /// "[stopped]" note so the abort is visible (mirrors the `Error` branch of
-    /// [`Self::apply_chunk`]). Does not touch `inflight_gen` — the caller clears
-    /// it via [`Self::stop_streaming`] / `abort_inflight_chat`.
+    /// 将进行中的助手回合标记为用户已停止。空占位消息
+    /// 变为 "(stopped)";部分流式回复追加
+    /// "[stopped]" 提示,使中止可见(与 [`Self::apply_chunk`] 的
+    /// `Error` 分支行为一致)。不修改 `inflight_gen`——由调用方通过
+    /// [`Self::stop_streaming`] / `abort_inflight_chat` 清除。
     pub fn mark_stopped(&mut self) {
         if let Some(last) = self.messages.last_mut() {
             if last.role == ChatRole::Assistant {
@@ -78,9 +78,9 @@ impl ChatPanelState {
         }
     }
 
-    /// Begin a turn: push the user message + an empty assistant placeholder, and
-    /// return a fresh generation id. The caller tags the provider stream's events
-    /// with this id so stale chunks are discarded.
+    /// 开始一个回合:推送用户消息 + 空的助手占位消息,并
+    /// 返回新的生成 id。调用方用它标记提供方流的事件,
+    /// 以便丢弃过期块。
     pub fn begin_turn(&mut self, user_text: &str) -> u64 {
         self.messages.push(ChatMessage::user(user_text));
         self.messages.push(ChatMessage::assistant(String::new()));
@@ -89,15 +89,15 @@ impl ChatPanelState {
         self.gen_counter
     }
 
-    /// Apply a streamed chunk for generation `gen`. Chunks whose gen doesn't match
-    /// the in-flight turn are dropped (the turn was superseded/aborted).
+    /// 应用生成 `gen` 的流式块。gen 不匹配
+    /// 进行中回合的块会被丢弃(该回合已被取代或中止)。
     pub fn apply_chunk(&mut self, gen: u64, ev: &ChatEvent) {
         if Some(gen) != self.inflight_gen {
-            return; // stale chunk from a superseded/aborted turn
+            return; // 来自已取代/中止回合的过期块
         }
         match ev {
             ChatEvent::TextDelta(t) => {
-                // Append to the in-flight assistant placeholder (the last message).
+                // 追加到进行中的助手占位消息(最后一条消息)。
                 if let Some(last) = self.messages.last_mut() {
                     if last.role == ChatRole::Assistant {
                         last.content.push_str(t);
@@ -108,7 +108,7 @@ impl ChatPanelState {
                 self.inflight_gen = None;
             }
             ChatEvent::Error(msg) => {
-                // Mark the slot: replace an empty placeholder, or note after partial text.
+                // 标记该槽位:空占位直接覆盖,或在部分文本后追加提示。
                 if let Some(last) = self.messages.last_mut() {
                     if last.role == ChatRole::Assistant {
                         if last.content.is_empty() {
@@ -120,7 +120,7 @@ impl ChatPanelState {
                 }
                 self.inflight_gen = None;
             }
-            // Non-fatal warnings + Phase-4 tool calls: ignored by the state machine.
+            // 非致命警告 + 第 4 阶段工具调用:状态机忽略。
             ChatEvent::Warn(_) | ChatEvent::ToolCallRequest { .. } => {}
         }
     }
@@ -165,7 +165,7 @@ mod tests {
         p.apply_chunk(gen, &ChatEvent::TextDelta("Hello".into()));
         p.apply_chunk(gen, &ChatEvent::TextDelta(" world".into()));
         assert_eq!(p.messages[1].content, "Hello world");
-        assert!(p.is_streaming()); // not finalized yet
+        assert!(p.is_streaming()); // 尚未终结
     }
 
     #[test]
@@ -186,11 +186,11 @@ mod tests {
     fn stale_chunk_from_superseded_turn_is_dropped() {
         let mut p = ChatPanelState::new();
         let gen1 = p.begin_turn("first");
-        let gen2 = p.begin_turn("second"); // supersedes gen1
-        // A late chunk from gen1 must not touch the gen2 assistant placeholder.
+        let gen2 = p.begin_turn("second"); // 取代 gen1
+        // gen1 的迟到块不得影响 gen2 的助手占位消息。
         p.apply_chunk(gen1, &ChatEvent::TextDelta("ghost".into()));
         assert_eq!(p.messages.last().unwrap().content, "");
-        // A current (gen2) chunk still applies.
+        // 当前(gen2)块仍然生效。
         p.apply_chunk(gen2, &ChatEvent::TextDelta("real".into()));
         assert_eq!(p.messages.last().unwrap().content, "real");
     }
@@ -225,15 +225,15 @@ mod tests {
 
     #[test]
     fn stale_chunk_after_stop_is_dropped() {
-        // stop_streaming() clears inflight_gen → a late chunk for the old gen
-        // must NOT write into the (hidden) assistant placeholder.
+        // stop_streaming() 清除 inflight_gen → 旧 gen 的迟到块
+        // 不得写入(已隐藏的)助手占位消息。
         let mut p = ChatPanelState::new();
         let gen = p.begin_turn("hi");
         p.apply_chunk(gen, &ChatEvent::TextDelta("first".into()));
         p.stop_streaming();
-        // Late chunk races in after the stop.
+        // 停止后,迟到块并发到达。
         p.apply_chunk(gen, &ChatEvent::TextDelta(" ghost".into()));
         let content = p.messages.last().unwrap().content.clone();
-        assert_eq!(content, "first"); // ghost not appended
+        assert_eq!(content, "first"); // 幽灵块未追加
     }
 }

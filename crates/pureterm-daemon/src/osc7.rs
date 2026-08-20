@@ -1,29 +1,29 @@
-//! OSC 7 shell-integration environment injection.
+//! OSC 7 shell 集成的环境注入。
 //!
-//! Shared by both the GUI's direct local-PTY path
-//! (`pureterm::terminal_context`) and the persistent daemon
-//! (`pureterm-daemon::session`) so every local shell reports its working
-//! directory via OSC 7 — which is what powers cwd inheritance for new
-//! tabs/panes.
+//! 由 GUI 的直连本地 PTY 路径
+//! (`pureterm::terminal_context`)与常驻守护进程
+//! (`pureterm-daemon::session`)共用,使每个本地 shell 都经
+//! OSC 7 上报工作目录——这正是新标签页/窗格
+//! cwd 继承的动力来源。
 //!
-//! Returns a set of environment variables to inject into the child shell via
-//! `tty::Options::env`, rather than mutating the spawner's process
-//! environment with `std::env::set_var`. The env approach avoids two
-//! problems the previous `set_var`-based injection had: (1) racing across
-//! concurrent daemon sessions, and (2) leaking the temp `ZDOTDIR` into
-//! unrelated spawns that happen before the restore.
+//! 返回一组经 `tty::Options::env` 注入子 shell 的环境变量,
+//! 而非用 `std::env::set_var` 改动拉起方的进程
+//! 环境。环境变量方式避开了此前基于 `set_var` 注入的两个
+//! 问题:(1)并发守护会话间的竞态;(2)把临时 `ZDOTDIR` 泄漏到
+//! 恢复之前发生的无关拉起。
+//! 恢复之前发生的无关拉起。
 
 use std::collections::HashMap;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
-/// The OSC 7 printf body: emits `ESC ] 7 ; file://$HOST$PWD ST` so the
-/// terminal learns the shell's current working directory.
+/// OSC 7 的 printf 主体:发出 `ESC ] 7 ; file://$HOST$PWD ST`,使
+/// 终端获知 shell 的当前工作目录。
 const OSC7_FUNC: &str = r#"_pt_osc7() { printf '\e]7;file://%s%s\e\\' "$HOST" "$PWD"; }"#;
 
-/// Write `content` to `path` at mode `0o600` (owner-only). The temp ZDOTDIR
-/// `.zshenv` embeds the user's real `ZDOTDIR`/`HOME` path, so it must not be
-/// world-readable. Shared by OSC 7 and OSC 133 (GAP-15) injection. Errors are
-/// surfaced (callers swallow them with `let _ =`, matching the prior behavior).
+/// 以 0o600(仅属主)权限把 `content` 写入 `path`。临时 ZDOTDIR 的
+/// `.zshenv` 内嵌用户真实的 `ZDOTDIR`/`HOME` 路径,因此绝不能让
+/// 其它人可读。由 OSC 7 与 OSC 133(GAP-15)注入共用。错误
+/// 会浮出(调用方以 `let _ =` 吞掉,与此前行为一致)。
 pub(crate) fn write_private(path: &str, content: &str) -> std::io::Result<()> {
     use std::io::Write;
     let mut f = std::fs::OpenOptions::new()
@@ -36,41 +36,41 @@ pub(crate) fn write_private(path: &str, content: &str) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Build the environment-variable set that injects the OSC 7 cwd-reporting
-/// hook into a freshly spawned local shell.
+/// 构建把 OSC 7 cwd 上报钩子注入新拉起本地
+/// shell 的环境变量集。
 ///
-/// `tag` must be unique per spawn (e.g. the daemon session id, or the GUI
-/// process pid) so the per-shell temporary zdotdir directories never collide.
+/// `tag` 每次拉起必须唯一(如守护会话 id 或 GUI
+/// 进程 pid),使每 shell 的临时 zdotdir 目录永不冲突。
 ///
-/// - zsh: a temp dir `/tmp/.pureterm-zdotdir-<tag>/.zshenv` restores the
-///   original `ZDOTDIR`, sources the user's real `.zshenv`, then registers
-///   `_pt_osc7` on the `chpwd` hook and calls it once.
-/// - bash: sets `PROMPT_COMMAND` to define and run `_pt_osc7`, preserving any
-///   pre-existing `PROMPT_COMMAND`.
+/// - zsh:临时目录 `/tmp/.pureterm-zdotdir-<tag>/.zshenv` 恢复
+///   原 `ZDOTDIR`,source 用户真实的 `.zshenv`,再把
+///   `_pt_osc7` 注册到 `chpwd` 钩子并调用一次。
+/// - bash:设置 `PROMPT_COMMAND` 来定义并运行 `_pt_osc7`,保留任何
+///   既有的 `PROMPT_COMMAND`。
 ///
-/// zsh + bash are covered; fish / nu / elvish / PowerShell are also handled
-/// by [`crate::shell_integration`] (the OSC 7 + OSC 133 combined path);
-/// this module is the OSC-7-only fallback for callers that haven't opted
-/// into the wider set. Inspired by cmux's shell integration.
+/// zsh + bash 已覆盖;fish / nu / elvish / PowerShell 由
+/// [`crate::shell_integration`] 处理(OSC 7 + OSC 133 的合并路径);
+/// 本模块是尚未选择完整集合者的 OSC-7 专用回退。
+/// 受 cmux 的 shell 集成启发。
 pub fn prepare_osc7_env(tag: &str) -> HashMap<String, String> {
     let mut env = HashMap::new();
 
-    // The original ZDOTDIR as seen by the spawner process; zsh's bootstrap
-    // .zshenv restores it so the user's own zsh config still loads normally.
+    // 拉起方进程看到的原始 ZDOTDIR;zsh 的引导
+    // .zshenv 会恢复它,使用户自己的 zsh 配置照常加载。
     let real_zdotdir = std::env::var("ZDOTDIR")
         .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
 
-    // -- zsh: ZDOTDIR bootstrap --
-    // t-core-windows-conpty: route through `std::env::temp_dir()` instead
-    // of hard-coding `/tmp` (Windows has no such path; the path is also
-    // the same one `shell_integration::temp_zdotdir` uses so v1 OSC 7
-    // alone and v1 OSC 7 + OSC 133 are consistent).
+    // -- zsh:ZDOTDIR 引导 --
+    // t-core-windows-conpty:改走 `std::env::temp_dir()`
+    // 而非硬编码 `/tmp`(Windows 没有该路径;该路径也是
+    // `shell_integration::temp_zdotdir` 所用的,使 v1 仅 OSC 7 与
+    // v1 OSC 7 + OSC 133 保持一致)。
     let zdot_dir = crate::shell_integration::temp_zdotdir(tag);
     let zdot_str = zdot_dir.to_string_lossy().to_string();
-    // Owner-only (0700): the `.zshenv` written inside embeds the user's real
-    // ZDOTDIR/HOME path and is sourced by the shell, so neither the dir nor the
-    // file may be world-accessible. The 0700 dir also blocks a pre-population
-    // race on the (guessable) `/tmp` path on shared hosts. (GAP-15 review.)
+    // 仅属主(0700):内部写入的 `.zshenv` 内嵌用户真实
+    // ZDOTDIR/HOME 路径且会被 shell source,因此目录与文件都不得
+    // 让他人可访问。0700 目录还能阻断共享主机上(可猜测的)
+    // `/tmp` 路径的预填充竞态。(GAP-15 评审。)
     let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&zdot_dir);
     let zshenv_content = format!(
         r#"# PureTerm zsh bootstrap — restores original ZDOTDIR and loads OSC 7 hook.
@@ -86,9 +86,9 @@ _pt_osc7
     let _ = write_private(&format!("{zdot_str}/.zshenv"), &zshenv_content);
     env.insert("ZDOTDIR".to_string(), zdot_str);
 
-    // -- bash: PROMPT_COMMAND env var --
-    // The function def + initial call must be in PROMPT_COMMAND because bash
-    // reads this env var on startup.
+    // -- bash:PROMPT_COMMAND 环境变量 --
+    // 函数定义 + 初次调用必须放进 PROMPT_COMMAND,因为 bash
+    // 启动时读取此环境变量。
     env.insert(
         "PROMPT_COMMAND".to_string(),
         format!(

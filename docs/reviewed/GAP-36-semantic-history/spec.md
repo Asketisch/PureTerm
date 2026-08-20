@@ -1,6 +1,6 @@
 ---
 gap: GAP-36
-title: Semantic History
+title: 语义历史
 category: 开发者工具
 plan_type: feature
 priority: P2

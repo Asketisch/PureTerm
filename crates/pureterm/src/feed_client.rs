@@ -1,4 +1,4 @@
-//! GAP-7.4: std-only Feed IPC client used by the `pureterm hook` shim.
+//! GAP-7.4:仅供 `pureterm hook` shim 使用的 std-only Feed IPC 客户端。
 //!
 //! 当 `evaluate` 产出 `Decision::Ask` 时,shim 用本模块联系运行中的 PureTerm
 //! GUI,把审批请求送到右侧 Feed 面板并**阻塞**等待人的决定(最长 `timeout`),
@@ -126,9 +126,9 @@ pub fn request_resume_approval(
     rpc_approval("resume.request_approval", params, timeout, socket_override)
 }
 
-/// Shared deferred-reply round-trip for both `feed.request_approval` and
-/// `resume.request_approval`. Single connection, single request: write a
-/// JSON-RPC line → `shutdown(WRITE)` → blocking `read_line` for the choice.
+/// `feed.request_approval` 与 `resume.request_approval` 共用的延迟回复往返:
+/// 单连接、单请求:写一行
+/// JSON-RPC → `shutdown(WRITE)` → 阻塞 `read_line` 等待选择。
 fn rpc_approval(
     method: &str,
     params: serde_json::Value,

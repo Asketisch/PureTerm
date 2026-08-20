@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use super::AppConfig;
 
 impl AppConfig {
-    /// GAP-20: `[window.glass]`
+    /// GAP-20: `[window.glass]` —— 毛玻璃特效
     pub fn load_glass_effect(path: &Path) -> crate::macos_glass_effect::GlassEffectConfig {
         let mut cfg = crate::macos_glass_effect::GlassEffectConfig::default();
         if let Some(table) = Self::load_table(path, "window") {
@@ -28,7 +28,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-22: `[touch_bar]`
+    /// GAP-22: `[touch_bar]` —— 触控栏
     pub fn load_touch_bar(path: &Path) -> crate::macos_touch_bar::TouchBarConfig {
         let mut cfg = crate::macos_touch_bar::TouchBarConfig::default();
         let Some(table) = Self::load_table(path, "touch_bar") else {
@@ -43,7 +43,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-23: `[tab_bar]`
+    /// GAP-23: `[tab_bar]` —— 视觉标签栏
     pub fn load_visual_tab_bar(path: &Path) -> crate::visual_tab_bar::VisualTabBarConfig {
         let mut cfg = crate::visual_tab_bar::VisualTabBarConfig::default();
         let Some(table) = Self::load_table(path, "tab_bar") else {
@@ -61,7 +61,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-28: `[window.border]`
+    /// GAP-28: `[window.border]` —— 窗口边框
     pub fn load_window_border(path: &Path) -> crate::window_border::WindowBorderConfig {
         let mut cfg = crate::window_border::WindowBorderConfig::default();
         if let Some(table) = Self::load_table(path, "window") {
@@ -83,7 +83,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-29: `[badge]`
+    /// GAP-29: `[badge]` —— 徽标叠加
     pub fn load_badge_overlay(path: &Path) -> crate::badge_overlay::BadgeOverlayConfig {
         let mut cfg = crate::badge_overlay::BadgeOverlayConfig::default();
         let Some(table) = Self::load_table(path, "badge") else {
@@ -107,7 +107,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-34: `[file_preview]`
+    /// GAP-34: `[file_preview]` —— 文件预览
     pub fn load_file_preview(path: &Path) -> crate::file_preview::FilePreviewConfig {
         let mut cfg = crate::file_preview::FilePreviewConfig::default();
         let Some(table) = Self::load_table(path, "file_preview") else {
@@ -119,7 +119,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-38: `[file_transfer]`
+    /// GAP-38: `[file_transfer]` —— 文件传输
     pub fn load_file_transfer(path: &Path) -> crate::file_transfer::FileTransferConfig {
         let mut cfg = crate::file_transfer::FileTransferConfig::default();
         let Some(table) = Self::load_table(path, "file_transfer") else {
@@ -134,7 +134,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-44: `[shared_session]`
+    /// GAP-44: `[shared_session]` —— 共享会话
     pub fn load_shared_session(path: &Path) -> crate::shared_sessions::SharedSessionConfig {
         let mut cfg = crate::shared_sessions::SharedSessionConfig::default();
         let Some(table) = Self::load_table(path, "shared_session") else {
@@ -152,7 +152,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-45: `[update]`
+    /// GAP-45: `[update]` —— 自动更新
     pub fn load_auto_update(path: &Path) -> crate::auto_update::AutoUpdateConfig {
         let mut cfg = crate::auto_update::AutoUpdateConfig::default();
         let Some(table) = Self::load_table(path, "update") else {
@@ -173,7 +173,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-49: `[plugins]`
+    /// GAP-49: `[plugins]` —— 插件系统
     pub fn load_plugins(path: &Path) -> crate::plugin_system::PluginSystemConfig {
         let mut cfg = crate::plugin_system::PluginSystemConfig::default();
         let Some(table) = Self::load_table(path, "plugins") else {
@@ -188,7 +188,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-50: `[cloud_sync]`
+    /// GAP-50: `[cloud_sync]` —— 云同步
     pub fn load_cloud_sync(path: &Path) -> crate::cloud_sync::CloudSyncConfig {
         let mut cfg = crate::cloud_sync::CloudSyncConfig::default();
         let Some(table) = Self::load_table(path, "cloud_sync") else {
@@ -206,7 +206,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-52: `[workflows]` enabled flag (entries via `[[workflows]]`).
+    /// GAP-52: `[workflows]` 启用开关(条目经 `[[workflows]]` 定义)。
     pub fn load_workflows_enabled(path: &Path) -> crate::workflows::WorkflowsConfig {
         let mut cfg = crate::workflows::WorkflowsConfig::default();
         let Some(table) = Self::load_table(path, "workflows") else {
@@ -218,7 +218,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-53: `[notebooks]`
+    /// GAP-53: `[notebooks]` —— 记事本
     pub fn load_notebooks(path: &Path) -> crate::notebooks::NotebooksConfig {
         let mut cfg = crate::notebooks::NotebooksConfig::default();
         let Some(table) = Self::load_table(path, "notebooks") else {
@@ -230,7 +230,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-54: `[background]`
+    /// GAP-54: `[background]` —— 背景图
     pub fn load_background_image(path: &Path) -> crate::background_image::BackgroundImageConfig {
         let mut cfg = crate::background_image::BackgroundImageConfig::default();
         let Some(table) = Self::load_table(path, "background") else {
@@ -251,7 +251,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-55: `[window.effects]`
+    /// GAP-55: `[window.effects]` —— 窗口特效
     pub fn load_window_effects(path: &Path) -> crate::window_effects::WindowEffectsConfig {
         let mut cfg = crate::window_effects::WindowEffectsConfig::default();
         if let Some(table) = Self::load_table(path, "window") {
@@ -270,7 +270,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-56: `[focus_follows_mouse]`
+    /// GAP-56: `[focus_follows_mouse]` —— 鼠标焦点跟随
     pub fn load_focus_follows_mouse(path: &Path) -> crate::focus_follows_mouse::FocusFollowsMouseConfig {
         let mut cfg = crate::focus_follows_mouse::FocusFollowsMouseConfig::default();
         let Some(table) = Self::load_table(path, "focus_follows_mouse") else {
@@ -285,7 +285,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-57: `[haptic]`
+    /// GAP-57: `[haptic]` —— 触感反馈
     pub fn load_haptic(path: &Path) -> crate::macos_haptic::HapticConfig {
         let mut cfg = crate::macos_haptic::HapticConfig::default();
         let Some(table) = Self::load_table(path, "haptic") else {
@@ -300,7 +300,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-58: `[theme]`
+    /// GAP-58: `[theme]` —— 自定义主题
     pub fn load_custom_theme(path: &Path) -> crate::custom_theme::CustomThemeConfig {
         let mut cfg = crate::custom_theme::CustomThemeConfig::default();
         let Some(table) = Self::load_table(path, "theme") else {
@@ -324,7 +324,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-59: `[emoji]`
+    /// GAP-59: `[emoji]` —— emoji 渲染
     pub fn load_emoji_rendering(path: &Path) -> crate::emoji_rendering::EmojiRenderingConfig {
         let mut cfg = crate::emoji_rendering::EmojiRenderingConfig::default();
         let Some(table) = Self::load_table(path, "emoji") else {
@@ -342,7 +342,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-60: `[pane_capture]`
+    /// GAP-60: `[pane_capture]` —— 面板捕获
     pub fn load_pane_capture(path: &Path) -> crate::pane_capture::PaneCaptureConfig {
         let mut cfg = crate::pane_capture::PaneCaptureConfig::default();
         let Some(table) = Self::load_table(path, "pane_capture") else {
@@ -357,7 +357,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-61: `[print]`
+    /// GAP-61: `[print]` —— 打印支持
     pub fn load_print_support(path: &Path) -> crate::print_support::PrintSupportConfig {
         let mut cfg = crate::print_support::PrintSupportConfig::default();
         let Some(table) = Self::load_table(path, "print") else {
@@ -375,7 +375,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-4.6: `[accessibility]`
+    /// GAP-4.6: `[accessibility]` —— 无障碍
     pub fn load_accessibility(path: &Path) -> crate::accessibility::AccessibilityConfig {
         let mut cfg = crate::accessibility::AccessibilityConfig::default();
         let Some(table) = Self::load_table(path, "accessibility") else {

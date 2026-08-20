@@ -12,7 +12,7 @@ use super::{SocketRouter, extract_index};
 impl SocketRouter {
     /// 注册 system.* / window.* / tab.* / workspace.* 方法。
     pub(super) fn register_system(&mut self) {
-        // ── system.* (4 methods) ──────────────────────────────────────
+        // ── system.* 方法(4 个) ──────────────────────────────────────────────────
         self.register("system.ping", |_params, _snap| {
             (Ok(serde_json::json!({"status": "ok"})), None)
         });
@@ -44,12 +44,12 @@ impl SocketRouter {
         });
 
         self.register("system.methods", move |_params, _snap| {
-            // This handler is special: it reads from the router itself.
-            // We return a marker; the dispatch() method fills in the actual list.
+            // 该处理器比较特殊:它直接读取路由器自身。
+            // 我们返回一个标记;由 dispatch() 方法填入实际列表。
             (Ok(serde_json::json!({"__list_methods__": true})), None)
         });
 
-        // ── window.* (4 methods) ──────────────────────────────────────
+        // ── window.* 方法(4 个) ──────────────────────────────────────────────────
         self.register("window.list", |_params, snap| {
             let windows = (0..snap.window_count)
                 .map(|i| {
@@ -70,7 +70,7 @@ impl SocketRouter {
             if snap.window_count == 0 {
                 return (Err(JsonRpcError { code: ERROR_INVALID_PARAMS, message: "No window open".into(), data: None }), None);
             }
-            // Close active tab (last tab closes the window)
+            // 关闭活动标签页(最后一个标签页会关闭窗口)
             let idx = snap.active_tab_index;
             (Ok(serde_json::json!({"closed": true, "tab_index": idx})), Some(IpcSideEffect::CloseTab { index: idx }))
         });
@@ -82,7 +82,7 @@ impl SocketRouter {
             (Ok(serde_json::json!({"focused": true})), None)
         });
 
-        // ── tab.* (4 methods) ─────────────────────────────────────────
+        // ── tab.* 方法(4 个) ─────────────────────────────────────────────────────
         self.register("tab.list", |_params, snap| {
             let tabs: Vec<Value> = snap
                 .tab_titles
@@ -122,7 +122,7 @@ impl SocketRouter {
             (Ok(serde_json::json!({"switched": true, "tab_index": idx})), Some(IpcSideEffect::SwitchTab { index: idx }))
         });
 
-        // ── workspace.* (GAP-48) ───────────────────────────────────────
+        // ── workspace.* 方法(GAP-48) ─────────────────────────────────────────────
         self.register("workspace.list", |_params, snap| {
             let workspaces: Vec<Value> = snap
                 .workspace_ids

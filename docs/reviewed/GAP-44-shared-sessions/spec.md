@@ -1,6 +1,6 @@
 ---
 gap: GAP-44
-title: Shared Sessions
+title: 共享会话
 category: SSH/网络
 plan_type: feature
 priority: P4

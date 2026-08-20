@@ -77,7 +77,7 @@ pureterm plugin disable my-plugin
 pureterm plugin uninstall my-plugin
 ```
 
-## Parser hook:OSC 1337;PureTerm-Plugin-<name>;<payload>
+## 解析器钩子：OSC 1337;PureTerm-Plugin-<name>;<payload>
 
 除了 host 主动调用插件的导出函数外,插件还可以反过来从 PTY 字节流
 接收消息。任何形如下面的 OSC 序列:

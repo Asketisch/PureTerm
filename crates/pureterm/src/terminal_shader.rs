@@ -4,15 +4,15 @@
 //! 红线 800)拆为子目录,各子文件按职责切分:
 //!
 //! - [`vertices`] — 4 个 GPU 顶点类型 + `ScreenUniforms`。
-//! - [`pipeline`] — `TerminalPipeline`(iced_wgpu `Pipeline`)+ `GpuResources`。
+//! - [`pipeline`] — `TerminalPipeline`(iced_wgpu 的 `Pipeline`)+ `GpuResources`。
 //! - [`primitive`] — `TerminalPrimitive`(iced_wgpu `Primitive`)外壳 + `draw`。
 //! - [`primitive_prepare`] — `TerminalPrimitive::prepare` 的拆分函数
-//!   (bg_color / bg_image / atlas / cell_text pass)。
+//!   (bg_color / bg_image / atlas / cell_text 各个 pass)。
 //! - [`primitive_quad_pass`] — T-core-graphics v3 image quad pass 的
 //!   `prepare` 逻辑。
 //! - [`glyph`] — `GlyphState`(字形光栅化 + 字形 atlas)。
 //! - [`image_quad`] — `ImageQuadState` + `ImageQuadDraw`。
-//! - [`program`] — `TerminalProgram`(iced `shader::Program`) + `TerminalState`。
+//! - [`program`] — `TerminalProgram`(iced 的 `shader::Program`)+ `TerminalState`。
 //! - [`helpers`] — 小工具函数。
 //! - [`shaper_tests`] — 单元测试。
 //!

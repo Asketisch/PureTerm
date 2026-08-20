@@ -1,6 +1,6 @@
 ---
 gap: GAP-27
-title: Settings Panel
+title: 设置面板
 category: UI/外壳
 plan_type: feature
 priority: P4

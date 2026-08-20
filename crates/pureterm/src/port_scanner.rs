@@ -1,7 +1,7 @@
-//! GAP-33: Port Scanner — periodic scan of listening TCP ports + process names.
+//! GAP-33:端口扫描器——周期性扫描监听中的 TCP 端口与进程名。
 //!
-//! Unix uses `lsof` (reliable PID/name mapping). Results feed the right-sidebar
-//! "Ports" tab; click copies `localhost:PORT` or opens a browser for HTTP ports.
+//! Unix 使用 `lsof`(可靠的 PID/名称映射)。结果送入右侧边栏的
+//! “Ports”页;点击复制 `localhost:PORT`,或为 HTTP 端口打开浏览器。
 
 use std::time::Duration;
 
@@ -11,7 +11,7 @@ use iced::Subscription;
 use crate::app_config::PortScannerConfig;
 use crate::iced_app::Message;
 
-/// One listening socket row in the sidebar.
+/// 侧边栏中的一行监听 socket。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ListeningPort {
     pub port: u16,
@@ -20,7 +20,7 @@ pub struct ListeningPort {
     pub protocol: String,
 }
 
-/// Scan listening TCP ports. Returns entries sorted by port ascending.
+/// 扫描监听中的 TCP 端口。返回按端口升序排列的条目。
 pub fn scan_listening_ports(cfg: &PortScannerConfig) -> Vec<ListeningPort> {
     if !cfg.enabled {
         return Vec::new();
@@ -91,7 +91,7 @@ fn parse_lsof_name_port(name: &str) -> Option<u16> {
     port_str.parse().ok()
 }
 
-/// `iced` subscription — one scan per configured interval.
+/// `iced` 订阅——按配置间隔扫描一次。
 pub fn port_scanner_subscription(cfg: PortScannerConfig) -> Subscription<Message> {
     if !cfg.enabled {
         return Subscription::none();

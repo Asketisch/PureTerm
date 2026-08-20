@@ -1,6 +1,6 @@
 ---
 gap: GAP-1.2
-title: DECSCL
+title: DECSCL(请求光标形状/颜色)
 category: 终端交互
 plan_type: feature
 priority: P3

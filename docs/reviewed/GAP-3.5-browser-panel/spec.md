@@ -1,6 +1,6 @@
 ---
 gap: GAP-3.5
-title: Browser Panel
+title: 浏览器面板
 category: UI/外壳
 plan_type: feature
 priority: P1

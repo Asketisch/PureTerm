@@ -1,7 +1,7 @@
 ---
 gap: GAP-05
-title: Voice Input
-category: AI Agent
+title: 语音输入
+category: AI 智能体
 plan_type: feature
 priority: P4
 effort: L

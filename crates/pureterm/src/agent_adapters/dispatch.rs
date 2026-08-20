@@ -90,7 +90,7 @@ pub fn dispatch(cmd: AgentsSub) {
             }
         }
         AgentsSub::Sessions { kind } => {
-            // GAP-7.5: list persisted agent session ids (for cold resume).
+            // GAP-7.5:列出已持久化的 agent 会话 id(用于冷恢复)。
             let kinds: Vec<String> = match &kind {
                 Some(k) => vec![k.clone()],
                 None => {
@@ -129,7 +129,7 @@ pub fn dispatch(cmd: AgentsSub) {
             }
         }
         AgentsSub::Detect => {
-            // GAP-7.6: scan host processes for declared agents.
+            // GAP-7.6:扫描宿主机进程,查找已声明的 agent。
             let path = crate::app_config::AppConfig::config_path();
             let vault = crate::app_config::AppConfig::load_vault_agents(&path);
             if vault.is_empty() {
@@ -157,7 +157,7 @@ pub fn dispatch(cmd: AgentsSub) {
             }
         }
         AgentsSub::Registry => {
-            // GAP-7.6: dump parsed [[vault.agents]].
+            // GAP-7.6:转储解析出的 [[vault.agents]]。
             let path = crate::app_config::AppConfig::config_path();
             let vault = crate::app_config::AppConfig::load_vault_agents(&path);
             if vault.is_empty() {

@@ -1,6 +1,6 @@
 ---
 gap: GAP-13
-title: Broadcast Input
+title: 广播输入
 category: 终端交互
 plan_type: feature
 priority: P3

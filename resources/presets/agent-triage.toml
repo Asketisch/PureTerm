@@ -1,14 +1,14 @@
-# PureTerm agent-triage keymap
-# Optimized for multi-pane AI agent workflows.
-# Usage: pureterm shortcuts preset agent-triage
+# PureTerm agent-triage 键位方案
+# 面向多窗格 AI 智能体工作流优化。
+# 用法:pureterm shortcuts preset agent-triage
 #
-# Design goals:
-#   - Fast tab switching (⌘1-9, ⌘⇧] / [)
-#   - Quick split/zoom for side-by-side agent + output
-#   - Swap panes to rearrange agent layout
-#   - All defaults preserved; only additions are documented.
+# 设计目标:
+#   - 快速切换标签(⌘1-9,⌘⇧] / [)
+#   - 快速分屏/放大,以便智能体 + 输出并排
+#   - 交换窗格以重排智能体布局
+#   - 保留全部默认;仅文档化新增项。
 
-# ── Core (same as default) ─────────────────────────────────────────────
+# ── 核心(与默认相同) ─────────────────────────────────────────────
 
 [[keyboard.bindings]]
 key = "t"
@@ -75,14 +75,14 @@ key = "P"
 mods = "Command"
 action = "OpenCommandPalette"
 
-# ── Agent-triage specifics ─────────────────────────────────────────────
-# Move pane to new tab for quick agent isolation
+# ── agent-triage 专属 ─────────────────────────────────────────────
+# 把窗格移到新标签,快速隔离智能体
 [[keyboard.bindings]]
 key = "T"
 mods = "Command|Shift"
 action = "MovePaneToNewTab"
 
-# Move pane to new window for cross-monitor agent monitoring
+# 把窗格移到新窗口,跨显示器监控智能体
 [[keyboard.bindings]]
 key = "N"
 mods = "Command|Shift"

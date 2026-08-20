@@ -1,6 +1,6 @@
-//! GAP-03 MVP: Tree-sitter semantic chunking + SQLite FTS keyword search.
+//! GAP-03 MVP:Tree-sitter 语义分块 + SQLite FTS 关键词搜索。
 //!
-//! Embeddings and Merkle-tree incremental sync are stubbed (`embedding` module).
+//! 嵌入与 Merkle 树增量同步为占位(`embedding` 模块)。
 
 mod chunk;
 mod db;

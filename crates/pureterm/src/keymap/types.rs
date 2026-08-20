@@ -6,16 +6,16 @@ use iced::keyboard::Key;
 
 use super::action::Action;
 
-// ── BindingKey ──────────────────────────────────────────────────────────
+// ── BindingKey 类型 ───────────────────────────────────────────────────────
 
-/// Key specification used in binding lookups.
+/// 绑定查找所用的按键规格。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BindingKey {
     Character(String),
     Named(BindingNamedKey),
 }
 
-/// Subset of iced's `Named` keys that appear in bindings.
+/// iced 的 `Named` 键中出现在绑定里的子集。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindingNamedKey {
     ArrowUp,
@@ -40,8 +40,8 @@ pub enum BindingNamedKey {
 }
 
 impl BindingNamedKey {
-    /// Convert from iced's `Named` key. Returns `None` for keys we don't
-    /// bind (e.g. custom key names).
+    /// 从 iced 的 `Named` 键转换。对未绑定的键返回 `None`
+    /// (如自定义键名)。
     pub fn from_iced(named: Named) -> Option<Self> {
         match named {
             Named::ArrowUp => Some(Self::ArrowUp),
@@ -64,8 +64,8 @@ impl BindingNamedKey {
     }
 }
 
-/// Convert an iced `Key` to our `BindingKey`. Returns `None` for keys
-/// that cannot be bound (e.g. custom/unrecognized).
+/// 把 iced 的 `Key` 转换为我们的 `BindingKey`。对无法
+/// 绑定的键返回 `None`(如自定义/未识别的键)。
 pub fn key_to_binding_key(key: &Key) -> Option<BindingKey> {
     match key {
         Key::Character(s) => Some(BindingKey::Character(s.to_string())),
@@ -74,17 +74,17 @@ pub fn key_to_binding_key(key: &Key) -> Option<BindingKey> {
     }
 }
 
-// ── ResolveResult ───────────────────────────────────────────────────────
+// ── ResolveResult 结果 ────────────────────────────────────────────────────
 
-/// Result of resolving a keypress against the keymap.
+/// 在键位映射上解析一次按键的结果。
 #[derive(Debug, Clone, PartialEq)]
 pub enum ResolveResult {
-    /// A single-stroke binding matched.
+    /// 命中了单按键绑定。
     Action(Action),
-    /// A chord prefix was accepted; waiting for the next key.
+    /// 和弦前缀被接受;等待下一个按键。
     ChordPending,
-    /// A chord sequence completed.
+    /// 和弦序列已完成。
     ChordAction(Action),
-    /// No binding matched; fall through to PTY passthrough.
+    /// 无绑定命中;回退为 PTY 直通。
     Passthrough,
 }

@@ -1,7 +1,7 @@
 ---
 gap: GAP-02
-title: Error Recovery
-category: AI Agent
+title: 错误恢复
+category: AI 智能体
 plan_type: wrap-up
 priority: P0
 effort: M
@@ -42,7 +42,7 @@ e2e: manual-e2e/gap-02-error-recovery.md
 
 单测：error_recovery **13** + config **2** + events filter **1** 绿。
 
-## Review（2026-06-30）✅
+## 评审（2026-06-30）✅
 
 修 4 类问题 + 记 2 项设计边界（核心 = 对照 GAP-01 补 prompt 注入加固；GAP-02 有 Apply，比 GAP-01 更敏感）：
 

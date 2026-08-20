@@ -19,7 +19,7 @@ fn make_keymap() -> Keymap {
 #[test]
 fn test_default_bindings_count() {
     let km = make_keymap();
-    // Should have a reasonable number of bindings (>20)
+    // 绑定数量应合理(>20 个)
     assert!(
         km.bindings.len() > 20,
         "expected >20 default bindings, got {}",
@@ -63,7 +63,7 @@ fn test_cmd_d_split_h() {
 #[test]
 fn test_cmd_shift_d_split_v() {
     let mut km = make_keymap();
-    // macOS may report ⌘⇧D as "D" without shift
+    // macOS 可能把 ⌘⇧D 报成不带 shift 的 "D"
     let result = km.resolve(
         &Key::Character("D".into()),
         Modifiers::COMMAND,
@@ -71,7 +71,7 @@ fn test_cmd_shift_d_split_v() {
     );
     assert_eq!(result, ResolveResult::Action(Action::SplitVertical));
 
-    // Or as "d" with shift
+    // 或带 shift 的 "d"
     let result = km.resolve(
         &Key::Character("d".into()),
         Modifiers::COMMAND | Modifiers::SHIFT,
@@ -102,7 +102,7 @@ fn test_cmd_equals_equalize() {
     assert_eq!(result, ResolveResult::Action(Action::EqualizeSplits));
 }
 
-// ── GAP-3.5: Browser address bar + split-web bindings ────────────
+// ── GAP-3.5:浏览器地址栏 + split-web 绑定 ────────────────────────────────
 
 #[test]
 fn test_cmd_l_focus_address_bar() {
@@ -118,14 +118,14 @@ fn test_cmd_l_focus_address_bar() {
 #[test]
 fn test_cmd_shift_l_ai_chat_dual_form() {
     let mut km = make_keymap();
-    // macOS may report ⌘⇧L as "L" without shift…
+    // macOS 可能把 ⌘⇧L 报成不带 shift 的 "L"…
     let r1 = km.resolve(
         &Key::Character("L".into()),
         Modifiers::COMMAND,
         Instant::now(),
     );
     assert_eq!(r1, ResolveResult::Action(Action::ToggleAiChatPanel));
-    // …or as "l" with shift.
+    // …或带 shift 的 "l"。
     let r2 = km.resolve(
         &Key::Character("l".into()),
         Modifiers::COMMAND | Modifiers::SHIFT,
@@ -142,11 +142,11 @@ fn test_parse_browser_actions() {
     assert_eq!(parse_action("SplitPaneWeb"), Ok(Action::SplitWeb));
 }
 
-// ── GAP-3.8 / GAP-4.3: search action parsing + bindings ──────────
+// ── GAP-3.8 / GAP-4.3:搜索动作解析与绑定 ──────────────────────────────────
 
 #[test]
 fn test_parse_search_actions() {
-    // Canonical names
+    // 规范名称
     assert_eq!(parse_action("SearchForward"), Ok(Action::SearchForward));
     assert_eq!(parse_action("SearchInDirectory"), Ok(Action::SearchInDirectory));
     assert_eq!(parse_action("SearchNext"), Ok(Action::SearchNext));
@@ -156,7 +156,7 @@ fn test_parse_search_actions() {
     assert_eq!(parse_action("SearchToggleRegex"), Ok(Action::SearchToggleRegex));
     assert_eq!(parse_action("SearchToggleWholeWord"), Ok(Action::SearchToggleWholeWord));
     assert_eq!(parse_action("SearchToggleFollow"), Ok(Action::SearchToggleFollow));
-    // mainstream-terminal-style aliases
+    // 主流终端风格的别名
     assert_eq!(parse_action("Find"), Ok(Action::SearchForward));
     assert_eq!(parse_action("FindInDirectory"), Ok(Action::SearchInDirectory));
     assert_eq!(parse_action("FindNext"), Ok(Action::SearchNext));
@@ -169,12 +169,12 @@ fn test_default_search_bindings() {
     let cmd = Modifiers::COMMAND;
     let cmd_shift = Modifiers::COMMAND | Modifiers::SHIFT;
 
-    // ⌘F → SearchForward
+    // ⌘F → SearchForward(正向搜索)
     assert_eq!(
         km.resolve(&Key::Character("f".into()), cmd, Instant::now()),
         ResolveResult::Action(Action::SearchForward),
     );
-    // ⌘⇧F → SearchInDirectory (macOS dual-form: "f" with shift, or "F" without)
+    // ⌘⇧F → SearchInDirectory(macOS 双形态:带 shift 的 "f",或不带 shift 的 "F")
     assert_eq!(
         km.resolve(&Key::Character("f".into()), cmd_shift, Instant::now()),
         ResolveResult::Action(Action::SearchInDirectory),
@@ -183,7 +183,7 @@ fn test_default_search_bindings() {
         km.resolve(&Key::Character("F".into()), cmd, Instant::now()),
         ResolveResult::Action(Action::SearchInDirectory),
     );
-    // F3 → SearchNext, ⇧F3 → SearchPrev (iced delivers F-keys as Character("F3"))
+    // F3 → SearchNext,⇧F3 → SearchPrev(iced 以 Character("F3") 形式派发 F 键)
     assert_eq!(
         km.resolve(&Key::Character("F3".into()), Modifiers::empty(), Instant::now()),
         ResolveResult::Action(Action::SearchNext),
@@ -192,7 +192,7 @@ fn test_default_search_bindings() {
         km.resolve(&Key::Character("F3".into()), Modifiers::SHIFT, Instant::now()),
         ResolveResult::Action(Action::SearchPrev),
     );
-    // ⌘G → SearchNext, ⌘⇧G → SearchPrev
+    // ⌘G → SearchNext(下一个搜索),⌘⇧G → SearchPrev(上一个搜索)
     assert_eq!(
         km.resolve(&Key::Character("g".into()), cmd, Instant::now()),
         ResolveResult::Action(Action::SearchNext),
@@ -304,7 +304,7 @@ fn test_cmd_clipboard() {
 #[test]
 fn test_cmd_shift_s_ssh() {
     let mut km = make_keymap();
-    // macOS dual-form: ⌘⇧S may arrive as "S" without shift
+    // macOS 双形态:⌘⇧S 可能以不带 shift 的 "S" 到达
     let result = km.resolve(
         &Key::Character("S".into()),
         Modifiers::COMMAND,
@@ -319,7 +319,7 @@ fn test_cmd_shift_s_ssh() {
     );
     assert_eq!(result, ResolveResult::Action(Action::OpenSshDialog));
 
-    // Also ⌘s alone maps to OpenSshDialog (current behavior)
+    // 单独的 ⌘s 也映射到 OpenSshDialog(当前行为)
     let result = km.resolve(
         &Key::Character("s".into()),
         Modifiers::COMMAND,
@@ -373,7 +373,7 @@ fn test_cmd_option_arrow_adjacent() {
 #[test]
 fn test_passthrough() {
     let mut km = make_keymap();
-    // A plain 'x' with no modifiers should passthrough to PTY
+    // 不带修饰键的 'x' 应透传给 PTY
     let result = km.resolve(
         &Key::Character("x".into()),
         Modifiers::empty(),
@@ -381,10 +381,10 @@ fn test_passthrough() {
     );
     assert_eq!(result, ResolveResult::Passthrough);
 
-    // ⌘X (not shift) is not bound — only ⌘⇧X is
-    // Actually ⌘X-with-uppercase "X" is bound (macOS dual-form). Test with lowercase.
-    // ⌘+x without shift is NOT bound (plain x). The binding is for ⌘⇧X or ⌘+X(uppercase).
-    // Let's test with a truly unbound combo:
+    // ⌘X(无 shift)未绑定 —— 只有 ⌘⇧X 绑定
+    // 实际上大写 "X" 的 ⌘X 有绑定(macOS 双形态)。用带 shift 的小写测试。
+    // 不带 shift 的 ⌘+x 未绑定(纯小写 x)。绑定针对 ⌘⇧X 或 ⌘+X(大写)。
+    // 用真正未绑定的组合来测试:
     let result = km.resolve(
         &Key::Character("z".into()),
         Modifiers::COMMAND,
@@ -393,7 +393,7 @@ fn test_passthrough() {
     assert_eq!(result, ResolveResult::Passthrough);
 }
 
-// ── TOML parsing tests ──────────────────────────────────────────
+// ── TOML 解析测试 ───────────────────────────────────────────────────
 
 #[test]
 fn test_parse_mods() {
@@ -452,7 +452,7 @@ fn test_toml_override() {
     let overrides = vec![RawBinding {
         key: "d".into(),
         mods: "Command".into(),
-        action: "SplitVertical".into(), // Override ⌘D to do vertical split
+        action: "SplitVertical".into(), // 覆盖 ⌘D 以做垂直拆分
     }];
     let mut km = Keymap::from_toml_overrides(&overrides, &defaults);
     let result = km.resolve(
@@ -466,8 +466,8 @@ fn test_toml_override() {
 #[test]
 fn test_chord_timeout() {
     let mut km = make_keymap();
-    // No chord bindings in defaults — pending chord should never be set.
-    // Test that a passthrough key stays passthrough.
+    // 默认配置中没有和弦绑定 —— 待定和弦不应被设置。
+    // 测试透传键始终透传。
     let result = km.resolve(
         &Key::Character("j".into()),
         Modifiers::empty(),
@@ -489,7 +489,7 @@ fn test_action_from_palette_id() {
     assert_eq!(action_from_palette_id("settings"), None);
 }
 
-// ── GAP-6.4 custom command tests ───────────────────────────────
+// ── GAP-6.4 自定义命令测试 ────────────────────────────────────────────
 
 #[test]
 fn test_split_mods_and_key_plus_separator() {
@@ -514,7 +514,7 @@ fn test_split_mods_and_key_no_mods() {
 
 #[test]
 fn test_split_mods_and_key_explicit_mods() {
-    // When explicit mods are given, key_str is parsed as a bare key.
+    // 给定显式修饰键时,key_str 按裸键解析。
     let (mods, key) = split_mods_and_key("D", Some("Alt"));
     assert_eq!(mods, Some(Modifiers::ALT));
     assert_eq!(key, Some(BindingKey::Character("D".into())));
@@ -522,8 +522,8 @@ fn test_split_mods_and_key_explicit_mods() {
 
 #[test]
 fn test_register_custom_command_basic() {
-    // Ctrl+B is not bound by defaults, so it must resolve to the
-    // registered custom command.
+    // Ctrl+B 未被默认配置绑定,因此必须解析到
+    // 已注册的自定义命令。
     let mut km = make_keymap();
     km.register_custom_commands(&[CustomCommand {
         id: "cmd.basic".into(),
@@ -545,8 +545,8 @@ fn test_register_custom_command_basic() {
 
 #[test]
 fn test_register_custom_command_shift_dual_form() {
-    // "Cmd+Shift+Q" must fire whether macOS reports it as
-    // lowercase 'q' with CMD|SHIFT, or uppercase 'Q' with CMD.
+    // "Cmd+Shift+Q" 必须无论 macOS 报成
+    // 带 CMD|SHIFT 的小写 'q',还是带 CMD 的大写 'Q',都须触发。
     let mut km = make_keymap();
     km.register_custom_commands(&[CustomCommand {
         id: "cmd.shift".into(),
@@ -577,7 +577,7 @@ fn test_register_custom_command_shift_dual_form() {
 
 #[test]
 fn test_register_custom_command_no_key_skipped() {
-    // A command without a `key` is palette-only; nothing is registered.
+    // 没有 `key` 的命令仅出现在调色板;不会注册任何绑定。
     let mut km = make_keymap();
     let before = km.bindings.len();
     km.register_custom_commands(&[CustomCommand {

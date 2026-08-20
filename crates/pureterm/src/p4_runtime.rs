@@ -1,19 +1,19 @@
-//! P4 GAP runtime bundle — configs + state wired from `iced_app`.
+//! P4 GAP 运行时组件包——配置与状态均由 `iced_app` 装配。
 
-/// All P4 feature configs and runtime state (GAP-05 … GAP-61, GAP-4.6).
+/// 全部 P4 特性配置与运行时状态(GAP-05 … GAP-61、GAP-4.6)。
 #[derive(Clone, Debug)]
 pub struct P4Features {
     pub voice_input_cfg: crate::voice_input::VoiceInputConfig,
     pub voice_input: crate::voice_input::VoiceInputState,
     pub terminal_graphics_cfg: crate::terminal_graphics::TerminalGraphicsConfig,
     pub graphics_cache: crate::terminal_graphics::GraphicsCache,
-    /// T-core-closure: live image store. The renderer pulls decoded RGBA
-    /// (or encoded PNG) payloads from here; the chunked-graphics reassembler
-    /// feeds it. Replaces the previous dead-code `GraphicsCache` field
-    /// (kept for backward compatibility — `GraphicsCache` is still used by
-    /// legacy callers; new code should use `image_store`).
+    /// T-core-closure:活跃图像存储。渲染器从这里拉取已解码的 RGBA
+    /// (或编码 PNG)载荷;分块图形重组器
+    /// 负责喂入。取代此前已成死代码的 `GraphicsCache` 字段
+    /// (为向后兼容保留——`GraphicsCache` 仍被
+    /// 旧调用方使用;新代码应改用 `image_store`)。
     pub image_store: crate::terminal_graphics::ImageStore,
-    /// T-core-closure: cross-read chunked-graphics reassembler.
+    /// T-core-closure:跨读取分块图形重组器。
     pub graphics_assembler: crate::terminal_graphics::GraphicsAssembler,
     pub glass_cfg: crate::macos_glass_effect::GlassEffectConfig,
     pub touch_bar_cfg: crate::macos_touch_bar::TouchBarConfig,
@@ -72,10 +72,10 @@ impl P4Features {
             graphics_cache: crate::terminal_graphics::GraphicsCache::new(
                 terminal_graphics_cfg.max_images,
             ),
-            // T-core-closure: the live image store replaces the dead-code
-            // `GraphicsCache` when the GUI's render path starts pulling
-            // from it. The legacy cache stays for callers that still want
-            // metadata-only placements.
+            // T-core-closure:活跃图像存储取代已成死代码的
+            // `GraphicsCache`——当 GUI 渲染路径开始
+            // 从中拉取时生效。旧缓存保留给仍只想要
+            // 元数据占位的调用方。
             image_store: crate::terminal_graphics::ImageStore::new(
                 terminal_graphics_cfg.max_images,
                 terminal_graphics_cfg.max_image_bytes,
@@ -116,14 +116,14 @@ impl P4Features {
         *self = Self::load(path);
     }
 
-    /// Apply platform side effects after config load (glass, blur, touch bar).
+    /// 配置加载后应用平台副作用(毛玻璃、模糊、触控条)。
     pub fn apply_platform_effects(&self) {
         crate::macos_glass_effect::apply_glass_effect(&self.glass_cfg);
         crate::window_effects::apply_blur(&self.window_effects_cfg);
         crate::macos_touch_bar::refresh_touch_bar(&self.touch_bar_cfg);
     }
 
-    /// Window opacity combining base config + `[window.effects]`.
+    /// 由基础配置 + `[window.effects]` 综合得出的窗口不透明度。
     pub fn effective_window_opacity(&self, base: f32) -> f32 {
         self.window_effects_cfg.effective_opacity(base)
     }

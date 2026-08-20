@@ -1,6 +1,6 @@
 ---
 gap: GAP-52
-title: Workflows
+title: 工作流
 category: 集成
 plan_type: feature
 priority: P4

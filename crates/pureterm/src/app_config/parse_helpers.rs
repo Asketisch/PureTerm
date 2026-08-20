@@ -16,9 +16,9 @@ pub(super) fn parse_hex_color(hex: &str) -> Option<[f32; 4]> {
     Some([r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0, 1.0])
 }
 
-/// GAP-10: parse a `[[triggers]]` entry's `action` + its action-specific
-/// params from the entry table. Returns `None` (already warned) on a missing
-/// required param or unknown action, so `load_triggers` can skip the entry.
+/// GAP-10:解析 `[[triggers]]` 条目的 `action` 及其特定于动作的
+/// 参数(来自条目表)。缺失必填参数或动作未知时
+/// 返回 `None`(已告警),以便 `load_triggers` 跳过该条目。
 pub(super) fn parse_trigger_action(
     action: &str,
     table: &toml::Table,

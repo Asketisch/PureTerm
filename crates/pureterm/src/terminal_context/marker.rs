@@ -11,18 +11,18 @@ use alacritty_terminal::vte::ansi;
 
 use super::ChannelEventListener;
 
-/// GAP-5.6: inject a persistent "reconnected" separator line into the terminal
-/// grid via the VT parser — the same path PTY output takes — so it survives in
-/// scrollback as a boundary between the old session's output and the new one.
-/// Used on the `Authenticating → Connected` transition after a successful
-/// reconnect. [`super::TerminalContext::write_to_pty`] is the wrong tool here: it
-/// forwards bytes to the remote shell's stdin, not the local grid.
+/// GAP-5.6:经由 VT 解析器——PTY 输出所走的同一路径——向终端
+/// grid 注入一条持久的“已重连”分隔线,使其作为旧会话输出与新会话
+/// 输出之间的边界留存于 scrollback。
+/// 在重连成功后的 `Authenticating → Connected` 转换时使用一次。
+/// 此处不该用 [`super::TerminalContext::write_to_pty`]:它把字节
+/// 转发给远程 shell 的 stdin,而非本地 grid。
 pub(crate) fn inject_reconnect_marker_into(
     term: &Arc<FairMutex<Term<ChannelEventListener>>>,
     host: &str,
 ) {
-    // Bright-black (SGR 90) line wrapped in CR-LF so it lands on its own row
-    // regardless of the cursor column when the reconnect completed.
+    // 用 CR-LF 包裹亮黑(SGR 90)文本行,使无论重连完成时光标
+    // 停在哪一列,它都独占一行。
     let line = format!("\r\n\x1b[90m── Reconnected to {host} ──\x1b[0m\r\n");
     let mut parser: ansi::Processor = ansi::Processor::new();
     let mut guard = term.lock_unfair();

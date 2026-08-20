@@ -1,6 +1,6 @@
 ---
 gap: GAP-09
-title: Notification System
+title: 通知系统
 category: 终端交互
 plan_type: wrap-up
 priority: P0

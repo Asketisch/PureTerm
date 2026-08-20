@@ -1,11 +1,11 @@
-//! Remote file operations: listdir, read, write, find.
+//! 远程文件操作:listdir、read、write、find。
 
 use std::io;
 use std::path::Path;
 
 use super::rpc;
 
-/// One directory entry from `remote.listdir` (mirrors daemon `FileEntry`).
+/// 来自 `remote.listdir` 的一个目录条目(对应守护进程 `FileEntry`)。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct RemoteFileEntry {
     pub name: String,
@@ -14,7 +14,7 @@ pub struct RemoteFileEntry {
     pub size: Option<u64>,
 }
 
-/// Text payload from `remote.read`.
+/// 来自 `remote.read` 的文本负载。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct RemoteFileRead {
     pub path: String,
@@ -24,15 +24,15 @@ pub struct RemoteFileRead {
     pub size: Option<u64>,
 }
 
-/// Match from `remote.find`.
+/// 来自 `remote.find` 的匹配项。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct RemoteFindMatch {
     pub path: String,
     pub is_dir: bool,
 }
 
-/// GAP-43: list a directory on a daemon session (local `read_dir` or remote
-/// `ssh -S` over the session ControlMaster socket).
+/// GAP-43:列出守护进程会话上的目录(本地 `read_dir` 或经
+/// 会话 ControlMaster socket 的远程 `ssh -S`)。
 pub fn remote_listdir(
     socket: &Path,
     session_id: &str,
@@ -57,7 +57,7 @@ pub fn remote_listdir(
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-/// GAP-43: read a file from a daemon session (local or SSH), capped at `max_bytes`.
+/// GAP-43:从守护进程会话(本地或 SSH)读取文件,上限为 `max_bytes` 字节。
 pub fn remote_read(
     socket: &Path,
     session_id: &str,
@@ -82,7 +82,7 @@ pub fn remote_read(
     serde_json::from_value(result).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
 }
 
-/// GAP-43: write a text file on a daemon session.
+/// GAP-43:在守护进程会话上写入文本文件。
 pub fn remote_write(
     socket: &Path,
     session_id: &str,
@@ -104,7 +104,7 @@ pub fn remote_write(
     Ok(())
 }
 
-/// GAP-43: find paths by name on a daemon session.
+/// GAP-43:在守护进程会话上按名称查找路径。
 pub fn remote_find(
     socket: &Path,
     session_id: &str,

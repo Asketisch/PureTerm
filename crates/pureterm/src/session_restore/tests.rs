@@ -33,8 +33,8 @@ use super::snapshot::migrate_v1_to_v2_in;
         }
     }
 
-    /// Serialize → deserialize must preserve the session id and the split tree
-    /// (the on-disk contract for cross-restart recovery). GAP-2.1: v2 tree shape.
+    /// 序列化 → 反序列化必须保留会话 id 与拆分树
+    ///(跨重启恢复的磁盘契约)。GAP-2.1:v2 树形。
     #[test]
     fn snapshot_round_trip() {
         let snap = wrap_tabs_into_v2(
@@ -60,7 +60,7 @@ use super::snapshot::migrate_v1_to_v2_in;
         assert!(back.windows[0].is_main);
         let panes = &back.windows[0].workspaces[0].tabs[0].panes;
         assert_eq!(panes[0].session_id.as_deref(), Some("daemon-1"));
-        // GAP-7.5: agent fields survive the round-trip (cold-resume persistence).
+        // GAP-7.5:agent 字段在往返后仍保留(冷恢复持久化)。
         assert_eq!(panes[0].agent_session_id.as_deref(), Some("cc-abc"));
         assert_eq!(panes[0].agent_kind.as_deref(), Some("claude-code"));
         assert_eq!(
@@ -69,8 +69,8 @@ use super::snapshot::migrate_v1_to_v2_in;
         );
     }
 
-    /// GAP-3.5: a web pane (kind="web", session_id=None, url=Some) must survive
-    /// the round-trip so it can be rebuilt by `restore()` from its url.
+    /// GAP-3.5:web 窗格(kind="web",session_id=None,url=Some)必须能在
+    /// 往返后保留,以便 `restore()` 依据其 url 重建。
     #[test]
     fn web_pane_snapshot_round_trip() {
         let snap = wrap_tabs_into_v2(
@@ -97,8 +97,8 @@ use super::snapshot::migrate_v1_to_v2_in;
         assert_eq!(p.url.as_deref(), Some("https://example.com"));
     }
 
-    /// GAP-7.5 / GAP-3.5: a pre-existing (v1) pane has no agent_session_id /
-    /// agent_kind / url. `#[serde(default)]` must fill them with `None`.
+    /// GAP-7.5 / GAP-3.5:既有(v1)窗格没有 agent_session_id /
+    /// agent_kind / url。`#[serde(default)]` 必须用 `None` 填充它们。
     #[test]
     fn pane_snapshot_v1_without_optional_fields_loads_with_defaults() {
         let json = r#"{"session_id":"s","kind":"local","ssh_profile":null,"title":"t"}"#;
@@ -109,8 +109,8 @@ use super::snapshot::migrate_v1_to_v2_in;
         assert!(p.url.is_none());
     }
 
-    /// A snapshot with the wrong version is rejected by `load`'s version gate.
-    /// (We re-implement the same check here since `load` reads a fixed path.)
+    /// 版本错误的快照会被 `load` 的版本闸门拒绝。
+    ///(`load` 读取固定路径,故此处重复实现同一检查。)
     #[test]
     fn wrong_version_round_trip_is_distinguishable() {
         let mut snap = LayoutSnapshot {

@@ -1,4 +1,4 @@
-//! TTY related functionality.
+//! TTY 相关功能。
 
 use std::ffi::{CStr, CString};
 use std::fs::File;
@@ -28,10 +28,10 @@ use signal_hook::{SigId, consts as sigconsts};
 use crate::event::{OnResize, WindowSize};
 use crate::tty::{ChildEvent, EventedPty, EventedReadWrite, Options};
 
-// Interest in PTY read/writes.
+// PTY 读写的兴趣注册。
 pub(crate) const PTY_READ_WRITE_TOKEN: usize = 0;
 
-// Interest in new child events.
+// 新子进程事件的兴趣注册。
 pub(crate) const PTY_CHILD_EVENT_TOKEN: usize = 1;
 
 macro_rules! die {
@@ -41,13 +41,13 @@ macro_rules! die {
     }};
 }
 
-/// Really only needed on BSD, but should be fine elsewhere.
+/// 其实只在 BSD 上需要,但别处也无害。
 fn set_controlling_terminal(fd: c_int) -> Result<()> {
     let res = unsafe {
-        // TIOSCTTY changes based on platform and the `ioctl` call is different
-        // based on architecture (32/64). So a generic cast is used to make sure
-        // there are no issues. To allow such a generic cast the clippy warning
-        // is disabled.
+        // TIOSCTTY 随平台变化,`ioctl` 调用随架构
+        //(32/64 位)不同。因此用泛型转型确保
+        // 不出问题。为允许该泛型转型,禁用了
+        // clippy 警告。
         #[allow(clippy::cast_lossless)]
         libc::ioctl(fd, TIOCSCTTY as _, 0)
     };
@@ -62,18 +62,18 @@ struct Passwd<'a> {
     shell: &'a str,
 }
 
-/// Return a Passwd struct with pointers into the provided buf.
+/// 返回指向所给 buf 的 Passwd 结构。
 ///
-/// # Unsafety
+/// # 不安全性
 ///
-/// If `buf` is changed while `Passwd` is alive, bad thing will almost certainly happen.
+/// 若 `Passwd` 存活期间 `buf` 被改变,几乎必然出问题。
 fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>> {
-    // Create zeroed passwd struct.
+    // 创建清零的 passwd 结构。
     let mut entry: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
 
     let mut res: *mut libc::passwd = ptr::null_mut();
 
-    // Try and read the pw file.
+    // 尝试读取 pw 文件。
     let uid = unsafe { libc::getuid() };
     let status = unsafe {
         libc::getpwuid_r(uid, entry.as_mut_ptr(), buf.as_mut_ptr() as *mut _, buf.len(), &mut res)
@@ -88,10 +88,10 @@ fn get_pw_entry(buf: &mut [i8; 1024]) -> Result<Passwd<'_>> {
         return Err(Error::other("pw not found"));
     }
 
-    // Sanity check.
+    // 健全性检查。
     assert_eq!(entry.pw_uid, uid);
 
-    // Build a borrowed Passwd struct.
+    // 构建借用的 Passwd 结构。
     Ok(Passwd {
         name: unsafe { CStr::from_ptr(entry.pw_name).to_str().unwrap() },
         dir: unsafe { CStr::from_ptr(entry.pw_dir).to_str().unwrap() },
@@ -116,7 +116,7 @@ impl Pty {
     }
 }
 
-/// User information that is required for a new shell session.
+/// 新 shell 会话所需的用户信息。
 struct ShellUser {
     user: String,
     home: String,
@@ -124,8 +124,8 @@ struct ShellUser {
 }
 
 impl ShellUser {
-    /// look for shell, username, longname, and home dir in the respective environment variables
-    /// before falling back on looking into `passwd`.
+    /// 先从相应环境变量找 shell、用户名、长名与主目录,
+    /// 再回退到查询 `passwd`。
     fn from_env() -> Result<Self> {
         let mut buf = [0; 1024];
         let pw = get_pw_entry(&mut buf);
@@ -167,45 +167,45 @@ fn default_shell_command(shell: &str, _user: &str, _home: &str) -> Command {
 fn default_shell_command(shell: &str, user: &str, home: &str) -> Command {
     let shell_name = shell.rsplit('/').next().unwrap();
 
-    // On macOS, use the `login` command so the shell will appear as a tty session.
+    // macOS 上用 `login` 命令,使 shell 表现为 tty 会话。
     let mut login_command = Command::new("/usr/bin/login");
 
-    // Exec the shell with argv[0] prepended by '-' so it becomes a login shell.
-    // `login` normally does this itself, but `-l` disables this.
+    // 以 '-' 前置 argv[0] 执行 shell,使其成为登录 shell。
+    // `login` 通常自己做这件事,但 `-l` 禁用了它。
     let exec = format!("exec -a -{} {}", shell_name, shell);
 
-    // Since we use -l, `login` will not change directory to the user's home. However,
-    // `login` only checks the current working directory for a .hushlogin file, causing
-    // it to miss any in the user's home directory. We can fix this by doing the check
-    // ourselves and passing `-q`
+    // 由于用了 -l,`login` 不会切换到用户主目录;而
+    // `login` 只在当前工作目录检查 .hushlogin,会漏掉
+    // 用户主目录里的。我们自己检查并传 `-q`
+    // 来修复。
     let has_home_hushlogin = Path::new(home).join(".hushlogin").exists();
 
-    // -f: Bypasses authentication for the already-logged-in user.
-    // -l: Skips changing directory to $HOME and prepending '-' to argv[0].
-    // -p: Preserves the environment.
-    // -q: Act as if `.hushlogin` exists.
+    // -f:为已登录用户绕过认证。
+    // -l:跳过切换到 $HOME 与给 argv[0] 前置 '-'。
+    // -p:保留环境。
+    // -q:表现得像存在 `.hushlogin`。
     //
-    // XXX: we use zsh here over sh due to `exec -a`.
+    // XXX:因 `exec -a` 用 zsh 而非 sh。
     let flags = if has_home_hushlogin { "-qflp" } else { "-flp" };
     login_command.args([flags, user, "/bin/zsh", "-fc", &exec]);
     login_command
 }
 
-/// Create a new TTY and return a handle to interact with it.
+/// 创建新 TTY 并返回与其交互的句柄。
 pub fn new(config: &Options, window_size: WindowSize, window_id: u64) -> Result<Pty> {
     let pty = openpty(None, Some(&window_size.to_winsize()))?;
     let (master, slave) = (pty.controller, pty.user);
     from_fd(config, window_id, master, slave)
 }
 
-/// Create a new TTY from a PTY's file descriptors.
+/// 从 PTY 的文件描述符创建新 TTY。
 pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd) -> Result<Pty> {
     let master_fd = master.as_raw_fd();
     let slave_fd = slave.as_raw_fd();
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     if let Ok(mut termios) = termios::tcgetattr(&master) {
-        // Set character encoding to UTF-8.
+        // 设置字符编码为 UTF-8。
         termios.input_modes.set(InputModes::IUTF8, true);
         let _ = termios::tcsetattr(&master, OptionalActions::Now, &termios);
     }
@@ -220,23 +220,23 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
         default_shell_command(&user.shell, &user.user, &user.home)
     };
 
-    // Setup child stdin/stdout/stderr as slave fd of PTY.
+    // 把子进程的 stdin/stdout/stderr 设为 PTY 的 slave fd。
     builder.stdin(slave.try_clone()?);
     builder.stderr(slave.try_clone()?);
     builder.stdout(slave);
 
-    // Setup shell environment.
+    // 设置 shell 环境。
     let window_id = window_id.to_string();
     builder.env("ALACRITTY_WINDOW_ID", &window_id);
     builder.env("USER", user.user);
     builder.env("HOME", user.home);
-    // Set Window ID for clients relying on X11 hacks.
+    // 为依赖 X11 hack 的客户端设置 Window ID。
     builder.env("WINDOWID", window_id);
     for (key, value) in &config.env {
         builder.env(key, value);
     }
 
-    // Prevent child processes from inheriting linux-specific startup notification env.
+    // 阻止子进程继承 linux 特有的启动通知环境变量。
     builder.env_remove("XDG_ACTIVATION_TOKEN");
     builder.env_remove("DESKTOP_STARTUP_ID");
 
@@ -247,20 +247,20 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
 
     unsafe {
         builder.pre_exec(move || {
-            // Create a new process group.
+            // 创建新进程组。
             let err = libc::setsid();
             if err == -1 {
                 return Err(Error::last_os_error());
             }
 
-            // Set working directory, ignoring invalid paths.
+            // 设置工作目录,忽略无效路径。
             if let Some(working_directory) = working_directory.as_ref() {
                 libc::chdir(working_directory.as_ptr());
             }
 
             set_controlling_terminal(slave_fd)?;
 
-            // No longer need slave/master fds.
+            // 不再需要 slave/master fd。
             libc::close(slave_fd);
             libc::close(master_fd);
 
@@ -275,11 +275,11 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
         });
     }
 
-    // Prepare signal handling before spawning child.
+    // 拉起子进程前准备信号处理。
     let (signals, sig_id) = {
         let (sender, recv) = UnixStream::pair()?;
 
-        // Register the recv end of the pipe for SIGCHLD.
+        // 注册 SIGCHLD 管道的接收端。
         let sig_id = signal_pipe::register(sigconsts::SIGCHLD, sender)?;
         recv.set_nonblocking(true)?;
         (recv, sig_id)
@@ -288,8 +288,8 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
     match builder.spawn() {
         Ok(child) => {
             unsafe {
-                // Maybe this should be done outside of this function so nonblocking
-                // isn't forced upon consumers. Although maybe it should be?
+                // 也许应在此函数之外做,避免把非阻塞
+                // 强加给消费者。也许又该如此?
                 set_nonblocking(master_fd);
             }
 
@@ -308,12 +308,12 @@ pub fn from_fd(config: &Options, window_id: u64, master: OwnedFd, slave: OwnedFd
 
 impl Drop for Pty {
     fn drop(&mut self) {
-        // Make sure the PTY is terminated properly.
+        // 确保 PTY 被正确终止。
         unsafe {
             libc::kill(self.child.id() as i32, libc::SIGHUP);
         }
 
-        // Clear signal-hook handler.
+        // 清除 signal-hook 处理器。
         unregister_signal(self.sig_id);
 
         let _ = self.child.wait();
@@ -382,7 +382,7 @@ impl EventedReadWrite for Pty {
 impl EventedPty for Pty {
     #[inline]
     fn next_child_event(&mut self) -> Option<ChildEvent> {
-        // See if there has been a SIGCHLD.
+        // 看看是否收到过 SIGCHLD。
         let mut buf = [0u8; 1];
         if let Err(err) = self.signals.read(&mut buf) {
             if err.kind() != ErrorKind::WouldBlock {
@@ -391,7 +391,7 @@ impl EventedPty for Pty {
             return None;
         }
 
-        // Match on the child process.
+        // 对子进程做 match。
         match self.child.try_wait() {
             Err(err) => {
                 error!("Error checking child process termination: {err}");
@@ -404,10 +404,10 @@ impl EventedPty for Pty {
 }
 
 impl OnResize for Pty {
-    /// Resize the PTY.
+    /// 调整 PTY 大小。
     ///
-    /// Tells the kernel that the window size changed with the new pixel
-    /// dimensions and line/column counts.
+    /// 告知内核窗口尺寸已变:新的像素
+    /// 尺寸与行/列数。
     fn on_resize(&mut self, window_size: WindowSize) {
         let win = window_size.to_winsize();
 
@@ -419,9 +419,9 @@ impl OnResize for Pty {
     }
 }
 
-/// Types that can produce a `Winsize`.
+/// 能产出 `Winsize` 的类型。
 pub trait ToWinsize {
-    /// Get a `Winsize`.
+    /// 取一个 `Winsize`。
     fn to_winsize(self) -> Winsize;
 }
 

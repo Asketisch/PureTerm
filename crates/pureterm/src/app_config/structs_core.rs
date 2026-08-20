@@ -5,9 +5,9 @@
 
 use std::path::Path;
 
-/// GAP-7.6/7.5: a `[[vault.agents]]` entry declaring how to resume an agent.
-/// `resume_command` may contain a `{session_id}` placeholder replaced at
-/// cold-resume time (e.g. `["claude", "--resume", "{session_id}"]`).
+/// GAP-7.6/7.5：`[[vault.agents]]` 条目，声明如何恢复一个 agent。
+/// `resume_command` 可含 `{session_id}` 占位符，在冷恢复时替换
+///（如 `["claude", "--resume", "{session_id}"]`）。
 ///
 /// GAP-7.6 字段:`name`/`detect`/`session_id_source`。`detect` 是进程名或 cmdline
 /// 的**子串**(非 shell 命令 —— 避免注入与 shell 依赖,偏离 cmux 的 shell 风格),
@@ -17,7 +17,7 @@ use std::path::Path;
 pub struct VaultAgentEntry {
     pub kind: String,
     pub resume_command: Vec<String>,
-    /// If true, this agent kind is exempt from hibernation (GAP-7.3).
+    /// 为 true 时，该 agent 类型免于休眠（GAP-7.3）。
     #[serde(default)]
     pub never_hibernate: bool,
     /// 可选:展示名(缺省回退 `kind`)。
@@ -32,19 +32,17 @@ pub struct VaultAgentEntry {
     pub session_id_source: Option<String>,
 }
 
-/// GAP-7.7: a `[[resume.bindings]]` entry — a named, templated shell command
-/// used to reattach to an external persistent session (tmux/screen/zellij) on
-/// cold-resume, instead of / in addition to the default `claude --resume <id>`.
-/// Keyed by `(kind, checkpoint)`; `shell` is an argv template supporting the
-/// placeholders `{session_id}`, `{checkpoint}`, `{kind}`, `{cwd}` via lightweight
-/// `String::replace` interpolation (no handlebars — consistent with
-/// `VaultAgentEntry.resume_command` at `session_restore.rs:378`). `auto = true`
-/// means cold-resume will attempt this binding (subject to HMAC-token
-/// authorization, see M2).
+/// GAP-7.7：`[[resume.bindings]]` 条目——命名、带模板的 shell 命令，
+/// 用于冷恢复时重新附加到外部持久会话（tmux/screen/zellij），
+/// 替代或补充默认的 `claude --resume <id>`。以 `(kind, checkpoint)` 为键；
+/// `shell` 是 argv 模板，支持 `{session_id}`、`{checkpoint}`、`{kind}`、
+/// `{cwd}` 占位符，经轻量 `String::replace` 插值（不用 handlebars——与
+/// `session_restore.rs:378` 的 `VaultAgentEntry.resume_command` 保持一致）。
+/// `auto = true` 表示冷恢复会尝试此绑定（需通过 HMAC 令牌授权，见 M2）。
 ///
-/// Note: `docs/TODOLIST.md` GAP-7.7 prose mentions `handlebars`; we deliberately
-/// use lightweight placeholder expansion (YAGNI — the DoD needs no conditionals,
-/// and it matches the existing resume_command interpolation style).
+/// 注：`docs/TODOLIST.md` 中 GAP-7.7 的叙述提到 `handlebars`；我们刻意
+/// 使用轻量占位符展开（YAGNI——DoD 不需要条件逻辑，且与现有
+/// resume_command 插值风格一致）。
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
 pub struct ResumeBinding {
     pub kind: String,
@@ -52,27 +50,24 @@ pub struct ResumeBinding {
     pub shell: Vec<String>,
     #[serde(default)]
     pub auto: bool,
-    /// T-core-tmux-cc v2: when `kind = "tmux"`, set `use_control_mode = true`
-    /// to attach via `tmux -CC` (control mode) instead of the legacy
-    /// `tmux attach -t`. The default `false` keeps existing configs
-    /// working without migration; v3 will flip the default to `true`.
+    /// T-core-tmux-cc v2：当 `kind = "tmux"` 时，设 `use_control_mode = true`
+    /// 以通过 `tmux -CC`（控制模式）附加，而非旧的 `tmux attach -t`。
+    /// 默认 `false` 让现有配置无需迁移即可工作；v3 会把默认翻转为 `true`。
     #[serde(default)]
     pub use_control_mode: bool,
-    /// T-core-tmux-cc v2: when `use_control_mode = true`, the GUI
-    /// captures this session name (auto-generated from `checkpoint`
-    /// if not provided) for the `tmux -CC new-session -A -s` call.
+    /// T-core-tmux-cc v2：当 `use_control_mode = true` 时，GUI 捕获
+    /// 此会话名（未提供时从 `checkpoint` 自动生成），用于
+    /// `tmux -CC new-session -A -s` 调用。
     #[serde(default)]
     pub session_name: Option<String>,
 }
 
 impl ResumeBinding {
-    /// Returns the effective `tmux -CC` arguments when this binding is
-    /// in tmux-control-mode. Falls back to a cold `attach -t` when
-    /// `use_control_mode = false`.
+    /// 该绑定处于 tmux 控制模式时，返回有效的 `tmux -CC` 参数。
+    /// `use_control_mode = false` 时回退为冷 `attach -t`。
     ///
-    /// v3 will prefer the `-CC` form once we have a stable GUI
-    /// integration; v2 keeps the cold path as the default for
-    /// backward-compatibility with existing user configs.
+    /// 一旦有稳定的 GUI 集成，v3 将优先使用 `-CC` 形式；v2 仍以冷路径
+    /// 为默认，以兼容现有用户配置。
     pub fn tmux_command_args(&self) -> Vec<String> {
         if self.use_control_mode && self.kind == "tmux" {
             let mut out = vec!["tmux".to_string(), "-CC".to_string(), "new-session".to_string(), "-A".to_string()];
@@ -88,22 +83,22 @@ impl ResumeBinding {
     }
 }
 
-/// GAP-7.3: `[agent.hibernation]` settings. Defaults yield a disabled config,
-/// so a missing/malformed table never breaks startup. The dual idle condition
-/// is `pty_idle_secs` AND `cpu_idle_secs` (both must be satisfied).
+/// GAP-7.3：`[agent.hibernation]` 设置。默认值为禁用配置，因此缺失/畸形
+/// 的表永远不会破坏启动。双重空闲条件为 `pty_idle_secs` 与
+/// `cpu_idle_secs` 同时满足。
 #[derive(Clone, Debug)]
 pub struct AgentHibernationConfig {
     pub enabled: bool,
     pub max_live_terminals: u32,
-    /// PTY silent (no output) for this many seconds.
+    /// PTY 静默（无输出）达到该秒数。
     pub pty_idle_secs: u64,
-    /// Child CPU near-zero for this many seconds.
+    /// 子进程 CPU 接近零持续该秒数。
     pub cpu_idle_secs: u64,
-    /// Confirmation panel auto-resolve timeout (seconds).
+    /// 确认面板自动处理超时（秒）。
     pub confirm_secs: u64,
-    /// GUI hibernation scan interval (seconds).
+    /// GUI 休眠扫描间隔（秒）。
     pub scan_interval_secs: u64,
-    /// Daemon CPU sample interval (seconds).
+    /// 守护进程 CPU 采样间隔（秒）。
     pub cpu_sample_interval_secs: u64,
 }
 
@@ -121,17 +116,16 @@ impl Default for AgentHibernationConfig {
     }
 }
 
-/// GAP-7.6: `[agent.detect]` settings — drives the detect-resume prompt panel.
-/// Defaults yield an *enabled* config: detection is a non-intrusive hint and
-/// the DoD wants the panel on by default; a missing/malformed table never
-/// breaks startup. With no `[[vault.agents]]` declared, `scan()` early-returns,
-/// so this is a no-op until the user opts in by registering agents.
+/// GAP-7.6：`[agent.detect]` 设置——驱动 detect-resume 提示面板。
+/// 默认值为*启用*配置：检测是非侵入式提示，DoD 希望默认打开面板；
+/// 缺失/畸形表永远不会破坏启动。未声明 `[[vault.agents]]` 时 `scan()`
+/// 提前返回，因此直到用户注册 agent 前都是空操作。
 #[derive(Clone, Debug)]
 pub struct AgentDetectConfig {
     pub enabled: bool,
-    /// Periodic scan interval (seconds). Independent of hibernation's tick.
+    /// 周期扫描间隔（秒）。与休眠的 tick 相互独立。
     pub scan_interval_secs: u64,
-    /// Scan once at startup (in addition to the periodic tick).
+    /// 启动时扫描一次（除了周期 tick 之外）。
     pub scan_on_startup: bool,
 }
 
@@ -145,17 +139,17 @@ impl Default for AgentDetectConfig {
     }
 }
 
-/// GAP-7.10: `[mcp]` settings — tune the `pureterm mcp serve` server. A
-/// missing/malformed table yields `Default` (every tool exposed, 5000-line
-/// capture cap) so a bad config never breaks startup. v1 surfaces only these
-/// two knobs; `proxy_methods` allowlist + streaming capture are deferred to v2.
+/// GAP-7.10：`[mcp]` 设置——调优 `pureterm mcp serve` 服务端。
+/// 缺失/畸形表返回 `Default`（暴露全部工具、5000 行捕获上限），
+/// 坏配置永远不会破坏启动。v1 只暴露这两个旋钮；`proxy_methods`
+/// 白名单 + 流式捕获推迟到 v2。
 #[derive(Clone, Debug)]
 pub struct McpConfig {
-    /// Default `lines` cap for `capture_pane` when the tool omits it. Bounds
-    /// runaway full-scrollback captures an agent didn't ask for.
+    /// 工具省略 `lines` 时 `capture_pane` 的默认行数上限。限制 agent
+    /// 未要求的失控全回滚捕获。
     pub default_capture_lines: usize,
-    /// Whitelist of exposed tool names. Empty/unset → all tools (see
-    /// `mcp::enabled_tools`); otherwise only listed names are advertised.
+    /// 暴露工具名的白名单。空/未设置 → 全部工具（见 `mcp::enabled_tools`）；
+    /// 否则只广播列出的名称。
     pub enabled_tools: Vec<String>,
 }
 
@@ -168,7 +162,7 @@ impl Default for McpConfig {
     }
 }
 
-/// GAP-47: `[applescript]` — gate macOS automation bridge features.
+/// GAP-47：`[applescript]` —— 门控 macOS 自动化桥接功能。
 #[derive(Clone, Debug)]
 pub struct AppleScriptConfig {
     pub enabled: bool,
@@ -180,11 +174,11 @@ impl Default for AppleScriptConfig {
     }
 }
 
-/// GAP-48: `[url_scheme]` — `pureterm://` handler registration + dispatch.
+/// GAP-48：`[url_scheme]` —— `pureterm://` 处理器注册 + 分发。
 #[derive(Clone, Debug)]
 pub struct UrlSchemeConfig {
     pub enabled: bool,
-    /// When true, call `LSSetDefaultHandlerForURLScheme` once at GUI startup.
+    /// 为 true 时，在 GUI 启动时调用一次 `LSSetDefaultHandlerForURLScheme`。
     pub register_on_launch: bool,
 }
 
@@ -197,13 +191,13 @@ impl Default for UrlSchemeConfig {
     }
 }
 
-/// GAP-35: `[lsp]` settings — built-in LSP client (rust-analyzer MVP). A
-/// missing/malformed table yields `Default` (`enabled = false`, rust →
-/// `rust-analyzer`) so startup never fails when the binary is absent.
+/// GAP-35：`[lsp]` 设置——内置 LSP 客户端（rust-analyzer MVP）。
+/// 缺失/畸形表返回 `Default`（`enabled = false`，rust → `rust-analyzer`），
+/// 二进制缺失时启动也不会失败。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LspConfig {
     pub enabled: bool,
-    /// Language id → server command (MVP: only `rust` is consumed).
+    /// 语言 id → 服务端命令（MVP：只消费 `rust`）。
     pub servers: std::collections::HashMap<String, String>,
 }
 

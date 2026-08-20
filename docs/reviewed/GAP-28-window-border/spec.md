@@ -1,6 +1,6 @@
 ---
 gap: GAP-28
-title: Window Border
+title: 窗口边框
 category: UI/外壳
 plan_type: feature
 priority: P4

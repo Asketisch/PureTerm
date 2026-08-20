@@ -1,4 +1,4 @@
-//! LSP message framing: `Content-Length` header + JSON body.
+//! LSP 消息分帧:`Content-Length` 头 + JSON 体。
 
 use std::io::{self, BufRead, Write};
 
@@ -15,13 +15,13 @@ pub enum TransportError {
     Json(#[from] serde_json::Error),
 }
 
-/// Encode a JSON value as an LSP-framed message (header + body).
+/// 把 JSON 值编码为 LSP 分帧消息(头 + 体)。
 pub fn encode_message(value: &Value) -> String {
     let body = serde_json::to_string(value).unwrap_or_else(|_| "{}".into());
     format!("Content-Length: {}\r\n\r\n{body}", body.len())
 }
 
-/// Read one LSP-framed message from a buffered reader.
+/// 从带缓冲的读取器读一条 LSP 分帧消息。
 pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Value, TransportError> {
     let mut content_length = None;
     loop {
@@ -49,7 +49,7 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Value, TransportError>
     Ok(serde_json::from_slice(&body)?)
 }
 
-/// Write a framed message to any writer.
+/// 向任意写入器写一条分帧消息。
 pub fn write_message<W: Write>(writer: &mut W, value: &Value) -> io::Result<()> {
     writer.write_all(encode_message(value).as_bytes())?;
     writer.flush()

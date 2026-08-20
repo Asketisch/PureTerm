@@ -6,7 +6,7 @@ use crate::triggers::TriggerAction;
 use std::path::PathBuf;
 
 
-    /// Write `contents` to a uniquely-named temp file and return its path.
+    /// 把 `contents` 写入唯一命名的临时文件并返回其路径。
     fn write_temp_toml(name: &str, contents: &str) -> PathBuf {
         let path = std::env::temp_dir().join(name);
         std::fs::write(&path, contents).unwrap();
@@ -124,7 +124,7 @@ resume_command = ["claude", "--resume", "{session_id}"]
 
     #[test]
     fn test_load_resume_bindings_malformed_empty() {
-        // serde-style (mirror vault): a malformed entry invalidates the array → empty.
+        // serde 风格(与 vault 一致):畸形条目使整个数组失效 → 空。
         let toml = r#"
 [[resume.bindings]]
 checkpoint = "no-kind-no-shell"
@@ -187,7 +187,7 @@ cpu_sample_interval_secs = 5
         let path = write_temp_toml("pureterm_test_hibernation.toml", toml);
         let cfg = AppConfig::load_agent_hibernation(&path);
         let _ = std::fs::remove_file(&path);
-        // SIGSTOP is unix-only; on Windows enabled is force-disabled.
+        // SIGSTOP 仅 Unix;在 Windows 上 enabled 会被强制禁用。
         #[cfg(unix)]
         assert!(cfg.enabled);
         #[cfg(not(unix))]
@@ -331,8 +331,8 @@ mods = "Alt"
         assert_eq!(cmds[0].mods.as_deref(), Some("Alt"));
     }
 
-    /// Cross-module: a `[[commands]]` TOML entry must round-trip into a
-    /// working keymap binding (config → load → register → resolve).
+    /// 跨模块:`[[commands]]` TOML 条目必须能往返为一个可用的 keymap 绑定
+    /// (config → load → register → resolve 全链路)。
     #[test]
     fn test_custom_commands_config_to_keymap_binding() {
         use crate::keymap::{Action, Keymap, ResolveResult};
@@ -363,7 +363,7 @@ key = "Ctrl+B"
         );
     }
 
-    // ── GAP-7.1 [[agent.hook]] ────────────────────────────────────────────
+    // ── GAP-7.1 [[agent.hook]](agent 钩子) ───────────────────────────
 
     #[test]
     fn test_load_agent_hooks_basic() {
@@ -418,7 +418,7 @@ font = { size = 14.0 }
 
     #[test]
     fn test_load_agent_hooks_skips_entry_without_action() {
-        // An entry needs at least one of `command` / `deny_pattern` / `ask_pattern`.
+        // 一条条目至少需要 `command` / `deny_pattern` / `ask_pattern` 之一。
         let toml = r#"
 [[agent.hook]]
 event = "PreToolUse"
@@ -437,7 +437,7 @@ deny_pattern = "x"
 
     #[test]
     fn test_load_agent_hooks_ask_pattern() {
-        // GAP-7.4: ask_pattern is a valid action (route to Feed panel).
+        // GAP-7.4:ask_pattern 是合法动作(路由到 Feed 面板)。
         let toml = r#"
 [[agent.hook]]
 event = "PreToolUse"
@@ -508,7 +508,7 @@ default_capture_lines = 0
 
     #[test]
     fn mcp_malformed_table_yields_default() {
-        // Not a table → Default, never panics.
+        // 不是表 → Default,绝不 panic。
         let toml = "mcp = \"oops\"";
         let path = write_temp_toml("pureterm_test_mcp_bad.toml", toml);
         let cfg = AppConfig::load_mcp(&path);
@@ -545,7 +545,7 @@ rust = "/usr/local/bin/rust-analyzer"
         assert_eq!(cfg.rust_command(), "/usr/local/bin/rust-analyzer");
     }
 
-    // ── GAP-15 [shell_integration] ───────────────────────────────────────
+    // ── GAP-15 [shell_integration](shell 集成) ─────────────────────
 
     #[test]
     fn shell_integration_missing_is_default_enabled() {
@@ -581,7 +581,7 @@ include_command_text = false
 
     #[test]
     fn shell_integration_malformed_table_yields_default() {
-        // Not a table → Default, never panics.
+        // 不是表 → Default,绝不 panic。
         let toml = "shell_integration = \"oops\"";
         let path = write_temp_toml("pureterm_test_si_bad.toml", toml);
         let cfg = AppConfig::load_shell_integration(&path);
@@ -591,7 +591,7 @@ include_command_text = false
         assert!(cfg.inject_bash);
     }
 
-    // ── GAP-51 [block_output] ──────────────────────────────────────────────
+    // ── GAP-51 [block_output](块输出) ─────────────────────────────
     #[test]
     fn block_output_missing_is_default_disabled() {
         let path = write_temp_toml("pureterm_test_block_missing.toml", "# empty\n");
@@ -633,7 +633,7 @@ color = "#ff0000"
 
     #[test]
     fn test_load_allow_exec_on_remote_defaults_false() {
-        // Top-level flag missing → safe default false.
+        // 顶层标志缺失 → 安全默认 false。
         let toml = "[[triggers]]\nname = \"x\"\npattern = \"y\"\naction = \"notify\"\n";
         let path = write_temp_toml("pureterm_test_allow_exec_default.toml", toml);
         let v = AppConfig::load_allow_exec_on_remote(&path);
@@ -896,8 +896,8 @@ mark = "build_start"
         assert!(matches!(triggers[2].cfg.action, TriggerAction::Fold { .. }));
     }
 
-    /// GAP-19: `[sidebar]` widths clamp on load (integer below MIN, float above
-    /// MAX) and `left_default_open` is honored; a missing table yields Default.
+    /// GAP-19:`[sidebar]` 宽度加载时被夹取(整数低于 MIN、浮点高于 MAX),
+    /// 并遵守 `left_default_open`;表格缺失时返回 Default。
     #[test]
     fn load_sidebar_clamps_widths_and_reads_default_open() {
         let toml = r#"
@@ -921,7 +921,7 @@ left_default_open = true
         let cfg = AppConfig::load_sidebar(&path);
         let _ = std::fs::remove_file(&path);
         assert_eq!(cfg, SidebarConfig::default());
-        assert!(!cfg.left_default_open); // default false
+        assert!(!cfg.left_default_open); // 默认 false
     }
     fn resume_binding_without_cc_falls_back_to_shell_vec() {
         let toml = r#"
@@ -938,7 +938,7 @@ shell = ["tmux", "attach", "-t", "{checkpoint}"]
         assert_eq!(b.kind, "tmux");
         assert_eq!(b.checkpoint, "work");
         assert!(!b.use_control_mode, "default must be false (back-compat)");
-        // tmux_command_args() returns the legacy shell when cc is off.
+        // cc 关闭时 tmux_command_args() 返回旧式 shell。
         let args = b.tmux_command_args();
         assert_eq!(args, vec!["tmux", "attach", "-t", "{checkpoint}"]);
     }
@@ -961,7 +961,7 @@ session_name = "ops"
         assert!(b.use_control_mode);
         assert_eq!(b.session_name.as_deref(), Some("ops"));
         let args = b.tmux_command_args();
-        // Expected: tmux -CC new-session -A -s pureterm-ops
+        // 期望:tmux -CC new-session -A -s pureterm-ops
         assert!(args.contains(&"-CC".to_string()), "must include -CC: {args:?}");
         assert!(args.contains(&"new-session".to_string()));
         assert!(args.contains(&"-s".to_string()));
@@ -970,7 +970,7 @@ session_name = "ops"
 
     #[test]
     fn resume_binding_with_cc_falls_back_to_checkpoint_name() {
-        // No explicit `session_name` — we derive from `checkpoint`.
+        // 未显式提供 `session_name` —— 我们从 `checkpoint` 派生。
         let toml = r#"
 [[resume.bindings]]
 kind = "tmux"
@@ -988,8 +988,8 @@ use_control_mode = true
 
     #[test]
     fn resume_binding_with_cc_ignored_for_non_tmux_kind() {
-        // `use_control_mode = true` only takes effect for kind = "tmux";
-        // for any other kind the legacy shell vec is returned unchanged.
+        // `use_control_mode = true` 只对 kind = "tmux" 生效;
+        // 其他 kind 原样返回旧式 shell vec。
         let toml = r#"
 [[resume.bindings]]
 kind = "zsh"
@@ -1005,11 +1005,11 @@ use_control_mode = true
         assert_eq!(args, vec!["zsh", "-i"]);
     }
 
-    // ── [statusbar] loader (GAP-24) ─────────────────────────────────────
+    // ── [statusbar] 加载器 (GAP-24) ────────────────────────────────
 
     #[test]
     fn test_load_statusbar_defaults_when_missing() {
-        // No [statusbar] table at all → use every field default.
+        // 完全没有 [statusbar] 表 → 使用每个字段的默认值。
         let path = write_temp_toml(
             "pureterm_test_statusbar_default.toml",
             "[unrelated]\nkey = 1\n",
@@ -1024,16 +1024,16 @@ use_control_mode = true
         assert_eq!(cfg.bar_height, defaults.bar_height);
         assert_eq!(cfg.clock_format, defaults.clock_format);
         assert_eq!(cfg.clock_show_seconds, defaults.clock_show_seconds);
-        // New field surfaces: default format must include `%S` so the
-        // show_seconds = false path has something to strip.
+        // 新字段细节:默认格式必须包含 `%S`,这样
+        // show_seconds = false 路径才有东西可去除。
         assert!(defaults.clock_format.contains("%S"));
         assert!(defaults.clock_show_seconds);
     }
 
     #[test]
     fn test_load_statusbar_overrides_clock_fields() {
-        // clock_format + clock_show_seconds are both optional; a partial
-        // override must not zero out the other.
+        // clock_format 与 clock_show_seconds 都是可选字段;部分
+        // 覆盖不得把另一个清零。
         let path = write_temp_toml(
             "pureterm_test_statusbar_clock.toml",
             r#"
@@ -1047,7 +1047,7 @@ clock_show_seconds = false
 
         assert_eq!(cfg.clock_format, "%H:%M");
         assert!(!cfg.clock_show_seconds);
-        // Untouched fields keep defaults.
+        // 未触及的字段保持默认值。
         assert!(cfg.show_sparklines);
         assert_eq!(cfg.bar_height, 24);
         assert_eq!(cfg.components, StatusBarConfig::default().components);
@@ -1055,8 +1055,8 @@ clock_show_seconds = false
 
     #[test]
     fn test_load_statusbar_empty_components_falls_back_to_default() {
-        // Empty `components = []` is a known foot-gun (renders a blank bar);
-        // the loader refuses to override defaults in that case.
+        // 空的 `components = []` 是一个已知的坑(会渲染出空白栏);
+        // 这种情况下加载器拒绝覆盖默认值。
         let path = write_temp_toml(
             "pureterm_test_statusbar_empty_components.toml",
             r#"
@@ -1093,8 +1093,8 @@ components = ["cwd", "git", "clock", "cursor"]
 
     #[test]
     fn test_load_statusbar_bar_height_is_clamped() {
-        // bar_height is clamped 18..=48 — both out-of-range values must be
-        // snapped to the bounds.
+        // bar_height 被夹在 18..=48 —— 两个越界值都必须
+        // 被吸附到边界上。
         let path_high = write_temp_toml(
             "pureterm_test_statusbar_height_high.toml",
             r#"

@@ -1,9 +1,9 @@
-//! State management for a selection in the grid.
+//! 网格中选区的状态管理。
 //!
-//! A selection should start when the mouse is clicked, and it should be
-//! finalized when the button is released. The selection should be cleared
-//! when text is added/removed/scrolled on the screen. The selection should
-//! also be cleared if the user clicks off of the selection.
+//! 选区应在鼠标点击时开始,按钮释放时
+//! 定稿。屏幕上的文本被添加/删除/滚动时应清除选区。
+//! 用户点击选区之外时也应清除
+//! 选区。
 
 use std::cmp::min;
 use std::mem;
@@ -15,7 +15,7 @@ use crate::term::Term;
 use crate::term::cell::{Cell, Flags};
 use crate::vte::ansi::CursorShape;
 
-/// A Point and side within that point.
+/// 一个点及其在该点内的一侧。
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 struct Anchor {
     point: Point,
@@ -28,14 +28,14 @@ impl Anchor {
     }
 }
 
-/// Represents a range of selected cells.
+/// 表示已选单元格的范围。
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct SelectionRange {
-    /// Start point, top left of the selection.
+    /// 起点,选区左上角。
     pub start: Point,
-    /// End point, bottom right of the selection.
+    /// 终点,选区右下角。
     pub end: Point,
-    /// Whether this selection is a block selection.
+    /// 此选区是否为块选区。
     pub is_block: bool,
 }
 
@@ -47,7 +47,7 @@ impl SelectionRange {
 }
 
 impl SelectionRange {
-    /// Check if a point lies within the selection.
+    /// 检查点是否在选区内。
     pub fn contains(&self, point: Point) -> bool {
         self.start.line <= point.line
             && self.end.line >= point.line
@@ -56,14 +56,14 @@ impl SelectionRange {
             && (self.end.column >= point.column || (self.end.line != point.line && !self.is_block))
     }
 
-    /// Check if the cell at a point is part of the selection.
+    /// 检查点处的单元格是否属于选区。
     pub fn contains_cell(
         &self,
         indexed: &Indexed<&Cell>,
         point: Point,
         shape: CursorShape,
     ) -> bool {
-        // Do not invert block cursor at selection boundaries.
+        // 不在选区边界反转块光标。
         if shape == CursorShape::Block
             && point == indexed.point
             && (self.start == indexed.point
@@ -77,18 +77,18 @@ impl SelectionRange {
             return false;
         }
 
-        // Point itself is selected.
+        // 点本身被选中。
         if self.contains(indexed.point) {
             return true;
         }
 
-        // Check if a wide char's trailing spacer is selected.
+        // 检查宽字符的尾随占位是否被选中。
         indexed.cell.flags().contains(Flags::WIDE_CHAR)
             && self.contains(Point::new(indexed.point.line, indexed.point.column + 1))
     }
 }
 
-/// Different kinds of selection.
+/// 不同类型的选区。
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum SelectionType {
     Simple,
@@ -97,24 +97,24 @@ pub enum SelectionType {
     Lines,
 }
 
-/// Describes a region of a 2-dimensional area.
+/// 描述二维区域中的一个范围。
 ///
-/// Used to track a text selection. There are four supported modes, each with its own constructor:
-/// [`simple`], [`block`], [`semantic`], and [`lines`]. The [`simple`] mode precisely tracks which
-/// cells are selected without any expansion. [`block`] will select rectangular regions.
-/// [`semantic`] mode expands the initial selection to the nearest semantic escape char in either
-/// direction. [`lines`] will always select entire lines.
+/// 用于跟踪文本选区。支持四种模式,各有自己的构造器:
+/// [`simple`]、[`block`]、[`semantic`] 与 [`lines`]。[`simple`] 模式精确跟踪选中
+/// 了哪些单元格,不做任何扩展。[`block`] 选择矩形区域。
+/// [`semantic`] 模式把初始选区向两侧扩展到最近的语义转义字符。
+/// [`lines`] 总是选择整行。
 ///
-/// Calls to [`update`] operate different based on the selection kind. The [`simple`] and [`block`]
-/// mode do nothing special, simply track points and sides. [`semantic`] will continue to expand
-/// out to semantic boundaries as the selection point changes. Similarly, [`lines`] will always
-/// expand the new point to encompass entire lines.
+/// [`update`] 的行为随选区类型不同。[`simple`] 与 [`block`]
+/// 模式无特殊之处,只跟踪点与侧。[`semantic`] 随选区点
+/// 变化持续扩展到语义边界。类似地,[`lines`] 总是
+/// 扩展新点以覆盖整行。
 ///
-/// [`simple`]: enum.Selection.html#method.simple
-/// [`block`]: enum.Selection.html#method.block
-/// [`semantic`]: enum.Selection.html#method.semantic
-/// [`lines`]: enum.Selection.html#method.lines
-/// [`update`]: enum.Selection.html#method.update
+/// [`simple`]:见 Selection::simple
+/// [`block`]:见 Selection::block
+/// [`semantic`]:见 Selection::semantic
+/// [`lines`]:见 Selection::lines
+/// [`update`]:见 Selection::update
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Selection {
     pub ty: SelectionType,
@@ -129,7 +129,7 @@ impl Selection {
         }
     }
 
-    /// Update the end of the selection.
+    /// 更新选区终点。
     pub fn update(&mut self, point: Point, side: Side) {
         self.region.end = Anchor::new(point, side);
     }
@@ -149,16 +149,16 @@ impl Selection {
             mem::swap(&mut start, &mut end);
         }
 
-        // Rotate start of selection.
+        // 旋转选区起点。
         if (start.point.line >= range_top || range_top == 0) && start.point.line < range_bottom {
             start.point.line = min(start.point.line - delta, bottommost_line);
 
-            // If end is within the same region, delete selection once start rotates out.
+            // 终点在同区间内时,起点旋出即删除选区。
             if start.point.line >= range_bottom && end.point.line < range_bottom {
                 return None;
             }
 
-            // Clamp selection to start of region.
+            // 把选区钳制到区间起点。
             if start.point.line < range_top && range_top != 0 {
                 if self.ty != SelectionType::Block {
                     start.point.column = Column(0);
@@ -168,16 +168,16 @@ impl Selection {
             }
         }
 
-        // Rotate end of selection.
+        // 旋转选区终点。
         if (end.point.line >= range_top || range_top == 0) && end.point.line < range_bottom {
             end.point.line = min(end.point.line - delta, bottommost_line);
 
-            // Delete selection if end has overtaken the start.
+            // 终点越过起点时删除选区。
             if end.point.line < start.point.line {
                 return None;
             }
 
-            // Clamp selection to end of region.
+            // 把选区钳制到区间终点。
             if end.point.line >= range_bottom {
                 if self.ty != SelectionType::Block {
                     end.point.column = dimensions.last_column();
@@ -198,8 +198,8 @@ impl Selection {
                     mem::swap(&mut start, &mut end);
                 }
 
-                // Simple selection is empty when the points are identical
-                // or two adjacent cells have the sides right -> left.
+                // 简单选区在两点相同、或两个相邻单元格
+                // 呈 右→左 侧时空。
                 start == end
                     || (start.side == Side::Right
                         && end.side == Side::Left
@@ -209,9 +209,9 @@ impl Selection {
             SelectionType::Block => {
                 let (start, end) = (self.region.start, self.region.end);
 
-                // Block selection is empty when the points' columns and sides are identical
-                // or two cells with adjacent columns have the sides right -> left,
-                // regardless of their lines
+                // 块选区在两点的列与侧相同、或列相邻的两单元格
+                // 呈 右→左 侧时空,
+                // 与行无关
                 (start.point.column == end.point.column && start.side == end.side)
                     || (start.point.column + 1 == end.point.column
                         && start.side == Side::Right
@@ -224,7 +224,7 @@ impl Selection {
         }
     }
 
-    /// Check whether selection contains any point in a given range.
+    /// 检查选区是否包含给定范围内的任何点。
     pub fn intersects_range<R: RangeBounds<Line>>(&self, range: R) -> bool {
         let mut start = self.region.start.point.line;
         let mut end = self.region.end.point.line;
@@ -248,7 +248,7 @@ impl Selection {
         range_bottom >= start && range_top <= end
     }
 
-    /// Expand selection sides to include all cells.
+    /// 扩展选区两侧以包含所有单元格。
     pub fn include_all(&mut self) {
         let (start, end) = (self.region.start.point, self.region.end.point);
         let (start_side, end_side) = match self.ty {
@@ -267,12 +267,12 @@ impl Selection {
         self.region.end.side = end_side;
     }
 
-    /// Convert selection to grid coordinates.
+    /// 把选区转换为网格坐标。
     pub fn to_range<T>(&self, term: &Term<T>) -> Option<SelectionRange> {
         let grid = term.grid();
         let columns = grid.columns();
 
-        // Order start above the end.
+        // 让起点在终点上方。
         let mut start = self.region.start;
         let mut end = self.region.end;
 
@@ -280,7 +280,7 @@ impl Selection {
             mem::swap(&mut start, &mut end);
         }
 
-        // Clamp selection to within grid boundaries.
+        // 把选区钳制到网格边界内。
         if end.point.line < term.topmost_line() {
             return None;
         }
@@ -297,12 +297,12 @@ impl Selection {
 
     fn range_semantic<T>(term: &Term<T>, mut start: Point, mut end: Point) -> SelectionRange {
         if start == end {
-            // Try smart selection first.
+            // 先尝试智能选区。
             if let Some(range) = Self::range_smart(term, start) {
                 return range;
             }
 
-            // Fallback: bracket matching.
+            // 回退:括号匹配。
             if let Some(matching) = term.bracket_search(start) {
                 if (matching.line == start.line && matching.column < start.column)
                     || (matching.line < start.line)
@@ -322,26 +322,26 @@ impl Selection {
         SelectionRange { start, end, is_block: false }
     }
 
-    /// Try smart selection at a single click point.
+    /// 在单次点击点尝试智能选区。
     fn range_smart<T>(term: &Term<T>, point: Point) -> Option<SelectionRange> {
         if !term.smart_selection.is_enabled() {
             return None;
         }
 
-        // Extract the logical line text (spanning wraplines) and map click column to byte offset.
+        // 提取逻辑行文本(跨换行行)并把点击列映射到字节偏移。
         let (text, byte_offset, line_start, char_columns) = term.smart_selection_line_text(point)?;
 
         let m = term.smart_selection.evaluate(&text, byte_offset)?;
 
-        // Convert match byte offsets back to grid Points.
+        // 把匹配的字节偏移转换回网格 Point。
         let start_point = byte_offset_to_point(&char_columns, m.start, line_start, term)?;
         let end_point = byte_offset_to_point(&char_columns, m.end, line_start, term)?;
 
-        // End is exclusive in byte offset but inclusive in SelectionRange.
+        // 字节偏移的 end 是排他的,SelectionRange 是含端点的。
         let end_point = if end_point == start_point {
             end_point
         } else {
-            // Step back one cell for inclusive end.
+            // 为含端终点回退一格。
             step_back(term, end_point)
         };
 
@@ -365,9 +365,9 @@ impl Selection {
             return None;
         }
 
-        // Remove last cell if selection ends to the left of a cell.
+        // 选区结束于单元格左侧时移除最后单元格。
         if end.side == Side::Left && start.point != end.point {
-            // Special case when selection ends to left of first cell.
+            // 选区结束于首单元格左侧的特例。
             if end.point.column == 0 {
                 end.point.column = Column(columns - 1);
                 end.point.line -= 1;
@@ -376,11 +376,11 @@ impl Selection {
             }
         }
 
-        // Remove first cell if selection starts at the right of a cell.
+        // 选区开始于单元格右侧时移除首单元格。
         if start.side == Side::Right && start.point != end.point {
             start.point.column += 1;
 
-            // Wrap to next line when selection starts to the right of last column.
+            // 选区开始于最后列右侧时换到下一行。
             if start.point.column == columns {
                 start.point.column = Column(0);
                 start.point.line += 1;
@@ -395,18 +395,18 @@ impl Selection {
             return None;
         }
 
-        // Always go top-left -> bottom-right.
+        // 总是取 左上 → 右下。
         if start.point.column > end.point.column {
             mem::swap(&mut start.side, &mut end.side);
             mem::swap(&mut start.point.column, &mut end.point.column);
         }
 
-        // Remove last cell if selection ends to the left of a cell.
+        // 选区结束于单元格左侧时移除最后单元格。
         if end.side == Side::Left && start.point != end.point && end.point.column.0 > 0 {
             end.point.column -= 1;
         }
 
-        // Remove first cell if selection starts at the right of a cell.
+        // 选区开始于单元格右侧时移除首单元格。
         if start.side == Side::Right && start.point != end.point {
             start.point.column += 1;
         }
@@ -415,24 +415,24 @@ impl Selection {
     }
 }
 
-/// Tests for selection.
+/// 选区测试。
 ///
-/// There are comments on all of the tests describing the selection. Pictograms
-/// are used to avoid ambiguity. Grid cells are represented by a [  ]. Only
-/// cells that are completely covered are counted in a selection. Ends are
-/// represented by `B` and `E` for begin and end, respectively.  A selected cell
-/// looks like [XX], [BX] (at the start), [XB] (at the end), [XE] (at the end),
-/// and [EX] (at the start), or [BE] for a single cell. Partially selected cells
-/// look like [ B] and [E ].
+/// 所有测试都有描述选区的注释,用象形图
+/// 避免歧义。网格单元格用 [  ] 表示。只有完全覆盖
+/// 的单元格计入选区。端点用 `B` 与 `E` 分别表示
+/// 起与终。被选中的单元格形如 [XX]、[BX](起始)、
+/// [XB](结尾)、[XE](结尾)、[EX](起始),或单格的 [BE]。
+/// 部分选中的单元格形如 [ B] 与 [E ]。
+/// 形如 [ B] 与 [E ](部分选中)。
 
-/// Convert a byte offset to a grid Point using the char_columns mapping.
+/// 用 char_columns 映射把字节偏移转换为网格 Point。
 fn byte_offset_to_point<T>(
     char_columns: &[(usize, Line, Column)],
     byte_offset: usize,
     _line_start: Point,
     _term: &Term<T>,
 ) -> Option<Point> {
-    // Binary search for the largest (byte, line, col) where byte <= byte_offset.
+    // 二分查找最大的 (byte, line, col),使 byte <= byte_offset。
     let idx = char_columns.partition_point(|(b, _, _)| *b <= byte_offset);
     if idx == 0 {
         return None;
@@ -441,12 +441,12 @@ fn byte_offset_to_point<T>(
     Some(Point::new(line, col))
 }
 
-/// Step back one cell in the grid (for converting exclusive end to inclusive).
+/// 在网格中回退一格(把排他终点转为含端)。
 fn step_back<T>(term: &Term<T>, point: Point) -> Point {
     if point.column > Column(0) {
         Point::new(point.line, point.column - 1)
     } else if point.line > term.topmost_line() {
-        // Wrap to end of previous line.
+        // 换到前一行的末尾。
         Point::new(point.line - 1, term.last_column())
     } else {
         point
@@ -466,11 +466,11 @@ mod tests {
         Term::new(Config::default(), &size, ())
     }
 
-    /// Test case of single cell selection.
+    /// 单单元格选区的测试用例。
     ///
     /// 1. [  ]
     /// 2. [B ]
-    /// 3. [BE]
+    /// 3. [BE](单格起终)
     #[test]
     fn single_cell_left_to_right() {
         let location = Point::new(Line(0), Column(0));
@@ -484,11 +484,11 @@ mod tests {
         });
     }
 
-    /// Test case of single cell selection.
+    /// 单单元格选区的测试用例。
     ///
     /// 1. [  ]
     /// 2. [ B]
-    /// 3. [EB]
+    /// 3. [EB](反向单格)
     #[test]
     fn single_cell_right_to_left() {
         let location = Point::new(Line(0), Column(0));
@@ -502,7 +502,7 @@ mod tests {
         });
     }
 
-    /// Test adjacent cell selection from left to right.
+    /// 测试从左到右的相邻单元格选区。
     ///
     /// 1. [  ][  ]
     /// 2. [ B][  ]
@@ -516,7 +516,7 @@ mod tests {
         assert_eq!(selection.to_range(&term(1, 2)), None);
     }
 
-    /// Test adjacent cell selection from right to left.
+    /// 测试从右到左的相邻单元格选区。
     ///
     /// 1. [  ][  ]
     /// 2. [  ][B ]
@@ -531,14 +531,14 @@ mod tests {
     }
 
     #[rustfmt::skip]
-    /// Test selection across adjacent lines.
+    /// 测试跨相邻行的选区。
     ///
     /// 1.  [  ][  ][  ][  ][  ]
     ///     [  ][  ][  ][  ][  ]
     /// 2.  [  ][ B][  ][  ][  ]
     ///     [  ][  ][  ][  ][  ]
-    /// 3.  [  ][ B][XX][XX][XX]
-    ///     [XX][XE][  ][  ][  ]
+    /// 3.  [  ][ B][XX][XX][XX](见下一行)
+    ///     [XX][XE][  ][  ][  ](象形图)
     #[test]
     fn across_adjacent_lines_upward_final_cell_exclusive() {
         let mut selection =
@@ -553,16 +553,16 @@ mod tests {
     }
 
     #[rustfmt::skip]
-    /// Test selection across adjacent lines.
+    /// 测试跨相邻行的选区。
     ///
     /// 1.  [  ][  ][  ][  ][  ]
     ///     [  ][  ][  ][  ][  ]
     /// 2.  [  ][  ][  ][  ][  ]
     ///     [  ][ B][  ][  ][  ]
-    /// 3.  [  ][ E][XX][XX][XX]
-    ///     [XX][XB][  ][  ][  ]
-    /// 4.  [ E][XX][XX][XX][XX]
-    ///     [XX][XB][  ][  ][  ]
+    /// 3.  [  ][ E][XX][XX][XX](见下一行)
+    ///     [XX][XB][  ][  ][  ](象形图)
+    /// 4.  [ E][XX][XX][XX][XX](见下一行)
+    ///     [XX][XB][  ][  ][  ](象形图)
     #[test]
     fn selection_bigger_then_smaller() {
         let mut selection =

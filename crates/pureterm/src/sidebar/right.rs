@@ -1,4 +1,4 @@
-//! GAP-19: Right sidebar — Find / Feed / Git mode tabs.
+//! GAP-19: 右侧栏 —— 查找 / 信息流 / Git 模式标签页。
 
 mod data;
 mod main;

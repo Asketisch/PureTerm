@@ -1,52 +1,52 @@
-//! Wgpu glyph atlas — bridges crossfont's RasterizedGlyph to a CPU-side texture atlas.
+//! Wgpu 字形图集——把 crossfont 的 RasterizedGlyph 桥接到 CPU 侧纹理图集。
 //!
-//! Dual-atlas design: a grayscale R8 atlas for text glyphs and an RGBA atlas for
-//! color emoji. Skyline bin-packing places glyphs into fixed 2048x2048 bitmaps.
-//! When an atlas fills up, LRU entries are evicted and both atlases are rebuilt.
+//! 双图集设计:文本字形用灰度 R8 图集,彩色 emoji 用
+//! RGBA 图集。天际线装箱把字形放进固定的 2048x2048 位图。
+//! 图集装满时逐出 LRU 条目并重建两个图集。
 
 use crossfont::{BitmapBuffer, RasterizedGlyph};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Which atlas a glyph lives in.
+/// 字形位于哪个图集。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AtlasKind {
     Grayscale,
     Color,
 }
 
-/// A cached glyph's location in the atlas.
+/// 已缓存字形在图集中的位置。
 #[derive(Clone, Copy, Debug)]
 pub struct CachedGlyph {
-    /// Top-left U coordinate in atlas UV space.
+    /// 图集 UV 空间中左上角的 U 坐标。
     pub u: f32,
-    /// Top-left V coordinate in atlas UV space.
+    /// 图集 UV 空间中左上角的 V 坐标。
     pub v: f32,
-    /// Bottom-right U coordinate in atlas UV space.
+    /// 图集 UV 空间中右下角的 U 坐标。
     pub u2: f32,
-    /// Bottom-right V coordinate in atlas UV space.
+    /// 图集 UV 空间中右下角的 V 坐标。
     pub v2: f32,
-    /// Horizontal offset from cell origin (pixels).
+    /// 相对单元格原点的水平偏移(像素)。
     pub x_offset: f32,
-    /// Vertical offset from cell origin (pixels).
+    /// 相对单元格原点的垂直偏移(像素)。
     pub y_offset: f32,
-    /// Glyph width in pixels.
+    /// 字形宽度(像素)。
     pub width: f32,
-    /// Glyph height in pixels.
+    /// 字形高度(像素)。
     pub height: f32,
-    /// Horizontal advance in pixels (post-shaping). v1 callers leave this
-    /// at `0.0`; the renderer applies the monospace cell width and the
-    /// shaping layer can override per-glyph in v2.
+    /// 水平步进(像素,整形后)。v1 调用方把它留在
+    /// `0.0`;渲染器应用等宽单元格宽度,v2 中
+    /// 整形层可按字形覆盖。
     pub x_advance: f32,
-    /// Vertical advance in pixels (post-shaping). v1 callers leave this
-    /// at `0.0`; vertical scripts (CJK sideways) populate it.
+    /// 垂直步进(像素,整形后)。v1 调用方把它留在
+    /// `0.0`;竖排文字(CJK 侧躺)会填充它。
     pub y_advance: f32,
-    /// Which atlas contains this glyph.
+    /// 该字形位于哪个图集。
     pub atlas_kind: AtlasKind,
 }
 
-/// Skyline bin-packing segment.
+/// 天际线装箱段。
 #[derive(Clone, Debug)]
 struct SkylineSeg {
     x: u32,
@@ -54,17 +54,17 @@ struct SkylineSeg {
     width: u32,
 }
 
-/// Atlas dimensions.
+/// 图集尺寸。
 const ATLAS_SIZE: u32 = 2048;
 
-/// Maximum number of cached glyphs before eviction kicks in.
+/// 触发逐出前可缓存字形的最大数量。
 const MAX_CACHE_ENTRIES: usize = 8192;
 
-/// A rectangular region of the atlas that changed since the last upload.
+/// 自上次上传以来图集中发生变化的一个矩形区域。
 ///
-/// Used by the render thread to do partial `queue.write_texture` calls
-/// instead of re-uploading the entire 4MB+16MB atlas on every frame that
-/// touched a single glyph.
+/// 供渲染线程做部分 `queue.write_texture` 调用,
+/// 而不是在只碰到单个字形的每一帧重传整个
+/// 4MB+16MB 图集。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DirtyRect {
     pub x: u32,
@@ -73,12 +73,12 @@ pub struct DirtyRect {
     pub h: u32,
 }
 
-/// What the render thread needs to upload changed atlas regions.
+/// 渲染线程上传已变化图集区域所需的数据。
 ///
-/// `data` is the full atlas (one contiguous `Arc<Vec<u8>>`); the render
-/// thread slices the sub-rectangles with byte offsets in
-/// `TexelCopyBufferLayout`. Returning `Arc` lets the main thread and
-/// render thread share the allocation without a 20MB clone.
+/// `data` 是完整图集(一整块 `Arc<Vec<u8>>`);渲染
+/// 线程按 `TexelCopyBufferLayout` 的字节偏移切出子矩形。返回 `Arc` 让
+/// 主线程与渲染线程共享分配,无需 20MB 克隆。
+/// 主线程与渲染线程共享同一分配,无需 20MB 克隆。
 pub struct AtlasDirty {
     pub regions: Vec<DirtyRect>,
     pub data: Arc<Vec<u8>>,
@@ -86,45 +86,45 @@ pub struct AtlasDirty {
     pub height: u32,
 }
 
-/// WgpuGlyphAtlas — CPU-side glyph cache with skyline bin packing.
+/// WgpuGlyphAtlas——带天际线装箱的 CPU 侧字形缓存。
 ///
-/// Dual-atlas: grayscale R8 (4 MB) for text, RGBA (16 MB) for color emoji.
-/// When full, evicts LRU entries and rebuilds.
+/// 双图集:文本用灰度 R8(4 MB),彩色 emoji 用 RGBA(16 MB)。
+/// 装满时逐出 LRU 条目并重建。
 pub struct WgpuGlyphAtlas {
     atlas_width: u32,
     atlas_height: u32,
-    /// R8 bitmap data (one byte per pixel).
+    /// R8 位图数据(每像素一字节)。
     atlas_data: Vec<u8>,
-    /// Skyline segments for grayscale bin packing.
+    /// 灰度装箱的天际线段。
     skyline: Vec<SkylineSeg>,
-    /// Glyph cache: (font_index, character) -> atlas location.
+    /// 字形缓存:(font_index, character) -> 图集位置。
     cache: HashMap<(usize, char), CachedGlyph>,
-    /// Stored rasterized glyphs for rebuild.
+    /// 为重建而保存的光栅化字形。
     stored_glyphs: HashMap<(usize, char), RasterizedGlyph>,
-    /// LRU ordering backed by `IndexMap`: front = oldest, back = newest.
-    /// PureTerm: O(1) `shift_remove_index(0)` for eviction (was O(n)
-    /// `Vec::position` + `Vec::remove` before).
+    /// 由 `IndexMap` 支撑的 LRU 顺序:前 = 最旧,后 = 最新。
+    /// PureTerm:逐出用 O(1) 的 `shift_remove_index(0)`(此前是 O(n) 的
+    /// `Vec::position` + `Vec::remove`)。
     lru_keys: IndexMap<(usize, char), ()>,
-    /// Maximum cache entries.
+    /// 缓存条目上限。
     capacity: usize,
-    /// Whether the grayscale atlas bitmap has changed since last GPU upload.
+    /// 灰度图集位图自上次 GPU 上传以来是否变化过。
     dirty: bool,
-    /// Per-rect tracking of grayscale changes since last `take_dirty_regions`.
-    /// Used by the render thread to do partial uploads.
+    /// 自上次 `take_dirty_regions` 以来灰度变化的逐矩形跟踪。
+    /// 供渲染线程做部分上传。
     dirty_regions: Vec<DirtyRect>,
-    /// RGBA color atlas bitmap (4 bytes per pixel).
+    /// RGBA 彩色图集位图(每像素 4 字节)。
     color_atlas_data: Vec<u8>,
-    /// Skyline segments for color atlas bin packing.
+    /// 彩色图集装箱的天际线段。
     color_skyline: Vec<SkylineSeg>,
-    /// Whether the color atlas bitmap has changed since last GPU upload.
+    /// 彩色图集位图自上次 GPU 上传以来是否变化过。
     color_dirty: bool,
-    /// Per-rect tracking of color atlas changes since last
+    /// 自上次以来彩色图集变化的逐矩形
     /// `take_color_dirty_regions`.
     color_dirty_regions: Vec<DirtyRect>,
 }
 
 impl WgpuGlyphAtlas {
-    /// Create a new empty glyph atlas.
+    /// 创建新的空字形图集。
     pub fn new() -> Self {
         let mut skyline = Vec::with_capacity(64);
         skyline.push(SkylineSeg {
@@ -158,12 +158,12 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Try to get a cached glyph. Returns `None` if not cached.
-    /// On a cache hit, the key is moved to the back of the LRU list.
+    /// 尝试取已缓存字形。未缓存返回 `None`。
+    /// 命中时把键移到 LRU 列表尾部。
     pub fn get(&mut self, font_index: usize, c: char) -> Option<CachedGlyph> {
         let key = (font_index, c);
         if let Some(&glyph) = self.cache.get(&key) {
-            // Move to end of LRU (most recently used). O(1) with IndexMap.
+            // 移到 LRU 末尾(最近使用)。IndexMap 下 O(1)。
             self.lru_keys.shift_remove(&key);
             self.lru_keys.insert(key, ());
             Some(glyph)
@@ -172,15 +172,15 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Insert a rasterized glyph from crossfont into the atlas.
+    /// 把 crossfont 的光栅化字形插入图集。
     ///
-    /// Routes `BitmapBuffer::Rgba` glyphs to the color atlas and all others
-    /// to the grayscale atlas. Returns the `CachedGlyph` with UV coordinates.
-    /// If the atlas is full, triggers a rebuild (evicts half the LRU entries).
+    /// 把 `BitmapBuffer::Rgba` 字形路由到彩色图集,其余
+    /// 路由到灰度图集。返回带 UV 坐标的 `CachedGlyph`。
+    /// 图集已满时触发重建(逐出一半 LRU 条目)。
     pub fn insert(&mut self, font_index: usize, c: char, glyph: &RasterizedGlyph) -> CachedGlyph {
         let key = (font_index, c);
 
-        // If already cached, update LRU and return. O(1) with IndexMap.
+        // 已缓存则更新 LRU 并返回。IndexMap 下 O(1)。
         if let Some(&cached) = self.cache.get(&key) {
             self.lru_keys.shift_remove(&key);
             self.lru_keys.insert(key, ());
@@ -195,7 +195,7 @@ impl WgpuGlyphAtlas {
             self.insert_grayscale(font_index, c, glyph)
         };
 
-        // Store the rasterized glyph for potential rebuild.
+        // 保存光栅化字形以备可能的重建。
         self.stored_glyphs.insert(key, Self::clone_rasterized(glyph));
         self.cache.insert(key, cached);
         self.lru_keys.insert(key, ());
@@ -203,7 +203,7 @@ impl WgpuGlyphAtlas {
         cached
     }
 
-    /// Insert a grayscale glyph into the R8 atlas.
+    /// 把灰度字形插入 R8 图集。
     fn insert_grayscale(
         &mut self,
         font_index: usize,
@@ -262,7 +262,7 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Insert a color (RGBA) glyph into the color atlas.
+    /// 把彩色(RGBA)字形插入彩色图集。
     fn insert_color(
         &mut self,
         _font_index: usize,
@@ -321,18 +321,18 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Check if the atlas texture needs to be re-uploaded.
+    /// 检查图集纹理是否需要重新上传。
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
 
-    /// Force both grayscale and color atlas textures to be re-uploaded on next render.
+    /// 强制灰度与彩色图集纹理在下次渲染时重新上传。
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
         self.color_dirty = true;
     }
 
-    /// Get the atlas bitmap data and mark clean. Returns `(data, width, height)`.
+    /// 取图集位图数据并标记为干净。返回 `(data, width, height)`。
     pub fn take_dirty_data(&mut self) -> Option<(Vec<u8>, u32, u32)> {
         if self.dirty {
             self.dirty = false;
@@ -342,15 +342,15 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Get the dirty regions + the full atlas buffer, marking the atlas
-    /// clean. Returns `None` if the atlas is clean.
+    /// 取脏区域 + 完整图集缓冲,并把图集标记为
+    /// 干净。图集干净时返回 `None`。
     ///
-    /// `data` is an `Arc<Vec<u8>>` so the main thread and the render
-    /// thread can hold the buffer without an extra clone. The full atlas
-    /// is returned (not just the dirty sub-rectangles) because the GPU
-    /// upload API wants a `&[u8]` slice with a row stride; the render
-    /// thread uses each region's `(x, y)` as the `TexelCopyTextureInfo`
-    /// origin and a byte offset into this buffer.
+    /// `data` 是 `Arc<Vec<u8>>`,使主线程与渲染
+    /// 线程都能持有缓冲而无需额外克隆。完整图集
+    ///(而非仅脏子矩形)被返回,因为 GPU
+    /// 上传 API 需要带行距的 `&[u8]` 切片;渲染
+    /// 线程用每个区域的 `(x, y)` 作为 `TexelCopyTextureInfo`
+    /// 原点,以及此缓冲内的字节偏移。
     pub fn take_dirty_regions(&mut self) -> Option<AtlasDirty> {
         if !self.dirty {
             return None;
@@ -365,22 +365,22 @@ impl WgpuGlyphAtlas {
         })
     }
 
-    /// Get a reference to the atlas bitmap data for upload without marking clean.
+    /// 取图集位图数据用于上传,但不标记干净。
     pub fn atlas_data(&self) -> &[u8] {
         &self.atlas_data
     }
 
-    /// Atlas dimensions as `(width, height)`.
+    /// 图集尺寸,形如 `(width, height)`。
     pub fn atlas_dimensions(&self) -> (u32, u32) {
         (self.atlas_width, self.atlas_height)
     }
 
-    /// Check if the color atlas texture needs to be re-uploaded.
+    /// 检查彩色图集纹理是否需要重新上传。
     pub fn is_color_dirty(&self) -> bool {
         self.color_dirty
     }
 
-    /// Get the color atlas bitmap data and mark clean. Returns `(data, width, height)`.
+    /// 取彩色图集位图数据并标记干净。返回 `(data, width, height)`。
     pub fn take_color_dirty_data(&mut self) -> Option<(Vec<u8>, u32, u32)> {
         if self.color_dirty {
             self.color_dirty = false;
@@ -390,7 +390,7 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Color-atlas counterpart of [`take_dirty_regions`].
+    /// [`take_dirty_regions`] 的彩色图集对应版本。
     pub fn take_color_dirty_regions(&mut self) -> Option<AtlasDirty> {
         if !self.color_dirty {
             return None;
@@ -405,11 +405,11 @@ impl WgpuGlyphAtlas {
         })
     }
 
-    // ---- Private helpers ----
+    // ---- 私有辅助 ----
 
-    /// Extract a grayscale (R8) bitmap from a crossfont `RasterizedGlyph`.
+    /// 从 crossfont `RasterizedGlyph` 提取灰度(R8)位图。
     ///
-    /// Only handles `BitmapBuffer::Rgb`. Returns `(width, height, grayscale_data)`.
+    /// 只处理 `BitmapBuffer::Rgb`。返回 `(width, height, grayscale_data)`。
     fn extract_grayscale(glyph: &RasterizedGlyph) -> (u32, u32, Vec<u8>) {
         let w = glyph.width as u32;
         let h = glyph.height as u32;
@@ -429,7 +429,7 @@ impl WgpuGlyphAtlas {
                     .collect()
             },
             BitmapBuffer::Rgba(rgba) => {
-                // Fallback: extract alpha as grayscale mask.
+                // 回退:把 alpha 提取为灰度蒙版。
                 rgba.chunks_exact(4).map(|px| px[3]).collect()
             },
         };
@@ -437,7 +437,7 @@ impl WgpuGlyphAtlas {
         (w, h, gray)
     }
 
-    /// Extract RGBA pixel data from a color glyph.
+    /// 从彩色字形提取 RGBA 像素数据。
     fn extract_rgba(glyph: &RasterizedGlyph) -> (u32, u32, Vec<u8>) {
         let w = glyph.width as u32;
         let h = glyph.height as u32;
@@ -453,7 +453,7 @@ impl WgpuGlyphAtlas {
         (w, h, rgba)
     }
 
-    /// Clone a RasterizedGlyph for storage (needed for rebuild).
+    /// 克隆一份 RasterizedGlyph 用于存储(重建时需要)。
     fn clone_rasterized(glyph: &RasterizedGlyph) -> RasterizedGlyph {
         RasterizedGlyph {
             character: glyph.character,
@@ -466,7 +466,7 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Blit a grayscale glyph into the atlas bitmap at `(x, y)`.
+    /// 把灰度字形块传(blit)到图集位图的 `(x, y)` 处。
     fn blit_glyph(&mut self, x: u32, y: u32, w: u32, h: u32, data: &[u8]) {
         for row in 0..h {
             let dst_offset = ((y + row) * self.atlas_width + x) as usize;
@@ -479,7 +479,7 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Blit an RGBA color glyph into the color atlas at `(x, y)`.
+    /// 把 RGBA 彩色字形块传到彩色图集的 `(x, y)` 处。
     fn blit_color_glyph(&mut self, x: u32, y: u32, w: u32, h: u32, data: &[u8]) {
         let row_bytes = w as usize * 4;
         for row in 0..h {
@@ -494,7 +494,7 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Allocate a rectangle in the color atlas using skyline bin-packing.
+    /// 用天际线装箱在彩色图集中分配一个矩形。
     fn allocate_color_rect(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
         if width == 0 || height == 0 || width > self.atlas_width || height > self.atlas_height {
             return None;
@@ -580,9 +580,9 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Allocate a rectangle in the atlas using skyline bin-packing.
+    /// 用天际线装箱在图集中分配一个矩形。
     ///
-    /// Returns `(x, y)` top-left position or `None` if no space.
+    /// 返回 `(x, y)` 左上位置,无空间时返回 `None`。
     fn allocate_rect(&mut self, width: u32, height: u32) -> Option<(u32, u32)> {
         if width == 0 || height == 0 || width > self.atlas_width || height > self.atlas_height {
             return None;
@@ -591,7 +591,7 @@ impl WgpuGlyphAtlas {
         let mut best_y = u32::MAX;
         let mut best_idx = 0;
 
-        // Find the skyline position that gives the lowest resulting Y.
+        // 寻找能给出最低结果 Y 的天际线位置。
         for i in 0..self.skyline.len() {
             if let Some(y) = self.fit_at(i, width, height) {
                 if y + height < best_y {
@@ -608,7 +608,7 @@ impl WgpuGlyphAtlas {
         let top_y = best_y - height;
         let best_x = self.skyline[best_idx].x;
 
-        // Insert new skyline node for the placed rectangle.
+        // 为已放置的矩形插入新的天际线节点。
         let new_seg = SkylineSeg {
             x: best_x,
             y: best_y,
@@ -617,17 +617,17 @@ impl WgpuGlyphAtlas {
 
         self.skyline.insert(best_idx, new_seg);
 
-        // Trim or remove segments covered by the new rectangle.
+        // 裁剪或移除被新矩形覆盖的段。
         let right_edge = best_x + width;
         let mut i = best_idx + 1;
         while i < self.skyline.len() {
             let seg_end = self.skyline[i].x + self.skyline[i].width;
             if self.skyline[i].x < right_edge {
                 if seg_end <= right_edge {
-                    // Fully covered — remove.
+                    // 完全覆盖——移除。
                     self.skyline.remove(i);
                 } else {
-                    // Partially covered — shrink from left.
+                    // 部分覆盖——从左侧收缩。
                     let shrink = right_edge - self.skyline[i].x;
                     self.skyline[i].x += shrink;
                     self.skyline[i].width -= shrink;
@@ -643,8 +643,8 @@ impl WgpuGlyphAtlas {
         Some((best_x, top_y))
     }
 
-    /// Check if a rect of `width` x `height` fits starting at skyline segment `idx`.
-    /// Returns the Y coordinate of the top of the placed rect, or None if it doesn't fit.
+    /// 检查 `width` x `height` 的矩形能否从天际线段 `idx` 起放下。
+    /// 返回所放矩形顶部的 Y 坐标,放不下返回 None。
     fn fit_at(&self, idx: usize, width: u32, height: u32) -> Option<u32> {
         let start_x = self.skyline[idx].x;
         let right_edge = start_x + width;
@@ -666,7 +666,7 @@ impl WgpuGlyphAtlas {
         Some(max_y)
     }
 
-    /// Merge adjacent skyline segments at the same Y level.
+    /// 合并同一 Y 层上相邻的天际线段。
     fn merge_skyline(&mut self) {
         let mut i = 0;
         while i + 1 < self.skyline.len() {
@@ -679,9 +679,9 @@ impl WgpuGlyphAtlas {
         }
     }
 
-    /// Rebuild both atlases after eviction.
+    /// 逐出后重建两个图集。
     ///
-    /// Evicts the oldest half of the LRU entries and re-packs remaining glyphs.
+    /// 逐出 LRU 中较旧的一半并重新装箱剩余字形。
     fn rebuild(&mut self) {
         let evict_count = self.lru_keys.len() / 2;
         if evict_count == 0 && self.lru_keys.len() > 0 {
@@ -699,16 +699,16 @@ impl WgpuGlyphAtlas {
             return;
         }
 
-        // PureTerm: use `drain(..evict_count)` to remove the oldest half
-        // in O(n) (single allocation shift). Equivalent semantics to the
-        // old `Vec::drain` path, but consistent with the new IndexMap.
+        // PureTerm:用 `drain(..evict_count)` 以 O(n) 移除最旧的一半
+        // (单次分配搬移)。语义与旧的 `Vec::drain`
+        // 路径等价,但与新的 IndexMap 保持一致。
         let evicted: Vec<_> = self.lru_keys.drain(..evict_count).collect();
         for (key, _) in &evicted {
             self.cache.remove(key);
             self.stored_glyphs.remove(key);
         }
 
-        // Reset both atlas bitmaps and skylines.
+        // 重置两个图集的位图与天际线。
         self.atlas_data.fill(0);
         self.skyline.clear();
         self.skyline.push(SkylineSeg { x: 0, y: 0, width: self.atlas_width });
@@ -818,16 +818,16 @@ mod tests {
         assert_eq!(cached.width, 10.0);
         assert_eq!(cached.height, 14.0);
         assert_eq!(cached.atlas_kind, AtlasKind::Grayscale);
-        // v2: x_advance and y_advance default to 0; the shaper / renderer
-        // is responsible for filling them in from a real shaping pass.
+        // v2:x_advance 与 y_advance 默认为 0;整形器 / 渲染器
+        // 负责从真实整形过程填充它们。
         assert_eq!(cached.x_advance, 0.0);
         assert_eq!(cached.y_advance, 0.0);
     }
 
-    /// v2: a `CachedGlyph` constructed manually (e.g. by the shaper when
-    /// producing a shaped run) must preserve the per-glyph `x_advance`.
-    /// This guards against accidental field-stripping during struct
-    /// refactors.
+    /// v2:手工构造的 `CachedGlyph`(例如整形器在产出
+    /// 整形 run 时)必须保留逐字形的 `x_advance`。
+    /// 该测试防止结构体重构时不慎剥离字段。
+    /// 该测试防止结构体重构时不慎剥离字段。
     #[test]
     fn test_cached_glyph_preserves_x_advance() {
         let g = CachedGlyph {
@@ -847,7 +847,7 @@ mod tests {
         assert_eq!(g.y_advance, 0.0);
     }
 
-    /// v2: a `CachedGlyph` for a CJK wide char must carry a 2-cell advance.
+    /// v2:CJK 宽字符的 `CachedGlyph` 必须携带 2 格步进。
     #[test]
     fn test_cached_glyph_cjk_advance() {
         let g = CachedGlyph {
@@ -863,14 +863,14 @@ mod tests {
             y_advance: 0.0,
             atlas_kind: AtlasKind::Grayscale,
         };
-        // When cell width is 7, 2-cell wide = 14.0
+        // 单元格宽 7 时,2 格宽 = 14.0。
         assert_eq!(g.x_advance, 14.0);
     }
 
     #[test]
     fn test_insert_color_glyph() {
         let mut atlas = WgpuGlyphAtlas::new();
-        // Simulate a color emoji glyph (RGBA).
+        // 模拟彩色 emoji 字形(RGBA)。
         let glyph = RasterizedGlyph {
             character: '🎉',
             top: 0,
@@ -920,11 +920,11 @@ mod tests {
         let data = atlas.take_dirty_data();
         assert!(data.is_some());
         assert!(!atlas.is_dirty());
-        // Second call should return None.
+        // 第二次调用应返回 None。
         assert!(atlas.take_dirty_data().is_none());
     }
 
-    /// Helper: build a tiny 1x1 Rgb glyph.
+    /// 辅助:构造一个 1x1 的 Rgb 小字形。
     fn tiny_glyph(c: char) -> RasterizedGlyph {
         RasterizedGlyph {
             character: c,
@@ -939,17 +939,17 @@ mod tests {
 
     #[test]
     fn lru_get_promotes_to_back() {
-        // PureTerm: IndexMap-backed LRU — `get` on a hit must move the
-        // entry to the back so the next eviction spares it.
+        // PureTerm:IndexMap 支撑的 LRU——命中时 `get` 必须把
+        // 条目移到尾部,使下一次逐出放过它。
         let mut atlas = WgpuGlyphAtlas::new();
         atlas.insert(0, 'A', &tiny_glyph('A'));
         atlas.insert(0, 'B', &tiny_glyph('B'));
         atlas.insert(0, 'C', &tiny_glyph('C'));
 
-        // Touch 'A' so it becomes most-recently-used.
+        // 触碰 'A',使其成为最近使用。
         assert!(atlas.get(0, 'A').is_some());
 
-        // The LRU order should now be: B, C, A.
+        // 此刻 LRU 顺序应为:B、C、A。
         let order: Vec<_> = atlas.lru_keys.keys().copied().collect();
         assert_eq!(order, vec![(0, 'B'), (0, 'C'), (0, 'A')]);
     }
@@ -961,31 +961,31 @@ mod tests {
         atlas.insert(0, 'B', &tiny_glyph('B'));
         atlas.insert(0, 'A', &tiny_glyph('A')); // re-insert 'A'
 
-        // After re-insert, A should be at the back.
+        // 重新插入后,A 应位于尾部。
         let order: Vec<_> = atlas.lru_keys.keys().copied().collect();
         assert_eq!(order, vec![(0, 'B'), (0, 'A')]);
     }
 
     #[test]
     fn lru_drain_evicts_oldest() {
-        // PureTerm: rebuild path uses `drain(..evict_count)` to remove the
-        // oldest half in O(n) (single allocation shift).
+        // PureTerm:重建路径用 `drain(..evict_count)` 以 O(n) 移除
+        // 最旧的一半(单次分配搬移)。
         let mut atlas = WgpuGlyphAtlas::new();
         for c in "ABCDE".chars() {
             atlas.insert(0, c, &tiny_glyph(c));
         }
-        // Order: A B C D E (A is oldest).
+        // 顺序:A B C D E(A 最旧)。
         let evicted: Vec<_> = atlas.lru_keys.drain(..2).collect();
         let evicted_keys: Vec<_> = evicted.into_iter().map(|(k, ())| k).collect();
         assert_eq!(evicted_keys, vec![(0, 'A'), (0, 'B')]);
-        // Survivors in order: C D E.
+        // 幸存者按序:C D E。
         let survivors: Vec<_> = atlas.lru_keys.keys().copied().collect();
         assert_eq!(survivors, vec![(0, 'C'), (0, 'D'), (0, 'E')]);
     }
 
-    /// PureTerm B3.1: `take_dirty_regions` returns per-glyph regions instead
-    /// of forcing the render thread to re-upload the full atlas. A single
-    /// new glyph (one of the 8192 cache slots) yields a single small rect.
+    /// PureTerm B3.1:`take_dirty_regions` 返回逐字形区域,
+    /// 而不是迫使渲染线程重传整个图集。单个
+    /// 新字形(8192 个缓存槽之一)产生一个小矩形。
     #[test]
     fn dirty_regions_track_per_glyph() {
         let mut atlas = WgpuGlyphAtlas::new();
@@ -993,19 +993,19 @@ mod tests {
         atlas.insert(0, 'B', &tiny_glyph('B'));
         let dirty = atlas.take_dirty_regions().expect("atlas is dirty");
         assert_eq!(dirty.regions.len(), 2);
-        // Each region is 1x1 (tiny_glyph).
+        // 每个区域都是 1x1(tiny_glyph)。
         for r in &dirty.regions {
             assert_eq!(r.w, 1);
             assert_eq!(r.h, 1);
         }
-        // After take, atlas is clean and a second take returns None.
+        // 取走后图集变干净,第二次取返回 None。
         assert!(atlas.take_dirty_regions().is_none());
-        // The Arc<data> shares the full atlas buffer (4MB).
+        // Arc<data> 共享完整图集缓冲(4MB)。
         assert_eq!(dirty.data.len(), (ATLAS_SIZE * ATLAS_SIZE) as usize);
     }
 
-    /// PureTerm B3.1: `take_color_dirty_regions` is the color-atlas
-    /// counterpart.
+    /// PureTerm B3.1:`take_color_dirty_regions` 是彩色图集的
+    /// 对应版本。
     #[test]
     fn color_dirty_regions_track_per_glyph() {
         let mut atlas = WgpuGlyphAtlas::new();
@@ -1023,7 +1023,7 @@ mod tests {
         assert_eq!(dirty.regions.len(), 1);
         assert_eq!(dirty.regions[0].w, 2);
         assert_eq!(dirty.regions[0].h, 2);
-        // Color atlas is 4 bytes per pixel.
+        // 彩色图集每像素 4 字节。
         assert_eq!(dirty.data.len(), (ATLAS_SIZE * ATLAS_SIZE * 4) as usize);
     }
 }

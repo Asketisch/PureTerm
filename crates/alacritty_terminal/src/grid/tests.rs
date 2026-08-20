@@ -1,4 +1,4 @@
-//! Tests for the Grid.
+//! Grid 的测试。
 
 use super::*;
 
@@ -22,7 +22,7 @@ impl GridCell for usize {
     }
 }
 
-// Scroll up moves lines upward.
+// 向上滚动把行上移。
 #[test]
 fn scroll_up() {
     let mut grid = Grid::<usize>::new(10, 1, 0);
@@ -54,7 +54,7 @@ fn scroll_up() {
     assert_eq!(grid[Line(9)].occ, 0);
 }
 
-// Scroll down moves lines downward.
+// 向下滚动把行下移。
 #[test]
 fn scroll_down() {
     let mut grid = Grid::<usize>::new(10, 1, 0);
@@ -118,7 +118,7 @@ fn scroll_down_with_history() {
     assert_eq!(grid[Line(9)].occ, 1);
 }
 
-// Test that GridIterator works.
+// 测试 GridIterator 可用。
 #[test]
 fn test_iter() {
     let assert_indexed = |value: usize, indexed: Option<Indexed<&usize>>| {
@@ -143,7 +143,7 @@ fn test_iter() {
     assert_indexed(3, iter.next());
     assert_indexed(4, iter.next());
 
-    // Test line-wrapping.
+    // 测试换行。
     assert_indexed(5, iter.next());
     assert_eq!(Column(0), iter.point().column);
     assert_eq!(1, iter.point().line);
@@ -152,10 +152,10 @@ fn test_iter() {
     assert_eq!(Column(4), iter.point().column);
     assert_eq!(0, iter.point().line);
 
-    // Make sure iter.cell() returns the current iterator position.
+    // 确保 iter.cell() 返回迭代器当前位置。
     assert_eq!(&4, iter.cell());
 
-    // Test that iter ends at end of grid.
+    // 测试迭代在网格末尾结束。
     let mut final_iter = grid.iter_from(Point { line: Line(4), column: Column(4) });
     assert_eq!(None, final_iter.next());
     assert_indexed(23, final_iter.prev());
@@ -269,7 +269,7 @@ fn grow_reflow() {
     assert_eq!(grid[Line(0)][Column(1)], cell('2'));
     assert_eq!(grid[Line(0)][Column(2)], cell('3'));
 
-    // Make sure rest of grid is empty.
+    // 确保网格其余部分为空。
     assert_eq!(grid[Line(1)].len(), 3);
     assert_eq!(grid[Line(1)][Column(0)], Cell::default());
     assert_eq!(grid[Line(1)][Column(1)], Cell::default());
@@ -298,7 +298,7 @@ fn grow_reflow_multiline() {
     assert_eq!(grid[Line(0)][Column(4)], cell('5'));
     assert_eq!(grid[Line(0)][Column(5)], cell('6'));
 
-    // Make sure rest of grid is empty.
+    // 确保网格其余部分为空。
     for r in (1..3).map(Line::from) {
         assert_eq!(grid[r].len(), 6);
         for c in 0..6 {
@@ -375,7 +375,7 @@ fn size_hint_matches_count<T>(iter: impl Iterator<Item = T>) {
     assert_eq!(upper, Some(count));
 }
 
-// https://github.com/rust-lang/rust-clippy/pull/6375
+// 见 https://github.com/rust-lang/rust-clippy/pull/6375
 #[allow(clippy::all)]
 fn cell(c: char) -> Cell {
     let mut cell = Cell::default();

@@ -1,9 +1,9 @@
-//! GAP-7.7: Custom resume bindings.
+//! GAP-7.7:自定义 resume 绑定。
 //!
-//! A *resume binding* is a named, templated shell command keyed by
-//! `(kind, checkpoint)` that reattaches to an external persistent session
-//! (tmux/screen/zellij) on cold-resume, instead of / in addition to the
-//! default `claude --resume <id>`. Bindings are declared in `pureterm.toml`:
+//! *resume 绑定* 是一条命名的、带模板的 shell 命令,以
+//! `(kind, checkpoint)` 为键,在冷恢复时重连到外部持久会话
+//! (tmux/screen/zellij),替代或补充默认的
+//! `claude --resume <id>`。绑定在 `pureterm.toml` 中声明:
 //!
 //! ```toml
 //! [[resume.bindings]]
@@ -13,11 +13,11 @@
 //! auto = true
 //! ```
 //!
-//! This module owns: lightweight placeholder interpolation, the config
-//! CRUD (`set_binding` / `remove_binding` / `list_bindings`) used by the
-//! `pureterm surface resume set|list|remove` CLI, and (M2) HMAC-signed
-//! persistent approval tokens + the `run` execution path + cold-resume
-//! integration. Unix-only — execution goes through `puretermd`.
+//! 本模块负责:轻量占位符插值、配置的
+//! 增删改查(`set_binding` / `remove_binding` / `list_bindings`),供
+//! `pureterm surface resume set|list|remove` CLI 使用;以及(M2)HMAC 签名
+//! 的持久审批 token、`run` 执行路径与冷恢复
+//! 集成。仅 Unix——执行经 `puretermd` 完成。
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -31,12 +31,12 @@ use toml_edit::{ArrayOfTables, Item, Table};
 use crate::app_config::{AppConfig, ResumeBinding};
 use crate::cli::ResumeSub;
 
-/// HMAC-SHA256 type alias for token computation.
+/// 用于 token 计算的 HMAC-SHA256 类型别名。
 type HmacSha256 = Hmac<Sha256>;
 
-/// Placeholder values fed to [`interpolate`]. All four are substituted with
-/// plain `String::replace` (no template engine) — consistent with the
-/// `{session_id}` interpolation at `session_restore.rs:378`.
+/// 提供给 [`interpolate`] 的占位符值。四个值全部用
+/// 简单的 `String::replace` 替换(无模板引擎)——与
+/// `session_restore.rs:378` 处的 `{session_id}` 插值保持一致。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct InterpolateVars<'a> {
     pub session_id: &'a str,
@@ -45,8 +45,8 @@ pub(crate) struct InterpolateVars<'a> {
     pub cwd: &'a str,
 }
 
-/// Substitute `{session_id}` / `{checkpoint}` / `{kind}` / `{cwd}` in each
-/// argv element. Elements without a placeholder are returned unchanged.
+/// 在每个 argv 元素中替换 `{session_id}` / `{checkpoint}` / `{kind}` / `{cwd}`。
+/// 不含占位符的元素原样返回。
 pub(crate) fn interpolate(argv: &[String], vars: &InterpolateVars<'_>) -> Vec<String> {
     argv.iter()
         .map(|s| {

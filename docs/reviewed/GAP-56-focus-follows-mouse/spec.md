@@ -1,6 +1,6 @@
 ---
 gap: GAP-56
-title: Focus Follows Mouse
+title: 焦点跟随鼠标
 category: 视觉
 plan_type: feature
 priority: P4

@@ -5,9 +5,9 @@ use crate::app_config::AppConfig;
 use crate::cli::ResumeSub;
 
 
-/// CLI entrypoint for `pureterm surface resume ...`. Operates on the user's
-/// real config (`AppConfig::config_path()`). `Run` mints an HMAC approval token
-/// via the Feed panel (see `run_binding`); `Set/List/Remove` are local CRUD.
+/// `pureterm surface resume ...` 的 CLI 入口。操作的是用户的
+/// 真实配置(`AppConfig::config_path()`)。`Run` 经由 Feed 面板铸造 HMAC 审批令牌
+///(见 `run_binding`);`Set/List/Remove` 是本地增删改查。
 pub(crate) fn dispatch(cmd: ResumeSub) {
     let path = AppConfig::config_path();
     match cmd {
@@ -52,10 +52,10 @@ pub(crate) fn dispatch(cmd: ResumeSub) {
     }
 }
 
-/// GAP-7.7: ask the running GUI to execute a resume binding. The GUI does the
-/// token check (silent spawn if valid) or surfaces the Feed panel; on Always it
-/// persists an HMAC token (enabling future cold-resume auto-spawn) and spawns.
-/// Thin CLI broker — the actual daemon spawn happens in the GUI process.
+/// GAP-7.7:请求运行中的 GUI 执行一条 resume 绑定。GUI 负责
+/// 令牌校验(有效则静默拉起)或弹出 Feed 面板;选 Always 时
+/// 持久化 HMAC 令牌(使未来冷恢复自动拉起可行)并执行。
+/// 极薄 CLI 中介——真正的启动发生在 GUI 进程内。
 pub(super) fn run_binding(kind: &str, checkpoint: &str) {
     let path = AppConfig::config_path();
     let Some(binding) = list_bindings(&path)

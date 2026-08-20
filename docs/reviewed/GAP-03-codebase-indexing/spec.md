@@ -1,7 +1,7 @@
 ---
 gap: GAP-03
-title: Codebase Indexing
-category: AI Agent
+title: 代码库索引
+category: AI 智能体
 plan_type: feature
 priority: P1
 effort: L

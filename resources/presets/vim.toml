@@ -1,8 +1,8 @@
-# PureTerm vim-style keymap
-# Pane navigation with hjkl, plus standard macOS tab/window bindings.
-# Usage: pureterm shortcuts preset vim
+# PureTerm vim 风格键位方案
+# 用 hjkl 导航窗格,外加标准 macOS 标签/窗口绑定。
+# 用法:pureterm shortcuts preset vim
 
-# ── Tab management (unchanged from default) ────────────────────────────
+# ── 标签管理(与默认相同) ────────────────────────────
 
 [[keyboard.bindings]]
 key = "t"
@@ -24,7 +24,7 @@ key = "{"
 mods = "Command"
 action = "PrevTab"
 
-# ── Split pane (unchanged) ─────────────────────────────────────────────
+# ── 分屏(与默认相同) ─────────────────────────────────────────────
 
 [[keyboard.bindings]]
 key = "d"
@@ -51,7 +51,7 @@ key = "Enter"
 mods = "Command|Shift"
 action = "ToggleZoom"
 
-# ── Clipboard (unchanged) ──────────────────────────────────────────────
+# ── 剪贴板(与默认相同) ──────────────────────────────────────────────
 
 [[keyboard.bindings]]
 key = "v"
@@ -63,8 +63,8 @@ key = "c"
 mods = "Command"
 action = "Copy"
 
-# ── Vim-style pane navigation ──────────────────────────────────────────
-# ⌘+h/j/k/l for pane navigation (adjacent, not DFS order)
+# ── vim 风格窗格导航 ──────────────────────────────────────────
+# ⌘+h/j/k/l 导航窗格(相邻优先,非 DFS 顺序)
 
 [[keyboard.bindings]]
 key = "h"
@@ -86,7 +86,7 @@ key = "k"
 mods = "Command"
 action = "FocusPaneNext"
 
-# ── Dialogs ────────────────────────────────────────────────────────────
+# ── 对话框 ────────────────────────────────────────────────────────────
 
 [[keyboard.bindings]]
 key = "S"

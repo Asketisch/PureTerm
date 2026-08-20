@@ -5,55 +5,55 @@ use serde::{Deserialize, Serialize};
 use crate::password_manager::PasswordRef;
 use crate::serial_telnet::{SerialSettings, SessionType};
 
-/// SSH Profile for PureTerm
+/// PureTerm 的 SSH 连接配置
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, SerdeReplace)]
 pub struct SshProfile {
     pub name: String,
     pub host: String,
     pub user: Option<String>,
     pub port: Option<u16>,
-    pub password: Option<String>, // encrypted
+    pub password: Option<String>, // 已加密
     pub key_path: Option<String>,
     pub shortcut: Option<String>,
-    /// GAP-5.4: forward the local ssh-agent to the remote host (`-o
-    /// ForwardAgent=yes`). Default off — agent forwarding is a trust risk on
-    /// untrusted/compromised hosts (OpenSSH defaults off for the same reason).
+    /// GAP-5.4:把本地 ssh-agent 转发给远端主机(以
+    /// `-o ForwardAgent=yes` 形式)。默认关闭 —— agent 转发在
+    /// 不可信 / 被攻陷的主机上是信任风险(OpenSSH 同样默认关闭)。
     #[serde(default)]
     pub forward_agent: bool,
-    /// GAP-40: local port forwards (`ssh -L`), each `localPort:remoteHost:remotePort`.
+    /// GAP-40:本地端口转发(`ssh -L`),格式为 `localPort:remoteHost:remotePort`。
     #[serde(default)]
     pub local_forwards: Vec<String>,
-    /// GAP-40: remote port forwards (`ssh -R`).
+    /// GAP-40:远端端口转发(`ssh -R`)。
     #[serde(default)]
     pub remote_forwards: Vec<String>,
-    /// GAP-40: untrusted X11 forwarding (`ssh -X`).
+    /// GAP-40:不受信任的 X11 转发(`ssh -X`)。
     #[serde(default)]
     pub forward_x11: bool,
-    /// GAP-40: trusted X11 forwarding (`ssh -Y`; overrides `forward_x11`).
+    /// GAP-40:受信任的 X11 转发(`ssh -Y`;覆盖 `forward_x11`)。
     #[serde(default)]
     pub forward_x11_trusted: bool,
-    /// GAP-41: jump host chain (`ProxyJump`); tried before OpenSSH config.
+    /// GAP-41:跳板机链(`ProxyJump`);先于 OpenSSH 配置尝试。
     #[serde(default)]
     pub jump_hosts: Vec<String>,
-    /// GAP-42: commands to run after login (one per line).
+    /// GAP-42:登录后运行的命令(每行一条)。
     #[serde(default)]
     pub login_commands: Vec<String>,
-    /// GAP-42: delay between login commands (ms).
+    /// GAP-42:登录命令之间的延迟(毫秒)。
     #[serde(default = "default_login_delay_ms")]
     pub login_delay_ms: u64,
-    /// GAP-42: `continue` or `stop` on first failure.
+    /// GAP-42:首次失败时 `continue` 或 `stop`。
     #[serde(default)]
     pub login_on_error: String,
-    /// GAP-37: 1Password item ref (`op://…`) or LastPass entry name.
+    /// GAP-37:1Password 条目引用(`op://…`)或 LastPass 条目名称。
     #[serde(default)]
     pub password_ref: Option<PasswordRefToml>,
-    /// GAP-39: `ssh` (default), `telnet`, or `serial`.
+    /// GAP-39:`ssh`(默认)、`telnet` 或 `serial`。
     #[serde(default)]
     pub session_type: String,
-    /// GAP-39: serial device path (e.g. `/dev/ttyUSB0`).
+    /// GAP-39:串口设备路径(例如 `/dev/ttyUSB0`)。
     #[serde(default)]
     pub serial_port: Option<String>,
-    /// GAP-39: serial baud rate.
+    /// GAP-39:串口波特率。
     #[serde(default)]
     pub baud_rate: Option<u32>,
 }
@@ -89,7 +89,7 @@ impl Default for SshProfile {
     }
 }
 
-/// TOML-friendly password ref (flattened).
+/// 适合 TOML 的密码引用(扁平的)。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, SerdeReplace)]
 pub struct PasswordRefToml {
     #[serde(default)]
@@ -133,7 +133,7 @@ impl SshProfile {
         self.port.unwrap_or(22)
     }
 
-    /// GAP-40: build the forward bundle for `SshCommandBuilder`.
+    /// GAP-40:为 `SshCommandBuilder` 构建转发集合。
     pub fn forwards(&self) -> SshForwards {
         SshForwards {
             local: self.local_forwards.clone(),
@@ -144,7 +144,7 @@ impl SshProfile {
     }
 }
 
-/// Registry for SSH profiles loaded from config
+/// 从配置加载的 SSH 连接配置注册表
 #[derive(Debug, Clone)]
 pub struct SshProfileRegistry {
     profiles: Vec<SshProfile>,
@@ -174,13 +174,13 @@ impl Default for SshProfileRegistry {
     }
 }
 
-/// Global `[ssh]` table knobs (not per-profile).
+/// 全局 `[ssh]` 表旋钮(非每个 profile)。
 #[derive(Debug, Clone)]
 pub struct SshSettings {
-    /// GAP-5.3: when several panes attach the same daemon session, PTY
-    /// resize uses min(cols) × min(rows) across all attached panes.
+    /// GAP-5.3:多个窗格附加同一个守护进程会话时,PTY
+    /// 缩放使用所有附加窗格中 min(cols) × min(rows)。
     pub smallest_screen_wins: bool,
-    /// GAP-37: password manager source (`auto`, `keychain`, `1password`, `lastpass`).
+    /// GAP-37:密码管理器来源(`auto`、`keychain`、`1password`、`lastpass`)。
     pub password_manager: String,
 }
 
@@ -193,7 +193,7 @@ impl Default for SshSettings {
     }
 }
 
-/// Load `[ssh]` settings from `pureterm.toml`. Missing table ⇒ defaults.
+/// 从 `pureterm.toml` 加载 `[ssh]` 设置。表缺失 ⇒ 使用默认值。
 pub fn load_ssh_settings(path: &std::path::Path) -> SshSettings {
     let contents = match std::fs::read_to_string(path) {
         Ok(c) => c,

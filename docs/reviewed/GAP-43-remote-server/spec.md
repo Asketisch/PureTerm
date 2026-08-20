@@ -1,6 +1,6 @@
 ---
 gap: GAP-43
-title: Remote Server
+title: 远程服务器
 category: SSH/网络
 plan_type: feature
 priority: P2

@@ -49,20 +49,20 @@ fn target_percent_exact_pane_id() {
 
 #[test]
 fn target_percent_zero_falls_back_to_first() {
-    // pane ids start at 1, so `%0` has no exact match → DFS index 0.
+    // pane id 从 1 开始,因此 `%0` 无精确匹配 → DFS 索引 0。
     let panes = sample();
     assert_eq!(parse_target(&Some("%0".into()), &panes).unwrap(), 1);
 }
 
 #[test]
 fn target_percent_out_of_range_errors() {
-    let panes = sample(); // ids 1,2,3 — no id 9 and DFS index 9 is out of range
+    let panes = sample(); // id 1,2,3 — 无 id 9,且 DFS 索引 9 越界
     assert!(parse_target(&Some("%9".into()), &panes).is_err());
 }
 
 #[test]
 fn target_next_wraps() {
-    let panes = sample(); // active = pane 1 (idx 0)
+    let panes = sample(); // 活动 = 窗格 1(idx 0)
     assert_eq!(parse_target(&Some(":+".into()), &panes).unwrap(), 2);
 }
 
@@ -70,13 +70,13 @@ fn target_next_wraps() {
 fn target_next_wraps_around() {
     let mut panes = sample();
     panes[0].active = false;
-    panes[2].active = true; // pane 3 active (idx 2, last)
+    panes[2].active = true; // 窗格 3 活动(idx 2,最后一个)
     assert_eq!(parse_target(&Some(":+".into()), &panes).unwrap(), 1);
 }
 
 #[test]
 fn target_prev_wraps() {
-    let panes = sample(); // active = pane 1 (idx 0)
+    let panes = sample(); // 活动 = 窗格 1(idx 0)
     assert_eq!(parse_target(&Some(":-".into()), &panes).unwrap(), 3);
 }
 
@@ -110,13 +110,13 @@ fn render_format_inactive() {
     assert_eq!(render_format("#{pane_active}", &p), "0");
 }
 
-// ── GAP-6.6: CLI ↔ SocketRouter round-trip (cross-module seam) ──────────
+// ── GAP-6.6: CLI ↔ SocketRouter round-trip(跨模块接缝) ──────────────────────────────
 //
-// Unit tests above cover parse_target / map_key / render_format in
-// isolation. These drive `run()` (the private entry under `dispatch`) end
-// to end through a fake-GUI Unix socket that runs the REAL `SocketRouter`,
-// proving the CLI marshals the right method+params and the router emits the
-// right `IpcSideEffect`. Mirrors the `agent_e2e.rs` fake-socket pattern.
+// 上面的单元测试单独覆盖 parse_target / map_key / render_format。
+// 以下用例通过一个运行真实 `SocketRouter` 的 fake-GUI Unix socket,端到端驱动
+// `run()`(即 `dispatch` 下的私有入口),证明 CLI 序列化出正确的 method+params,
+// 证明 CLI 序列化出正确的 method+params,且路由器发出
+// 且路由器发出正确的 `IpcSideEffect`。复用 `agent_e2e.rs` 的 fake-socket 模式。
 #[cfg(unix)]
 mod round_trip {
     use super::*;
@@ -127,8 +127,8 @@ mod round_trip {
     use std::thread;
     use std::time::Duration;
 
-    /// What the fake GUI observed: each (method, params) it dispatched and
-    /// every side effect the router emitted.
+    /// 假 GUI 观察到的内容:它分发过的每个 (method, params) 以及
+    /// 路由器发出的每个副作用。
     #[derive(Default)]
     struct Recorded {
         calls: Vec<(String, Value)>,
@@ -146,8 +146,8 @@ mod round_trip {
         p
     }
 
-    /// 2 tabs: tab 0 = panes {10(active), 11}; tab 1 = pane {20(active)}.
-    /// `%0` resolves to the first pane (id 10); tab index 1 is valid.
+    /// 2 个标签页:标签 0 = 窗格 {10(活动), 11};标签 1 = 窗格 {20(活动)}。
+    /// `%0` 解析到第一个窗格(id 10);标签索引 1 有效。
     fn tmux_snap() -> AppSnapshot {
         AppSnapshot {
             window_count: 1,
@@ -170,11 +170,11 @@ mod round_trip {
         }
     }
 
-    /// Fake GUI: binds the socket, runs the real `SocketRouter` over every
-    /// connection, records methods + side effects. Each `send_rpc` opens a
-    /// fresh connection (the client half-closes its write side after the
-    /// request, so `read_to_string` returns exactly one request). Polls
-    /// non-blocking so the test can stop it once `run()` returns.
+    /// 假 GUI:绑定 socket,对每个连接运行真实的 `SocketRouter`,
+    /// 记录方法 + 副作用。每次 `send_rpc` 打开一条新连接(客户端在请求后
+    /// 关闭其写端,因此 `read_to_string` 恰好返回一个请求)。
+    /// 请求,因此 `read_to_string` 恰好返回一个请求)。
+    /// 采用非阻塞轮询,以便 `run()` 返回后停止该测试线程。
     #[allow(clippy::type_complexity)]
     fn spawn_fake_gui(
         path: PathBuf,
@@ -239,13 +239,13 @@ mod round_trip {
         (rec, stop, handle)
     }
 
-    /// `capture-pane -p` (no `--lines`) defaults `lines=50` (the DoD) and
-    /// targets the resolved pane.
+    /// `capture-pane -p`(不带 `--lines`)默认 `lines=50`(DoD 要求)并
+    /// 定位到解析出的窗格。
     #[test]
     fn capture_pane_round_trip_marshals_snapshot_with_lines_default() {
         let path = unique_socket_path("cap");
         let (rec, stop, handle) = spawn_fake_gui(path.clone(), tmux_snap());
-        thread::sleep(Duration::from_millis(60)); // let the listener bind
+        thread::sleep(Duration::from_millis(60)); // 等待监听器绑定
         let cmd = TmuxSub::CapturePane {
             target: Some("%0".into()),
             print: true,
@@ -267,8 +267,8 @@ mod round_trip {
         assert_eq!(snap_call.1["pane_id"], 10, "%0 → first pane id");
     }
 
-    /// `send-keys ping` marshals `surface.send_text` with the resolved pane
-    /// and the (map_key-translated) text.
+    /// `send-keys ping` 以解析出的窗格和(map_key 转换后的)文本序列化出
+    /// `surface.send_text`。
     #[test]
     fn send_keys_round_trip_marshals_target_and_text() {
         let path = unique_socket_path("sk");
@@ -289,8 +289,8 @@ mod round_trip {
         assert_eq!(st.1["text"], "ping");
     }
 
-    /// `join-pane -s %0 -t 1` marshals `pane.attach` and the router emits
-    /// `AttachPane { src_pane_id: 10, dst_tab_index: 1, Vertical }`.
+    /// `join-pane -s %0 -t 1` 序列化出 `pane.attach`,路由器发出
+    /// `AttachPane { src_pane_id: 10, dst_tab_index: 1, Vertical }`。
     #[test]
     fn join_pane_round_trip_emits_attach_pane_effect() {
         let path = unique_socket_path("jp");

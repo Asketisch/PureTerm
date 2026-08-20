@@ -1,11 +1,11 @@
-# PureTerm tmux-style keymap
-# Ctrl+B prefix chord for pane/window management.
-# Usage: pureterm shortcuts preset tmux
+# PureTerm tmux 风格键位方案
+# Ctrl+B 前缀和弦,用于窗格/窗口管理。
+# 用法:pureterm shortcuts preset tmux
 #
-# Note: chord support is Phase 6 (GAP-3.7). Until then, this preset
-# uses Cmd-based bindings as a close approximation.
+# 注意:和弦支持在 Phase 6(GAP-3.7)。在那之前,本预设
+# 用 Cmd 系绑定做近似替代。
 
-# ── Tab = tmux window ──────────────────────────────────────────────────
+# ── 标签 = tmux window ──────────────────────────────────────────────────
 
 [[keyboard.bindings]]
 key = "t"
@@ -27,7 +27,7 @@ key = "{"
 mods = "Command"
 action = "PrevTab"
 
-# ── Split pane ─────────────────────────────────────────────────────────
+# ── 分屏 ─────────────────────────────────────────────────────────
 
 [[keyboard.bindings]]
 key = "d"
@@ -54,7 +54,7 @@ key = "Enter"
 mods = "Command|Shift"
 action = "ToggleZoom"
 
-# ── tmux-style: Cmd+Arrow for pane nav ─────────────────────────────────
+# ── tmux 风格:Cmd+方向键切换窗格 ─────────────────────────────────
 
 [[keyboard.bindings]]
 key = "ArrowUp"
@@ -76,7 +76,7 @@ key = "ArrowRight"
 mods = "Command"
 action = "FocusPaneNext"
 
-# ── Clipboard ──────────────────────────────────────────────────────────
+# ── 剪贴板 ──────────────────────────────────────────────────────────
 
 [[keyboard.bindings]]
 key = "v"
@@ -88,7 +88,7 @@ key = "c"
 mods = "Command"
 action = "Copy"
 
-# ── Dialogs ────────────────────────────────────────────────────────────
+# ── 对话框 ────────────────────────────────────────────────────────────
 
 [[keyboard.bindings]]
 key = "S"

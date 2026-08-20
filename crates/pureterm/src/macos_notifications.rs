@@ -1,20 +1,20 @@
-//! GAP-09: macOS desktop notifications — UserNotifications framework toasts.
+//! GAP-09:macOS 桌面通知——基于 UserNotifications 框架的弹窗提示。
 //!
-//! Mirrors `macos_dock_badge.rs` / `macos_eyedropper.rs`: a small objc2 shim
-//! whose every call site is the iced main thread. We request
-//! `.alert | .sound | .badge` authorization once at startup (best-effort,
-//! fire-and-forget — the completion handler is a no-op), then `post(title,
-//! body)` schedules a `UNNotificationRequest` delivered immediately.
+//! 与 `macos_dock_badge.rs` / `macos_eyedropper.rs` 相同:一个小的 objc2 垫片,
+//! 其所有调用点都在 iced 主线程。我们在启动时请求
+//! `.alert | .sound | .badge` 授权(尽力而为,
+//! 即发即忘——完成回调为空操作),随后 `post(title,
+//! body) 调度立即投递的 `UNNotificationRequest`。
 //!
-//! macOS subtlety: the request is *dropped* if authorization was denied or has
-//! not yet completed when `post` runs — that is acceptable (the in-app ring,
-//! status-bar count, and Dock badge are unaffected; they don't go through
-//! UNUserNotificationCenter). A proper bundle id is required for toasts to show
-//! (see GAP-09 plan: repackage via `./build.sh app`).
+//! macOS 细节:若授权被拒绝、或 `post` 运行时授权尚未完成,
+//! 请求会被*丢弃*——这可以接受(应用内响铃、
+//! 状态栏计数与 Dock 角标不受影响;它们不经过
+//! UNUserNotificationCenter)。弹窗显示需要正确的 bundle id
+//! (见 GAP-09 计划:通过 `./build.sh app` 重新打包)。
 //!
-//! Version note: pinned to objc2-user-notifications **0.3.x** (objc2 0.6 line),
-//! NOT the 0.2.x wry pulls transitively — 0.2.x binds to objc2 0.5 whose
-//! `NSString`/`Retained` are distinct types from this crate's objc2 0.6.
+//! 版本说明:固定使用 objc2-user-notifications **0.3.x**(objc2 0.6 线),
+//! 而非 wry 传递引入的 0.2.x——0.2.x 绑定 objc2 0.5,其
+//! `NSString`/`Retained` 与本 crate 的 objc2 0.6 类型不同。
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -27,52 +27,52 @@ use objc2_user_notifications::{
     UNUserNotificationCenter,
 };
 
-/// Per-process monotonic counter for notification identifiers. A stable/empty
-/// identifier would make macOS coalesce or overwrite prior delivered
-/// notifications; a fresh id per post keeps each toast distinct. (We don't need
-/// stable ids for v1 — no click-to-focus-via-notification wiring yet.)
+/// 进程内单调递增的通知标识计数器。稳定/空的标识
+/// 会让 macOS 合并或覆盖先前已投递的通知;
+/// 每次投递使用新 id 可保证每条弹窗互不相同。(v1 暂不需要
+/// 稳定 id——尚无点击通知聚焦的接线。)
 static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
-/// Request notification authorization (`.alert | .sound | .badge`) once at
-/// startup. Idempotent + best-effort: the completion handler does nothing, and a
-/// toast posted before authorization resolves is simply dropped by the system.
-/// A denied grant just means toasts won't show — call sites gate on
-/// `[notification].desktop_notifications` and the focus/visibility logic, never
-/// on the (async, unknown) authorization result.
+/// 在启动时请求一次通知授权(`.alert | .sound | .badge`)。
+/// 幂等且尽力而为:完成回调不做任何事;
+/// 授权结果落定前发出的弹窗会被系统直接丢弃。
+/// 授权被拒仅意味着弹窗不显示——调用点只依据
+/// `[notification].desktop_notifications` 与焦点/可见性逻辑做门控,
+/// 绝不依赖(异步、未知的)授权结果。
 pub fn request_authorization() {
     let center = UNUserNotificationCenter::currentNotificationCenter();
     let options = UNAuthorizationOptions::Alert
         | UNAuthorizationOptions::Sound
         | UNAuthorizationOptions::Badge;
-    // Empty `Fn` block: authorization is fire-and-forget. block2 requires `Fn`
-    // (not `FnOnce`); an empty closure is trivially `Fn`.
+    // 空的 `Fn` 块:授权即发即忘。block2 要求 `Fn`
+    // (而非 `FnOnce`);空闭包天然是 `Fn`。
     let completion = RcBlock::new(move |_granted: Bool, _err: *mut NSError| {});
     center.requestAuthorizationWithOptions_completionHandler(options, &completion);
 }
 
-/// Post a desktop notification (title + body) immediately. The title is shown
-/// as the alert headline, the body as the subtitle line. No-op side effect if
-/// the app lacks/denied authorization (the system drops the request).
+/// 立即投递一条桌面通知(标题 + 正文)。标题显示为
+/// 提醒标题,正文显示为副标题行。若应用
+/// 缺少/被拒授权则无副作用(系统丢弃请求)。
 pub fn post(title: &str, body: &str) {
     let center = UNUserNotificationCenter::currentNotificationCenter();
     let content = UNMutableNotificationContent::new();
     content.setTitle(&NSString::from_str(title));
     content.setBody(&NSString::from_str(body));
     content.setSound(Some(&UNNotificationSound::defaultSound()));
-    // Fresh identifier per post so each toast is a distinct delivered
-    // notification (empty/stable ids coalesce).
+    // 每次投递使用新标识,保证每条弹窗都是独立的已投递
+    // 通知(空/稳定的 id 会被合并)。
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let identifier = NSString::from_str(&format!("pureterm-{id}"));
-    // `as_super()` upcasts the `&UNMutableNotificationContent` reference to the
-    // `&UNNotificationContent` the constructor wants. `None` trigger ⇒ deliver
-    // immediately.
+    // `as_super()` 把 `&UNMutableNotificationContent` 引用向上转型为
+    // 构造器所需的 `&UNNotificationContent`。`None` 触发器 ⇒
+    // 立即投递。
     let request = UNNotificationRequest::requestWithIdentifier_content_trigger(
         &identifier,
         content.as_super(),
         None,
     );
-    // Completion handler is optional; we don't need the result (errors here mean
-    // authorization denied — surfaced as "toast doesn't appear", already
-    // expected).
+    // 完成回调可选;我们不需要其结果(此处的错误意味着
+    // 授权被拒——表现为"弹窗未出现",
+    // 属于预期)。
     center.addNotificationRequest_withCompletionHandler(&request, None);
 }

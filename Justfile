@@ -1,54 +1,54 @@
-# PureTerm build commands
+# PureTerm 构建命令
 #
-# All cross-platform / cross-target work goes through ./build.sh.
-# Run `./build.sh --help` for the full option list, or `./build.sh info`
-# to see which tools are available on the current host.
+# 所有跨平台 / 跨 target 工作均经 ./build.sh。
+# 运行 `./build.sh --help` 查看完整选项列表,或 `./build.sh info`
+# 查看当前宿主上可用的工具。
 
-# --- Core build -------------------------------------------------------------
+# --- 核心构建 -------------------------------------------------------------
 
-# Build debug
+# 构建 debug
 build:
     cargo build --bin pureterm
 
-# Build release
+# 构建 release
 release:
     cargo build --release --bin pureterm
 
-# Build & bundle for the host OS in the host triple.
-#   macOS  -> dist/PureTerm.app, .app.zip, .dmg
-#   Linux  -> dist/pureterm-*/  + .tar.gz
-#   Win    -> dist/pureterm-*/  + .zip
+# 在宿主 triple 上为宿主 OS 构建 + 打包。
+#   macOS  → dist/PureTerm.app、.app.zip、.dmg(应用包)
+#   Linux  → dist/pureterm-*/ + .tar.gz(目录树 + 压缩包)
+#   Win    → dist/pureterm-*/ + .zip(目录树 + 压缩包)
 app:
     bash build.sh app
 
-# Bundle for the host OS in every installed target triple.
+# 在所有已安装 target triple 上为宿主 OS 打包。
 app-all:
     bash build.sh app-all
 
-# Cross-platform build matrix. Skips targets whose toolchain isn't
-# installed (no hard error). Cross-OS builds (e.g. .dmg on Linux) are
-# skipped by the script — only host-OS bundling runs.
+# 跨平台构建矩阵。跳过未安装工具链的
+# target(无硬报错)。跨 OS 构建(如 Linux 上产 .dmg)
+# 由脚本跳过 — 只运行宿主 OS 的打包。
 matrix:
     bash build.sh matrix
 
-# Print the detected environment: host OS, installed rustup targets,
-# and which bundler tools (hdiutil, codesign, zstd, zip, signtool, …) are
-# available. Useful in CI to debug a failing build step.
+# 打印检测到的环境:宿主 OS、已安装 rustup targets、
+# 以及哪些打包工具(hdiutil、codesign、zstd、zip、signtool…)可用。
+# CI 上调试失败构建步骤时有用。
 info:
     bash build.sh info
 
-# --- Test / lint ------------------------------------------------------------
+# --- 测试 / lint ------------------------------------------------------------
 
-# Run clippy
+# 运行 clippy
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
 
-# Check formatting
+# 检查格式化
 fmt:
     cargo fmt --all -- --check
 
-# Run tests (auto-detect cargo-nextest for parallel execution)
-# Install with: cargo install cargo-nextest --locked
+# 运行测试(自动检测 cargo-nextest 以并行执行)
+# 安装:cargo install cargo-nextest --locked
 test:
     #!/usr/bin/env bash
     set -e
@@ -60,16 +60,16 @@ test:
         cargo test --workspace
     fi
 
-# --- Utilities --------------------------------------------------------------
+# --- 实用工具 --------------------------------------------------------------
 
-# Clean build artifacts (and the dist/ directory).
+# 清理构建产物(以及 dist/ 目录)。
 clean:
     bash build.sh clean
 
-# Show current config
+# 显示当前配置
 show-config:
     cargo run -- show-config
 
-# List available themes
+# 列出可用主题
 list-themes:
     cargo run -- list-themes

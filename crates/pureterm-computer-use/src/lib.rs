@@ -1,19 +1,19 @@
-//! GAP-04 MVP: desktop screenshot (macOS `screencapture`) and input-injection stubs.
+//! GAP-04 MVP:桌面截图(macOS `screencapture`)与输入注入桩。
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Raw PNG bytes from a full-screen capture.
+/// 全屏捕获的原始 PNG 字节。
 pub fn capture_screen_png() -> Result<Vec<u8>, String> {
     #[cfg(target_os = "macos")]
     {
         let tmp = temp_png_path();
-        // `screencapture` takes the destination as a CLI arg, so the path must
-        // be UTF-8. A non-UTF-8 $TMPDIR is unsupported — fail rather than fall
-        // back to a shared hardcoded path (the old `unwrap_or` dropped even the
-        // PID, colliding across instances and offering a static symlink target).
+        // `screencapture` 把目标路径作为 CLI 参数接收,因此路径必须
+        // 是 UTF-8。非 UTF-8 的 $TMPDIR 不受支持——直接失败,而不是
+        // 回退到共享的硬编码路径(旧的 `unwrap_or` 连 PID 都丢掉了,
+        // 会跨实例冲突,还提供一个静态符号链接目标)。
         let path_str = tmp
             .to_str()
             .ok_or_else(|| "screenshot: temp dir path is not UTF-8 (GAP-04)".to_string())?;
@@ -22,8 +22,8 @@ pub fn capture_screen_png() -> Result<Vec<u8>, String> {
             .status()
             .map_err(|e| format!("screencapture spawn failed: {e}"))?;
         if !status.success() {
-            // screencapture may have written a partial file — best-effort
-            // cleanup, then surface the failure without reading bad bytes.
+            // screencapture 可能写出了不完整的文件——尽力
+            // 清理,然后在不读取坏字节的前提下暴露失败。
             let _ = std::fs::remove_file(&tmp);
             return Err(format!("screencapture exited with {status}"));
         }
@@ -35,14 +35,14 @@ pub fn capture_screen_png() -> Result<Vec<u8>, String> {
     }
 }
 
-/// Read the captured PNG then **always** remove the temp file — on success,
-/// on read failure, and when the file is missing. The capture contract is that
-/// `screencapture` created the file and we own its cleanup on every path; the
-/// previous version leaked it whenever `read` failed (the `?` skipped cleanup).
-/// Returns `Err` for an empty capture (screencapture wrote nothing usable).
+/// 读取捕获的 PNG,然后**总是**删除临时文件——成功时、
+/// 读取失败时、以及文件缺失时皆然。捕获契约是:
+/// `screencapture` 创建了该文件,每条路径上的清理都归我们;
+/// 旧版本在 `read` 失败时会泄漏它(`?` 跳过了清理)。
+/// 空捕获(screencapture 没写出可用内容)返回 `Err`。
 fn read_and_cleanup(path: &Path) -> Result<Vec<u8>, String> {
     let read = std::fs::read(path);
-    // Unconditional best-effort cleanup on every path — never leak the temp PNG.
+    // 每条路径上无条件的尽力清理——绝不泄漏临时 PNG。
     let _ = std::fs::remove_file(path);
     let bytes = read.map_err(|e| format!("read screenshot: {e}"))?;
     if bytes.is_empty() {
@@ -51,7 +51,7 @@ fn read_and_cleanup(path: &Path) -> Result<Vec<u8>, String> {
     Ok(bytes)
 }
 
-/// Mouse click — MVP stub (returns structured not-implemented error).
+/// 鼠标点击——MVP 桩(返回结构化的未实现错误)。
 pub fn click(x: i32, y: i32) -> Result<(), String> {
     let _ = (x, y);
     Err(format!(
@@ -59,13 +59,13 @@ pub fn click(x: i32, y: i32) -> Result<(), String> {
     ))
 }
 
-/// Type text into the focused application — MVP stub.
+/// 向聚焦的应用输入文本——MVP 桩。
 pub fn type_text(text: &str) -> Result<(), String> {
     let _ = text;
     Err("desktop_type: input injection stub — not yet implemented (GAP-04 MVP)".into())
 }
 
-/// Press a key by name — MVP stub.
+/// 按名称按键——MVP 桩。
 pub fn key_press(key: &str) -> Result<(), String> {
     let _ = key;
     Err(format!(
@@ -73,11 +73,11 @@ pub fn key_press(key: &str) -> Result<(), String> {
     ))
 }
 
-/// A per-capture temp path that is unique and hard to predict, to mitigate the
-/// classic `/tmp` symlink race (a PID-only name is guessable; the old static
-/// fallback was worse). PID + high-resolution timestamp + in-process counter
-/// keeps this std-only (no `tempfile` dep). Residual risk on a true multi-user
-/// hardened host is recorded as an accepted MVP limitation.
+/// 每次捕获一个唯一且难预测的临时路径,以缓解经典的
+/// `/tmp` 符号链接竞态(仅 PID 的名字可被猜到;旧的静态
+/// 回退更糟)。PID + 高分辨率时间戳 + 进程内计数器
+/// 使其保持 std-only(无需 `tempfile` 依赖)。在真正的多用户
+/// 加固主机上的残余风险已记录为可接受的 MVP 限制。
 fn temp_png_path() -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -133,8 +133,8 @@ mod tests {
 
     #[test]
     fn temp_png_paths_are_distinct() {
-        // Consecutive paths must differ — the PID+nanos+counter name is the
-        // symlink-race mitigation; a colliding name would defeat it.
+        // 连续两次的路径必须不同——PID+纳秒+计数器命名正是
+        // 符号链接竞态的缓解手段;名字一旦碰撞即失去防护。
         let a = temp_png_path();
         let b = temp_png_path();
         assert_ne!(a, b);

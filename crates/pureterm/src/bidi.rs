@@ -1,9 +1,9 @@
-//! GAP-18: BiDi support MVP — config + line reorder helper.
+//! GAP-18:BiDi 支持 MVP——配置 + 行重排辅助。
 //!
-//! Full HarfBuzz shaping integration is deferred. When `bidi_mode = "auto"`,
-//! terminal snapshot rendering may reorder RTL runs via `unicode-bidi`.
+//! 完整的 HarfBuzz 整形集成暂缓。当 `bidi_mode = "auto"` 时,
+//! 终端快照渲染可经 `unicode-bidi` 重排 RTL 文本段。
 
-/// User-facing BiDi mode from `[terminal].bidi_mode`.
+/// 面向用户的 BiDi 模式,来自 `[terminal].bidi_mode`。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum BidiMode {
     #[default]
@@ -30,14 +30,14 @@ impl BidiMode {
     }
 }
 
-/// Reorder a single line for visual display when `mode == Auto`.
-/// Returns the original string when reorder is unnecessary or disabled.
+/// 当 `mode == Auto` 时,为视觉显示重排单行文本。
+/// 无需重排或已禁用时返回原字符串。
 pub fn reorder_line(line: &str, mode: BidiMode) -> String {
     match mode {
         BidiMode::Ltr => line.to_string(),
         BidiMode::Rtl => {
-            // MVP: force RTL presentation by reversing grapheme-safe chars
-            // (full shaping deferred).
+            // MVP:通过反转按字素安全的字符来强制 RTL 呈现
+            // (完整的整形暂缓)。
             line.chars().rev().collect()
         }
         BidiMode::Auto => {
@@ -57,7 +57,7 @@ fn needs_bidi(s: &str) -> bool {
 }
 
 fn reorder_with_unicode_bidi(line: &str) -> String {
-    // MVP: unicode-bidi paragraph/run API needs grid context; passthrough for now.
+    // MVP:unicode-bidi 的段落/段 API 需要网格上下文;目前直通。
     line.to_string()
 }
 

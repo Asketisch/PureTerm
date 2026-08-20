@@ -1,27 +1,27 @@
-//! GAP-55: Window transparency and blur.
+//! GAP-55:窗口透明与毛玻璃模糊。
 //!
-//! macOS: install an `NSVisualEffectView` (`.behindWindow` blend mode) as the
-//! window's `contentView` so the OS draws the system vibrancy / blur under
-//! the rest of the view hierarchy. The opaque terminal view is added as a
-//! subview on top.
+//! macOS:安装 `NSVisualEffectView`(`.behindWindow` 混合模式)作为
+//! 窗口的 `contentView`,让系统在视图层级下方绘制
+//! 系统级 vibrancy / 毛玻璃。不透明的终端视图作为
+//! 子视图叠加在最上层。
 //!
-//! Windows: enable `DwmEnableBlurBehindWindow` via the `windows` crate
-//! (feature-gated).
+//! Windows:通过 `windows` crate 启用 `DwmEnableBlurBehindWindow`
+//! (特性开关控制)。
 //!
-//! Other Unix: no-op (the system compositor provides its own blur for
-//! compatible WMs); the function logs a debug message.
+//! 其他 Unix:无操作(系统合成器会为兼容的窗口管理器
+//! 自带毛玻璃);该函数仅记录一条 debug 日志。
 
 use std::path::Path;
 
-/// `[window.effects]` config (opacity + blur).
+/// `[window.effects]` 配置(不透明度 + 毛玻璃)。
 #[derive(Clone, Debug, PartialEq)]
 pub struct WindowEffectsConfig {
     pub enabled: bool,
     pub opacity: f32,
     pub blur: bool,
-    /// macOS only: `behind_window` (default) | `within_window`.
-    /// `behind_window` blurs desktop wallpaper / windows behind this one;
-    /// `within_window` blurs content inside the window.
+    /// 仅 macOS:`behind_window`(默认)| `within_window`。
+    /// `behind_window` 模糊本窗口背后的桌面壁纸 / 窗口;
+    /// `within_window` 模糊窗口内部的内容。
     pub blending_mode: String,
 }
 
@@ -45,24 +45,24 @@ impl WindowEffectsConfig {
     }
 }
 
-/// Result of a blur apply attempt. Useful for tests and logging.
+/// 一次毛玻璃应用尝试的结果。供测试与日志使用。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum BlurApplyOutcome {
-    /// `enabled` was false or `blur` was false — nothing to do.
+    /// `enabled` 为 false 或 `blur` 为 false——无事可做。
     Skipped,
-    /// macOS: NSVisualEffectView installed successfully.
+    /// macOS:已成功安装 NSVisualEffectView。
     InstalledMacos,
-    /// Windows: DWM blur-behind enabled.
+    /// Windows:已启用 DWM 毛玻璃。
     InstalledWindows,
-    /// Platform does not support blur (Linux/BSD without WM hint support).
+    /// 平台不支持毛玻璃(Linux/BSD 无 WM 提示支持)。
     UnsupportedPlatform,
-    /// Internal failure (could not access NSApplication, alloc failed, …).
+    /// 内部失败(无法访问 NSApplication、alloc 失败等)。
     Failed(String),
 }
 
-/// macOS: install an `NSVisualEffectView` with `.behindWindow` blending
-/// under the existing window content. Idempotent — calling twice is safe
-/// (the second call replaces the previous effect view).
+/// macOS:在现有窗口内容之下安装一个 `.behindWindow` 混合的
+/// `NSVisualEffectView`。幂等——调用两次是安全的
+/// (第二次调用会替换掉之前的毛玻璃视图)。
 #[cfg(target_os = "macos")]
 pub fn apply_blur_macos(blending_behind: bool) -> BlurApplyOutcome {
     use objc2::ffi::NSInteger;
@@ -103,12 +103,12 @@ pub fn apply_blur_macos(blending_behind: bool) -> BlurApplyOutcome {
         };
         effect.setBlendingMode(mode);
         effect.setState(NSVisualEffectState::FollowsWindowActiveState);
-        // NSViewWidthSizable | NSViewHeightSizable = 2 | 16 (raw bitmask from AppKit).
+        // NSViewWidthSizable | NSViewHeightSizable = 2 | 16(来自 AppKit 的原始位掩码)。
         let mask: NSInteger = 2 | 16;
         let _: () = unsafe { msg_send![&*effect, setAutoresizingMask: mask] };
-        // Move the existing content view under the new effect view so the
-        // terminal render path is unchanged. NSWindow takes ownership of
-        // the new contentView.
+        // 把现有内容视图移到新的毛玻璃视图之下,让
+        // 终端渲染路径保持不变。NSWindow 接管
+        // 新的 contentView 的所有权。
         let prev_content: Retained<NSView> = content.clone();
         let prev_frame: NSRect = prev_content.frame();
         let _: () = unsafe { msg_send![&*window, setContentView: &*effect] };
@@ -123,20 +123,20 @@ pub fn apply_blur_macos(blending_behind: bool) -> BlurApplyOutcome {
     }
 }
 
-/// Windows: enable `DwmEnableBlurBehindWindow` for the active window. This
-/// is best-effort; many W10+ setups replace the legacy API with the
-/// Acrylic/Modern backdrop APIs, which are not yet wired here.
+/// Windows:为当前活动窗口启用 `DwmEnableBlurBehindWindow`。这是
+/// 尽力而为;许多 W10+ 环境会用 Acrylic/Modern 背景
+/// API 取代旧 API,这些新 API 尚未在此接入。
 #[cfg(target_os = "windows")]
 pub fn apply_blur_windows() -> BlurApplyOutcome {
-    // The full Win32 wiring would require a `winapi`/`windows` crate and a
-    // `HWND` handle. PureTerm's binary uses `winit` for windowing; the
-    // winit `Window::hwnd()` method exposes the HWND. We avoid the
-    // dependency here and return Unsupported unless the winit integration
-    // is built out (tracked as a follow-up).
+    // 完整的 Win32 接线需要 `winapi`/`windows` crate 和
+    // `HWND` 句柄。PureTerm 的二进制使用 `winit` 管理窗口;
+    // winit 的 `Window::hwnd()` 方法可暴露 HWND。此处我们避免
+    // 引入该依赖并返回 Unsupported,除非 winit 集成
+    // 已完整实现(作为后续事项跟踪)。
     BlurApplyOutcome::UnsupportedPlatform
 }
 
-/// Cross-platform entry point.
+/// 跨平台入口。
 pub fn apply_blur(cfg: &WindowEffectsConfig) -> BlurApplyOutcome {
     if !cfg.enabled || !cfg.blur {
         return BlurApplyOutcome::Skipped;
@@ -153,8 +153,8 @@ pub fn apply_blur(cfg: &WindowEffectsConfig) -> BlurApplyOutcome {
     }
 }
 
-/// Best-effort load: read `[window.effects]` from a TOML file. Used by
-/// `p4_runtime` to bootstrap at startup. Returns `Default` on any error.
+/// 尽力加载:从 TOML 文件读取 `[window.effects]`。供
+/// `p4_runtime` 在启动时引导使用。任何错误都返回 `Default`。
 pub fn load_from_path(path: &Path) -> WindowEffectsConfig {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return WindowEffectsConfig::default();
@@ -199,7 +199,7 @@ mod tests {
     #[test]
     fn disabled_passthrough() {
         let cfg = WindowEffectsConfig::default();
-        // base * 1.0 stays base
+        // base * 1.0 仍为 base
         assert_eq!(cfg.effective_opacity(0.5), 0.5);
     }
 
@@ -237,10 +237,10 @@ mod tests {
     }
 }
 
-    /// T-core-windows-conpty v2: the Windows blur stub returns
-    /// `UnsupportedPlatform` on non-Windows hosts (which is where this
-    /// test compiles) and is a no-op `Ok(())` once the winit/Win32
-    /// wiring lands in v3.
+    /// T-core-windows-conpty v2:Windows 毛玻璃桩函数在非 Windows 主机上
+    /// (即本测试实际编译的平台)返回 `UnsupportedPlatform`;
+    /// 只有 winit/Win32 接线在 v3 落地后,才会变为 no-op `Ok(())`。
+    /// (v3 之前的占位桩,行为与上面两条测试一致。)
     #[test]
     fn apply_blur_disabled_yields_skipped() {
         let mut cfg = WindowEffectsConfig::default();
@@ -249,8 +249,8 @@ mod tests {
         assert_eq!(apply_blur(&cfg), BlurApplyOutcome::Skipped);
     }
 
-    /// When the config says `enabled = true, blur = false`, we also
-    /// skip (blur is gated on both flags).
+    /// 当配置为 `enabled = true, blur = false` 时,同样会
+    /// 跳过(毛玻璃受两个开关共同约束)。
     #[test]
     fn apply_blur_with_disabled_blur_flag_yields_skipped() {
         let mut cfg = WindowEffectsConfig::default();
@@ -259,8 +259,8 @@ mod tests {
         assert_eq!(apply_blur(&cfg), BlurApplyOutcome::Skipped);
     }
 
-    /// On non-macOS / non-Windows hosts, the cross-platform dispatch
-    /// returns `UnsupportedPlatform`.
+    /// 在非 macOS / 非 Windows 主机上,跨平台分发
+    /// 返回 `UnsupportedPlatform`。
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     #[test]
     fn apply_blur_unsupported_on_linux_dev_hosts() {

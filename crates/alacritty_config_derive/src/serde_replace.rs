@@ -8,7 +8,7 @@ use syn::{
 
 use crate::{Attr, GenericsStreams, MULTIPLE_FLATTEN_ERROR};
 
-/// Error if the derive was used on an unsupported type.
+/// 在不支持的类型上使用该派生时的错误。
 const UNSUPPORTED_ERROR: &str = "SerdeReplace must be used on a tuple struct";
 
 pub fn derive(input: TokenStream) -> TokenStream {
@@ -77,17 +77,17 @@ pub fn derive_recursive<T>(
     }
 }
 
-/// Create SerdeReplace recursive match arms.
+/// 创建 SerdeReplace 的递归 match 臂。
 fn match_arms<T>(fields: &Punctuated<Field, T>) -> Result<TokenStream2, syn::Error> {
     let mut stream = TokenStream2::default();
     let mut flattened_arm = None;
 
-    // Create arm for each field.
+    // 为每个字段创建臂。
     for field in fields {
         let ident = field.ident.as_ref().expect("unreachable tuple struct");
         let literal = ident.to_string();
 
-        // Check if #[config(flattened)] attribute is present.
+        // 检查是否存在 #[config(flattened)] 属性。
         let flatten = field
             .attrs
             .iter()
@@ -102,7 +102,7 @@ fn match_arms<T>(fields: &Punctuated<Field, T>) -> Result<TokenStream2, syn::Err
                 _ => alacritty_config::SerdeReplace::replace(&mut self.#ident, value)?,
             });
         } else {
-            // Extract all `#[config(alias = "...")]` attribute values.
+            // 提取全部 `#[config(alias = "...")]` 属性值。
             let aliases = field
                 .attrs
                 .iter()
@@ -130,7 +130,7 @@ fn match_arms<T>(fields: &Punctuated<Field, T>) -> Result<TokenStream2, syn::Err
         }
     }
 
-    // Add the flattened catch-all as last match arm.
+    // 把扁平化的收尾臂加为最后一个 match 臂。
     if let Some(flattened_arm) = flattened_arm.take() {
         stream.extend(flattened_arm);
     }

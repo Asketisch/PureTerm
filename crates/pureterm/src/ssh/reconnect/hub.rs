@@ -19,9 +19,9 @@ use crate::ssh::session::SshSessionManager;
 use crate::split_tree::PaneId;
 
 impl ReconnectHub {
-    /// Create the hub. The tokio channel's receiver is held internally and
-    /// claimed once by the iced `Subscription` via
-    /// [`Self::take_updates_receiver`].
+    /// 创建 hub。tokio 通道的接收端保存在内部,
+    /// 由 iced `Subscription` 通过以下方法领取一次:
+    /// [`Self::take_updates_receiver`]。
     pub fn new() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         Self {
@@ -34,9 +34,9 @@ impl ReconnectHub {
         }
     }
 
-    /// Claim the updates receiver (called once by the iced `Subscription`
-    /// builder). Returns `None` on subsequent calls — the subscription then
-    /// stays idle, which is the safe degradation.
+    /// 领取更新接收端(由 iced `Subscription` 构建器调用一次)。
+    /// 之后再次调用返回 `None`——订阅由此保持空闲,
+    /// 这是安全降级。
     pub fn take_updates_receiver(&self) -> Option<UnboundedReceiver<ReconnectUpdate>> {
         self.updates_rx.lock().unwrap().take()
     }
@@ -48,11 +48,11 @@ impl ReconnectHub {
             .clone()
     }
 
-    /// Record a reconnect trigger for `pane_id` at `now` and decide whether to
-    /// spawn a worker. Evicts timestamps older than [`FLAP_WINDOW`]; returns
-    /// [`SpawnDecision::Flapping`] once the in-window count exceeds
-    /// [`MAX_FLAPS`]. Pure w.r.t. worker spawning (does NOT start a thread),
-    /// so it is unit-testable with synthetic clocks.
+    /// 在 `now` 记录 `pane_id` 的重连触发并决定是否
+    /// 启动 worker。剔除早于 [`FLAP_WINDOW`] 的时间戳;
+    /// 一旦窗口内计数超过 [`MAX_FLAPS`] 就返回
+    /// [`SpawnDecision::Flapping`]。就 worker 启动而言是纯函数(不启动线程),
+    /// 因此可用合成时钟进行单元测试。
     pub(super) fn record_reconnect_trigger(&self, pane_id: PaneId, now: Instant) -> SpawnDecision {
         let mut hist = self.flap_history.lock().unwrap();
         let ts = hist.entry(pane_id).or_default();
@@ -65,20 +65,20 @@ impl ReconnectHub {
         }
     }
 
-    /// Spawn (or replace) the reconnect worker for `pane_id`.
+    /// 为 `pane_id` 启动(或替换)重连 worker。
     ///
-    /// Returns [`SpawnDecision::Flapping`] (without spawning) when the pane has
-    /// tripped the anti-hammer cap ([`FLAP_WINDOW`] / [`MAX_FLAPS`]) — a
-    /// connect-then-die host that would otherwise reconnect forever. The caller
-    /// is responsible for marking the pane `Failed(flapping)`.
+    /// 当窗格触发了反滥用上限时返回 [`SpawnDecision::Flapping`]
+    /// (且不启动):([`FLAP_WINDOW`] / [`MAX_FLAPS`])——否则反复连接
+    /// 失败的宿主会无限重连。调用方负责将窗格标记为
+    /// `Failed(flapping)`。
     pub fn spawn_reconnect(
         &self,
         pane_id: PaneId,
         manager: Arc<SshSessionManager>,
         params: ReconnectParams,
     ) -> SpawnDecision {
-        // Anti-hammer gate: refuse before touching the worker slots so a
-        // flapping host cannot start yet another backoff-3s cycle.
+        // 反滥用闸门:在触碰 worker 槽之前拒绝,
+        // 让反复抖动的宿主无法再启动一个 3 秒退避周期。
         if self.record_reconnect_trigger(pane_id, Instant::now()) == SpawnDecision::Flapping {
             log::warn!(
                 "GAP-5.6: SSH pane {:?} flapped >{} times within {:?}; refusing to reconnect",
@@ -93,8 +93,8 @@ impl ReconnectHub {
         let key = params.connection_key();
         let key_lock = self.key_lock(&key);
 
-        // If a previous worker slot for this pane is somehow still present,
-        // cancel it before starting fresh.
+        // 如果该窗格的旧 worker 槽仍意外存在,
+        // 先取消它再重新开始。
         if let Some(prev) = self.slots.lock().unwrap().remove(&pane_id) {
             prev.signal.cancel();
         }
@@ -117,31 +117,31 @@ impl ReconnectHub {
         SpawnDecision::Spawned
     }
 
-    /// Cancel the worker for `pane_id` (if any). The worker thread is
-    /// **detached** (not joined): a mid-flight `spawn_pty` can take up to
-    /// ~`ConnectTimeout` to return, and joining would block the UI thread on
-    /// tab close. The worker checks the cancel flag after each spawn attempt
-    /// and exits promptly on its own, dropping any ssh child it spawned
-    /// (SIGHUP+reap in `SshPty::Drop`).
+    /// 取消 `pane_id` 的 worker(若有)。worker 线程是**分离**的
+    /// (不 join):进行中的 `spawn_pty` 最长可能耗时
+    /// ~`ConnectTimeout` 才返回,如果 join,关闭标签页时会阻塞
+    /// UI 线程。worker 在每次 spawn 尝试后检查取消标志,
+    /// 并自行快速退出,丢弃它启动的任何 ssh 子进程
+    /// (`SshPty::Drop` 中 SIGHUP+reap)。
     ///
-    /// Also drains any completed-but-unclaimed PTY for the pane (the pane was
-    /// closed between Success-send and reattach).
+    /// 同时清空该窗格已完成但未被领取的 PTY
+    /// (窗格在发送 Success 与重新挂接之间被关闭)。
     pub fn cancel(&self, pane_id: PaneId) {
-        // Anti-hammer: forget the flap history too, so a pane that the user
-        // gave up on (close / disconnect) and later reconnects starts fresh.
+        // 反滥用:连同 flap 历史一起清除,这样用户放弃
+        // (关闭 / 断连)后重新连接的窗格可以从头开始。
         self.flap_history.lock().unwrap().remove(&pane_id);
         if let Some(slot) = self.slots.lock().unwrap().remove(&pane_id) {
             slot.signal.cancel();
         }
         if let Some((pty, _stderr)) = self.completed.lock().unwrap().remove(&pane_id) {
-            // Drop → SshPty::Drop → SIGHUP+reap the child we spawned.
+            // Drop → SshPty::Drop → SIGHUP+reap 我们启动的子进程。
             drop(pty);
         }
     }
 
-    /// Claim a successfully-spawned PTY for `pane_id` (called from the iced
-    /// loop on [`ReconnectUpdate::Success`]). Returns `None` if the pane was
-    /// cancelled before the iced loop processed the Success message.
+    /// 领取 `pane_id` 成功启动的 PTY(在 iced 循环中由
+    /// [`ReconnectUpdate::Success`] 调用)。若窗格在 iced 循环处理
+    /// Success 消息前被取消,则返回 `None`。
     pub fn take_success(&self, pane_id: PaneId) -> Option<(Box<SshPty>, Option<File>)> {
         self.completed.lock().unwrap().remove(&pane_id)
     }
@@ -153,10 +153,10 @@ impl Default for ReconnectHub {
     }
 }
 
-/// The reconnect worker body. Loops up to [`BACKOFF.len()`] times:
-/// check cancel → acquire per-key lock → `spawn_pty` → on success deposit
-/// the PTY and send `Success` (or drop it if cancelled meanwhile); on
-/// failure send `Progress`, sleep with cancel-aware backoff.
+/// 重连 worker 主体。最多循环 [`BACKOFF.len()`] 次:
+/// 检查 cancel → 获取 per-key 锁 → `spawn_pty`;成功时存入
+/// PTY 并发送 `Success`(若其间被取消则丢弃);失败时
+/// 发送 `Progress`,并按可感知取消的退避方式睡眠。
 #[allow(clippy::too_many_arguments)]
 fn reconnect_worker(
     pane_id: PaneId,
@@ -172,8 +172,8 @@ fn reconnect_worker(
             return;
         }
 
-        // Serialize per connection key: only one worker spawns a fresh
-        // ControlMaster at a time. Others reuse the resulting socket.
+        // 按连接键串行化:同一时间只有一个 worker 启动新的
+        // ControlMaster。其余 worker 复用生成的 socket。
         {
             let _kg = key_lock.lock().unwrap();
             let spawn_result = manager.spawn_pty(
@@ -191,11 +191,11 @@ fn reconnect_worker(
 
             match spawn_result {
                 Ok((ssh_pty, _socket_path, stderr)) => {
-                    // Re-check cancel right before handing off — the pane
-                    // may have been closed while spawn was in flight.
+                    // 交接前再次检查取消——窗格可能在
+                    // spawn 进行中被关闭。
                     if cancel.is_cancelled() {
-                        // Balance the get_or_create refcount bump inside
-                        // spawn_pty, then drop the child.
+                        // 先在内部平衡 get_or_create 的引用计数增加,
+                        // 再丢弃子进程。
                         manager.release(&params.host, params.user.as_deref(), params.port);
                         drop(ssh_pty);
                         return;
@@ -206,10 +206,10 @@ fn reconnect_worker(
                 }
                 Err(e) => {
                     let attempt = (i + 1) as u8;
-                    // BUG-3: on the final attempt give up immediately. `break`
-                    // skips the post-block backoff sleep AND the misleading
-                    // "retry in Ns" Progress — the (already-decided) Failed
-                    // message is sent after the loop instead.
+                    // BUG-3:最后一次尝试立即放弃。`break`
+                    // 跳过块后的退避睡眠以及误导性的
+                    // “retry in Ns”Progress——(已决定的)Failed
+                    // 消息在循环结束后才发送。
                     if attempt == final_attempt() {
                         log::debug!(
                             "ssh reconnect pane {:?} exhausted all {} attempts (last error: {})",
@@ -234,14 +234,14 @@ fn reconnect_worker(
                 }
             }
         }
-        // Released the key lock; sleep before the next attempt, wakeable by
-        // cancel.
+        // 已释放 key 锁;下一次尝试前睡眠,可被 cancel 唤醒。
+        // 可被 cancel 唤醒。
         if cancel.sleep_or_cancel(delay) {
             return;
         }
     }
 
-    // Exhausted all attempts.
+    // 已用尽所有尝试。
     let _ = updates_tx.send(ReconnectUpdate::Failed {
         pane_id,
         kind: SshFailureKind::Unknown,

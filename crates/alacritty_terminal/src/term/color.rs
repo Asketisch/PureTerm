@@ -2,22 +2,22 @@ use std::ops::{Index, IndexMut};
 
 use crate::vte::ansi::{NamedColor, Rgb};
 
-/// Number of terminal colors.
+/// 终端颜色数量。
 pub const COUNT: usize = 269;
 
-/// Array of indexed colors.
+/// 索引颜色数组。
 ///
-/// | Indices  | Description       |
+/// | 索引      | 描述             |
 /// | -------- | ----------------- |
-/// | 0..16    | Named ANSI colors |
-/// | 16..232  | Color cube        |
-/// | 233..256 | Grayscale ramp    |
-/// | 256      | Foreground        |
-/// | 257      | Background        |
-/// | 258      | Cursor            |
-/// | 259..267 | Dim colors        |
-/// | 267      | Bright foreground |
-/// | 268      | Dim background    |
+/// | 0..16    | 命名 ANSI 颜色   |
+/// | 16..232  | 色立方           |
+/// | 233..256 | 灰度渐变         |
+/// | 256      | 前景             |
+/// | 257      | 背景             |
+/// | 258      | 光标             |
+/// | 259..267 | 暗色             |
+/// | 267      | 亮前景           |
+/// | 268      | 暗背景           |
 #[derive(Copy, Clone)]
 pub struct Colors([Option<Rgb>; COUNT]);
 

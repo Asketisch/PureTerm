@@ -1,23 +1,21 @@
-//! `DaemonPty` — an `EventedPty` backed by a socketpair + pump thread.
+//! `DaemonPty` —— 基于 socketpair + 泵线程的 `EventedPty`。
 //!
-//! The daemon owns the real PTY; it mirrors bytes over a framed Unix data
-//! socket (see `pureterm_daemon::frame`). This module provides a thin wrapper
-//! that slots into `PtyEventLoop::new(...).spawn()` identically to `Pty` or
-//! `SshPty`. The M0 spike (`event_loop::tests_evented_socketpair`) proved the
-//! contract holds.
+//! daemon 拥有真正的 PTY;它通过带帧的 Unix 数据 socket(见
+//! `pureterm_daemon::frame`)镜像字节。本模块提供一个薄包装,可像 `Pty`
+//! 或 `SshPty` 一样接入 `PtyEventLoop::new(...).spawn()`。M0 spike
+//! (`event_loop::tests_evented_socketpair`)已验证该契约成立。
 //!
-//! Lifetime:
-//!   1. `DaemonPty::connect(session_id)` dials the daemon's per-session data
-//!      socket and spawns a pump `std::thread`.
-//!   2. The pump reads frames from the data socket; `OUTPUT` payloads are
-//!      written into a socketpair whose local end IS `DaemonPty::local` — so
-//!      `reader()/writer()` return raw PTY bytes exactly as the loop expects.
-//!   3. `EXIT` frames cause the pump to write 1 byte into `self.signals` (the
-//!      self-pipe), synthesizing the `next_child_event()` contract.
-//!   4. Bytes written by `PtyEventLoop` via `writer()` flow into the socketpair
-//!      and are read by the pump, which wraps them as `INPUT` frames.
-//!   5. `on_resize` sends a message to the pump which wraps it as a `RESIZE`
-//!      frame.
+//! 生命周期:
+//!   1. `DaemonPty::connect(session_id)` 拨入 daemon 的每会话数据 socket,
+//!      并生成一个泵 `std::thread`。
+//!   2. 泵从数据 socket 读取帧;`OUTPUT` 载荷写入 socketpair,其本地端
+//!      正是 `DaemonPty::local` —— 因此 `reader()/writer()` 返回原始 PTY
+//!      字节,与事件循环的预期完全一致。
+//!   3. `EXIT` 帧让泵向 `self.signals`(self-pipe)写入 1 字节,模拟
+//!      `next_child_event()` 契约。
+//!   4. `PtyEventLoop` 通过 `writer()` 写入的字节流入 socketpair,被泵
+//!      读取后包装为 `INPUT` 帧。
+//!   5. `on_resize` 向泵发送消息,泵将其包装为 `RESIZE` 帧。
 
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Write};
@@ -34,40 +32,40 @@ use alacritty_terminal::event::{OnResize, WindowSize};
 use alacritty_terminal::tty::{ChildEvent, EventedPty, EventedReadWrite};
 use pureterm_daemon::frame::{self, frame_type};
 
-/// Interest keys matching the `event_loop.rs` contract (same as `tty/unix.rs`).
+/// 与 `event_loop.rs` 契约匹配的兴趣键(与 `tty/unix.rs` 相同)。
 const PTY_READ_WRITE_TOKEN: usize = 0;
 const PTY_CHILD_EVENT_TOKEN: usize = 1;
 
-/// A `DaemonPty` replaces a real PTY in the GUI process. It mirrors bytes from
-/// the daemon via a pump thread and exposes them through a local socketpair so
-/// `PtyEventLoop` can poll/read/write without any changes.
+/// `DaemonPty` 在 GUI 进程中替代真实 PTY。它通过泵线程镜像 daemon 的
+/// 字节,再通过本地 socketpair 暴露,使 `PtyEventLoop` 无需任何修改即可
+/// 支持 poll/read/write 等操作。
 pub struct DaemonPty {
-    /// Local end of a socketpair carrying raw PTY bytes (bidirectional).
+    /// 承载原始 PTY 字节(双向)的 socketpair 本地端。
     local: File,
-    /// Self-pipe: the pump writes 1 byte here when a daemon `EXIT` frame
-    /// arrives. `next_child_event` reads it.
+    /// self-pipe:daemon `EXIT` 帧到达时泵在此写入 1 字节。
+    /// `next_child_event` 读取它。
     signals: crate::local_socket::LocalStream,
-    /// Channel to the pump for resize requests.
+    /// 向泵发送 resize 请求的通道。
     resize_tx: mpsc::Sender<(u16, u16)>,
-    /// Stop flag: set on drop so the pump exits gracefully.
+    /// 停止标志:丢弃时置位,让泵优雅退出。
     stop: Arc<AtomicBool>,
-    /// The pump thread handle — joined on drop.
+    /// 泵线程句柄 —— 丢弃时 join。
     _pump: Option<JoinHandle<()>>,
 }
 
 impl DaemonPty {
-    /// Connect to a daemon session's data socket and spawn the pump thread.
+    /// 连接 daemon 会话的数据 socket 并生成泵线程。
     ///
-    /// `data_path` is the per-session Unix socket returned by `session.attach`.
+    /// `data_path` 是 `session.attach` 返回的每会话 Unix socket。
     pub fn connect(data_path: &std::path::Path) -> io::Result<Self> {
-        // Socketpair: local (for PtyEventLoop) <-> pump (bridges daemon frames).
+        // Socketpair:本地端(供 PtyEventLoop)<-> 泵(桥接 daemon 帧)。
         let (local_stream, pump_stream) = local_pair()?;
         local_stream.set_nonblocking(true)?;
-        pump_stream.set_nonblocking(false)?; // pump uses blocking I/O
+        pump_stream.set_nonblocking(false)?; // 泵使用阻塞 I/O
 
         let local = unsafe { File::from_raw_fd(local_stream.into_raw_fd()) };
 
-        // Self-pipe for exit notification.
+        // 用于退出通知的 self-pipe。
         let (signals, sig_send) = local_pair()?;
         signals.set_nonblocking(true)?;
 
@@ -97,11 +95,11 @@ impl DaemonPty {
 impl Drop for DaemonPty {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
-        // The pump will notice the stop flag on its next read timeout.
+        // 泵会在下一次读取超时时发现停止标志。
     }
 }
 
-// ── EventedReadWrite ──────────────────────────────────────────────────────
+// ── EventedReadWrite 实现 ──────────────────────────────────────
 
 impl EventedReadWrite for DaemonPty {
     type Reader = File;
@@ -158,7 +156,7 @@ impl EventedReadWrite for DaemonPty {
     }
 }
 
-// ── EventedPty ────────────────────────────────────────────────────────────
+// ── EventedPty 实现 ────────────────────────────────────────────
 
 impl EventedPty for DaemonPty {
     fn next_child_event(&mut self) -> Option<ChildEvent> {
@@ -172,7 +170,7 @@ impl EventedPty for DaemonPty {
     }
 }
 
-// ── OnResize ──────────────────────────────────────────────────────────────
+// ── OnResize 实现 ──────────────────────────────────────────────
 
 impl OnResize for DaemonPty {
     fn on_resize(&mut self, window_size: WindowSize) {
@@ -180,17 +178,17 @@ impl OnResize for DaemonPty {
     }
 }
 
-// ── Pump thread ───────────────────────────────────────────────────────────
+// ── 泵线程 ─────────────────────────────────────────────────────
 
-/// The pump bridges the framed daemon data socket ↔ the raw socketpair.
+/// 泵桥接带帧的 daemon 数据 socket ↔ 原始 socketpair。
 ///
-/// Reads:
-/// - daemon data socket → decode frames → OUTPUT payload → write to pump_stream
-/// - daemon data socket → EXIT frame → write 1 byte to sig_send
+/// 读取:
+/// - daemon 数据 socket → 解码帧 → OUTPUT 载荷 → 写入 pump_stream
+/// - daemon 数据 socket → EXIT 帧 → 向 sig_send 写入 1 字节
 ///
-/// Writes:
-/// - pump_stream (bytes written by PtyEventLoop) → INPUT frames → daemon
-/// - resize_rx messages → RESIZE frames → daemon
+/// 写入:
+/// - pump_stream(PtyEventLoop 写入的字节)→ INPUT 帧 → daemon
+/// - resize_rx 消息 → RESIZE 帧 → daemon
 fn pump_loop(
     mut data: crate::local_socket::LocalStream,
     mut local: crate::local_socket::LocalStream,
@@ -198,7 +196,7 @@ fn pump_loop(
     resize_rx: mpsc::Receiver<(u16, u16)>,
     stop: Arc<AtomicBool>,
 ) {
-    // Set timeouts so the pump can check `stop` periodically.
+    // 设置超时,使泵能周期性检查 `stop`。
     let timeout = std::time::Duration::from_millis(100);
     let _ = data.set_read_timeout(Some(timeout));
     let _ = local.set_read_timeout(Some(timeout));
@@ -212,33 +210,33 @@ fn pump_loop(
             return;
         }
 
-        // Check for resize requests (non-blocking).
+        // 检查 resize 请求(非阻塞)。
         while let Ok((cols, rows)) = resize_rx.try_recv() {
             let payload = frame::encode_resize(cols, rows);
             let wire = frame::encode(frame_type::RESIZE, &payload);
             let _ = data.write_all(&wire);
         }
 
-        // Read from data socket (daemon → GUI direction).
+        // 从数据 socket 读取(daemon → GUI 方向)。
         match data.read(&mut data_buf) {
-            Ok(0) => return, // daemon closed
+            Ok(0) => return, // daemon 已关闭
             Ok(n) => {
                 frame_buf.extend_from_slice(&data_buf[..n]);
-                // Decode all complete frames.
+                // 解码所有完整帧。
                 let mut pos = 0;
                 while let Ok(Some((f, consumed))) = frame::decode(&frame_buf[pos..]) {
                     match f.ftype {
                         frame_type::OUTPUT | frame_type::SCROLLBACK => {
-                            // Write raw payload to the socketpair (-> PtyEventLoop reader).
+                            // 把原始载荷写入 socketpair(-> PtyEventLoop 读取端)。
                             let _ = local.write_all(f.payload);
                         }
                         frame_type::EXIT => {
                             let _ = sig_send.write_all(&[1u8]);
-                            // Drain remaining frames then exit.
+                            // 排空剩余帧后退出。
                             pos += consumed;
                             continue;
                         }
-                        frame_type::PONG => {} // ignore keepalive responses
+                        frame_type::PONG => {} // 忽略保活响应
                         _ => {}
                     }
                     pos += consumed;
@@ -246,12 +244,12 @@ fn pump_loop(
                 frame_buf.drain(..pos);
             }
             Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {}
-            Err(_) => return, // data socket broken
+            Err(_) => return, // 数据 socket 已损坏
         }
 
-        // Read from local socketpair (PtyEventLoop writer → daemon direction).
+        // 从本地 socketpair 读取(PtyEventLoop 写入端 → daemon 方向)。
         match local.read(&mut local_buf) {
-            Ok(0) => return, // local closed (GUI dropped DaemonPty)
+            Ok(0) => return, // 本地端已关闭(GUI 已丢弃 DaemonPty)
             Ok(n) => {
                 let wire = frame::encode(frame_type::INPUT, &local_buf[..n]);
                 if data.write_all(&wire).is_err() {

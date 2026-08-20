@@ -1,18 +1,14 @@
-//! T-core-tmux-cc: the control-mode tmux child process + envelope IO.
+//! T-core-tmux-cc：控制模式下的 tmux 子进程 + 信封 IO。
 //!
-//! v2 expands the v1 `spawn_tmux_cc` shell-out into a full
-//! `TmuxChild` struct:
+//! v2 把 v1 的 `spawn_tmux_cc` shell 外包扩展为完整的 `TmuxChild` 结构体：
 //!
-//! - Holds the `Child` handle (reaping + shutdown paths).
-//! - Owns stdin/stdout/stdio so the GUI can do `write_envelope`
-//!   without re-forking.
-//! - Returns envelopes via a buffered reader — the v1 path threw them
-//!   on the floor.
+//! - 持有 `Child` 句柄（回收与关闭路径）。
+//! - 拥有 stdin/stdout/stdio，使 GUI 无需重新 fork 即可 `write_envelope`。
+//! - 通过带缓冲的读取器返回信封——v1 路径直接把它们丢弃。
 //!
-//! The full EventedPty integration (async stdin/stdout pumped by
-//! `terminal_context`) is wired in v3 once the EventLoop refactor
-//! lands. v2 is plain synchronous stdio + a thread that reaps the
-//! child.
+//! 完整的 EventedPty 集成（由 `terminal_context` 泵送异步 stdin/stdout）
+//! 在 v3 EventLoop 重构落地后接上。v2 是纯同步 stdio + 一个回收子进程的
+//! 线程。
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, ChildStderr, ChildStdin, ChildStdout, Command, Stdio};
@@ -21,23 +17,23 @@ use std::thread;
 
 use super::envelope::{parse_envelopes, TmuxEnvelope};
 
-/// Arguments for spawning a fresh tmux -CC session.
+/// 生成一个新的 tmux -CC 会话的参数。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TmuxSpawnArgs {
-    /// `-s <name>` session name. Auto-generated from `tag` if None.
+    /// `-s <name>` 会话名。为 None 时由 `tag` 自动生成。
     pub session_name: Option<String>,
-    /// `-x` initial columns.
+    /// `-x` 初始列数。
     pub cols: u16,
-    /// `-y` initial rows.
+    /// `-y` 初始行数。
     pub rows: u16,
-    /// If true, attach to an existing session; else create new.
+    /// 为 true 时附加到已有会话；否则新建会话。
     pub attach: bool,
-    /// `-t <target>` for attach mode. Required when `attach` is true.
+    /// 附加模式下的 `-t <target>`。`attach` 为 true 时必填。
     pub target: Option<String>,
 }
 
 impl TmuxSpawnArgs {
-    /// Build the args for a `tmux -CC new-session -A -s pureterm-<tag>`.
+    /// 构建 `tmux -CC new-session -A -s pureterm-<tag>` 的参数。
     pub fn new_session(tag: &str, cols: u16, rows: u16) -> Self {
         Self {
             session_name: Some(format!("pureterm-{tag}")),
@@ -48,7 +44,7 @@ impl TmuxSpawnArgs {
         }
     }
 
-    /// Build args for `tmux -CC attach -t <target>`.
+    /// 构建 `tmux -CC attach -t <target>` 的参数。
     pub fn attach(target: impl Into<String>) -> Self {
         Self {
             session_name: None,
@@ -60,38 +56,34 @@ impl TmuxSpawnArgs {
     }
 }
 
-/// Handle to a running `tmux -CC` child + its stdio.
+/// 运行中的 `tmux -CC` 子进程句柄 + 其 stdio。
 ///
-/// `TmuxChild` is the v2 full-lifecycle wrapper around a `tmux -CC`
-/// child. It owns stdin/stdout, spawns a reader thread that streams
-/// envelopes to a channel, and exposes helpers for the GUI to send
-/// `%input` envelopes and reap the child on detach.
+/// `TmuxChild` 是围绕 `tmux -CC` 子进程的 v2 全生命周期包装。它拥有
+/// stdin/stdout，生成一个持续把信封流入 channel 的读取线程，并提供
+/// 让 GUI 发送 `%input` 信封、在分离时回收子进程的辅助方法。
 ///
-/// Note: the metadata struct in `backend.rs` is also named
-/// `TmuxChild` (different concept: the v1 GUI-side handle that
-/// tracks session/pane metadata). The two have distinct roles and
-/// don't conflict at runtime.
+/// 注意：`backend.rs` 里的元数据结构体也叫 `TmuxChild`（不同概念：那是
+/// v1 的 GUI 侧句柄，跟踪会话/面板元数据）。两者职责不同，运行时
+/// 不冲突。
 pub struct TmuxChild {
     child: Child,
     stdin: Option<ChildStdin>,
-    /// Buffered stdout reader (consumed by the envelope-reader thread).
+    /// 带缓冲的 stdout 读取器（由信封读取线程消费）。
     stdout: Option<ChildStdout>,
     stderr: Option<ChildStderr>,
-    /// Channel of envelopes streamed from stdout. The reader thread
-    /// pushes; the GUI pops.
+    /// 从 stdout 流入的信封 channel。读取线程写入；GUI 取出。
     rx: Receiver<TmuxEnvelope>,
-    /// Reader thread handle (kept so we can join on shutdown).
+    /// 读取线程句柄（保存以便关闭时 join）。
     _reader: Option<thread::JoinHandle<()>>,
-    /// Session id (`$session` from `%session-changed`). `None` until
-    /// the first envelope arrives.
+    /// 会话 id（来自 `%session-changed` 的 `$session`）。在第一个信封
+    /// 到达前为 `None`。
     session_id: Option<String>,
-    /// Original session name we asked tmux to attach/create.
+    /// 我们请求 tmux 附加/创建的原始会话名。
     pub session_name: Option<String>,
 }
 
 impl TmuxChild {
-    /// Spawn `tmux -CC` with the given args. Returns the live child
-    /// handle + a channel of envelopes.
+    /// 用给定参数生成 `tmux -CC`。返回活动子进程句柄 + 信封 channel。
     pub fn spawn(args: &TmuxSpawnArgs) -> std::io::Result<Self> {
         let mut cmd = Command::new("tmux");
         cmd.arg("-CC");
@@ -119,7 +111,7 @@ impl TmuxChild {
         let mut reader = BufReader::new(stdout.expect("piped stdout"));
         let join = thread::spawn(move || {
             let mut buf = String::new();
-            // Loop until EOF (the child closes stdout on exit).
+            // 循环直到 EOF（子进程退出时关闭 stdout）。
             loop {
                 buf.clear();
                 let n = match reader.read_line(&mut buf) {
@@ -132,7 +124,7 @@ impl TmuxChild {
                 }
                 for env in parse_envelopes(&buf) {
                     if tx.send(env).is_err() {
-                        return; // GUI went away
+                        return; // GUI 已退出
                     }
                 }
             }
@@ -150,12 +142,11 @@ impl TmuxChild {
         })
     }
 
-    /// Drain any pending envelopes. Non-blocking — returns immediately
-    /// with whatever the reader thread has buffered.
+    /// 排空所有待处理信封。非阻塞——立即返回读取线程已缓冲的内容。
     pub fn try_recv_envelope(&mut self) -> Option<TmuxEnvelope> {
         match self.rx.try_recv() {
             Ok(env) => {
-                // Capture the session id the first time we see it.
+                // 第一次看到会话时捕获会话 id。
                 if let TmuxEnvelope::SessionChanged { session_id, .. } = &env {
                     if self.session_id.is_none() && !session_id.is_empty() {
                         self.session_id = Some(session_id.clone());
@@ -167,7 +158,7 @@ impl TmuxChild {
         }
     }
 
-    /// Block until at least one envelope arrives.
+    /// 阻塞直到至少一个信封到达。
     pub fn recv_envelope(&mut self) -> Option<TmuxEnvelope> {
         match self.rx.recv() {
             Ok(env) => {
@@ -182,22 +173,21 @@ impl TmuxChild {
         }
     }
 
-    /// Send a `%input` envelope to tmux (keystroke input from the
-    /// GUI's `Term`). Blocks until the bytes are written.
+    /// 向 tmux 发送 `%input` 信封（来自 GUI `Term` 的按键输入）。
+    /// 阻塞直到字节写入完成。
     pub fn send_input(&mut self, bytes: &[u8]) -> std::io::Result<()> {
         let stdin = self
             .stdin
             .as_mut()
             .ok_or_else(|| std::io::Error::other("stdin closed"))?;
-        // Wrap raw bytes as `%input $ <length>\n<bytes>` per the tmux
-        // control-mode protocol.
+        // 按 tmux 控制模式协议，把原始字节包装为 `%input $ <length>\n<bytes>`。
         write_envelope(stdin, &TmuxEnvelope::Input {
             pane_id: 0,
             bytes: bytes.to_vec(),
         })
     }
 
-    /// Send a raw envelope (e.g. `refresh-client -C 200x50`).
+    /// 发送一个原始信封（例如 `refresh-client -C 200x50`）。
     pub fn send_envelope(&mut self, env: &TmuxEnvelope) -> std::io::Result<()> {
         let stdin = self
             .stdin
@@ -206,34 +196,32 @@ impl TmuxChild {
         write_envelope(stdin, env)
     }
 
-    /// Poll the child for exit; returns the exit status if it has
-    /// exited, `None` if it's still running.
+    /// 轮询子进程是否退出；已退出则返回退出状态，仍在运行则返回 `None`。
     pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
         self.child.try_wait()
     }
 
-    /// Send `SIGTERM` and reap. Use on detach / app shutdown.
+    /// 发送 `SIGTERM` 并回收。用于分离 / 应用关闭时。
     pub fn terminate(&mut self) -> std::io::Result<()> {
-        // Closing stdin first signals tmux to shut down cleanly on
-        // some platforms; we then escalate to kill.
+        // 在某些平台上，先关闭 stdin 会让 tmux 干净地关闭；随后再升级为 kill。
         self.stdin.take();
         self.child.kill()?;
         self.child.wait()?;
         Ok(())
     }
 
-    /// Get the session id we observed in the first
-    /// `%session-changed` envelope. `None` if we haven't seen one yet.
+    /// 获取在第一个 `%session-changed` 信封中观察到的会话 id。
+    /// 还没看到则为 `None`。
     pub fn session_id(&self) -> Option<&str> {
         self.session_id.as_deref()
     }
 
-    /// Has the child exited?
+    /// 子进程是否已退出？
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
     }
 
-    /// Drain stderr (used to surface tmux errors in the GUI log).
+    /// 排空 stderr（用于把 tmux 错误显示到 GUI 日志）。
     pub fn stderr_text(&mut self) -> std::io::Result<String> {
         let mut s = String::new();
         if let Some(err) = self.stderr.as_mut() {
@@ -245,35 +233,33 @@ impl TmuxChild {
 
 impl Drop for TmuxChild {
     fn drop(&mut self) {
-        // Best-effort cleanup: ignore errors (the child may have
-        // already exited, or the GUI may be panicking — either way
-        // we shouldn't double-panic).
+        // 尽力而为的清理：忽略错误（子进程可能已退出，或 GUI 正在
+        // panic——无论哪种都不应双重 panic）。
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
 }
 
-/// Write one envelope to the tmux -CC child stdin.
+/// 向 tmux -CC 子进程 stdin 写入一个信封。
 ///
-/// Currently a thin wrapper around `TmuxEnvelope::serialize`; kept as
-/// a function so callers don't have to know the protocol details.
+/// 目前是 `TmuxEnvelope::serialize` 的薄包装；保留为函数，使调用方
+/// 不必了解协议细节。
 fn write_envelope<W: Write>(w: &mut W, env: &TmuxEnvelope) -> std::io::Result<()> {
     let s = env.serialize();
     w.write_all(s.as_bytes())?;
     w.flush()
 }
 
-// --- v1 stub kept for back-compat. The new `TmuxChild` replaces
-// it for new callers, but the legacy `spawn_tmux_cc` signature is
-// preserved so older binary paths still work.
+// --- 为向后兼容保留的 v1 桩代码。新 `TmuxChild` 取代了新调用方，
+// 但保留旧 `spawn_tmux_cc` 签名，使旧二进制路径仍可用。
 
 #[cfg(unix)]
 mod unix {
     use std::io;
     use std::process::{Child, Command, Stdio};
 
-    /// Legacy v1: spawn a `tmux -CC` child and return a handle the
-    /// GUI can write commands to / read envelopes from.
+    /// 旧版 v1：生成 `tmux -CC` 子进程并返回句柄，GUI 可向它写入
+    /// 命令 / 从中读取信封。
     pub fn spawn_tmux_cc(tag: &str, cols: u16, rows: u16) -> io::Result<(Child, String, u32)> {
         let session = format!("pureterm-{tag}");
         let child = Command::new("tmux")
@@ -324,11 +310,10 @@ mod tests {
         assert!(a.session_name.is_none());
     }
 
-    /// Spawning tmux requires the binary on PATH; skip if missing.
+    /// 生成 tmux 需要 PATH 中的二进制；缺失时跳过。
     #[test]
     fn spawn_fails_cleanly_without_tmux_binary() {
-        // Use a binary that definitely doesn't exist so we test the
-        // error path without polluting PATH.
+        // 使用一个肯定不存在的二进制来测试错误路径，避免污染 PATH。
         let mut cmd = Command::new("/nonexistent/tmux");
         cmd.arg("-CC");
         let result = cmd.spawn();
@@ -337,9 +322,8 @@ mod tests {
 
     #[test]
     fn terminate_idempotent() {
-        // Construct a fake child via `Command::new("true")` so we
-        // don't need tmux installed. `terminate` should kill + wait
-        // without panicking.
+        // 用 `Command::new("true")` 构造一个假子进程，这样不必安装 tmux。
+        // `terminate` 应在不 panic 的情况下 kill + wait。
         let mut cmd = Command::new("true");
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -354,9 +338,9 @@ mod tests {
             session_id: None,
             session_name: None,
         };
-        // First terminate: kill + wait.
+        // 第一次 terminate：kill + wait。
         pty.terminate().expect("first terminate ok");
-        // is_alive should now be false.
+        // is_alive 此时应为 false。
         assert!(!pty.is_alive());
     }
 }

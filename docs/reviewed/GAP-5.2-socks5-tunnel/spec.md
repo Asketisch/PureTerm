@@ -1,6 +1,6 @@
 ---
 gap: GAP-5.2
-title: SOCKS5 Tunnel
+title: SOCKS5 隧道
 category: SSH/网络
 plan_type: integration
 priority: P1
@@ -59,7 +59,7 @@ SOCKS5 隧道是 AI agent 访问受限网络的基础能力。
 2. 持久化：tunnels 配置写入 daemon `tunnels.json` —— ✅
 3. TOFU：首次连接记录 host key，后续验证 —— ✅
 
-## Review ✅ (2026-06-30)
+## 评审 ✅ (2026-06-30)
 
 审 2 bug 全修 + 6 单测（TDD），Review flip ✅：
 

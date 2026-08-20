@@ -1,4 +1,4 @@
-//! GAP-7.7: Custom resume bindings.
+//! GAP-7.7: 自定义恢复绑定。
 
 mod types;
 mod config;

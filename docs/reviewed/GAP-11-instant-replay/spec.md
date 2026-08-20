@@ -1,6 +1,6 @@
 ---
 gap: GAP-11
-title: Instant Replay
+title: 即时回放
 category: 终端交互
 plan_type: feature
 priority: P2

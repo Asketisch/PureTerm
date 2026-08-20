@@ -1,6 +1,6 @@
 ---
 gap: GAP-14
-title: Enhanced Vim Mode
+title: 增强 Vim 模式
 category: 终端交互
 plan_type: enhance
 priority: P3

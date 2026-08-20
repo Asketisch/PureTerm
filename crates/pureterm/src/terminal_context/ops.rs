@@ -32,8 +32,8 @@ use crate::ssh::pty::SshPty;
 use crate::ssh::reconnect::{ReconnectParams, SshState, SshStateSnapshot};
 
 impl TerminalContext {
-    /// Access the underlying `Term` grid. The shader uses this to read
-    /// cells every frame. Both variants expose the same grid shape.
+    /// 访问底层 `Term` 网格。shader 每帧用它读取 cell。
+    /// 两个变体暴露相同的网格形态。
     pub fn terminal(&self) -> &Arc<FairMutex<Term<ChannelEventListener>>> {
         match self {
             TerminalContext::Local(ctx) => &ctx.terminal,
@@ -42,7 +42,7 @@ impl TerminalContext {
         }
     }
 
-    /// Write bytes to the PTY (keyboard input).
+    /// 向 PTY 写入字节（键盘输入）。
     pub fn write_to_pty(&self, bytes: &[u8]) {
         match self {
             TerminalContext::Local(ctx) => ctx.notifier.notify(bytes.to_vec()),
@@ -51,9 +51,8 @@ impl TerminalContext {
         }
     }
 
-    /// GAP-42: return a clone of the PTY notifier so login commands can be
-    /// sent from a background thread without holding a non-`Send`
-    /// `Arc<TerminalContext>`.
+    /// GAP-42：返回 PTY notifier 的克隆，使登录命令可以从后台线程发送，
+    /// 无需持有非 `Send` 的 `Arc<TerminalContext>`。
     pub fn pty_notifier(&self) -> Option<Notifier> {
         match self {
             TerminalContext::Local(ctx) => Some(ctx.notifier.clone()),
@@ -62,21 +61,20 @@ impl TerminalContext {
         }
     }
 
-    /// GAP-5.6: stamp a "reconnected" separator line into this SSH pane's grid
-    /// on a successful reconnect. No-op for local panes. See
-    /// [`inject_reconnect_marker_into`].
+    /// GAP-5.6：重连成功后向该 SSH 面板的网格盖一条"reconnected" 分隔线。
+    /// 对本地面板是空操作。参见 [`inject_reconnect_marker_into`]。
     pub fn inject_reconnect_marker(&self) {
         match self {
             #[cfg(unix)]
             TerminalContext::Ssh(ctx) => {
                 inject_reconnect_marker_into(&ctx.terminal, &ctx.ssh_host);
             },
-            // Local pane (or non-unix): nothing to mark.
+            // 本地面板（或非 Unix）：无需标记。
             _ => {},
         }
     }
 
-    /// Resize the terminal grid and notify the PTY.
+    /// 调整终端网格尺寸并通知 PTY。
     pub fn resize(&self, cols: usize, rows: usize, cell_w: u16, cell_h: u16) {
         let size = TermSize::new(cols, rows);
         match self {
@@ -105,10 +103,9 @@ impl TerminalContext {
         }
     }
 
-    /// Poll for one pending terminal event (drained by the iced loop each
-    /// wakeup). Replaces the old `event_rx()` accessor: because the SSH
-    /// receiver now lives behind the swappable `runtime` `RefCell`, there is
-    /// no stable `&Receiver` to hand out.
+    /// 轮询一个待处理的终端事件（iced 循环每次唤醒时排空）。取代旧的
+    /// `event_rx()` 访问器：因为 SSH 接收端现在位于可替换的 `runtime`
+    /// `RefCell` 之后，无法交出稳定的 `&Receiver`。
     pub fn poll_terminal_event(&self) -> Option<super::TerminalEvent> {
         match self {
             TerminalContext::Local(ctx) => ctx.event_rx.try_recv().ok(),
@@ -117,7 +114,7 @@ impl TerminalContext {
         }
     }
 
-    /// True if this context is backed by an SSH connection.
+    /// 该上下文是否由 SSH 连接支撑。
     pub fn is_ssh(&self) -> bool {
         match self {
             TerminalContext::Local(_) => false,
@@ -126,7 +123,7 @@ impl TerminalContext {
         }
     }
 
-    /// Return the child PID (only meaningful for local PTY contexts).
+    /// 返回子进程 PID（仅对本地 PTY 上下文有意义）。
     pub fn child_pid(&self) -> Option<u32> {
         match self {
             TerminalContext::Local(ctx) => Some(ctx.child_pid),
@@ -135,9 +132,9 @@ impl TerminalContext {
         }
     }
 
-    /// GAP-5.6: the daemon session id if this context mirrors a `puretermd`-
-    /// owned PTY (local or ssh). `None` for a direct PTY, which cannot survive
-    /// GUI restart and is therefore not persisted/restored.
+    /// GAP-5.6：若该上下文镜像 `puretermd` 拥有的 PTY（本地或 ssh），
+    /// 返回 daemon 会话 id。直连 PTY 返回 `None`：它无法扛过 GUI 重启，
+    /// 因此不会持久化/恢复。
     pub fn session_id(&self) -> Option<&str> {
         match self {
             TerminalContext::Local(ctx) => ctx.session_id.as_deref(),
@@ -146,7 +143,7 @@ impl TerminalContext {
         }
     }
 
-    /// GAP-40: active SSH forward summary (`L2 R1 X`), if any.
+    /// GAP-40：活动的 SSH 转发摘要（`L2 R1 X`），若有。
     #[cfg(unix)]
     pub fn ssh_forward_summary(&self) -> Option<&str> {
         match self {
@@ -155,7 +152,7 @@ impl TerminalContext {
         }
     }
 
-    /// Human-readable profile name (only meaningful for SSH contexts).
+    /// 人类可读的 profile 名称（仅对 SSH 上下文有意义）。
     pub fn profile_display(&self) -> Option<&str> {
         match self {
             TerminalContext::Local(_) => None,
@@ -164,8 +161,8 @@ impl TerminalContext {
         }
     }
 
-    /// SSH connection key fields for pool release on close.
-    /// Returns `None` for local contexts.
+    /// 关闭时释放连接池所需的 SSH 连接键字段。
+    /// 本地上下文返回 `None`。
     #[cfg(unix)]
     pub fn ssh_release_key(&self) -> Option<(&str, Option<&str>, Option<u16>)> {
         match self {
@@ -178,9 +175,8 @@ impl TerminalContext {
         }
     }
 
-    /// Read available stderr bytes from the SSH child process (non-blocking).
-    /// Returns `None` if this is not an SSH context or the stderr pipe has
-    /// been consumed / was never captured.
+    /// 从 SSH 子进程读取可用的 stderr 字节（非阻塞）。
+    /// 若不是 SSH 上下文、或 stderr 管道已被消费完/从未捕获，返回 `None`。
     #[cfg(unix)]
     pub fn read_stderr(&self) -> Option<String> {
         match self {
@@ -190,10 +186,10 @@ impl TerminalContext {
                 let file = rt.stderr_file.as_mut()?;
                 let mut buf = vec![0u8; 4096];
                 let mut accumulated = Vec::new();
-                // The pipe is non-blocking; read until WouldBlock.
+                // 管道是非阻塞的；读到 WouldBlock 为止。
                 loop {
                     match file.read(&mut buf) {
-                        Ok(0) => break, // EOF
+                        Ok(0) => break, // EOF 文件结束
                         Ok(n) => accumulated.extend_from_slice(&buf[..n]),
                         Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => break,
                         Err(_) => break,
@@ -207,9 +203,9 @@ impl TerminalContext {
         }
     }
 
-    // ── GAP-5.6 reconnect support ──────────────────────────────────────────
+    // ── GAP-5.6 重连支持 ────────────────────────────────────────────────────
 
-    /// Snapshot the SSH reconnect state for UI rendering. `None` for local.
+    /// 快照 SSH 重连状态供 UI 渲染。本地为 `None`。
     #[cfg(unix)]
     pub fn ssh_state_snapshot(&self) -> Option<SshStateSnapshot> {
         match self {
@@ -220,9 +216,9 @@ impl TerminalContext {
         }
     }
 
-    /// Set the SSH reconnect state (called from the iced loop on
-    /// [`crate::ssh::reconnect::ReconnectUpdate`] Progress/Failed, or on
-    /// `reattach`). No-op for local contexts.
+    /// 设置 SSH 重连状态（在 iced 循环里收到 [`crate::ssh::reconnect::ReconnectUpdate`]
+    /// Progress/Failed 时调用，或在 `reattach` 时调用）。
+    /// 本地上下文为空操作。
     #[cfg(unix)]
     pub fn set_ssh_state(&self, state: SshState) {
         if let TerminalContext::Ssh(ctx) = self {
@@ -230,9 +226,9 @@ impl TerminalContext {
         }
     }
 
-    /// Mark this SSH pane as closing by user intent (manual disconnect / tab
-    /// close). MUST be set before writing `exit\r` so the exit handler does
-    /// not auto-reconnect. No-op for local contexts.
+    /// 把该 SSH 面板标记为用户主动关闭（手动断开 / 关闭标签页）。
+    /// 必须在写入 `exit\r` 前设置，使退出处理器不会自动重连。
+    /// 本地上下文为空操作。
     #[cfg(unix)]
     pub fn mark_user_initiated_close(&self) {
         if let TerminalContext::Ssh(ctx) = self {
@@ -240,7 +236,7 @@ impl TerminalContext {
         }
     }
 
-    /// True iff a user-initiated close was flagged for this SSH pane.
+    /// 该 SSH 面板是否被标记为用户主动关闭。
     #[cfg(unix)]
     pub fn is_user_initiated_close(&self) -> bool {
         match self {
@@ -249,8 +245,8 @@ impl TerminalContext {
         }
     }
 
-    /// Clone out the parameters needed to re-spawn this SSH connection.
-    /// `None` for local contexts.
+    /// 克隆重新生成该 SSH 连接所需的参数。
+    /// 本地上下文为 `None`。
     #[cfg(unix)]
     pub fn ssh_reconnect_params(&self) -> Option<ReconnectParams> {
         match self {
@@ -268,18 +264,16 @@ impl TerminalContext {
         }
     }
 
-    /// GAP-5.6: reattach a freshly-spawned `SshPty` to this context after a
-    /// reconnect. Joins the old (dead) loop thread, builds a new
-    /// `PtyEventLoop` against the SAME terminal `Arc` (so scrollback is
-    /// preserved), and swaps the notifier / event receiver / io thread /
-    /// stderr.
+    /// GAP-5.6：重连后把新生成的 `SshPty` 重新附加到该上下文。
+    /// 先 join 旧的（已死的）循环线程，再基于同一个终端 `Arc` 构建
+    /// 新的 `PtyEventLoop`（从而保留回滚缓冲），并替换 notifier、
+    /// 事件接收端、io 线程和 stderr。
     ///
-    /// Soundness relies on alacritty's `Term::exit` (term/mod.rs) NOT setting
-    /// a sticky "exited" flag — it only emits `Event::Exit`. The `PtyEventLoop`
-    /// owns its own `Poller` (loop-local), so the old dead loop leaves no
-    /// registrations on the terminal. If a future alacritty fork adds a
-    /// sticky exited flag, reattach will silently break (no input processed)
-    /// — re-audit then.
+    /// 正确性依赖于 alacritty 的 `Term::exit`（term/mod.rs）*不会*设置
+    /// 粘性的 "exited" 标记——它只发出 `Event::Exit`。`PtyEventLoop`
+    /// 拥有自己的 `Poller`（循环局部），所以旧的死循环不会在终端上留下
+    /// 注册。若未来某个 alacritty 分支加了粘性 exited 标记，reattach 会
+    /// 静默失效（输入无人处理）——届时需重新审计。
     #[cfg(unix)]
     pub fn reattach(&self, ssh_pty: SshPty, stderr: Option<File>) -> io::Result<()> {
         use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
@@ -291,19 +285,17 @@ impl TerminalContext {
 
         let mut rt = ctx.runtime.borrow_mut();
 
-        // 1. Join the old loop thread. It has already exited (the child exit
-        //    is what triggered the reconnect), but joining closes the small
-        //    window between "Exit event delivered" and "thread fully torn
-        //    down".
+        // 1. join 旧的循环线程。它已经退出（子进程退出触发重连），但 join
+        //    能关闭 "Exit 事件已送达" 与 "线程完全拆除" 之间的小窗口。
         if let Some(mut joiner) = rt.io_thread.take() {
             joiner.join();
         }
 
-        // 2. Fresh channel pair + listener for the new loop.
+        // 2. 为新循环准备全新的通道对 + 监听器。
         let (event_tx, event_rx) = bounded(64);
         let event_listener = ChannelEventListener::new(event_tx);
 
-        // 3. New loop against the same terminal Arc (scrollback preserved).
+        // 3. 基于同一个终端 Arc 构建新循环（保留回滚缓冲）。
         let pty_loop = alacritty_terminal::event_loop::EventLoop::new(
             Arc::clone(&ctx.terminal),
             event_listener,
@@ -314,7 +306,7 @@ impl TerminalContext {
         let loop_tx = pty_loop.channel();
         let io_thread = super::internal::ThreadJoiner::new(pty_loop.spawn());
 
-        // 4. Swap the swappable runtime state.
+        // 4. 替换可替换的运行时状态。
         rt.notifier = Notifier(loop_tx);
         rt.event_rx = event_rx;
         rt.io_thread = Some(io_thread);

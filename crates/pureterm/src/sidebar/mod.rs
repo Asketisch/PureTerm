@@ -1,22 +1,22 @@
-//! GAP-19: Dual Sidebar — left (Workspace + Git summary) and right
-//! (Find / Feed / Git modes). State lives here; views in `left` / `right`.
+//! GAP-19:双栏侧边栏——左侧(工作区 + Git 摘要)与右侧
+//! (Find / Feed / Git 等模式)。状态集中在此,视图在 `left` / `right` 子模块。
 
 pub mod left;
 pub mod right;
 
-/// Sidebar width bounds (px). Config values are clamped to this range.
+/// 侧边栏宽度边界(像素)。配置值会被限制在此范围内。
 pub const MIN_WIDTH: f32 = 120.0;
 pub const MAX_WIDTH: f32 = 480.0;
 pub const DEFAULT_WIDTH: f32 = 240.0;
 
-/// Which sidebar divider is being dragged (GAP-19 drag-to-resize).
+/// 正在拖拽的侧边栏分隔条(GAP-19 拖拽调整宽度)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarSide {
     Left,
     Right,
 }
 
-/// Right sidebar tab modes (MVP: Find, Feed, Git, Ports, Files, Blocks, Tools).
+/// 右侧侧边栏的标签页模式(MVP:Find、Feed、Git、Ports、Files、Blocks、Tools)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum RightMode {
     #[default]
@@ -25,7 +25,7 @@ pub enum RightMode {
     Git,
     Ports,
     Files,
-    /// GAP-51: block list when `[block_output].enabled`.
+    /// GAP-51:`[block_output].enabled` 启用时的输出块列表。
     Blocks,
     Toolbelt,
 }
@@ -55,7 +55,7 @@ impl RightMode {
         ]
     }
 
-    /// Tabs visible for the current config (Blocks only when block output is on).
+    /// 当前配置下可见的标签页(仅开启输出块时显示 Blocks)。
     pub fn visible(block_output_enabled: bool) -> Vec<RightMode> {
         Self::all()
             .iter()
@@ -65,19 +65,19 @@ impl RightMode {
     }
 }
 
-/// Runtime sidebar visibility + active right mode + per-window widths.
+/// 运行时侧边栏可见性 + 当前右侧模式 + 每窗口宽度。
 ///
-/// Widths live here (not on `SidebarConfig`) so each window resizes
-/// independently and drag-to-resize can mutate them at runtime; the config
-/// table is only the launch default. `Default` starts closed at 240 px.
+/// 宽度保存在这里(而非 `SidebarConfig`),使每个窗口可以独立
+/// 缩放,拖拽调整在运行时直接改动这些值;配置
+/// 表只是启动时的默认值。`Default` 初始关闭,宽度 240 像素。
 #[derive(Debug, Clone)]
 pub struct SidebarState {
     pub left_open: bool,
     pub right_open: bool,
     pub right_mode: RightMode,
-    /// Runtime left-sidebar width (px), clamped to `MIN_WIDTH..=MAX_WIDTH`.
+    /// 运行时左侧侧边栏宽度(像素),限制在 `MIN_WIDTH..=MAX_WIDTH` 内。
     pub left_width: f32,
-    /// Runtime right-sidebar width (px), clamped to `MIN_WIDTH..=MAX_WIDTH`.
+    /// 运行时右侧侧边栏宽度(像素),限制在 `MIN_WIDTH..=MAX_WIDTH` 内。
     pub right_width: f32,
 }
 
@@ -94,7 +94,7 @@ impl Default for SidebarState {
 }
 
 impl SidebarState {
-    /// Effective left width: clamped when open, 0 when closed.
+    /// 生效的左侧宽度:打开时取夹紧值,关闭时为 0。
     pub fn effective_left_width(&self) -> f32 {
         if self.left_open {
             clamp_width(self.left_width)
@@ -103,7 +103,7 @@ impl SidebarState {
         }
     }
 
-    /// Effective right width: clamped when open, 0 when closed.
+    /// 生效的右侧宽度:打开时取夹紧值,关闭时为 0。
     pub fn effective_right_width(&self) -> f32 {
         if self.right_open {
             clamp_width(self.right_width)
@@ -112,7 +112,7 @@ impl SidebarState {
         }
     }
 
-    /// Terminal column width after subtracting open sidebars (≥ 0).
+    /// 减去已打开的侧边栏后,终端可用的列宽(≥ 0)。
     pub fn terminal_width(&self, viewport_width: f32) -> f32 {
         (viewport_width - self.effective_left_width() - self.effective_right_width()).max(0.0)
     }
@@ -152,9 +152,9 @@ pub fn clamp_width(w: f32) -> f32 {
     w.clamp(MIN_WIDTH, MAX_WIDTH)
 }
 
-/// GAP-19 review: the EventBus kind emitted for a right-sidebar toggle.
-/// Pure decision seam so the Git-mode reopen path can't silently drop the
-/// visibility event (review BUG-1) — every toggle emits exactly one of these.
+/// GAP-19 review:右侧侧边栏切换时发出的事件总线类型。
+/// 作为纯粹的决定性接缝,使 Git 模式重新打开路径不会悄悄丢弃
+/// 可见性事件(review BUG-1)——每次切换恰好发出其一。
 #[inline]
 pub fn right_sidebar_event(now_open: bool) -> &'static str {
     if now_open {
@@ -187,21 +187,21 @@ mod tests {
         assert_eq!(st.terminal_width(1000.0), 520.0);
     }
 
-    /// Review BUG-1 regression guard: every right-sidebar toggle emits exactly
-    /// one visibility event — the Git-mode reopen path must not skip it.
+    /// Review BUG-1 回归防护:每次右侧侧边栏切换恰好发出
+    /// 一个可见性事件——Git 模式重新打开路径不得跳过它。
     #[test]
     fn right_sidebar_event_always_emits() {
         assert_eq!(right_sidebar_event(true), "sidebar.right_opened");
         assert_eq!(right_sidebar_event(false), "sidebar.right_closed");
     }
 
-    /// Runtime widths clamp on construction; drag updates keep the 120–480 bound.
+    /// 构造时对运行时宽度做夹紧;拖拽更新保持在 120–480 边界内。
     #[test]
     fn effective_widths_clamp_and_gate_on_open() {
         let mut st = SidebarState::default();
-        st.left_width = 50.0; // below MIN
-        st.right_width = 999.0; // above MAX
-        // Closed → contributes nothing.
+        st.left_width = 50.0; // 低于最小值
+        st.right_width = 999.0; // 高于最大值
+        // 关闭 → 不贡献任何宽度。
         assert_eq!(st.effective_left_width(), 0.0);
         assert_eq!(st.effective_right_width(), 0.0);
         st.left_open = true;

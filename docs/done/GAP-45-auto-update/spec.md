@@ -1,6 +1,6 @@
 ---
 gap: GAP-45
-title: Auto Update
+title: 自动更新
 category: 平台
 plan_type: platform
 priority: P4

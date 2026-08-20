@@ -1,11 +1,11 @@
-//! GAP-6.6: pipe-pane — tap a session's PTY output to a shell command (tmux
+//! GAP-6.6:pipe-pane——把会话的 PTY 输出接到一条 shell 命令(tmux
 //! `pipe-pane`).
 //!
-//! The pump thread feeds PTY bytes into an mpsc channel; a tokio task drains
-//! it into the spawned command's stdin. Stopping = dropping the sender (the
-//! task ends; `kill_on_drop` reaps the child). The pump is a plain `std::thread`
-//! and never touches the runtime — only `UnboundedSender::send` (which never
-//! blocks), so a slow/dead child can't stall PTY delivery to subscribers.
+//! 泵线程把 PTY 字节喂进 mpsc 通道;一个 tokio 任务把通道排空到
+//! 拉起命令的 stdin。停止 = 丢弃 sender(任务
+//! 结束;`kill_on_drop` 收殓子进程)。泵是普通 `std::thread`,
+//! 从不触碰 runtime——只调 `UnboundedSender::send`(永不
+//! 阻塞),因此缓慢/死掉的子进程不会拖停向订阅者投递 PTY。
 
 use std::io;
 use std::process::Stdio;
@@ -15,11 +15,11 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 use crate::session::SessionManager;
 
-/// Start piping a session's output to `command` (run via `sh -c`). Spawns the
-/// child + a runtime task that drains the feeder channel into the child's
-/// stdin. Returns the sender the pump writes PTY bytes to. The task owns the
-/// `Child` (with `kill_on_drop`), so dropping the sender ends the task and
-/// reaps the child.
+/// 开始把会话输出导入 `command`(经 `sh -c` 运行)。拉起子进程
+/// + 一个把馈送通道排空进子进程 stdin 的 runtime 任务。
+/// 返回泵向其写入 PTY 字节的 sender。任务持有
+/// `Child`(带 `kill_on_drop`),因此丢弃 sender 即结束任务并
+/// 收殓子进程。
 pub fn start(rt: &tokio::runtime::Handle, command: &str) -> io::Result<UnboundedSender<Vec<u8>>> {
     let mut child = Command::new("sh")
         .arg("-c")
@@ -39,9 +39,9 @@ async fn drain(
     child: tokio::process::Child,
 ) {
     use tokio::io::AsyncWriteExt;
-    // Hold `child` for the task's lifetime so `kill_on_drop` only fires when
-    // the task ends (sender dropped → recv returns None → loop exits). Named
-    // `_child` so its non-use isn't flagged while still keeping it alive.
+    // 为任务生命周期持有 `child`,使 `kill_on_drop` 只在
+    // 任务结束时触发(sender 丢弃 → recv 返回 None → 循环退出)。命名
+    // 为 `_child`,既不因未使用被标记,又保持其存活。
     let _child = child;
     while let Some(chunk) = rx.recv().await {
         if let Some(s) = stdin.as_mut() {
@@ -53,9 +53,9 @@ async fn drain(
     drop(stdin);
 }
 
-/// GAP-6.6: set a session's pipe (tmux `pipe-pane [command]`). `command` None
-/// ⇒ clear (stop piping). Replaces any prior pipe (dropping its sender kills
-/// the old child). Returns Err if the session is unknown or the spawn fails.
+/// GAP-6.6:设置会话的管道(tmux `pipe-pane [command]`)。`command` 为 None
+/// ⇒ 清除(停止导入)。替换任何既有管道(丢弃其 sender 会杀掉
+/// 旧子进程)。会话未知或拉起失败返回 Err。
 pub fn set(
     manager: &SessionManager,
     rt: &tokio::runtime::Handle,
@@ -65,8 +65,8 @@ pub fn set(
     let handle = manager
         .session_handle(sid)
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("unknown session {sid:?}")))?;
-    // Drop any prior sender first (kills its child), then start the new one
-    // while the pump sees None (no partial feed to a dying child).
+    // 先丢弃旧 sender(杀掉其子进程),再启动新的,
+    // 使泵看到 None(不会部分喂给垂死的子进程)。
     let new_tx = {
         let h = handle.lock().unwrap();
         let _prev = h.pipe_feeder.lock().unwrap().take();
@@ -80,8 +80,8 @@ pub fn set(
     Ok(())
 }
 
-/// GAP-6.6: stop piping a session (tmux `pipe-pane` with no command). No-op if
-/// the session is unknown or had no pipe.
+/// GAP-6.6:停止会话导入(tmux 不带命令的 `pipe-pane`)。会话未知
+/// 或本无管道时空操作。
 pub fn clear(manager: &SessionManager, sid: &str) {
     if let Some(handle) = manager.session_handle(sid) {
         let h = handle.lock().unwrap();
@@ -89,7 +89,7 @@ pub fn clear(manager: &SessionManager, sid: &str) {
     }
 }
 
-/// GAP-6.6: session ids that currently have an active pipe-pane tap.
+/// GAP-6.6:当前存在活动 pipe-pane 管道的会话 id。
 pub fn list(manager: &SessionManager) -> Vec<String> {
     manager.pipe_status()
 }
@@ -98,22 +98,22 @@ pub fn list(manager: &SessionManager) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// The core pipe-pane contract: bytes pushed onto the feeder channel reach
-    /// the spawned command's stdin. `start` is the standalone entry (no
-    /// `SessionManager` needed), so this exercises the pump→drain→child path
-    /// directly — the part the dispatch-level `set`/`clear` tests don't cover.
+    /// pipe-pane 的核心契约:推入馈送通道的字节到达
+    /// 拉起命令的 stdin。`start` 是独立入口(无需
+    /// `SessionManager`),因此这里直接演练 泵→排空→子进程 路径——
+    /// 分派层 `set`/`clear` 测试未覆盖的那部分。
     #[tokio::test]
     async fn start_feeds_bytes_to_child_stdin() {
         let out =
             std::env::temp_dir().join(format!("pt_pipe_test_{}.txt", std::process::id()));
         let _ = std::fs::remove_file(&out);
         let rt = tokio::runtime::Handle::current();
-        // `dd bs=1` writes each byte via its own write() syscall (no block
-        // buffering), so the payload is committed to the file as soon as it
-        // arrives — independent of the child exiting or being reaped. (`cat`
-        // would block-buffer to a regular file, and the drain task's
-        // `kill_on_drop` reaps the child immediately after closing its stdin,
-        // racing — and losing to — `cat`'s EOF flush.)
+        // `dd bs=1` 对每个字节各做一次 write() 系统调用(无块
+        // 缓冲),因此载荷一到即落盘——不依赖子进程退出或被收殓。
+        // (`cat` 对普通文件会块缓冲,而排空任务的
+        // `kill_on_drop` 在关闭 stdin 后立即收殓子进程,会与
+        // `cat` 的 EOF 冲刷竞速——且竞输。)
+        // 且竞输。)
         let cmd = format!("dd bs=1 of={} 2>/dev/null", out.display());
         let tx = start(&rt, &cmd).expect("start pipe");
         tx.send(b"payload-bytes".to_vec()).expect("send chunk");

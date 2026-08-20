@@ -42,8 +42,8 @@ pub fn save_atomic_to(snapshot: &LayoutSnapshot, path: &std::path::Path) -> bool
     true
 }
 
-/// Atomically write the snapshot to the default state path.
-/// Thin wrapper over [`save_atomic_to`] (best-effort: ignores the result).
+/// 把快照原子写入默认的状态保存路径。
+/// 对 [`save_atomic_to`] 的轻量封装(尽力而为:忽略失败结果)。
 #[cfg(unix)]
 pub fn save_atomic(snapshot: &LayoutSnapshot) {
     let _ = save_atomic_to(snapshot, &state_path());

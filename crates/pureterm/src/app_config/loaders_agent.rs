@@ -11,9 +11,9 @@ use super::AppConfig;
 use crate::ssh::config::SshProfile;
 
 impl AppConfig {
-    /// Load the user's `[[ssh.profiles]]` array from the toml config.
+    /// 从 toml 配置加载用户的 `[[ssh.profiles]]` 数组。
     ///
-    /// The config is structured as:
+    /// 配置结构如下：
     /// ```toml
     /// [[ssh.profiles]]
     /// name = "loopback"
@@ -23,10 +23,9 @@ impl AppConfig {
     /// key_path = "~/.ssh/id_ed25519"
     /// ```
     ///
-    /// This is a separate pass from `AppConfig::load` because the
-    /// `ssh` table is optional and we want to keep this function
-    /// failure-tolerant: a missing or malformed `[[ssh.profiles]]`
-    /// block returns an empty Vec, never propagates an error up.
+    /// 这是与 `AppConfig::load` 分开的一次独立读取，因为 `ssh` 表是
+    /// 可选的，且我们希望此函数失败容忍：缺失或格式错误的
+    /// `[[ssh.profiles]]` 块返回空 Vec，绝不向上传播错误。
     pub fn load_ssh_profiles(path: &Path) -> Vec<SshProfile> {
         let contents = match std::fs::read_to_string(path) {
             Ok(c) => c,
@@ -35,10 +34,9 @@ impl AppConfig {
                 return Vec::new();
             },
         };
-        // Parse the whole file as a generic toml::Value first so we
-        // can pick out the optional `[ssh]` table and its `profiles`
-        // array. Using `toml::Value` (not toml_edit) is fine here:
-        // we're not modifying the document, just reading.
+        // 先把整个文件解析为通用的 toml::Value，以便取出可选的 `[ssh]`
+        // 表及其 `profiles` 数组。这里用 `toml::Value`（而非 toml_edit）
+        // 就足够了：我们不改文档，只读取。
         let value: toml::Value = match toml::from_str(&contents) {
             Ok(v) => v,
             Err(e) => {
@@ -46,8 +44,7 @@ impl AppConfig {
                 return Vec::new();
             },
         };
-        // Walk ssh.profiles. If the table is missing, that's normal
-        // (user hasn't added any profiles yet).
+        // 遍历 ssh.profiles。表缺失是正常情况（用户还没添加任何配置）。
         let Some(profiles_value) = value
             .get("ssh")
             .and_then(|s| s.get("profiles"))
@@ -69,8 +66,8 @@ impl AppConfig {
         }
     }
 
-    /// Load the `[[vault.agents]]` array (GAP-7.6/7.5). Failure-tolerant: a
-    /// missing or malformed block returns an empty Vec.
+    /// 加载 `[[vault.agents]]` 数组（GAP-7.6/7.5）。失败容忍：缺失或
+    /// 格式错误的块返回空 Vec。
     ///
     /// ```toml
     /// [[vault.agents]]
@@ -98,10 +95,10 @@ impl AppConfig {
         }
     }
 
-    /// Load the `[[resume.bindings]]` array (GAP-7.7). Failure-tolerant: a
-    /// missing or malformed block returns an empty Vec (mirrors
-    /// `load_vault_agents`). Entries are deduplicated by `(kind, checkpoint)`,
-    /// later wins (mirrors `load_custom_commands` id dedup).
+    /// 加载 `[[resume.bindings]]` 数组（GAP-7.7）。失败容忍：缺失或
+    /// 格式错误的块返回空 Vec（镜像 `load_vault_agents`）。条目按
+    /// `(kind, checkpoint)` 去重，后者胜出（镜像 `load_custom_commands`
+    /// 的 id 去重）。
     ///
     /// ```toml
     /// [[resume.bindings]]
@@ -129,7 +126,7 @@ impl AppConfig {
                 return Vec::new();
             }
         };
-        // Dedup by (kind, checkpoint), later wins (mirrors load_custom_commands).
+        // 按 (kind, checkpoint) 去重，后者胜出（镜像 load_custom_commands）。
         let mut result: Vec<ResumeBinding> = Vec::new();
         for b in entries {
             if let Some(existing) = result
@@ -144,10 +141,9 @@ impl AppConfig {
         result
     }
 
-    /// Load the `[agent.hibernation]` table (GAP-7.3). A missing/malformed
-    /// table yields `Default` (disabled). On non-Unix, `enabled` is
-    /// force-disabled — SIGSTOP is unix-only — though cold resume
-    /// (`claude --resume`) still works.
+    /// 加载 `[agent.hibernation]` 表（GAP-7.3）。缺失/格式错误的表返回
+    /// `Default`（禁用）。非 Unix 上 `enabled` 被强制禁用——SIGSTOP
+    /// 仅 Unix 可用——但冷恢复（`claude --resume`）仍然可用。
     pub fn load_agent_hibernation(path: &Path) -> AgentHibernationConfig {
         let mut cfg = AgentHibernationConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -186,7 +182,7 @@ impl AppConfig {
         if let Some(n) = table.get("cpu_sample_interval_secs").and_then(|v| v.as_integer()) {
             cfg.cpu_sample_interval_secs = (n.max(1)) as u64;
         }
-        // SIGSTOP is unix-only; on Windows hibernation is force-disabled.
+        // SIGSTOP 仅 Unix 可用；Windows 上休眠被强制禁用。
         #[cfg(not(unix))]
         {
             cfg.enabled = false;
@@ -194,10 +190,9 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[agent.detect]` table (GAP-7.6). A missing/malformed table
-    /// yields `Default` (enabled). Detection shells out to `ps` / reads
-    /// `/proc` which is unix-only, but the config parses on all platforms; the
-    /// GUI gating lives in `#[cfg(unix)]` at the call site.
+    /// 加载 `[agent.detect]` 表（GAP-7.6）。缺失/格式错误的表返回
+    /// `Default`（启用）。检测会 shell 出 `ps` / 读取 `/proc`（仅 Unix），
+    /// 但配置在所有平台都能解析；GUI 门控位于调用点的 `#[cfg(unix)]`。
     pub fn load_agent_detect(path: &Path) -> AgentDetectConfig {
         let mut cfg = AgentDetectConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -227,15 +222,14 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-10: Load the top-level `allow_exec_on_remote` flag. When `false`
-    /// (the default), an `exec` trigger — or a cross-pane `send_text` — whose
-    /// match originated from an SSH/remote pane is blocked: attacker-influenced
-    /// remote text must not drive local code execution / keystroke injection.
-    /// Opt in with `allow_exec_on_remote = true` at the config top level.
+    /// GAP-10：加载顶层 `allow_exec_on_remote` 标志。为 `false`（默认）时，
+    /// 匹配来自 SSH/远程面板的 `exec` 触发器——或跨面板 `send_text`——会被
+    /// 阻止：受攻击者影响的远程文本绝不能驱动本地代码执行 / 按键注入。
+    /// 可在配置顶层用 `allow_exec_on_remote = true` 显式开启。
     ///
-    /// The flag lives at the top level (not under `[triggers]`) because
-    /// `[[triggers]]` makes `triggers` an array, so a scalar cannot share that
-    /// key. Missing file / unparseable config → `false` (safe-by-default).
+    /// 该标志位于顶层（不在 `[triggers]` 下），因为 `[[triggers]]` 使
+    /// `triggers` 成为数组，标量无法与之共享键。文件缺失 / 配置无法解析
+    /// → `false`（默认安全）。
     pub fn load_allow_exec_on_remote(path: &Path) -> bool {
         let Ok(contents) = std::fs::read_to_string(path) else {
             return false;
@@ -249,31 +243,31 @@ impl AppConfig {
             .unwrap_or(false)
     }
 
-    /// GAP-7.1: Load the user's `[[agent.hook]]` array from the toml config.
+    /// GAP-7.1：从 toml 配置加载用户的 `[[agent.hook]]` 数组。
     ///
-    /// Each entry is `{ event, matcher?, command? | deny_pattern? | ask_pattern?, *_reason?, timeout? }`:
+    /// 每个条目形如 `{ event, matcher?, command? | deny_pattern? | ask_pattern?, *_reason?, timeout? }`：
     /// ```toml
     /// [[agent.hook]]
     /// event = "PreToolUse"
-    /// matcher = "Bash"               # regex on tool_name (Pre/PostToolUse only)
-    /// deny_pattern = "\\brm\\s+-rf"  # built-in regex → deny
+    /// matcher = "Bash"               # 对 tool_name 的正则（仅 Pre/PostToolUse）
+    /// deny_pattern = "\\brm\\s+-rf"  # 内置正则 → 拒绝
     /// deny_reason = "rm -rf blocked"
     ///
     /// [[agent.hook]]
     /// event = "PostToolUse"
-    /// command = "/abs/lint.sh"       # external command (general mechanism)
+    /// command = "/abs/lint.sh"       # 外部命令（通用机制）
     /// timeout = 30
     ///
-    /// [[agent.hook]]                 # GAP-7.4: route to Feed approval panel
+    /// [[agent.hook]]                 # GAP-7.4：路由到 Feed 审批面板
     /// event = "PreToolUse"
     /// matcher = "Bash"
-    /// ask_pattern = "."              # built-in regex → ask (human approval)
+    /// ask_pattern = "."              # 内置正则 → 询问（人工审批）
     /// ask_reason = "confirm before run"
     /// ```
     ///
-    /// Failure-tolerant, mirroring `load_custom_commands`: a missing file or
-    /// `agent.hook` table returns an empty Vec; entries missing `event`, or
-    /// missing all of `command`/`deny_pattern`/`ask_pattern`, are skipped (warn).
+    /// 失败容忍，镜像 `load_custom_commands`：文件缺失或 `agent.hook` 表
+    /// 缺失返回空 Vec；缺少 `event`，或 `command`/`deny_pattern`/`ask_pattern`
+    /// 全缺的条目会被跳过（并告警）。
     pub fn load_agent_hooks(path: &Path) -> Vec<crate::agent_hooks::HookRule> {
         use crate::agent_hooks::HookRule;
 

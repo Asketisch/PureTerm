@@ -27,7 +27,7 @@ fn test_snap() -> AppSnapshot {
     }
 }
 
-// ── system.* ──────────────────────────────────────────────────────
+// ── system.* 命名空间 ─────────────────────────────────────────────────
 #[test]
 fn system_ping() {
     let router = SocketRouter::new();
@@ -98,7 +98,7 @@ fn system_methods() {
     assert!(methods.contains(&serde_json::json!("system.ping")));
 }
 
-// ── window.* ──────────────────────────────────────────────────────
+// ── window.* 命名空间 ─────────────────────────────────────────────────
 #[test]
 fn window_list() {
     let router = SocketRouter::new();
@@ -134,7 +134,7 @@ fn window_focus() {
     assert_eq!(resp.result.unwrap()["focused"], true);
 }
 
-// ── tab.* ─────────────────────────────────────────────────────────
+// ── tab.* 命名空间 ────────────────────────────────────────────────────
 #[test]
 fn tab_list() {
     let router = SocketRouter::new();
@@ -200,7 +200,7 @@ fn tab_switch() {
     assert!(matches!(fx, Some(IpcSideEffect::SwitchTab { index: 1 })));
 }
 
-// ── pane.* ────────────────────────────────────────────────────────
+// ── pane.* 命名空间 ───────────────────────────────────────────────────
 #[test]
 fn pane_list() {
     let router = SocketRouter::new();
@@ -208,15 +208,15 @@ fn pane_list() {
     let (resp, _) = router.dispatch(15, "pane.list", None, &snap);
     let result = resp.result.unwrap();
     let panes = result.as_array().unwrap();
-    assert_eq!(panes.len(), 3); // tab 0 has 2, tab 1 has 1
+    assert_eq!(panes.len(), 3); // tab 0 有 2 个,tab 1 有 1 个
 }
 
-// ── GAP-6.6: tmux layout / pipe RPCs ──────────────────────────────
+// ── GAP-6.6:tmux 布局 / pipe RPC ────────────────────────────────────
 #[test]
 fn pane_list_exposes_per_pane_id() {
-    // Phase 0: every row carries its own stable id (tmux `%N` targeting).
+    // 阶段 0:每行都带有自己的稳定 id(面向 tmux `%N` 定位)。
     let router = SocketRouter::new();
-    let snap = test_snap(); // pane_ids = [[10, 11], [20]]
+    let snap = test_snap(); // pane_ids 为 [[10, 11], [20]]
     let (resp, _) = router.dispatch(29, "pane.list", None, &snap);
     let panes = resp.result.unwrap().as_array().unwrap().clone();
     let ids: Vec<u64> = panes.iter().map(|p| p["pane_id"].as_u64().unwrap()).collect();
@@ -409,7 +409,7 @@ fn pane_zoom() {
     assert!(matches!(fx, Some(IpcSideEffect::ToggleZoom)));
 }
 
-// ── surface.* ─────────────────────────────────────────────────────
+// ── surface.* 命名空间 ────────────────────────────────────────────────
 #[test]
 fn surface_list() {
     let router = SocketRouter::new();
@@ -442,8 +442,8 @@ fn surface_send_text_missing() {
     assert_eq!(resp.error.unwrap().code, ERROR_INVALID_PARAMS);
 }
 
-// GAP-7.9: `surface.send_text` must emit a `SendText` side effect carrying
-// the parsed `text` + optional `pane_id` (None ⇒ active pane at exec time).
+// GAP-7.9:`surface.send_text` 必须产生 `SendText` 副作用,携带
+// 解析出的 `text` 与可选 `pane_id`(None ⇒ 执行时取活跃窗格)。
 #[cfg(unix)]
 #[test]
 fn surface_send_text_emits_side_effect() {
@@ -467,8 +467,8 @@ fn surface_send_text_emits_side_effect() {
     }
 }
 
-// GAP-7.9: without an explicit `pane_id` the side effect carries None so
-// the main loop writes to the active pane.
+// GAP-7.9:未显式给出 `pane_id` 时副作用携带 None,
+// 主循环即写入活跃窗格。
 #[cfg(unix)]
 #[test]
 fn surface_send_text_defaults_to_active_pane() {
@@ -489,7 +489,7 @@ fn surface_send_text_defaults_to_active_pane() {
     }
 }
 
-// ── config.* ──────────────────────────────────────────────────────
+// ── config.* 命名空间 ─────────────────────────────────────────────────
 #[test]
 fn config_get_no_key() {
     let router = SocketRouter::new();
@@ -535,10 +535,10 @@ fn config_set() {
     let router = SocketRouter::new();
     let snap = test_snap();
     let (resp, _) = router.dispatch(30, "config.set", None, &snap);
-    assert!(resp.result.is_some()); // Returns note, no error
+    assert!(resp.result.is_some()); // 返回 note,无错误
 }
 
-// ── ssh.* ─────────────────────────────────────────────────────────
+// ── ssh.* 命名空间 ────────────────────────────────────────────────────
 #[test]
 fn ssh_list_profiles() {
     let router = SocketRouter::new();
@@ -603,8 +603,8 @@ fn ssh_disconnect_with_pane_id() {
 
 #[test]
 fn ssh_state_returns_pane_states() {
-    // GAP-5.6: `ssh.state` is the read-only Socket API surface for SSH
-    // connection state (agents / MCP / CLI query which panes are connected).
+    // GAP-5.6:`ssh.state` 是 SSH 连接状态的只读 Socket API 表面,
+    // 供 agent / MCP / CLI 查询哪些窗格已连接。
     let router = SocketRouter::new();
     let mut snap = test_snap();
     snap.ssh_pane_states = vec![SshPaneState {
@@ -626,7 +626,7 @@ fn ssh_state_returns_pane_states() {
     assert_eq!(panes[0]["session_id"], "sess-1");
 }
 
-// ── debug.* ───────────────────────────────────────────────────────
+// ── debug.* 命名空间 ──────────────────────────────────────────────────
 #[test]
 fn debug_ping() {
     let router = SocketRouter::new();
@@ -646,7 +646,7 @@ fn debug_dump_state() {
     assert_eq!(r["ssh_profiles"], 2);
 }
 
-// ── General ───────────────────────────────────────────────────────
+// ── 通用 ────────────────────────────────────────────────────────────
 #[test]
 fn method_not_found() {
     let router = SocketRouter::new();

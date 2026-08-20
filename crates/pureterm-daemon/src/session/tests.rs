@@ -39,15 +39,15 @@ fn session_ids_are_unique() {
     assert_ne!(a, b);
 }
 
-/// GAP-5.1 M2/M5: `scrollback_frames` serializes the ring as `SCROLLBACK`
-/// wire frames — what a freshly-attached subscriber receives to rebuild
-/// scrollback. (Eviction itself is covered by `ring_buffer` tests.)
+/// GAP-5.1 M2/M5:`scrollback_frames` 把环序列化为 `SCROLLBACK`
+/// 线上帧——新挂接的订阅者收到的就是这些,用以重建
+/// 回滚。(逐出本身由 `ring_buffer` 测试覆盖。)
 #[test]
 fn scrollback_frames_encode_ring_as_scrollback() {
     let mut ring = RingBuffer::new(1024);
     ring.push(b"the quick brown fox");
 
-    // Concatenate the payloads of every produced frame; assert all SCROLLBACK.
+    // 拼接每个产出帧的载荷;断言全部是 SCROLLBACK。
     let mut got = Vec::new();
     for wire in scrollback_frames(&ring) {
         let (frame, _consumed) = next_frame(&wire, 0).expect("one frame per entry");
@@ -57,7 +57,7 @@ fn scrollback_frames_encode_ring_as_scrollback() {
     assert_eq!(got, b"the quick brown fox");
 }
 
-/// Minimal frame reader for tests: returns `((ftype, payload), consumed)`.
+/// 供测试用的极简帧读取器:返回 `((ftype, payload), consumed)`。
 fn next_frame(data: &[u8], pos: usize) -> Option<((u8, &[u8]), usize)> {
     if pos + 4 > data.len() {
         return None;
@@ -74,8 +74,8 @@ fn manager_list_reflects_create_and_kill() {
     let _iso = crate::discovery::IsolatedDataDir::new();
     let mgr = SessionManager::default();
     assert!(mgr.list().is_empty());
-    // create_local spawns a real shell; skip shape-assertions if it fails
-    // (e.g. minimal CI without a usable login shell).
+    // create_local 会拉起真实 shell;若失败(如极简 CI 缺少可用的
+    // 登录 shell)则跳过形状断言。
     if let Ok(id) = mgr.create_local(80, 24, None, None, None, true) {
         let infos = mgr.list();
         assert_eq!(infos.len(), 1);
@@ -86,9 +86,9 @@ fn manager_list_reflects_create_and_kill() {
     }
 }
 
-/// GAP-7.3: hibernate SIGSTOPs the session child (flag → true), resume
-/// SIGCONTs it (flag → false), both idempotent, and the child stays alive
-/// throughout (SIGSTOP/SIGCONT never close fds or kill the process).
+/// GAP-7.3:hibernate 对会话子进程 SIGSTOP(标志 → true),resume
+/// 对其 SIGCONT(标志 → false),两者幂等,且子进程全程
+/// 存活(SIGSTOP/SIGCONT 绝不关闭 fd 或杀死进程)。
 #[test]
 fn hibernate_then_resume_round_trip() {
     let _iso = crate::discovery::IsolatedDataDir::new();
@@ -100,17 +100,17 @@ fn hibernate_then_resume_round_trip() {
     let child_pid = mgr.list().into_iter().find(|i| i.id == id).unwrap().child_pid;
     assert!(pid_alive(child_pid), "child alive before hibernate");
 
-    // hibernate → flag true, child still alive (stopped, not killed).
+    // hibernate → 标志为 true,子进程仍存活(被停而非被杀)。
     assert!(mgr.hibernate(&id));
     assert!(mgr.list().iter().find(|i| i.id == id).unwrap().hibernated);
     assert!(pid_alive(child_pid), "child still alive after SIGSTOP");
 
-    // resume → flag false, child still alive.
+    // resume → 标志为 false,子进程仍存活。
     assert!(mgr.resume(&id));
     assert!(!mgr.list().iter().find(|i| i.id == id).unwrap().hibernated);
     assert!(pid_alive(child_pid), "child still alive after SIGCONT");
 
-    // idempotent: hibernate/resume on the same state don't fail.
+    // 幂等:同一状态下 hibernate/resume 不失败。
     assert!(mgr.hibernate(&id));
     assert!(mgr.hibernate(&id));
     assert!(mgr.resume(&id));
@@ -119,11 +119,11 @@ fn hibernate_then_resume_round_trip() {
     let _ = mgr.kill(&id);
 }
 
-/// GAP-5.1 M1 core proof: a session's child shell survives the GUI
-/// (subscriber) disconnecting, because the master fd is owned by the pump
-/// thread inside the `SessionHandle` — not by the subscriber. Dropping the
-/// subscriber must NOT close the master, so the child keeps running and a
-/// fresh subscriber can re-attach.
+/// GAP-5.1 M1 核心证明:会话的子 shell 在 GUI
+///(订阅者)断开后依然存活,因为 master fd 由 `SessionHandle` 内的泵
+/// 线程持有——而不是订阅者。丢弃
+/// 订阅者绝不能关闭 master,子进程得以继续运行,
+/// 新的订阅者可以重新挂接。
 #[test]
 fn local_session_child_survives_subscriber_drop() {
     let _iso = crate::discovery::IsolatedDataDir::new();
@@ -137,29 +137,29 @@ fn local_session_child_survives_subscriber_drop() {
         (info.child_pid, PathBuf::from(&info.data_path))
     };
 
-    // Sanity: child alive right after creation.
+    // 健全性:创建后子进程存活。
     assert!(pid_alive(child_pid), "child not alive after create");
 
-    // Attach a subscriber (mimics the GUI's DaemonPty) and drain the banner.
+    // 挂接一个订阅者(模拟 GUI 的 DaemonPty)并排空 banner。
     {
         let mut sub = UnixStream::connect(&data_path).expect("connect data socket");
         sub.set_read_timeout(Some(std::time::Duration::from_secs(1))).unwrap();
         let mut buf = [0u8; 8192];
         let _ = std::io::Read::read(&mut sub, &mut buf);
-        // `sub` drops here → the subscriber connection closes (GUI exits).
+        // `sub` 在此丢弃 → 订阅连接关闭(GUI 退出)。
     }
 
-    // Let the pump notice the closed subscriber (poll wait ≤ 250ms).
+    // 让泵注意到订阅者已关闭(poll 等待 ≤ 250ms)。
     std::thread::sleep(std::time::Duration::from_millis(600));
 
-    // CORE ASSERTION: the child shell is still alive after the subscriber
-    // (GUI) dropped. If this fails, the master fd was closed on detach.
+    // 核心断言:订阅者(GUI)丢弃后子 shell 仍存活。
+    // 若失败,说明 master fd 在脱离时被关闭了。
     assert!(
         pid_alive(child_pid),
         "child died after subscriber dropped — master fd closed prematurely"
     );
 
-    // A fresh subscriber can re-attach to the still-live session.
+    // 新的订阅者可以重新挂接到仍存活的会话。
     {
         let sub = UnixStream::connect(&data_path).expect("re-attach data socket");
         drop(sub);
@@ -168,8 +168,8 @@ fn local_session_child_survives_subscriber_drop() {
     assert!(mgr.kill(&id));
 }
 
-/// Authoritative liveness check via `ps` (kill(pid,0) can't distinguish a
-/// live child from a not-yet-reaped zombie; `ps` reads kernel state).
+/// 经 `ps` 的权威存活检查(kill(pid,0) 无法区分存活子进程与
+/// 尚未收殓的僵尸;`ps` 读内核状态)。
 fn pid_alive(pid: u32) -> bool {
     let out = std::process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "stat="])

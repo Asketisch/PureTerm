@@ -15,46 +15,46 @@ use wgpu::util::DeviceExt;
 use super::vertices::{BgImageVertex, BgVertex, ImageQuadVertex, TextVertex};
 
 pub struct TerminalPipeline {
-    // Shared render pipelines (immutable after creation)
+    // 共享渲染管线(创建后不可变)
     pub(super) bg_color_pipeline: wgpu::RenderPipeline,
     pub(super) text_pipeline: wgpu::RenderPipeline,
 
-    // Shared bind group layouts
+    // 共享的绑定组布局(bind group layout)
     pub(super) uniform_bgl: wgpu::BindGroupLayout,
     pub(super) text_atlas_bgl: wgpu::BindGroupLayout,
     pub(super) text_uniform_bgl: wgpu::BindGroupLayout,
 
-    // Shared sampler
+    // 共享采样器
     pub(super) nearest_sampler: wgpu::Sampler,
 
-    // Shared atlas textures (GlyphState is shared across all panes;
-    // first pane to call prepare() uploads dirty atlas data).
-    // Textures are persistent across frames; we only recreate them
-    // when the atlas size changes (e.g., new glyphs push it to grow).
-    // On steady-state frames we use `queue.write_texture` for partial updates.
+    // 共享图集纹理(GlyphState 在所有窗格间共享;
+    // 首个调用 prepare() 的窗格负责上传脏图集数据)。
+    // 纹理跨帧持久;只有图集尺寸变化时才重建
+    // (例如新字形迫使图集扩容时)。
+    // 稳态帧上使用 `queue.write_texture` 做局部更新。
     pub(super) grayscale_atlas_texture: Option<wgpu::Texture>,
     pub(super) color_atlas_texture: Option<wgpu::Texture>,
     pub(super) grayscale_atlas_size: (u32, u32),
     pub(super) color_atlas_size: (u32, u32),
-    // Views derived from the textures above; the bind group is cached
-    // and only re-created when the views change (i.e., on texture recreate).
+    // 由上述纹理派生的视图;绑定组被缓存,
+    // 仅当视图变化(即纹理重建)时才重建。
     pub(super) grayscale_atlas_view: Option<wgpu::TextureView>,
     pub(super) color_atlas_view: Option<wgpu::TextureView>,
     pub(super) text_atlas_bind_group: Option<wgpu::BindGroup>,
 
-    // GAP-54: background image pipeline + bind group layout.
+    // GAP-54:背景图像管线 + 绑定组布局。
     pub(super) bg_image_pipeline: wgpu::RenderPipeline,
     pub(super) bg_image_bgl: wgpu::BindGroupLayout,
     pub(super) bg_image_sampler: wgpu::Sampler,
 
-    // T-core-graphics v3: image quad pipeline + atlas binding.
+    // T-core-graphics v3:图像四边形(image quad)管线 + 图集绑定。
     //
-    // The atlas is a single 2048×2048 RGBA8 texture (matching `ImageAtlas`
-    // on the CPU side); every visible Sixel / chunked-graphics / inline
-    // image lives somewhere inside it, packed by `ImageAtlas`'s row-stride allocator.
-    // The CPU uploads dirty sub-rects each frame; this struct holds the
-    // persistent GPU texture + view + bind group so we don't recreate them
-    // when there's no new content.
+    // 图集是单张 2048×2048 的 RGBA8 纹理(与 CPU 侧的 `ImageAtlas` 对应);
+    // 所有可见的 Sixel / 分块图形 / 内联图像都位于其中,
+    // 由 `ImageAtlas` 的行步长分配器打包放置。
+    // CPU 每帧上传脏子矩形;本结构持有
+    // 常驻的 GPU 纹理 + 视图 + 绑定组,避免无新内容时
+    // 重复重建。
     pub(super) image_quad_pipeline: wgpu::RenderPipeline,
     pub(super) image_atlas_bgl: wgpu::BindGroupLayout,
     pub(super) image_atlas_sampler: wgpu::Sampler,
@@ -64,8 +64,8 @@ pub struct TerminalPipeline {
     pub(super) image_atlas_bind_group: Option<wgpu::BindGroup>,
 }
 
-/// Per-frame GPU resources owned by each `TerminalPrimitive` instance.
-/// Stored via `Mutex` because `Primitive::prepare()` receives `&self` and must be `Sync`.
+/// 每个 `TerminalPrimitive` 实例拥有的逐帧 GPU 资源。
+/// 用 `Mutex` 存储,因为 `Primitive::prepare()` 接收 `&self` 且必须 `Sync`。
 pub(in crate::terminal_shader) struct GpuResources {
     pub(in crate::terminal_shader) bg_vertex_buffer: Option<wgpu::Buffer>,
     pub(in crate::terminal_shader) bg_index_buffer: Option<wgpu::Buffer>,
@@ -77,7 +77,7 @@ pub(in crate::terminal_shader) struct GpuResources {
     pub(in crate::terminal_shader) text_uniform_bind_group: Option<wgpu::BindGroup>,
     pub(in crate::terminal_shader) text_index_count: u32,
 
-    // GAP-54: per-pane background image state.
+    // GAP-54:每个窗格的背景图像状态。
     pub(in crate::terminal_shader) bg_image_vertex_buffer: Option<wgpu::Buffer>,
     pub(in crate::terminal_shader) bg_image_index_buffer: Option<wgpu::Buffer>,
     pub(in crate::terminal_shader) bg_image_index_count: u32,
@@ -85,14 +85,14 @@ pub(in crate::terminal_shader) struct GpuResources {
     pub(in crate::terminal_shader) bg_image_uniform_bind_group: Option<wgpu::BindGroup>,
     pub(in crate::terminal_shader) bg_image_texture: Option<wgpu::Texture>,
     pub(in crate::terminal_shader) bg_image_view: Option<wgpu::TextureView>,
-    /// Hash of the loaded image bytes — used to skip GPU re-upload when
-    /// the image hasn't changed across frames.
+    /// 已加载图像字节的哈希 —— 用于在图像跨帧未变时
+    /// 跳过 GPU 重新上传。
     pub(in crate::terminal_shader) bg_image_signature: u64,
 
-    // T-core-graphics v3: per-pane image quad state.
-    // Vertex/index buffers are rebuilt every frame from
-    // `TerminalPrimitive::image_quad_draws`; the bind group references the
-    // shared pipeline-level atlas texture (see `image_atlas_bind_group`).
+    // T-core-graphics v3:每个窗格的图像四边形状态。
+    // 顶点 / 索引缓冲每帧根据
+    // `TerminalPrimitive::image_quad_draws` 重建;绑定组引用
+    // 共享的管线级图集纹理(见 `image_atlas_bind_group`)。
     pub(in crate::terminal_shader) image_quad_vertex_buffer: Option<wgpu::Buffer>,
     pub(in crate::terminal_shader) image_quad_index_buffer: Option<wgpu::Buffer>,
     pub(in crate::terminal_shader) image_quad_uniform_bind_group: Option<wgpu::BindGroup>,
@@ -141,7 +141,7 @@ impl Pipeline for TerminalPipeline {
         _queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
     ) -> Self {
-        // --- Shared uniform BGL ---
+        // --- 共享的 uniform 绑定组布局 ---
         let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Terminal Uniform BGL"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -156,7 +156,7 @@ impl Pipeline for TerminalPipeline {
             }],
         });
 
-        // --- BgColor pipeline ---
+        // --- BgColor 管线 ---
         let bg_shader_src = include_str!(
             "../../../pureterm-alacritty-runtime/src/alacritty/renderer/shaders/bg_color.wgsl"
         );
@@ -171,7 +171,7 @@ impl Pipeline for TerminalPipeline {
         });
         let bg_color_pipeline = create_pipeline(device, "BgColor", &bg_shader, &bg_layout, BgVertex::desc(), format);
 
-        // --- CellText pipeline ---
+        // --- CellText 管线 ---
         let text_atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Text Atlas BGL"),
             entries: &[
@@ -238,7 +238,7 @@ impl Pipeline for TerminalPipeline {
         });
         let text_pipeline = create_pipeline(device, "CellText", &text_shader, &text_layout, TextVertex::desc(), format);
 
-        // --- GAP-54: background image pipeline ---
+        // --- GAP-54:背景图像管线 ---
         let bg_image_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("BgImage BGL"),
             entries: &[
@@ -289,7 +289,7 @@ impl Pipeline for TerminalPipeline {
             format,
         );
 
-        // --- T-core-graphics v3: image quad pipeline ---
+        // --- T-core-graphics v3:图像四边形管线 ---
         let image_atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Image Atlas BGL"),
             entries: &[

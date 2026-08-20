@@ -1,7 +1,7 @@
 ---
 gap: GAP-01
-title: AI Chat Panel
-category: AI Agent
+title: AI 对话面板
+category: AI 智能体
 plan_type: feature
 priority: P0
 effort: XL
@@ -71,7 +71,7 @@ Phase 1+2 headless + Phase 3 GUI 已落地；剩余 Phase 4 function calling + S
 5. ✅ 快捷键：`⌘⇧L` 打开/关闭 Chat Panel（`⌘L` = Browser）
 6. ❌ 与 MCP Server 联动：Chat 可调用 MCP tools 实现 function calling
 
-## Review（2026-06-30）✅
+## 评审（2026-06-30）✅
 
 三 Explore agent 交叉审计 + 读源核实后修正确性/安全 bug，补测试，flip Review ✅。`status` 仍 `done`。
 

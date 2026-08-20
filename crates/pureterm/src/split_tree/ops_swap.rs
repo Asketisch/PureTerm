@@ -46,11 +46,11 @@ impl SplitNode {
         }
     }
 
-    /// GAP-6.6: swap two panes by id (tmux `swap-pane -s A -t B`). Swaps the
-    /// pane ids of the two leaves in place — the tree structure + ratios are
-    /// preserved, and since rendering maps `PaneId → content`, the two panes'
-    /// contents visually exchange position (exactly swap-pane's semantics).
-    /// Both ids must be present; returns false (tree unchanged) otherwise.
+    /// GAP-6.6:按 id 交换两个窗格(tmux `swap-pane -s A -t B`)。在原位交换
+    /// 两个叶子的窗格 id——树结构与比例均
+    /// 保持不变;由于渲染按 `PaneId → 内容` 映射,两个窗格的
+    /// 内容在视觉上互换位置(正是 swap-pane 的语义)。
+    /// 两个 id 必须都存在;否则返回 false(树保持不变)。
     pub fn swap_by_ids(&mut self, src: PaneId, dst: PaneId) -> bool {
         if src == dst {
             return self.contains(src);

@@ -1,6 +1,6 @@
 ---
 gap: GAP-15
-title: Shell Integration
+title: Shell 集成
 category: 终端交互
 plan_type: wrap-up
 priority: P0
@@ -38,7 +38,7 @@ v1 交付：
 
 其它已知局限（Review 记录）：bash 集成覆写整个 `PROMPT_COMMAND`（OSC 7 旧实现会 `${PROMPT_COMMAND:+;$PROMPT_COMMAND}` 保留用户值，本 gap 未保留——自定义 `PROMPT_COMMAND` 如 starship precmd / git status 会丢失；安全保留有风险，留后续）；temp ZDOTDIR（`/tmp/.pureterm-zdotdir-<tag>`）现 dir `0700` / `.zshenv` `0600`（防世界可读泄露真实 `$HOME`），但生命周期清理（会话结束 rm）留后续 gap。
 
-## Review ✅（2026-06-29）
+## 评审 ✅（2026-06-29）
 
 审计结论：OSC 133 scanner / `ShellMark` 事件桥（`_ => return` 丢事件陷阱已修，`terminal_context.rs:84`）/ A/B/C/D 状态机 / `shell.context` IPC / `get_shell_context` MCP 全部正确且有测试覆盖；IPC 每请求重建 live snapshot（`iced_app.rs:6597`），无陈旧数据 bug。修 4 处：
 

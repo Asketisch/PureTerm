@@ -14,14 +14,14 @@ use super::*;
 
     #[test]
     fn final_attempt_is_last_backoff_index_and_gives_up_immediately() {
-        // BUG-3: a worker that has failed its final attempt must give up at
-        // once — neither sleep out the last backoff slot nor emit a misleading
-        // "retry in Ns" Progress. `final_attempt()` is the 1-based index the
-        // worker breaks on, so it must stay equal to `BACKOFF.len()` (a
-        // schedule edit can't silently resurrect the wasted final sleep).
+        // BUG-3:最后一次尝试失败的 worker 必须立刻放弃 ——
+        // 既不睡满最后的退避槽,也不发出误导性的
+        // "retry in Ns" 进度。`final_attempt()` 是从 1 开始计的索引,
+        // worker 依此中断,因此它必须始终等于 `BACKOFF.len()`(
+        // 修改调度表不能悄悄复活被浪费的最后一次睡眠)。
         assert_eq!(final_attempt(), BACKOFF.len() as u8);
         assert_eq!(final_attempt(), 8);
-        // Every earlier attempt still retries; only the final one gives up.
+        // 更早的每次尝试仍会重试;只有最后一次放弃。
         for a in 1..final_attempt() {
             assert_ne!(a, final_attempt(), "attempt {a} must not be the give-up boundary");
         }
@@ -104,7 +104,7 @@ use super::*;
         let signal = CancelSignal::new();
         let s = signal.clone();
         let handle = thread::spawn(move || {
-            // Sleep 60s, but expect cancel to wake us fast.
+            // 睡眠 60 秒,但预期取消能很快唤醒。
             s.sleep_or_cancel(Duration::from_secs(60))
         });
         thread::sleep(Duration::from_millis(50));
@@ -129,7 +129,7 @@ use super::*;
     #[test]
     fn hub_cancel_for_unknown_pane_is_noop() {
         let hub = ReconnectHub::new();
-        // Should not panic.
+        // 不应 panic。
         hub.cancel(PaneId(9999));
     }
 
@@ -142,8 +142,8 @@ use super::*;
 
     #[test]
     fn hub_updates_tx_delivers_to_receiver() {
-        // Verify the tx→rx plumbing without an async runtime: claim the rx,
-        // send via tx, then poll with `try_recv` (sync).
+        // 在没有异步运行时的情况下验证 tx→rx 管道:先认领 rx,
+        // 再经 tx 发送,然后用 `try_recv`(同步)轮询。
         let hub = ReconnectHub::new();
         let mut rx = hub.take_updates_receiver().expect("receiver present");
         let _ = hub.updates_tx.send(ReconnectUpdate::Failed {
@@ -163,7 +163,7 @@ use super::*;
 
     #[test]
     fn reconnect_update_spawned_travels_channel() {
-        // GAP-5.6: Spawned replaces Success — ssh forked but not yet connected.
+        // GAP-5.6:Spawned 取代 Success —— ssh 已 fork 但尚未连接。
         let hub = ReconnectHub::new();
         let mut rx = hub.take_updates_receiver().expect("receiver present");
         let _ = hub.updates_tx.send(ReconnectUpdate::Spawned { pane_id: PaneId(7) });
@@ -176,7 +176,7 @@ use super::*;
     #[test]
     fn take_success_returns_none_after_cancel_drain() {
         let hub = ReconnectHub::new();
-        // Nothing deposited; cancel drains completed; take_success is None.
+        // 未存入任何内容;cancel 排空已完成项;take_success 为 None。
         hub.cancel(PaneId(5));
         assert!(hub.take_success(PaneId(5)).is_none());
     }
@@ -247,7 +247,7 @@ use super::*;
 
     #[test]
     fn failure_kind_and_snapshot_slugs_are_stable() {
-        // GAP-5.6: slugs are a wire contract for events / IPC — lock them.
+        // GAP-5.6:slug 是事件 / IPC 的线上契约 —— 锁定它们。
         assert_eq!(SshFailureKind::Auth.as_str(), "auth");
         assert_eq!(SshFailureKind::Network.as_str(), "network");
         assert_eq!(SshFailureKind::HostKey.as_str(), "host_key");
@@ -264,13 +264,13 @@ use super::*;
         assert_eq!(SshStateSnapshot::Connected.attempt(), None);
     }
 
-    // --- GAP-5.6 follow-up: anti-hammer (flap) detector ----------------------
+    // ── GAP-5.6 跟进:防连击(flap)检测 ───────────────────────────────────────────────────
 
     #[test]
     fn flap_constants_are_sane() {
-        // Window must be long enough to catch a flapper but the cap low enough
-        // to stop it quickly; cap must be high enough to spare a recovering
-        // host from false positives.
+        // 窗口要足够长以捕捉连击者,上限要足够低
+        // 以快速叫停;上限又要足够高,避免误伤
+        // 正在恢复的主机。
         assert!(FLAP_WINDOW >= Duration::from_secs(30), "window too short: {:?}", FLAP_WINDOW);
         assert!(MAX_FLAPS >= 3, "cap too low (false positives): {}", MAX_FLAPS);
         assert!(MAX_FLAPS <= 12, "cap too high (flapper hammers too long): {}", MAX_FLAPS);
@@ -278,7 +278,7 @@ use super::*;
 
     #[test]
     fn flap_first_n_triggers_spawn() {
-        // The first MAX_FLAPS triggers within the window all spawn.
+        // 窗口内前 MAX_FLAPS 次触发全部放行。
         let hub = ReconnectHub::new();
         let mut t = Instant::now();
         for i in 0..MAX_FLAPS {
@@ -294,8 +294,8 @@ use super::*;
 
     #[test]
     fn flap_exceeding_max_within_window_refuses() {
-        // MAX_FLAPS triggers spawn; the next trigger, still inside the window,
-        // is refused (Flapping) instead of starting another min-backoff cycle.
+        // MAX_FLAPS 次触发已放行;下一次触发(仍在窗口内)
+        // 被拒绝(Flapping),而不是再开启一轮最小退避。
         let hub = ReconnectHub::new();
         let mut t = Instant::now();
         for _ in 0..MAX_FLAPS {
@@ -311,8 +311,8 @@ use super::*;
 
     #[test]
     fn flap_window_self_decays_for_healthy_host() {
-        // A host that drops occasionally must NOT accumulate toward the cap:
-        // triggers older than FLAP_WINDOW age out, so a later drop starts fresh.
+        // 偶尔掉线的主机绝不能向上限累计:
+        // 超过 FLAP_WINDOW 的触发会过期,后来的掉线从零开始。
         let hub = ReconnectHub::new();
         let t0 = Instant::now();
         let mut t = t0;
@@ -320,7 +320,7 @@ use super::*;
             assert_eq!(hub.record_reconnect_trigger(PaneId(1), t), SpawnDecision::Spawned);
             t += Duration::from_secs(10);
         }
-        // Advance well past the window so every prior trigger is stale.
+        // 推进到远超窗口,使此前的所有触发都过期。
         let later = t0 + FLAP_WINDOW + Duration::from_secs(1);
         assert_eq!(
             hub.record_reconnect_trigger(PaneId(1), later),
@@ -331,8 +331,8 @@ use super::*;
 
     #[test]
     fn flap_cancel_clears_history() {
-        // A user giving up (close / disconnect) must forget the flap history so
-        // a later reconnect of the same pane id is not unfairly throttled.
+        // 用户主动放弃(关闭 / 断开)时必须遗忘连击历史,
+        // 以免同一窗格后续重连被不公平地限流。
         let hub = ReconnectHub::new();
         let mut t = Instant::now();
         for _ in 0..MAX_FLAPS {
@@ -349,7 +349,7 @@ use super::*;
 
     #[test]
     fn flap_counter_is_per_pane() {
-        // One pane flapping must not poison a different pane's reconnect.
+        // 一个窗格连击绝不能污染另一窗格的重连。
         let hub = ReconnectHub::new();
         let mut t = Instant::now();
         for _ in 0..MAX_FLAPS {

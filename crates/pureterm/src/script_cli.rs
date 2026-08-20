@@ -1,6 +1,6 @@
-//! GAP-47: `pureterm script …` — AppleScript-friendly automation CLI.
+//! GAP-47:`pureterm script …` —— 面向 AppleScript 的自动化 CLI。
 //!
-//! Typical osascript usage:
+//! 典型的 osascript 用法:
 //! ```applescript
 //! do shell script "/path/to/pureterm script get-cwd"
 //! do shell script "/path/to/pureterm script send-text --text \"ls\\r\""
@@ -14,14 +14,14 @@ use crate::automation::{self, AutomationAction};
 
 #[derive(Subcommand, Clone)]
 pub enum ScriptSub {
-    /// Open a new tab in the running GUI.
+    /// 在运行中的 GUI 里打开一个新标签页。
     NewTab,
-    /// Switch to a tab by index (0-based).
+    /// 按索引切换到标签页(从 0 开始)。
     SwitchTab {
         #[arg(long)]
         index: usize,
     },
-    /// Switch workspace by id, name, or index (0-based creation order).
+    /// 按 id、名称或索引切换工作区(索引按创建顺序从 0 起)。
     SwitchWorkspace {
         #[arg(long)]
         id: Option<u64>,
@@ -30,30 +30,30 @@ pub enum ScriptSub {
         #[arg(long)]
         index: Option<usize>,
     },
-    /// Type text into the active (or specified) pane. Use `\r` for Enter.
+    /// 向活跃(或指定)窗格输入文本。换行用 `\r`。
     SendText {
         #[arg(long)]
         text: String,
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Print the active pane cwd (from shell integration / OSC 7).
+    /// 打印活跃窗格的 cwd(来自 shell 集成 / OSC 7)。
     GetCwd {
         #[arg(long)]
         pane_id: Option<u64>,
-        /// Emit full `shell.context` JSON instead of cwd only.
+        /// 输出完整的 `shell.context` JSON,而非仅 cwd。
         #[arg(long)]
         json: bool,
     },
-    /// Open an ad-hoc SSH tab in the running GUI (Unix only).
+    /// 在运行中的 GUI 里打开一个临时 SSH 标签页(仅 Unix)。
     #[cfg(unix)]
     Ssh {
-        /// `[user@]host` or `user@host:port`.
+        /// `[user@]host` 或 `user@host:port`。
         target: String,
         #[arg(long)]
         port: Option<u16>,
     },
-    /// Parse and execute a `pureterm://` URL against the running GUI.
+    /// 解析并让运行中的 GUI 执行 `pureterm://` URL。
     Open {
         url: String,
     },
@@ -61,13 +61,13 @@ pub enum ScriptSub {
 
 #[derive(Subcommand, Clone)]
 pub enum UrlSub {
-    /// Register PureTerm as the default `pureterm://` handler (macOS).
+    /// 把 PureTerm 注册为默认的 `pureterm://` 处理器(macOS)。
     Register,
-    /// Parse a URL and print the resolved action as JSON (no IPC).
+    /// 解析 URL 并以 JSON 打印解析出的动作(不经过 IPC)。
     Parse {
         url: String,
     },
-    /// Open a `pureterm://` URL via the Socket API (GUI must be running).
+    /// 经 Socket API 打开 `pureterm://` URL(要求 GUI 正在运行)。
     Open {
         url: String,
     },

@@ -1,18 +1,18 @@
-//! Data-plane framing codec.
+//! 数据面帧编解码器。
 //!
-//! The daemon↔GUI data plane is a long-lived Unix stream carrying
-//! length-prefixed tagged frames:
+//! 守护进程↔GUI 数据面是一条承载长度前缀带标签帧的
+//! 长连 Unix 流:
 //!
 //! ```text
 //! [ u32 LE length ][ u8 type ][ payload .. ]
 //! ```
 //!
-//! `length` counts the type byte plus the payload (`1 + payload.len()`), so a
-//! reader consumes `length` bytes after the 4-byte header and splits off the
-//! type byte. This keeps the read loop simple: read header, read exactly
-//! `length` bytes, decode.
+//! `length` 计入类型字节加载荷(`1 + payload.len()`),因此
+//! 读取方在 4 字节头之后消费 `length` 字节并拆出
+//! 类型字节。这使读循环很简单:读头、精确读
+//! `length` 字节、解码。
 
-/// Frame type discriminants.
+/// 帧类型判别值。
 pub mod frame_type {
     pub const OUTPUT: u8 = 0x01; // daemon -> GUI, raw PTY bytes
     pub const INPUT: u8 = 0x02; // GUI -> daemon, bytes to write to PTY stdin
@@ -23,10 +23,10 @@ pub mod frame_type {
     pub const SCROLLBACK: u8 = 0x07; // daemon -> GUI, ring-buffer replay (M2)
 }
 
-/// Header size in bytes (the `u32 LE length` field).
+/// 头部大小(字节)(即 `u32 LE length` 字段)。
 pub const HEADER_LEN: usize = 4;
 
-/// Encode a frame into a fresh `Vec<u8>`.
+/// 把一帧编码进新的 `Vec<u8>`。
 pub fn encode(ftype: u8, payload: &[u8]) -> Vec<u8> {
     let total = 1 + payload.len(); // type byte + payload
     let mut out = Vec::with_capacity(HEADER_LEN + total);
@@ -36,18 +36,18 @@ pub fn encode(ftype: u8, payload: &[u8]) -> Vec<u8> {
     out
 }
 
-/// A decoded frame.
+/// 一个已解码的帧。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Frame<'a> {
     pub ftype: u8,
     pub payload: &'a [u8],
 }
 
-/// Decode one frame from the front of `buf`.
+/// 从 `buf` 前部解码一帧。
 ///
-/// Returns `Ok(Some((frame, consumed)))` if a full frame is available, consuming
-/// `consumed` bytes. Returns `Ok(None)` if the buffer does not yet contain a
-/// complete frame (partial read). Returns `Err` on a malformed length.
+/// 完整帧可用时返回 `Ok(Some((frame, consumed)))`,消费
+/// `consumed` 字节。缓冲尚不含完整帧(部分读)时返回
+/// `Ok(None)`。长度畸形返回 `Err`。
 pub fn decode(buf: &[u8]) -> Result<Option<(Frame<'_>, usize)>, &'static str> {
     if buf.len() < HEADER_LEN {
         return Ok(None);
@@ -66,7 +66,7 @@ pub fn decode(buf: &[u8]) -> Result<Option<(Frame<'_>, usize)>, &'static str> {
     Ok(Some((Frame { ftype, payload }, HEADER_LEN + total)))
 }
 
-/// Encode a RESIZE frame payload (cols, rows).
+/// 编码 RESIZE 帧载荷(cols、rows)。
 pub fn encode_resize(cols: u16, rows: u16) -> [u8; 4] {
     let mut p = [0u8; 4];
     p[..2].copy_from_slice(&cols.to_le_bytes());
@@ -74,7 +74,7 @@ pub fn encode_resize(cols: u16, rows: u16) -> [u8; 4] {
     p
 }
 
-/// Decode a RESIZE frame payload.
+/// 解码 RESIZE 帧载荷。
 pub fn decode_resize(payload: &[u8]) -> Result<(u16, u16), &'static str> {
     if payload.len() != 4 {
         return Err("resize payload must be 4 bytes");
@@ -84,7 +84,7 @@ pub fn decode_resize(payload: &[u8]) -> Result<(u16, u16), &'static str> {
     Ok((cols, rows))
 }
 
-/// Encode an EXIT frame payload (exit code; -1 = unknown).
+/// 编码 EXIT 帧载荷(退出码;-1 = 未知)。
 pub fn encode_exit(code: i32) -> [u8; 4] {
     code.to_le_bytes()
 }
@@ -115,10 +115,10 @@ mod tests {
     #[test]
     fn decode_partial_returns_none() {
         let wire = encode(frame_type::OUTPUT, b"some bytes");
-        // Truncate the payload: header present, body incomplete.
+        // 截断载荷:有头,体不完整。
         let partial = &wire[..HEADER_LEN + 3];
         assert!(decode(partial).unwrap().is_none());
-        // Only header bytes.
+        // 只有头部字节。
         assert!(decode(&wire[..HEADER_LEN - 1]).unwrap().is_none());
     }
 
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn length_includes_type_byte() {
-        // payload of 5 bytes => total field = 6 (1 type + 5 payload).
+        // 载荷 5 字节 => total 字段 = 6(1 类型 + 5 载荷)。
         let wire = encode(frame_type::OUTPUT, b"12345");
         let mut len_bytes = [0u8; 4];
         len_bytes.copy_from_slice(&wire[..HEADER_LEN]);

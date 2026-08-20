@@ -1,25 +1,25 @@
-//! Conversation persistence — one JSON file per conversation under
+//! 会话持久化——每个会话对应一个 JSON 文件,位于
 //! `<data_dir>/chat/<conv_id>.json`.
 //!
-//! Clones the [`crate::agent_sessions`] pattern: lives in the daemon's
-//! owner-only (`0o700`) data dir, written atomically via `NamedTempFile::persist`
-//! so a crash mid-write can't corrupt the conversation. `save_at`/`load_at` take
-//! an explicit path (for unit tests with a tempdir); `save`/`load` resolve the
-//! `<data_dir>/chat/<id>.json` path used in production.
+//! 复刻 [`crate::agent_sessions`] 的模式:存放在守护进程
+//! 仅属主可读的(`0o700`)数据目录中,经 `NamedTempFile::persist` 原子写入,
+//! 因此中途崩溃不会损坏会话。`save_at`/`load_at` 接收
+//! 显式路径(单元测试用临时目录);`save`/`load` 解析
+//! 生产环境所用的 `<data_dir>/chat/<id>.json` 路径。
 
 use crate::ai_chat::types::ChatMessage;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// Production path of a conversation: `<data_dir>/chat/<conv_id>.json`.
+/// 会话的生产路径:`<data_dir>/chat/<conv_id>.json`。
 pub fn path_for(conv_id: &str) -> PathBuf {
     pureterm_daemon::discovery::data_dir()
         .join("chat")
         .join(format!("{conv_id}.json"))
 }
 
-/// Persist `messages` atomically to `path` (creating parent dirs). Production
-/// callers use [`save`]; tests pass a tempdir path.
+/// 将 `messages` 原子写入 `path`(自建父目录)。生产
+/// 调用方用 [`save`];测试传入临时目录路径。
 pub fn save_at(path: &Path, messages: &[ChatMessage]) -> std::io::Result<()> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(dir)?;
@@ -27,28 +27,28 @@ pub fn save_at(path: &Path, messages: &[ChatMessage]) -> std::io::Result<()> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
     let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
     tmp.write_all(json.as_bytes())?;
-    tmp.as_file().sync_all()?; // durability before the rename
+    tmp.as_file().sync_all()?; // 重命名前先落盘持久化
     tmp.persist(path)
         .map_err(|e| std::io::Error::other(e.to_string()))?;
     Ok(())
 }
 
-/// Load a conversation from `path`. Production callers use [`load`]; tests pass a
-/// tempdir path.
+/// 从 `path` 加载会话。生产调用方用 [`load`];测试传入
+/// 临时目录路径。
 pub fn load_at(path: &Path) -> std::io::Result<Vec<ChatMessage>> {
     let bytes = std::fs::read(path)?;
     serde_json::from_slice(&bytes)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
-/// Persist a conversation by id (best-effort; errors are logged, not fatal).
+/// 按 id 持久化会话(尽力而为;出错只记日志,不致命)。
 pub fn save(conv_id: &str, messages: &[ChatMessage]) {
     if let Err(e) = save_at(&path_for(conv_id), messages) {
         log::warn!("ai_chat::session: save({conv_id}) failed: {e}");
     }
 }
 
-/// Load a conversation by id. Missing/unreadable → empty vec (fresh conversation).
+/// 按 id 加载会话。缺失/不可读 → 空 vec(视为全新会话)。
 pub fn load(conv_id: &str) -> Vec<ChatMessage> {
     load_at(&path_for(conv_id)).unwrap_or_else(|e| {
         if e.kind() != std::io::ErrorKind::NotFound {
@@ -77,7 +77,7 @@ mod tests {
 
     #[test]
     fn load_missing_returns_empty_via_wrapper() {
-        // load() swallows NotFound → empty (the production fresh-conversation path).
+        // load() 吞掉 NotFound → 返回空(生产环境的新会话路径)。
         let missing = path_for("__nonexistent_test_conv__");
         let _ = std::fs::remove_file(&missing);
         assert!(load("__nonexistent_test_conv__").is_empty());

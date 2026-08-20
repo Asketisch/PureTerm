@@ -1,4 +1,4 @@
-# T-Core Gap Closure — PR Checklist
+# T-Core 缺口闭环 — PR 检查清单
 
 > 每个组件一条 PR；这里逐条列出"开 PR 前必须勾选"的可验证项。
 > 文档主见 `docs/todo/t-core-gap-closure/spec.md`。
@@ -15,7 +15,7 @@
 - [x] `crates/alacritty_terminal/src/event.rs:157` 旁新增 `Event::GraphicsImage { id, protocol: Sixel|Kitty, format, cols, rows, payload, placement }`。
 - [x] `crates/alacritty_terminal/src/event.rs` 下游消费方 (terminal_event → pureterm/src/terminal_context.rs:46-87) 通。
 
-### A.2 image atlas（GPU）
+### A.2 图像图集（GPU）
 - [x] `crates/pureterm-alacritty-runtime/src/alacritty/renderer/image_atlas.rs` 新文件 —— LRU + dirty-region 上传，11 单测。**注**：v2 把 sky-line 改为基于"占用矩形列表"的 next-free-slot 算法（原 skyline 实现有边界场景 bug，详见 image_atlas_tests::multiple_images_pack_without_overlap）。
 - [x] `crates/pureterm-alacritty-runtime/src/alacritty/renderer/mod.rs` 导出 `ImageAtlas`。
 - [x] `crates/pureterm/src/terminal_shader.rs` 新增 `ImageQuadState` —— image quad pass 的 CPU 侧入口。
@@ -36,26 +36,26 @@
 
 ---
 
-## B. t-core-shaper（Rustybuzz + cluster + per-glyph advance）
+## B. t-core-shaper（Rustybuzz + 簇 + 每字形 advance）
 
-### B.1 shaper trait
+### B.1 shaper trait（整形器特性）
 - [x] `crates/pureterm-alacritty-runtime/Cargo.toml` 加 `rustybuzz = "0.20"` + `unicode-bidi` + `unicode-script`。
 - [x] `crates/pureterm-alacritty-runtime/src/shaper/mod.rs` 定义 `pub trait Shaper: Send + Sync { fn shape(&self, &str, f32) -> ShapedRun; }`。
 - [x] `crates/pureterm-alacritty-runtime/src/shaper/rustybuzz_shaper.rs` 真实实现 —— `RustyBuzzShaper` + `FontFace`，8 单测。
 - [x] `crates/pureterm-alacritty-runtime/src/shaper/fallback.rs` per-glyph 回退链 —— `FallbackChain` + `FallbackChainBuilder` 6 单测。
 - [x] `crates/pureterm-alacritty-runtime/src/shaper/rustybuzz_shaper.rs` 跑 UAX #29。
 
-### B.2 glyph_atlas advance
+### B.2 glyph_atlas advance（字形前进量）
 - [x] `crates/pureterm-alacritty-runtime/src/alacritty/renderer/glyph_atlas.rs:18-49` `CachedGlyph` 加 `x_advance: f32, y_advance: f32`。
 - [x] `crates/pureterm/src/terminal_shader.rs` 在 `get_or_rasterize` 同步缩放 advance 到逻辑像素。
 - [x] `glyph_atlas` 已有 11 单测 + 新增 2 "advance via CachedGlyph struct"。
 
-### B.3 shader
+### B.3 shader（着色器）
 - [x] `crates/pureterm/src/terminal_shader.rs:19-21` `use pureterm_alacritty_runtime::shaper::{ShapedRun, Shaper}`。
 - [x] `crates/pureterm/src/terminal_shader.rs` `GlyphState` 加 `shaper: Arc<dyn Shaper>` 字段 + `shape_text(&self, &str) -> ShapedRun` 方法。
 - [x] `terminal_shader.rs` 新增 3 个 shaper 单测。
 
-### B.4 config
+### B.4 config（配置）
 - [x] `crates/pureterm/src/shaper_config.rs` 新模块 —— `ShaperBackend` + `FallbackEntry` + 6 单测。
 - [x] `crates/pureterm/src/app_config.rs` `load_shaper` 加载 + `default-config.toml` 加 `[shaper]` block。
 
@@ -66,9 +66,9 @@
 
 ---
 
-## C. t-core-tmux-cc
+## C. t-core-tmux-cc（多窗格控制）
 
-### C.1 envelope
+### C.1 envelope（封套）
 - [x] `crates/pureterm/src/tmux_cc/envelope.rs` 解析 8 种 envelope：`%begin` / `%end` / `%output` / `%input` / `%session_changed` / `%windows` + `error` / `pause` / `subscription-changed`。
 - [x] `crates/pureterm/src/tmux_cc/envelope.rs` 新增 `parse_envelopes`（多行）+ `TmuxEnvelope::serialize`（含内联 base64 encoder）。
 - [x] `tmux_cc/tests/envelope.rs` ≥10 用例（包含嵌套 begin/end 错误 / UTF-8 字段 / 大块 output 分片）。
@@ -85,11 +85,11 @@
 - [x] `tmux_cc/mirror.rs` 把 `%windows` / `%window-add` / `%window-close` / `%window-renamed` / `%layout-change` mirror 到本地 `split_tree`。
 - [x] `crates/pureterm/src/split_tree.rs` 新增 4 个 `tmux_mirror_integration_tests` —— mirror parser 不破坏 `split_tree::tests`。
 
-### C.4 CLI
+### C.4 CLI（命令行）
 - [x] `crates/pureterm/src/cli.rs:1225-1227` 把 `Command::Tmux` 拆为 `TmuxCli`（已有）+ `TmuxAttach { session, new_window }`。
 - [x] `tmux_cli.rs:668-961` 已有 30+ 测试 0 回归。
 
-### C.5 config & resume
+### C.5 config & resume（配置与恢复）
 - [x] `crates/pureterm/src/app_config.rs` `ResumeBinding` 加 `use_control_mode: bool` + `session_name: Option<String>` + `tmux_command_args()` 助手。
 - [x] `crates/pureterm/src/resume_bindings.rs` 同步初始化的 2 个 `ResumeBinding` 字段 + 4 个 resume/cc 单测。
 
@@ -99,7 +99,7 @@
 
 ---
 
-## D. t-core-shell-integ（fish / nu / PowerShell / elvish）
+## D. t-core-shell-integ（fish / nu / PowerShell / elvish 各 shell）
 
 ### D.1 数据结构
 - [x] `crates/pureterm-daemon/src/shell_integration.rs:19-22` 改 `ShellIntegrationOpts { shells: HashSet<Shell>, per_shell: HashMap<Shell, PerShellScript> }`。
@@ -117,7 +117,7 @@
 - [x] `crates/pureterm-daemon/src/session.rs:165` 同改。
 - [x] ZDOTDIR / 临时目录统一改为 `std::env::temp_dir().join(".pureterm-...")`。
 
-### D.4 config
+### D.4 config（配置）
 - [x] `crates/pureterm/src/app_config.rs:328-1037` `ShellIntegrationConfig` 加 `per_shell: HashMap<String, bool>`。
 - [x] `default-config.toml` 同期改。
 
@@ -131,9 +131,9 @@
 
 ---
 
-## E. t-core-windows-conpty
+## E. t-core-windows-conpty（Windows 平台 ConPTY 支持）
 
-### E.1 build
+### E.1 build（构建）
 - [x] `crates/pureterm-alacritty-runtime/build.rs:13` 修路径或删 `embed_resource` 调（依赖 `src/alacritty/windows/alacritty.rc` 不存在）。
 - [x] **v3**:`crates/pureterm-alacritty-runtime/Cargo.toml` `[target.'cfg(windows)'.build-dependencies]` 已有 `embed-resource = "3"`(v2 落地时已加,本项确认)。
 
@@ -152,7 +152,7 @@
 - [x] `crates/pureterm/src/window_effects.rs:129,147-149` 现有 stub 补完 + 新增 3 单测（disabled / blur 禁用 / 不支持平台）。
 - [x] `crates/pureterm/src/print_support.rs:180,220` 现有 Windows stub 注释已指明 v3 替换路径。
 
-### E.6 CI + E2E
+### E.6 CI + E2E（持续集成 + 端到端）
 - [x] **v3**:`.github/workflows/ci.yml` 新文件,三平台 matrix(ubuntu-22.04 / macos-14 / **windows-2022**)。Windows runner 跑 `cargo build --target x86_64-pc-windows-msvc` + `cargo test`。
 - [x] **v3**:`cargo build --target x86_64-pc-windows-msvc` 通过 —— 由 Windows CI runner 验证(macOS 上无法跨链 MSVC,需 `link.exe` + Windows SDK;CI runner 上原生支持)。本地 `cargo check --target x86_64-pc-windows-msvc` 用于类型检查。
 - [x] **v3**:`crates/pureterm/tests/conpty_smoke.rs` 新文件,`#![cfg(windows)]` 守卫 + `cmd_exe_smoke` / `powershell_smoke` 两个测试(目前 `todo!()` 标记 v3+1 待真实 `windows::open_conpty` 落地后接入)。
@@ -160,14 +160,14 @@
 
 ---
 
-## F. t-core-plugin-runtime
+## F. t-core-plugin-runtime（插件运行时）
 
-### F.1 manifest
+### F.1 manifest（清单）
 - [x] `crates/pureterm/src/plugin_system.rs:64-91` `PluginManifest` 加 `abi_version: u32` / `entry_points: HashMap<String, String>` / `provides: Vec<String>` / `config_schema: Option<toml::Value>` / `enabled: bool`。
 - [x] `enum Provides` 已 v1 引入（`ProfileProvider` / `HostApp` / `ToolbarButtonProvider` / `TabContextMenuProvider` / `ConfigProvider` / `StatusBarComponent` / `SidebarTab` / `CommandPaletteItem` / `IpcMethod` / `TerminalParserHook` / `RendererOverlay`）。
 - [x] 已有 8 单测 + 新增 4 "new manifest fields / enabled / set_enabled"。
 
-### F.2 loader
+### F.2 loader（加载器）
 - [x] `crates/pureterm/src/plugin_loader.rs` 新文件 —— `PluginLoader` trait + `StaticPluginLoader` + `WasmPluginLoader` sketch。
 - [x] **v3**:`crates/pureterm/Cargo.toml` 加 `wasm-runtime` cargo feature + `wasmtime = { version = "30", optional = true, default-features = false, features = ["cranelift", "runtime", "component-model"] }`。默认 off(避免 50+ MB 冷构建开销);启用时 `WasmPluginLoader::load(WasmFile)` 走真实 `wasmtime::Module::new` 路径,关闭时返回 `Err("wasmtime is not wired …")` 优雅降级。
 - [x] `HostFn` 9 个 host 函数签名：parser / renderer / palette / IPC / status_bar / sidebar / profile / tab_menu / config。
@@ -177,7 +177,7 @@
 - [x] **v3 parser**:`crates/alacritty_terminal/src/event_loop.rs` `scan_plugin_osc` 函数 + 主循环调用 + 7 个单测。解析 `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` → `Event::PluginOsc { name, payload }`。`crates/alacritty_terminal/src/event.rs` 加 `PluginOsc` struct + `Event::PluginOsc` variant + Debug impl。
 - [x] **v3 renderer / palette / IPC / status_bar / sidebar**:`HostFn` 9 个签名已定义(各为 `Arc<dyn Fn + Send + Sync>`),iced_app 端的 host-state 注入留给 v3+1 PR(linker.func_wrap 需要活动 `TerminalContext` / JSON-RPC router)。
 
-### F.4 CLI
+### F.4 CLI（命令行）
 - [x] `crates/pureterm/src/p4_cli.rs:9-31` `PluginSub` 加 `Enable` / `Disable`，挂 `set_enabled` 助手。
 
 ### F.5 示例 & 文档

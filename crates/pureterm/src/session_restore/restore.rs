@@ -11,13 +11,13 @@ use crate::ssh::config::SshProfile;
 use crate::split_tree::{PaneId, SplitNode};
 use crate::terminal_context::TerminalContext;
 
-/// Attempt to restore the previous layout by re-attaching to surviving daemon
-/// sessions. Returns `None` if nothing could be restored (caller opens a fresh
-/// tab). GAP-2.1: walks the v2 window→workspace→tab tree; all windows' workspaces
-/// fold into the main window (detached topology doesn't survive restart, but every
-/// PTY/session/scrollback does). Orphans (alive daemon sessions not in the
-/// snapshot) land in a trailing "Recovered" workspace. Panes whose session died
-/// (or were non-daemon) are pruned and the split tree collapses around them.
+/// 尝试通过重新附加到仍存活的守护进程会话,恢复上次的布局。
+/// 若无可恢复内容则返回 `None`(调用方打开新
+/// 标签页)。GAP-2.1:遍历 v2 的 窗口→工作区→标签页 树;所有窗口的
+/// 工作区折叠进主窗口(分离式拓扑不跨重启,但每个
+/// PTY / 会话 / 回滚都保留)。孤儿会话(存活但未出现在快照中的
+/// 守护进程会话)会落在末尾的 "Recovered" 工作区。会话已死的窗格
+/// (或非守护进程的)会被剔除,分割树围绕它们收拢。
 #[cfg(unix)]
 pub fn restore(
     snapshot: &LayoutSnapshot,
@@ -33,7 +33,7 @@ pub fn restore(
         }
     };
 
-    // Alive sessions: id -> kind (kind is needed for orphan dispatch).
+    // 存活会话:id -> kind(kind 用于孤儿会话的派发)。
     let alive: Vec<(String, String)> = match daemon_client::list_sessions(&daemon_socket) {
         Ok(list) => list
             .into_iter()
@@ -137,11 +137,11 @@ pub fn restore(
     }
 }
 
-/// GAP-7.5: cold-resume an agent whose daemon session died while the GUI was
-/// closed. Resolves the agent's `resume_command` from `[[vault.agents]]` (by
-/// kind), substitutes `{session_id}`, spawns it via the daemon (which owns the
-/// new PTY), and attaches. Falls back to `claude --resume <id>` when the kind
-/// isn't configured. Built at 80×24 — the caller resizes after attach.
+/// GAP-7.5:冷恢复一个 GUI 关闭期间守护进程会话死掉的 agent。
+/// 从 `[[vault.agents]]` 按 kind 解析该 agent 的 `resume_command`,
+/// 替换 `{session_id}`,经守护进程拉起(守护进程持有
+/// 新 PTY)并附加。当 kind
+/// 未配置时回退到 `claude --resume <id>`。构建于 80×24 —— 附加后由调用方调整尺寸。
 #[cfg(unix)]
 pub fn cold_resume_agent(
     agent_session_id: &str,
@@ -150,10 +150,10 @@ pub fn cold_resume_agent(
     use alacritty_terminal::term::test::TermSize;
 
     let kind = agent_kind.unwrap_or("claude-code");
-    // GAP-7.7: prefer an `auto` resume binding (e.g. `tmux attach -t work`)
-    // authorized by an HMAC token over the default `claude --resume`. Cold-
-    // resume never prompts — no token (or no auto binding) means fall through
-    // to the vault/claude path below.
+    // GAP-7.7:优先使用经 HMAC 令牌授权的 `auto` 恢复绑定
+    // (例如 `tmux attach -t work`),而不是默认的 `claude --resume`。冷
+    // 恢复从不提示 —— 没有令牌(或没有 auto 绑定)就直接落入
+    // 下方的 vault / claude 路径。
     if let Some(argv) = crate::resume_bindings::cold_resume_argv(kind, agent_session_id, "") {
         let daemon_socket = crate::daemon_client::ensure_daemon()?;
         let (sid, _data_path) = crate::daemon_client::create_local(
@@ -175,10 +175,10 @@ pub fn cold_resume_agent(
     .find(|e| e.kind == kind)
     .map(|e| e.resume_command.clone())
     .unwrap_or_else(|| {
-        // Default: `claude --resume <id>` (the most common agent).
+        // 默认:`claude --resume <id>`(最常见的 agent)。
         vec!["claude".into(), "--resume".into(), agent_session_id.to_string()]
     });
-    // Substitute the `{session_id}` placeholder in each argv element.
+    // 在 argv 的每个元素中替换 `{session_id}` 占位符。
     let argv: Vec<String> =
         argv.iter().map(|a| a.replace("{session_id}", agent_session_id)).collect();
 
@@ -196,10 +196,10 @@ pub fn cold_resume_agent(
     Ok(Arc::new(ctx))
 }
 
-/// Attach one pane's terminal context to a surviving daemon session. Local and
-/// SSH both go through `attach_existing` → `DaemonPty`; SSH reuses the live
-/// `ssh -tt` child (no re-auth). Built at a placeholder 80×24 — the caller
-/// resizes to the real window right after attach.
+/// 把某个窗格的终端上下文附加到存活的守护进程会话。本地与
+/// SSH 都经由 `attach_existing` → `DaemonPty`;SSH 复用存活的
+/// `ssh -tt` 子进程(无需重新认证)。以 80×24 占位构建 —— 调用方
+/// 附加后立即调整到真实窗口尺寸。
 #[cfg(unix)]
 pub(super) fn attach_pane(
     session_id: &str,
@@ -222,10 +222,10 @@ pub(super) fn attach_pane(
     }
 }
 
-/// A minimal placeholder profile for an SSH session whose original profile was
-/// deleted from config (or was never persisted). The remote shell keeps
-/// running via the daemon; only the display name + reconnect metadata are
-/// best-effort.
+/// 为原始 profile 已从配置删除(或从未持久化)的 SSH 会话提供的
+/// 最小占位 profile。远端 shell 继续
+/// 通过守护进程运行;只有显示名 + 重连元数据是
+/// 尽力而为的。
 #[cfg(unix)]
 fn synthetic_ssh_profile(name: Option<&str>) -> SshProfile {
     SshProfile {

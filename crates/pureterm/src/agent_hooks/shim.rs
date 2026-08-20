@@ -1,6 +1,6 @@
 //! Hook shim 入口 —— `run_hook_shim`(CLI `pureterm hook` 子命令入口,读 stdin
 //! JSON、评估、打印 Claude Code 协议决策、exit)及其辅助(evaluate_shim*/resolve/
-//! infer)。
+//! infer 等)。
 
 use std::io::{Read, Write};
 use std::time::Duration;

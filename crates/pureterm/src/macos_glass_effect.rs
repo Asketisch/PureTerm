@@ -1,10 +1,10 @@
-//! GAP-20: macOS window glass / vibrancy effect.
+//! GAP-20:macOS 窗口毛玻璃 / 活力效果。
 
-/// `[window.glass]` config.
+/// `[window.glass]` 配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct GlassEffectConfig {
     pub enabled: bool,
-    /// `glass` (macOS 26+) or `vibrancy` fallback.
+    /// `glass`(macOS 26+)或 `vibrancy` 回退。
     pub style: String,
 }
 
@@ -17,7 +17,7 @@ impl Default for GlassEffectConfig {
     }
 }
 
-/// Apply glass/vibrancy to the main window. MVP: log + no-op until NSVisualEffect wired.
+/// 把毛玻璃/活力效果应用到主窗口。MVP:先打日志 + 空操作,待 NSVisualEffectView 接入。
 pub fn apply_glass_effect(cfg: &GlassEffectConfig) {
     if !cfg.enabled {
         return;

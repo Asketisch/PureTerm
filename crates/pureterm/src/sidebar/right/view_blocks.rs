@@ -1,8 +1,8 @@
-//! GAP-51 v1: Blocks sidebar view.
+//! GAP-51 v1:输出块侧边栏视图。
 //!
-//! Filtering is done inline using `PaneBlockStore::filtered` (single source of
-//! truth). The view paginates the result newest-first into `PAGE_SIZE`-sized
-//! chunks and renders `page` (clamped to `[0, total_pages)`).
+//! 过滤内联使用 `PaneBlockStore::filtered`(单一事实来源),
+//! 视图将结果按最新优先以 `PAGE_SIZE` 大小分页,
+//! 并渲染 `page`(限制在 `[0, total_pages)` 内)。
 
 use iced::widget::{button, column, row, space, text, text_input};
 use iced::{Color, Element, Length, Theme};
@@ -12,9 +12,9 @@ use crate::iced_app::Message;
 use crate::output_blocks::{BlockFilter, OutputBlock};
 use crate::sidebar::RightMode;
 
-/// Newest-first pagination chunk size. The store keeps at most
-/// `BLOCK_STORE_MAX = 256` blocks per pane; with `PAGE_SIZE = 50` that's at
-/// most ~6 pages of dense activity before the oldest get dropped.
+/// 最新优先的分页块大小。存储最多为每个窗格保留
+/// `BLOCK_STORE_MAX = 256` 个块;按 `PAGE_SIZE = 50` 算,最多
+/// 约 6 页密集活动,之后最早的块会被丢弃。
 pub(crate) const PAGE_SIZE: usize = 50;
 
 pub(crate) fn view_blocks<'a>(blocks: BlocksTabData<'a>) -> Element<'a, Message, Theme, iced::Renderer> {
@@ -49,8 +49,8 @@ pub(crate) fn view_blocks<'a>(blocks: BlocksTabData<'a>) -> Element<'a, Message,
             .padding(4),
     );
 
-    // Single-source filtering: PaneBlockStore::filtered is the only place that
-    // knows how to match exit code + query against command/output_text.
+    // 单一来源过滤:`PaneBlockStore::filtered` 是唯一
+    // 知晓如何按退出码 + 查询匹配 command/output_text 的地方。
     let filter = BlockFilter {
         exit: blocks.exit_filter,
         query: Some(blocks.search),
@@ -72,16 +72,16 @@ pub(crate) fn view_blocks<'a>(blocks: BlocksTabData<'a>) -> Element<'a, Message,
 
     let page_size = blocks.page_size.max(1);
     let total_pages = filtered_total.div_ceil(page_size);
-    // Clamp so page always points at a valid slice.
+    // 限制 page,使其始终指向有效的切片。
     let page = blocks.page.min(total_pages.saturating_sub(1));
 
-    // filtered is oldest-first; page 0 = the LAST `page_size` entries;
-    // page 1 = the chunk before that; etc.
+    // filtered 为旧→新排列;page 0 = 最后的 `page_size` 条;
+    // page 1 = 其前一块;以此类推。
     let start = filtered_total.saturating_sub((page + 1) * page_size);
     let end = filtered_total.saturating_sub(page * page_size);
     let page_slice: &[&OutputBlock] = &filtered[start..end];
 
-    // Footer: "showing X–Y of K" + prev/next buttons.
+    // 页脚:显示“第 X–Y 条,共 K 条” + 上一页/下一页按钮。
     let first = start + 1;
     let last = end;
     let footer = row![

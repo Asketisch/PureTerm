@@ -1,8 +1,8 @@
-//! Regression tests for GAP-35 LSP client lifecycle bugs.
+//! GAP-35 LSP 客户端生命周期缺陷的回归测试。
 //!
-//! These drive a mock LSP server (`src/bin/mock-lsp-server.rs`) over real stdio,
-//! covering the initialize handshake (BUG-2), graceful shutdown (BUG-4) and
-//! crash/reader-exit lifecycle (BUG-3). Lives in `tests/` so Cargo injects
+//! 这些测试驱动一个模拟 LSP 服务器(`src/bin/mock-lsp-server.rs`)走真实 stdio,
+//! 覆盖初始化握手(BUG-2)、优雅关停(BUG-4)与
+//! 崩溃/读线程退出生命周期(BUG-3)。放在 `tests/` 是为了让 Cargo 注入
 //! `CARGO_BIN_EXE_mock_lsp_server`.
 
 use std::path::PathBuf;
@@ -10,12 +10,12 @@ use std::time::{Duration, Instant};
 
 use pureterm_lsp::{LspClient, LspClientConfig};
 
-/// Locate the `mock-lsp-server` binary built next to this test binary.
+/// 定位与本测试二进制一同构建的 `mock-lsp-server` 二进制。
 ///
-/// Cargo places the test exe at `<target>/<profile>/deps/<name>-<hash>` and the
-/// package's bins at `<target>/<profile>/<bin>`, so walking two parents up from
-/// the test exe lands on the profile dir. (Done manually because this workspace
-/// does not inject `CARGO_BIN_EXE_*`.)
+/// Cargo 把测试可执行文件放在 `<target>/<profile>/deps/<name>-<hash>`,
+/// 而包的二进制在 `<target>/<profile>/<bin>`,因此从测试
+/// 可执行文件向上走两级即到 profile 目录。(手动完成,因为本 workspace
+/// 不注入 `CARGO_BIN_EXE_*`。)
 fn mock_exe() -> PathBuf {
     let exe = std::env::current_exe().expect("current_exe");
     let profile_dir = exe
@@ -37,8 +37,8 @@ fn mock_cfg(scenario: &str, marker: Option<&str>) -> LspClientConfig {
     }
 }
 
-/// BUG-2: `initialize` must read the server's response and surface a rejection
-/// instead of fire-and-forgetting it.
+/// BUG-2:`initialize` 必须读取服务器响应并让拒绝浮出水面,
+/// 而不是发后即忘。
 #[test]
 fn spawn_fails_when_server_rejects_initialize() {
     let result = LspClient::spawn(mock_cfg("fail-init", None));
@@ -48,8 +48,8 @@ fn spawn_fails_when_server_rejects_initialize() {
     }
 }
 
-/// BUG-4: `Drop` must perform the graceful shutdown/exit handshake rather than
-/// SIGKILLing the server.
+/// BUG-4:`Drop` 必须完成优雅的 shutdown/exit 握手,而不是
+/// 直接 SIGKILL 服务器。
 #[test]
 fn drop_sends_graceful_shutdown() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -74,13 +74,13 @@ fn drop_sends_graceful_shutdown() {
     );
 }
 
-/// BUG-3: after the server crashes, diagnostics must be cleared and the client
-/// marked dead (no stale diagnostics served to status bar / AI chat).
+/// BUG-3:服务器崩溃后,诊断必须被清空且客户端
+/// 标记为已死(不再向状态栏 / AI 聊天提供过期诊断)。
 #[test]
 fn clears_diagnostics_and_marks_dead_after_server_crash() {
     let client = LspClient::spawn(mock_cfg("crash-after-publish", None)).expect("spawn ok");
 
-    // didOpen makes the mock publish one diagnostic, then close stdout.
+    // didOpen 使模拟服务器发布一条诊断,然后关闭 stdout。
     let file = tempfile::Builder::new()
         .suffix(".rs")
         .tempfile()
@@ -88,7 +88,7 @@ fn clears_diagnostics_and_marks_dead_after_server_crash() {
     std::fs::write(file.path(), "fn main() {}").expect("write");
     let _ = client.did_open(file.path());
 
-    // Wait for the reader to hit EOF and react.
+    // 等待读线程抵达 EOF 并作出反应。
     let deadline = Instant::now() + Duration::from_secs(3);
     while client.is_alive() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(20));

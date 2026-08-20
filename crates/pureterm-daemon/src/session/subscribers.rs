@@ -16,20 +16,20 @@ use crate::ring_buffer::RingBuffer;
 use super::io_helpers::{write_fd_nonblock};
 use super::{OUTPUT_CHUNK, SUBSCRIBER_KEY};
 
-/// An attached GUI client (GAP-5.1 M5 multi-attach).
+/// 一个已挂接的 GUI 客户端(GAP-5.1 M5 多挂接)。
 pub(super) struct Subscriber {
     pub(super) stream: UnixStream,
-    /// Outbound frame queue — each entry is one fully-serialized wire frame.
+    /// 出站帧队列——每个条目是一个完整序列化的线上帧。
     pub(super) queue: VecDeque<Vec<u8>>,
-    /// Bytes of `queue.front()` already written to the kernel.
+    /// `queue.front()` 已写入内核的字节数。
     pub(super) off: usize,
-    /// Last reported terminal size from this subscriber (GAP-5.3).
+    /// 该订阅者最近上报的终端尺寸(GAP-5.3)。
     pub(super) cols: u16,
     pub(super) rows: u16,
 }
 
 impl Subscriber {
-    /// Bytes not yet accepted by the kernel (for backpressure accounting).
+    /// 尚未被内核接收的字节(用于背压核算)。
     pub(super) fn pending_bytes(&self) -> usize {
         let mut total = 0usize;
         for (i, f) in self.queue.iter().enumerate() {
@@ -39,11 +39,11 @@ impl Subscriber {
     }
 }
 
-/// Drop a subscriber whose outbound queue is hopelessly behind (bounded
-/// backpressure): the pump never blocks on a stalled client — it disconnects it.
+/// 丢弃出站队列严重滞后的订阅者(有界
+/// 背压):泵绝不被停滞的客户端阻塞——直接断开它。
 pub(super) const SUB_BACKPRESSURE_CAP: usize = 2 * 1024 * 1024;
 
-/// Serialize the ring's contents as `SCROLLBACK` wire frames (chunked).
+/// 把环内容序列化为 `SCROLLBACK` 线上帧(分块)。
 pub(super) fn scrollback_frames(ring: &RingBuffer) -> Vec<Vec<u8>> {
     ring.snapshot()
         .chunks(OUTPUT_CHUNK)
@@ -51,7 +51,7 @@ pub(super) fn scrollback_frames(ring: &RingBuffer) -> Vec<Vec<u8>> {
         .collect()
 }
 
-/// Broadcast fresh PTY output to every subscriber as `OUTPUT` frames.
+/// 把新到的 PTY 输出作为 `OUTPUT` 帧广播给每个订阅者。
 pub(super) fn broadcast_output(subscribers: &mut [Subscriber], bytes: &[u8]) {
     if bytes.is_empty() {
         return;
@@ -67,8 +67,8 @@ pub(super) fn broadcast_output(subscribers: &mut [Subscriber], bytes: &[u8]) {
     }
 }
 
-/// Non-blocking flush of every subscriber's queue (partial writes advance the
-/// per-subscriber cursor; `WouldBlock` defers to the next writable event).
+/// 非阻塞地冲刷每个订阅者的队列(部分写推进
+/// 每订阅者游标;`WouldBlock` 推迟到下一个可写事件)。
 pub(super) fn flush_subscribers(subscribers: &mut [Subscriber]) {
     for sub in subscribers.iter_mut() {
         while let Some(front) = sub.queue.front() {
@@ -90,7 +90,7 @@ pub(super) fn flush_subscribers(subscribers: &mut [Subscriber]) {
     }
 }
 
-/// Disconnect subscribers whose queued backlog exceeds the cap.
+/// 断开排队积压超过上限的订阅者。
 pub(super) fn enforce_backpressure(poll: &Poller, subscribers: &mut Vec<Subscriber>) {
     let to_drop: Vec<usize> = subscribers
         .iter()
@@ -101,7 +101,7 @@ pub(super) fn enforce_backpressure(poll: &Poller, subscribers: &mut Vec<Subscrib
     drop_subscribers(poll, subscribers, &to_drop);
 }
 
-/// Remove the given subscriber indices (deregistering each from the poller).
+/// 移除给定的订阅者下标(从轮询器注销每一个)。
 pub(super) fn drop_subscribers(poll: &Poller, subscribers: &mut Vec<Subscriber>, indices: &[usize]) {
     if indices.is_empty() {
         return;
@@ -118,7 +118,7 @@ pub(super) fn drop_subscribers(poll: &Poller, subscribers: &mut Vec<Subscriber>,
     *subscribers = kept;
 }
 
-/// Keep each subscriber's writable interest in sync with its queue.
+/// 让每个订阅者的可写兴趣与其队列保持同步。
 pub(super) fn reconcile_writable(poll: &Poller, subscribers: &[Subscriber]) {
     for sub in subscribers {
         let needs = !sub.queue.is_empty();
@@ -128,7 +128,7 @@ pub(super) fn reconcile_writable(poll: &Poller, subscribers: &[Subscriber]) {
     }
 }
 
-/// Enqueue an `EXIT` frame to every subscriber (sent on master EOF).
+/// 向每个订阅者入队一个 `EXIT` 帧(master EOF 时发送)。
 pub(super) fn enqueue_exit_all(subscribers: &mut [Subscriber], code: i32) {
     let wire = frame::encode(frame_type::EXIT, &frame::encode_exit(code));
     for sub in subscribers {

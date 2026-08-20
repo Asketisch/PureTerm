@@ -1,8 +1,8 @@
-//! GAP-44: Shared sessions — multi-user terminal (XL stub: config + serve scaffold).
+//! GAP-44:共享会话——多用户终端(XL 占位:配置 + serve 脚手架)。
 
 use serde::{Deserialize, Serialize};
 
-/// `[shared_session]` config.
+/// `[shared_session]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SharedSessionConfig {
     pub enabled: bool,
@@ -27,7 +27,7 @@ pub struct ShareInvite {
     pub read_only: bool,
 }
 
-/// Generate a share invite URL (WebSocket server not started in MVP stub).
+/// 生成共享邀请 URL(MVP 占位中不启动 WebSocket 服务器)。
 pub fn create_invite(cfg: &SharedSessionConfig, host: &str) -> Result<ShareInvite, String> {
     if !cfg.enabled {
         return Err("shared_session disabled — set [shared_session].enabled = true".into());
@@ -40,7 +40,7 @@ pub fn create_invite(cfg: &SharedSessionConfig, host: &str) -> Result<ShareInvit
     })
 }
 
-/// Stub server entry — logs and returns immediately.
+/// 占位服务端入口——记录日志后立即返回。
 pub fn serve_stub(cfg: &SharedSessionConfig) -> Result<(), String> {
     if !cfg.enabled {
         return Err("shared_session disabled".into());

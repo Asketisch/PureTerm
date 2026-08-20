@@ -1,6 +1,6 @@
 ---
 gap: GAP-12
-title: Annotations & Marks
+title: 注解与标记
 category: 终端交互
 plan_type: feature
 priority: P2

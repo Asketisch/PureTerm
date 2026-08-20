@@ -6,8 +6,8 @@
 //! [`super::sub::run`] 分发与 [`super::tests`] 的 round-trip e2e 使用。
 //!
 //! 分阶段标注与原文件一致:phase 1(capture/list/send_keys/split/kill/select)
-//! → phase 2(layout ops:resize/swap/break/select-layout)→ phase 3(join-pane)
-//! → phase 4(pipe-pane/wait-for,daemon-backed)。
+//! → phase 2(布局操作:resize/swap/break/select-layout)→ phase 3(join-pane)
+//! → phase 4(pipe-pane/wait-for,由守护进程支撑)。
 
 use std::path::PathBuf;
 
@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 use super::format::{render_format, map_key, DEFAULT_LIST_FORMAT};
 use super::target::{parse_target, resolve_optional_target, resolve_panes, rpc};
 
-// ── command implementations (phase 1) ────────────────────────────────────
+// ── 命令实现(phase 1) ────────────────────────────────────────────────────────
 
 pub(super) fn run_capture(
     socket: &Option<PathBuf>,
@@ -28,8 +28,8 @@ pub(super) fn run_capture(
 ) -> Result<(), String> {
     let panes = resolve_panes(socket)?;
     let pane_id = parse_target(&target, &panes)?;
-    // `-S 0` ⇒ visible viewport only; otherwise full scrollback. `-p` ⇒ keep
-    // the last 50 lines (the DoD); an explicit `--lines N` overrides.
+    // `-S 0` ⇒ 仅可视视口;否则为完整回滚。`-p` ⇒ 保留
+    // 最后 50 行(DoD 要求);显式 `--lines N` 可覆盖。
     let visible_only = start.as_deref() == Some("0");
     let lines_cap = match lines {
         Some(n) => Some(n),
@@ -46,8 +46,8 @@ pub(super) fn run_capture(
     }
     let resp = rpc(socket, "surface.snapshot", Some(Value::Object(params)))?;
     let text = resp.get("text").and_then(|v| v.as_str()).unwrap_or("");
-    // tmux `capture-pane` without `-p` stashes into the paste buffer; we have
-    // none, so always emit to stdout and note it when `-p` was absent.
+    // tmux 不带 `-p` 的 `capture-pane` 会存入粘贴缓冲;我们没有
+    // 该缓冲,因此总是输出到 stdout,并在缺少 `-p` 时说明。
     if !print {
         eprintln!(
             "[pureterm tmux] (capture-pane without -p: written to stdout; paste buffer unsupported)"
@@ -79,17 +79,17 @@ pub(super) fn run_send_keys(
 }
 
 pub(super) fn run_split(socket: &Option<PathBuf>, horizontal: bool) -> Result<(), String> {
-    // tmux default = `-v` (stacked); `-h` = side by side. PureTerm's
-    // `pane.split` "horizontal" = side by side, "vertical" = stacked, so the
-    // mapping is direct.
+    // tmux 默认为 `-v`(上下堆叠);`-h` = 并排。PureTerm 的
+    // `pane.split` "horizontal" = 并排,"vertical" = 上下堆叠,
+    // 因此映射是直接的。
     let dir = if horizontal { "horizontal" } else { "vertical" };
     rpc(socket, "pane.split", Some(json!({ "direction": dir })))?;
     Ok(())
 }
 
 pub(super) fn run_kill(socket: &Option<PathBuf>, target: Option<String>) -> Result<(), String> {
-    // Phase 1: `pane.close` only closes the active pane. Targeted close lands
-    // in phase 2 (pane.close pane_id); for now warn + close active.
+    // Phase 1:`pane.close` 只关闭活动窗格。定向关闭
+    // 在 phase 2(pane.close pane_id)实现;目前警告并关闭活动窗格。
     if target.is_some() {
         eprintln!(
             "[pureterm tmux] kill-pane -t needs pane.close target support (phase 2); closing active"
@@ -129,7 +129,7 @@ pub(super) fn run_select(
     Ok(())
 }
 
-// ── command implementations (phase 2: layout ops) ───────────────────────
+// ── 命令实现(phase 2:布局操作) ──────────────────────────────────────────────────
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_resize(
@@ -147,7 +147,7 @@ pub(super) fn run_resize(
     if let Some(id) = pane_id {
         params.insert("pane_id".into(), json!(id));
     }
-    // Absolute -x/-y win; else the direction flags; else a default nudge.
+    // 优先绝对 -x/-y;其次方向标志;最后默认微调。
     if let Some(c) = x {
         params.insert("cols".into(), json!(c));
     } else if let Some(r) = y {
@@ -171,9 +171,9 @@ pub(super) fn run_resize(
     Ok(())
 }
 
-// `down` is part of the documented CLI surface (tmux `swap-pane -D`) but not
-// read by the current logic (`up` alone picks the probe direction); kept to
-// preserve the original signature.
+// `down` 属于有文档的 CLI 面(tmux `swap-pane -D`),但现在
+// 逻辑不读取它(仅 `up` 决定探测方向);保留
+// 以保持原签名。
 #[allow(unused_variables)]
 pub(super) fn run_swap(
     socket: &Option<PathBuf>,
@@ -186,7 +186,7 @@ pub(super) fn run_swap(
     let (src, dst) = if source.is_some() && target.is_some() {
         (parse_target(&source, &panes)?, parse_target(&target, &panes)?)
     } else {
-        // -U/-D: swap the active pane with its prev/next neighbor (DFS order).
+        // -U/-D:把活动窗格与其前 / 后邻居交换(DFS 顺序)。
         let active = panes
             .iter()
             .find(|p| p.active)
@@ -219,12 +219,12 @@ pub(super) fn run_join(
     let panes = resolve_panes(socket)?;
     let active_id = panes.iter().find(|p| p.active).map(|p| p.pane_id);
     let active_tab = panes.iter().find(|p| p.active).map(|p| p.tab);
-    // -s source (default: active pane).
+    // -s 指定源(默认:活动窗格)。
     let src = match &source {
         Some(_) => parse_target(&source, &panes)?,
         None => active_id.ok_or("no active pane")?,
     };
-    // -t target: a tab index, or `%N` (that pane's tab); default active tab.
+    // -t 目标:标签页索引,或 `%N`(该窗格所在标签页);默认活动标签页。
     let dst_tab = match &target {
         Some(t) => {
             if let Ok(n) = t.parse::<usize>() {
@@ -267,10 +267,10 @@ pub(super) fn run_pipe(
     Ok(())
 }
 
-/// GAP-6.6: `wait-for` connects to the daemon directly and blocks — `wait`/
-/// `lock` park until signaled. We bypass `daemon_client::rpc` (5s read
-/// timeout) with a raw blocking Unix socket so the park is unbounded, matching
-/// tmux.
+/// GAP-6.6:`wait-for` 直接连接守护进程并阻塞 —— `wait` / `lock`
+/// 挂起直到被信号唤醒。我们绕过 `daemon_client::rpc`(5 秒读
+/// 超时),改用原始阻塞 Unix socket,使挂起无界,与
+/// tmux 一致。
 pub(super) fn run_wait_for(channel: String, signal: bool, lock: bool, unlock: bool) -> Result<(), String> {
     use std::io::{BufRead, BufReader, Write};
 

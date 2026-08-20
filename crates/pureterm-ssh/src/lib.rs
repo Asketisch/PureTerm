@@ -1,14 +1,14 @@
-//! `pureterm-ssh` — process-independent SSH PTY spawn machinery (GAP-5.1 M3).
+//! `pureterm-ssh` — 与进程无关的 SSH PTY 拉起机制(GAP-5.1 M3)。
 //!
-//! Shared by the PureTerm GUI (direct SSH tabs, as today) and the `puretermd`
-//! daemon (which owns SSH PTYs so they survive GUI restart). Contains only the
-//! spawn recipe: `SshCommandBuilder`, `SshPty` (openpty + `ssh -tt` ControlMaster
-//! child + `EventedPty` impls for the GUI's alacritty loop), and the optional
-//! `SshSessionManager` ControlMaster pool. Credential storage, config parsing,
-//! and the reconnect state machine stay in the GUI crate (they are GUI-shaped
-//! or carry unlocked secret material).
+//! 由 PureTerm GUI(如今的直连 SSH 标签页)与 `puretermd`
+//! 守护进程(由它持有 SSH PTY,使其在 GUI 重启后存活)共用。只包含
+//! 拉起配方:`SshCommandBuilder`、`SshPty`(openpty + `ssh -tt` ControlMaster
+//! 子进程 + 供 GUI alacritty 循环使用的 `EventedPty` 实现),以及可选的
+//! `SshSessionManager` ControlMaster 池。凭据存储、配置解析
+//! 与重连状态机留在 GUI crate(它们是 GUI 形态的,
+//! 或携带已解锁的机密材料)。
 //!
-//! The child-process side is Unix-only.
+//! 子进程侧仅限 Unix。
 
 #[cfg(unix)]
 pub mod agent_sock;

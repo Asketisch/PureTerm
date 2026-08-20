@@ -1,6 +1,6 @@
 ---
 gap: GAP-23
-title: Tab Bar
+title: 标签栏
 category: UI/外壳
 plan_type: feature
 priority: P4

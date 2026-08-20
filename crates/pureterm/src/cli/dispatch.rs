@@ -11,17 +11,17 @@ use serde_json::Value;
 use super::subs::{EventsSub, FeedSub, McpSub, ReplaySub, ShortcutsSub, SurfaceSub, SshSub};
 use super::top::{Cli, Command};
 
-/// Run a parsed CLI command. Exits the process on error.
+/// 运行解析后的 CLI 命令。出错时退出进程。
 pub fn run(cli: Cli) {
-    // Destructure so `socket` stays borrowable while `command` is matched by value.
+    // 解构,使得按值匹配 `command` 时 `socket` 仍可借用。
     let Cli { socket, json, command } = cli;
     match command {
         Command::System { cmd } => send(&socket, json, cmd.method_and_params()),
         Command::Window { cmd } => send(&socket, json, cmd.method_and_params()),
         Command::Tab { cmd } => send(&socket, json, cmd.method_and_params()),
         Command::Pane { cmd } => send(&socket, json, cmd.method_and_params()),
-        // GAP-7.7: Surface is hybrid — `resume *` is local config CRUD, the
-        // rest go through the IPC bridge. Precedent: Ssh arm below.
+        // GAP-7.7: Surface 是混合命令——`resume *` 为本地配置 CRUD,
+        // 其余走 IPC 桥接。参见下方 Ssh 分支。
         Command::Surface { cmd } => match &cmd {
             #[cfg(unix)]
             SurfaceSub::Resume { cmd: resume_cmd } => {
@@ -32,7 +32,7 @@ pub fn run(cli: Cli) {
         Command::Config { cmd } => send(&socket, json, cmd.method_and_params()),
         #[cfg(unix)]
         Command::Ssh { cmd } => match &cmd {
-            // Daemon-direct interactive client (GAP-5.1 M3 DoD).
+            // 守护进程直连的交互式客户端(GAP-5.1 M3 DoD)。
             SshSub::Connect {
                 target: Some(t),
                 port,
@@ -61,7 +61,7 @@ pub fn run(cli: Cli) {
                     settings.smallest_screen_wins,
                 );
             }
-            // GAP-5.2: daemon-direct SOCKS5 tunnel control.
+            // GAP-5.2:守护进程直连的 SOCKS5 隧道控制。
             SshSub::Tunnel { target, port, identity, local_port, password, no_remote_dns, forward_agent } => {
                 crate::tunnel_cli::start(
                     target,
@@ -89,7 +89,7 @@ pub fn run(cli: Cli) {
             let parsed = params.and_then(|s| serde_json::from_str(&s).ok());
             send(&socket, json, (&method, parsed));
         }
-        // GAP-09: `pureterm notify` → notification.post RPC.
+        // GAP-09:`pureterm notify` 命令 → notification.post RPC。
         Command::Notify { message, title, pane_id } => {
             let params = serde_json::json!({
                 "body": message,
@@ -98,14 +98,14 @@ pub fn run(cli: Cli) {
             });
             send(&socket, json, ("notification.post", Some(params)));
         }
-        // GAP-7.1: never returns (exits with the hook decision). Local only.
+        // GAP-7.1:永不返回(以 hook 决策退出)。仅本地。
         Command::Hook { event } => crate::agent_hooks::run_hook_shim(event),
-        // GAP-7.2: writes the agent's hook config directly. Local only.
+        // GAP-7.2:直接写入 agent 的 hook 配置。仅本地。
         Command::Agents { cmd } => crate::agent_adapters::dispatch(cmd),
-        // GAP-7.3: hibernate/resume via the daemon control plane.
+        // GAP-7.3:通过守护进程控制面进行休眠/恢复。
         #[cfg(unix)]
         Command::Agent { cmd } => dispatch_agent(cmd),
-        // GAP-7.6: read feed audit log (local JSONL, no IPC).
+        // GAP-7.6:读取 feed 审计日志(本地 JSONL,无 IPC)。
         Command::Feed { cmd } => match cmd {
             FeedSub::List { limit } => {
                 let entries = crate::feed_log::read_last(limit.unwrap_or(50));
@@ -128,7 +128,7 @@ pub fn run(cli: Cli) {
                 }
             }
         },
-        // GAP-6.7: read/follow the unified event log (local JSONL, no IPC).
+        // GAP-6.7:读取/跟随统一事件日志(本地 JSONL,无 IPC)。
         Command::Events { cmd } => match cmd {
             EventsSub::List { limit, r#type } => {
                 let filter = crate::events::TypeFilter::parse(r#type.as_deref());
@@ -169,13 +169,13 @@ pub fn run(cli: Cli) {
                 }
             },
         },
-        // GAP-7.8: all browser ops are synchronous JSON-RPC over the GUI socket
-        // (the GUI owns the webview + the agent-browser execution layer). The
-        // async JS-ops' deferred reply is awaited inside `send`.
+        // GAP-7.8:所有浏览器操作都是经 GUI socket 的同步 JSON-RPC
+        // (GUI 持有 webview 与 agent 浏览器执行层)。
+        // 异步 JS 操作的延迟回复在 `send` 内等待。
         Command::Browser { cmd } => send(&socket, json, cmd.method_and_params()),
-        // GAP-7.10: MCP is hybrid — `serve` runs the stdio server (no IPC
-        // bridge; the server itself dials the GUI socket per tool call),
-        // `list-tools` is a local roster print. Precedent: Surface arm above.
+        // GAP-7.10: MCP 是混合命令——`serve` 运行 stdio 服务器(无 IPC
+        // 桥接;服务器在每次工具调用时自行拨号 GUI socket),
+        // `list-tools` 为本地清单打印。参见上方 Surface 分支。
         Command::Mcp { cmd } => match cmd {
             McpSub::Serve => {
                 let cfg = crate::app_config::AppConfig::load_mcp(
@@ -208,7 +208,7 @@ pub fn run(cli: Cli) {
                 for name in names {
                     let spec = crate::mcp::tool_spec(name)
                         .expect("enabled_tool_names returns only known tools");
-                    // First line of the description keeps the table readable.
+                    // 只取描述首行,保持表格可读。
                     let desc: String =
                         spec.description.lines().next().unwrap_or("").to_string();
                     println!("{:<18}  {} → {}", spec.name, spec.rpc_method, desc);
@@ -218,13 +218,13 @@ pub fn run(cli: Cli) {
             McpSub::List => mcp_list(),
             McpSub::Uninstall { client } => mcp_uninstall(&client),
         },
-        // GAP-6.6: hybrid — tmux commands dispatch in `tmux_cli` (some need
-        // multi-step RPC + local formatting, e.g. capture-pane / list-panes).
+        // GAP-6.6:混合命令——tmux 命令在 `tmux_cli` 中分发(有些需要
+        // 多步 RPC + 本地格式化,如 capture-pane / list-panes)。
         Command::Tmux { cmd } => crate::tmux_cli::dispatch(cmd, &socket, json),
-        // T-core-tmux-cc: `pureterm tmux-attach` — print the `tmux -CC`
-        // command line the GUI uses to attach to / create the session.
-        // v1: the GUI runs the actual child; the CLI is a thin probe so
-        // ops can verify the spawn wiring.
+        // T-core-tmux-cc:`pureterm tmux-attach` — 打印 GUI 用来
+        // 附加到/创建会话的 `tmux -CC` 命令行。
+        // v1:GUI 运行实际的子进程;CLI 只是一个轻量探针,
+        // 便于运维验证 spawn 接线。
         Command::TmuxAttach { session, new_window } => {
             let tag = std::process::id();
             let mut argv: Vec<String> = vec!["tmux".to_string(), "-CC".to_string()];
@@ -267,7 +267,7 @@ pub fn run(cli: Cli) {
     }
 }
 
-/// GAP-7.3: dispatch `agent` subcommands against the daemon.
+/// GAP-7.3:把 `agent` 子命令分发给守护进程。
 #[cfg(unix)]
 fn dispatch_agent(cmd: super::subs::AgentSub) {
     use crate::daemon_client;
@@ -327,9 +327,9 @@ fn dispatch_agent(cmd: super::subs::AgentSub) {
     }
 }
 
-/// GAP-7.10: `pureterm mcp install <client>` — write our server entry into the
-/// client's config (idempotent). Local config RMW; no IPC. Mirrors
-/// `agent_adapters::dispatch`.
+/// GAP-7.10:`pureterm mcp install <client>` — 把我们的服务器条目写入
+/// 客户端配置(幂等)。本地配置 RMW,无 IPC。与
+/// `agent_adapters::dispatch` 一致。
 fn mcp_install(client: &str) {
     use crate::mcp::adapter::{find_adapter, McpClientAdapter};
     use crate::agent_adapters::pureterm_bin;
@@ -354,7 +354,7 @@ fn mcp_install(client: &str) {
     }
 }
 
-/// GAP-7.10: `pureterm mcp uninstall <client>` — remove our entry.
+/// GAP-7.10:`pureterm mcp uninstall <client>` — 移除我们的条目。
 fn mcp_uninstall(client: &str) {
     use crate::mcp::adapter::{find_adapter, McpClientAdapter};
     use crate::agent_adapters::pureterm_bin;
@@ -373,7 +373,7 @@ fn mcp_uninstall(client: &str) {
     }
 }
 
-/// GAP-7.10: `pureterm mcp list` — show each client's installed status.
+/// GAP-7.10:`pureterm mcp list` — 显示每个客户端的安装状态。
 fn mcp_list() {
     use crate::mcp::adapter::{registry, McpClientAdapter};
     use crate::agent_adapters::pureterm_bin;
@@ -386,7 +386,7 @@ fn mcp_list() {
     }
 }
 
-/// GAP-6.7: print a table of events (newest first).
+/// GAP-6.7:打印事件表(最新在前)。
 fn print_events(entries: &[crate::events::AppEvent]) {
     if entries.is_empty() {
         println!("no events yet");
@@ -398,7 +398,7 @@ fn print_events(entries: &[crate::events::AppEvent]) {
     }
 }
 
-/// GAP-6.7: one-line rendering of an event for `events list` / `events tail`.
+/// GAP-6.7:供 `events list` / `events tail` 使用的事件单行渲染。
 fn format_event(e: &crate::events::AppEvent) -> String {
     let data = if e.data.is_null() {
         "-".to_string()
@@ -414,8 +414,8 @@ fn format_event(e: &crate::events::AppEvent) -> String {
     )
 }
 
-/// Send a `(method, params)` tuple to the running PureTerm instance and print
-/// the response (compact or pretty per `json`). Exits 1 on error.
+/// 向运行中的 PureTerm 实例发送 `(method, params)` 元组并打印
+/// 响应(按 `json` 决定紧凑或美化)。出错时以 1 退出。
 pub fn send(socket: &Option<PathBuf>, json: bool, (method, params): (&str, Option<Value>)) {
     match crate::ipc::client::send_rpc(method, params, socket.clone()) {
         Ok(Some(value)) => {

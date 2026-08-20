@@ -1,32 +1,32 @@
-//! JSON-RPC 2.0 protocol types for PureTerm.
+//! PureTerm 的 JSON-RPC 2.0 协议类型。
 //!
-//! Transport-agnostic: pure serde types with no socket code. Shared by the GUI
-//! Socket API (`crates/pureterm/src/ipc/`) and the `puretermd` daemon control
-//! plane so client and server can never drift.
+//! 与传输层无关：纯 serde 类型，不含任何 socket 代码。GUI 的 Socket API
+//!（`crates/pureterm/src/ipc/`）与 `puretermd` 守护进程控制面共用同一套类型，
+//! 保证客户端与服务端永不漂移。
 //!
-//! Wire format: one JSON object per line (newline-delimited JSON-RPC).
+//! 线上格式：每行一个 JSON 对象（换行分隔的 JSON-RPC）。
 
 use serde::{Deserialize, Serialize};
 
-/// JSON-RPC 2.0 constant version string.
+/// JSON-RPC 2.0 协议版本号常量。
 pub const JSONRPC_VERSION: &str = "2.0";
 
-// ── Standard JSON-RPC 2.0 error codes ──────────────────────────────────
+// ── 标准 JSON-RPC 2.0 错误码 ────────────────────────────────────────────────
 
-/// Invalid JSON was received by the server.
+/// 服务端收到无法解析的 JSON。
 pub const ERROR_PARSE: i64 = -32700;
-/// The JSON sent is not a valid Request object.
+/// 发送的 JSON 不是合法的 Request 对象。
 pub const ERROR_INVALID_REQUEST: i64 = -32600;
-/// The method does not exist / is not available.
+/// 方法不存在或不可用。
 pub const ERROR_METHOD_NOT_FOUND: i64 = -32601;
-/// Invalid method parameter(s).
+/// 方法参数非法。
 pub const ERROR_INVALID_PARAMS: i64 = -32602;
-/// Internal JSON-RPC error.
+/// JSON-RPC 内部错误。
 pub const ERROR_INTERNAL: i64 = -32603;
 
-// ── Request / Response ─────────────────────────────────────────────────
+// ── 请求 / 响应 ────────────────────────────────────────────────────────────
 
-/// Incoming JSON-RPC 2.0 request from a client.
+/// 客户端发来的 JSON-RPC 2.0 请求。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
@@ -36,7 +36,7 @@ pub struct JsonRpcRequest {
     pub params: Option<serde_json::Value>,
 }
 
-/// Outgoing JSON-RPC 2.0 response to a client.
+/// 返回给客户端的 JSON-RPC 2.0 响应。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
@@ -47,7 +47,7 @@ pub struct JsonRpcResponse {
     pub error: Option<JsonRpcError>,
 }
 
-/// JSON-RPC 2.0 error object.
+/// JSON-RPC 2.0 错误对象。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcError {
     pub code: i64,
@@ -56,20 +56,20 @@ pub struct JsonRpcError {
     pub data: Option<serde_json::Value>,
 }
 
-// ── Constructors ───────────────────────────────────────────────────────
+// ── 构造函数 ───────────────────────────────────────────────────────────────
 
 impl JsonRpcRequest {
-    /// Create a new request with the given id and method.
+    /// 用给定的 id 和方法名创建一个新请求。
     pub fn new(id: u64, method: impl Into<String>) -> Self {
         Self { jsonrpc: JSONRPC_VERSION.into(), id, method: method.into(), params: None }
     }
 
-    /// Create a new request with params.
+    /// 创建一个带参数的新请求。
     pub fn with_params(id: u64, method: impl Into<String>, params: serde_json::Value) -> Self {
         Self { jsonrpc: JSONRPC_VERSION.into(), id, method: method.into(), params: Some(params) }
     }
 
-    /// Parse from a JSON string line.
+    /// 从一行 JSON 字符串解析请求。
     pub fn from_line(line: &str) -> Result<Self, JsonRpcError> {
         serde_json::from_str(line).map_err(|e| JsonRpcError {
             code: ERROR_PARSE,
@@ -80,12 +80,12 @@ impl JsonRpcRequest {
 }
 
 impl JsonRpcResponse {
-    /// Successful response.
+    /// 成功响应。
     pub fn ok(id: u64, result: serde_json::Value) -> Self {
         Self { jsonrpc: JSONRPC_VERSION.into(), id, result: Some(result), error: None }
     }
 
-    /// Error response.
+    /// 错误响应。
     pub fn err(id: u64, code: i64, message: impl Into<String>) -> Self {
         Self {
             jsonrpc: JSONRPC_VERSION.into(),
@@ -95,17 +95,17 @@ impl JsonRpcResponse {
         }
     }
 
-    /// Method-not-found response (convenience).
+    /// 方法不存在的响应（便捷构造函数）。
     pub fn method_not_found(id: u64, method: &str) -> Self {
         Self::err(id, ERROR_METHOD_NOT_FOUND, format!("Method not found: {method}"))
     }
 
-    /// Internal error response (convenience).
+    /// 内部错误响应（便捷构造函数）。
     pub fn internal(id: u64, msg: impl Into<String>) -> Self {
         Self::err(id, ERROR_INTERNAL, msg)
     }
 
-    /// Serialize to a single JSON line (with trailing newline).
+    /// 序列化为单行 JSON（末尾带换行符）。
     pub fn to_line(&self) -> String {
         let mut s = serde_json::to_string(self).unwrap_or_default();
         s.push('\n');
@@ -113,7 +113,7 @@ impl JsonRpcResponse {
     }
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────
+// ── 测试 ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {

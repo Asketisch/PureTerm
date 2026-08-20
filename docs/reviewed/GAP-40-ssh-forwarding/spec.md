@@ -1,6 +1,6 @@
 ---
 gap: GAP-40
-title: SSH Forwarding
+title: SSH 端口转发
 category: SSH/网络
 plan_type: integration
 priority: P2

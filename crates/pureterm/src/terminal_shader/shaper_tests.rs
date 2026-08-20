@@ -1,7 +1,7 @@
-//! T-core-shaper v2: tests for the renderer-side shaper wiring.
+//! T-core-shaper v2:渲染器侧字形整形接线的测试。
 //!
-//! Validates that the per-glyph `x_advance` returned by the shaper
-//! actually drives the cursor advance the renderer would apply.
+//! 验证整形器返回的逐字形 `x_advance`
+//! 确实驱动渲染器将施加的光标步进。
 
 use pureterm_alacritty_runtime::shaper::{MonospaceShaper, Shaper};
 
@@ -29,6 +29,6 @@ fn monospace_shaper_advances_two_cells_for_cjk() {
 fn cluster_to_cell_offsets_account_for_wide_chars() {
     let shaper = MonospaceShaper::new();
     let run = shaper.shape("a你b", 7.0);
-    // ASCII consumes cell 0, CJK consumes cells 1+2, ASCII consumes cell 3
+    // ASCII 占据格子 0,CJK 占据格子 1+2,ASCII 占据格子 3
     assert_eq!(run.cluster_to_cell, vec![0, 1, 3]);
 }

@@ -1,6 +1,6 @@
 ---
 gap: GAP-34
-title: File Preview
+title: 文件预览
 category: 开发者工具
 plan_type: feature
 priority: P4

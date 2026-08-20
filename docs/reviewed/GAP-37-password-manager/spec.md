@@ -1,6 +1,6 @@
 ---
 gap: GAP-37
-title: Password Manager
+title: 密码管理器
 category: 开发者工具
 plan_type: integration
 priority: P3

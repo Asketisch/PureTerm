@@ -1,10 +1,10 @@
-//! GAP-7.10: the MCP stdio server (`pureterm mcp serve`), feature-gated behind
-//! `mcp-server`. Each tool is a thin adapter over the existing GUI JSON-RPC
-//! Socket API — it builds the params object and forwards via `rpc()`, which
-//! wraps the **blocking** `ipc::client::send_rpc` in `spawn_blocking` so the
-//! rmcp async worker thread never blocks on socket I/O.
+//! GAP-7.10：MCP stdio 服务器（`pureterm mcp serve`），由 `mcp-server`
+//! 特性门控。每个工具都是现有 GUI JSON-RPC Socket API 之上的薄适配器——
+//! 它构建参数对象并经 `rpc()` 转发；`rpc()` 把**阻塞的**
+//! `ipc::client::send_rpc` 包在 `spawn_blocking` 中，使 rmcp 异步工作线程
+//! 永远不会阻塞在 socket I/O 上。
 //!
-//! Logging goes to **stderr only** — stdout is the MCP transport.
+//! 日志**只写 stderr**——stdout 是 MCP 传输通道。
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -28,12 +28,12 @@ capture_pane to read a pane's current output, send_text to type into a pane \
 (use the literal two characters \\r — backslash-r — for Enter). Pair \
 send_text with capture_pane to run a command and read its result.";
 
-/// Bridge an MCP tool call to the GUI Socket API. `send_rpc` is blocking
-/// (write_all + shutdown + read_line over the Unix socket), so it MUST run off
-/// the rmcp async worker — `spawn_blocking` parks it on the blocking pool.
-/// `socket_override = None` honors `PURETERM_SOCKET` / default discovery (the
-/// agent-in-pane case: the spawned `pureterm mcp serve` inherits the env var
-/// and nails itself to the right GUI instance).
+/// 把 MCP 工具调用桥接到 GUI Socket API。`send_rpc` 是阻塞的
+/// （在 Unix socket 上 write_all + shutdown + read_line），因此它必须离开
+/// rmcp 异步工作线程运行——`spawn_blocking` 把它停放在阻塞池上。
+/// `socket_override = None` 时遵循 `PURETERM_SOCKET` / 默认发现（面板内
+/// agent 场景：生成的 `pureterm mcp serve` 继承环境变量，把自己钉到
+/// 正确的 GUI 实例上）。
 async fn rpc(method: &str, params: Option<Value>, socket: Option<PathBuf>) -> Result<Option<Value>, String> {
     let m = method.to_string();
     tokio::task::spawn_blocking(move || send_rpc(&m, params, socket))
@@ -41,16 +41,16 @@ async fn rpc(method: &str, params: Option<Value>, socket: Option<PathBuf>) -> Re
         .map_err(|e| format!("rpc task failed: {e}"))?
 }
 
-/// Stringify a Socket-API result for return to the MCP client. `Ok(None)` (a
-/// method with no result field) becomes a faithful JSON `null` rather than an
-/// empty string, so the agent can tell "no payload" from "empty payload".
+/// 把 Socket-API 结果字符串化后返回给 MCP 客户端。`Ok(None)`（没有结果
+/// 字段的方法）变为忠实的 JSON `null`，而不是空字符串，使 agent 能区分
+/// “无载荷”与“空载荷”。
 fn to_text(res: Option<Value>) -> String {
     serde_json::to_string(&res).unwrap_or_else(|_| "null".into())
 }
 
-/// How long `desktop_screenshot`'s Feed approval prompt waits for a human
-/// choice before failing closed. Matches the GUI Feed panel's 120s auto-Deny
-/// soft timeout (`feed_panel.rs`) so both sides time out together.
+/// `desktop_screenshot` 的 Feed 审批提示在失败关闭前等待人工选择多久。
+/// 与 GUI Feed 面板的 120s 自动拒绝软超时（`feed_panel.rs`）一致，
+/// 使两侧同时超时。
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub struct PureTermServer {
@@ -58,173 +58,173 @@ pub struct PureTermServer {
     socket: Option<PathBuf>,
 }
 
-// ── Tool parameter schemas ───────────────────────────────────────────────
-// `#[serde(default)]` makes optional fields truly optional (the agent may omit
-// them); a required field like `SendTextParams::text` that's missing fails
-// deserialization and rmcp returns a structured error.
+// ── 工具参数模式 ───────────────────────────────────────────────
+// `#[serde(default)]` 使可选字段真正可选（agent 可以省略它们）；
+// 像 `SendTextParams::text` 这样缺失的必填字段会导致反序列化失败，
+// rmcp 返回结构化错误。
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct CapturePaneParams {
-    /// Target pane id (default: active pane).
+    /// 目标面板 id（默认：活动面板）。
     #[serde(default)]
     pane_id: Option<u64>,
-    /// Capture only the visible viewport (default: full scrollback, capped by
-    /// `[mcp].default_capture_lines`).
+    /// 只捕获可见视口（默认：完整回滚，受 `[mcp].default_capture_lines`
+    /// 限制）。
     #[serde(default)]
     visible_only: Option<bool>,
-    /// Keep only the last N lines (default: `[mcp].default_capture_lines`).
+    /// 只保留最后 N 行（默认：`[mcp].default_capture_lines`）。
     #[serde(default)]
     lines: Option<usize>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct GetShellContextParams {
-    /// Target pane id (default: active pane).
+    /// 目标面板 id（默认：活动面板）。
     #[serde(default)]
     pane_id: Option<u64>,
-    /// Cap the recent_commands list to the last N (default: 10).
+    /// 把 recent_commands 列表限制到最后 N 条（默认：10）。
     #[serde(default)]
     recent: Option<u64>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct SendTextParams {
-    /// Text to type into the pane. Use the two characters \\r for Enter.
+    /// 要输入到面板的文本。用两个字符 \r 表示回车。
     text: String,
-    /// Target pane id (default: active pane).
+    /// 目标面板 id（默认：活动面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct PaneIdParams {
-    /// Target pane id (default: active pane).
+    /// 目标面板 id（默认：活动面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct SplitPaneParams {
-    /// Split direction: "horizontal" (side-by-side) or "vertical" (stacked).
+    /// 拆分方向：“horizontal”（并排）或 “vertical”（堆叠）。
     #[serde(default)]
     direction: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct FocusPaneParams {
-    /// "prev" or "next" (default: "next").
+    /// “prev” 或 “next”（默认：“next”）。
     #[serde(default)]
     direction: Option<String>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct BrowserNavigateParams {
-    /// URL to navigate the web pane to.
+    /// 要把网页面板导航到的 URL。
     url: String,
-    /// Target web pane id (default: first web pane).
+    /// 目标网页面板 id（默认：第一个网页面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct BrowserExtractParams {
-    /// CSS selector to match.
+    /// 要匹配的 CSS 选择器。
     selector: String,
-    /// Element attribute to extract (default: visible text content).
+    /// 要提取的元素属性（默认：可见文本内容）。
     #[serde(default)]
     attribute: Option<String>,
-    /// Target web pane id (default: first web pane).
+    /// 目标网页面板 id（默认：第一个网页面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
-// GAP-7.8: the remaining agent-browser ops. `pane_id` is resolved GUI-side
-// (handle_browser_request picks the first web pane when omitted), so each tool
-// just forwards its op-specific params — no per-op pane resolution here.
+// GAP-7.8：其余 agent 浏览器操作。`pane_id` 在 GUI 侧解析
+// （handle_browser_request 在省略时选择第一个网页面板），因此每个工具
+// 只转发其操作专属参数——这里不做逐操作的面板解析。
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct BrowserClickParams {
-    /// CSS selector of the element to click.
+    /// 要点击的元素的 CSS 选择器。
     selector: String,
-    /// Target web pane id (default: first web pane).
+    /// 目标网页面板 id（默认：第一个网页面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct BrowserTypeParams {
-    /// CSS selector of the input/element to type into.
+    /// 要输入的目标输入框/元素的 CSS 选择器。
     selector: String,
-    /// Text to type into the element.
+    /// 要输入到元素中的文本。
     text: String,
-    /// Target web pane id (default: first web pane).
+    /// 目标网页面板 id（默认：第一个网页面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct BrowserScrollParams {
-    /// Horizontal scroll delta in pixels (default 0; ignored when `selector` is set).
+    /// 水平滚动增量（像素）（默认 0；设置了 `selector` 时忽略）。
     #[serde(default)]
     x: Option<i64>,
-    /// Vertical scroll delta in pixels (default 0; ignored when `selector` is set).
+    /// 垂直滚动增量（像素）（默认 0；设置了 `selector` 时忽略）。
     #[serde(default)]
     y: Option<i64>,
-    /// CSS selector to scroll into view (when set, overrides x/y).
+    /// 要滚动到视图中的 CSS 选择器（设置时覆盖 x/y）。
     #[serde(default)]
     selector: Option<String>,
-    /// Target web pane id (default: first web pane).
+    /// 目标网页面板 id（默认：第一个网页面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct BrowserWaitParams {
-    /// CSS selector to wait for.
+    /// 要等待的 CSS 选择器。
     selector: String,
-    /// Timeout in ms (default 5000). Blocks up to ~6.5s before timing out.
+    /// 超时（毫秒）（默认 5000）。超时前最多阻塞约 6.5s。
     #[serde(default)]
     timeout_ms: Option<u64>,
-    /// Target web pane id (default: first web pane).
+    /// 目标网页面板 id（默认：第一个网页面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
-/// Shared params for pane-id-only browser ops (get_url / get_title / screenshot).
+/// 仅面板 id 的浏览器操作（get_url / get_title / screenshot）共享的参数。
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct BrowserPaneIdParams {
-    /// Target web pane id (default: first web pane).
+    /// 目标网页面板 id（默认：第一个网页面板）。
     #[serde(default)]
     pane_id: Option<u64>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct SearchCodeParams {
-    /// Keyword query (FTS5 prefix tokens).
+    /// 关键词查询（FTS5 前缀 token）。
     query: String,
-    /// Max hits (default 20).
+    /// 最大命中数（默认 20）。
     #[serde(default)]
     limit: Option<usize>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct GetFileContextParams {
-    /// Workspace-relative or absolute path.
+    /// 工作区相对或绝对路径。
     path: String,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct FindSymbolParams {
-    /// Symbol name substring (e.g. function or class name).
+    /// 符号名子串（例如函数或类名）。
     name: String,
-    /// Max hits (default 20).
+    /// 最大命中数（默认 20）。
     #[serde(default)]
     limit: Option<usize>,
 }
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
 struct OpenUrlParams {
-    /// A `pureterm://` URL (tab/workspace/ssh/command actions).
+    /// 一个 `pureterm://` URL（tab/workspace/ssh/command 动作）。
     url: String,
 }
 
@@ -256,9 +256,8 @@ impl PureTermServer {
         if let Some(v) = p.visible_only {
             obj.insert("visible_only".into(), json!(v));
         }
-        // Apply the config default capture cap when the caller didn't bound it,
-        // so an unbounded full-scrollback capture only happens when the agent
-        // explicitly opts in via a large `lines`.
+        // 调用方未限定上限时应用配置的默认捕获上限，使无界全回滚捕获只在
+        // agent 通过大的 `lines` 显式选择时发生。
         obj.insert(
             "lines".into(),
             json!(p.lines.unwrap_or(self.cfg.default_capture_lines)),
@@ -415,7 +414,7 @@ impl PureTermServer {
         if let Some(sel) = p.selector {
             obj.insert("selector".into(), json!(sel));
         } else {
-            // Match the op's event_payload shape: absent x/y default to 0.
+            // 匹配操作的事件载荷形状：缺失的 x/y 默认为 0。
             obj.insert("x".into(), json!(p.x.unwrap_or(0)));
             obj.insert("y".into(), json!(p.y.unwrap_or(0)));
         }
@@ -550,10 +549,9 @@ impl PureTermServer {
         let socket = self.socket.clone();
         tokio::task::spawn_blocking(move || {
             // SECURITY (spec §安全): a full-desktop screenshot can exfiltrate
-            // passwords / 2FA / DMs to the agent. Require affirmative human
-            // consent via the Feed approval panel before capturing, and fail
-            // closed on deny / no-GUI / timeout. The allow/deny decision lives
-            // in `computer_use::approval_allows_screenshot` (pure, unit-tested).
+            // 密码 / 2FA / DM 给 agent。捕获前需要通过 Feed 审批面板获得人工
+            // 明确同意；在拒绝 / 无 GUI / 超时时失败关闭。允许/拒绝决策位于
+            // `computer_use::approval_allows_screenshot`（纯函数，已单元测试）。
             let req = FeedApprovalRequest {
                 session_id: "computer-use",
                 event: "computer_use.screenshot",
@@ -582,8 +580,8 @@ impl PureTermServer {
     async fn desktop_click(&self, params: Parameters<DesktopClickParams>) -> Result<String, String> {
         let p = params.0;
         tokio::task::spawn_blocking(move || {
-            // SECURITY: when input injection is implemented, gate it behind
-            // request_approval (as desktop_screenshot does) before invoking.
+            // SECURITY：实现输入注入时，调用前要像 desktop_screenshot 那样用
+            // request_approval 把关。
             crate::computer_use::click(p.x, p.y)?;
             serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
         })
@@ -595,8 +593,8 @@ impl PureTermServer {
     async fn desktop_type(&self, params: Parameters<DesktopTypeParams>) -> Result<String, String> {
         let text = params.0.text;
         tokio::task::spawn_blocking(move || {
-            // SECURITY: when input injection is implemented, gate it behind
-            // request_approval (as desktop_screenshot does) before invoking.
+            // SECURITY：实现输入注入时，调用前要像 desktop_screenshot 那样
+            // 用 request_approval 把关。
             crate::computer_use::type_text(&text)?;
             serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
         })
@@ -608,8 +606,8 @@ impl PureTermServer {
     async fn desktop_key(&self, params: Parameters<DesktopKeyParams>) -> Result<String, String> {
         let key = params.0.key;
         tokio::task::spawn_blocking(move || {
-            // SECURITY: when input injection is implemented, gate it behind
-            // request_approval (as desktop_screenshot does) before invoking.
+            // SECURITY：实现输入注入时，调用前要像 desktop_screenshot 那样
+            // 用 request_approval 把关。
             crate::computer_use::key_press(&key)?;
             serde_json::to_string(&json!({ "ok": true })).map_err(|e| e.to_string())
         })
@@ -637,10 +635,10 @@ impl PureTermServer {
 #[tool_handler]
 impl ServerHandler for PureTermServer {
     fn get_info(&self) -> ServerInfo {
-        // `InitializeResult` is `#[non_exhaustive]`, so use its constructor
-        // (not a struct literal). `from_build_env()` would read
-        // CARGO_CRATE_NAME inside rmcp's source → "rmcp"; set the name
-        // explicitly so the client sees "pureterm" + this crate's version.
+        // `InitializeResult` 是 `#[non_exhaustive]`，所以使用其构造函数
+        // （而不是结构体字面量）。`from_build_env()` 会读取 rmcp 源码内部的
+        // CARGO_CRATE_NAME → “rmcp”；显式设置名称，使客户端看到
+        // “pureterm” + 本 crate 的版本。
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(INSTRUCTIONS)
             .with_server_info(Implementation::new(
@@ -650,12 +648,11 @@ impl ServerHandler for PureTermServer {
     }
 }
 
-/// Run the MCP stdio server until stdin closes (the client disconnects) or the
-/// transport errors. Logs to stderr only. Builds its own current-thread tokio
-/// runtime: tool calls are agent-driven (low frequency), and `rpc()` offloads
-/// the blocking socket work to the blocking pool.
+/// 运行 MCP stdio 服务器，直到 stdin 关闭（客户端断开）或传输出错。
+/// 只向 stderr 记录。构建自己的当前线程 tokio 运行时：工具调用由
+/// agent 驱动（低频），`rpc()` 把阻塞的 socket 工作卸载到阻塞池。
 pub fn run_server(cfg: McpConfig, socket: Option<PathBuf>) {
-    // stdout is the MCP transport — only stderr is safe for diagnostics.
+    // stdout 是 MCP 传输通道——只有 stderr 可用于诊断。
     let _ = env_logger::try_init();
 
     eprintln!(

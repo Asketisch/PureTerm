@@ -41,7 +41,7 @@ pureterm agents install claude-code   # 写 ~/.claude/settings.json
 - [ ] 不点 → 120s 后自动 Deny(`source:timeout`)
 - [ ] `tail ~/Library/Application\ Support/pureterm/feed.jsonl` 见审计行(choice/source)
 
-## GAP-7.7 Custom resume bindings
+## GAP-7.7 自定义恢复绑定
 
 ```bash
 pureterm surface resume set --kind tmux --checkpoint work --auto --shell tmux attach -t work
@@ -52,7 +52,7 @@ pureterm surface resume run          # 经 Feed 面板审批,Always → mint HMA
 - [ ] 杀掉该 tmux 会话后冷重启 GUI → 同 kind 的死 session 静默自动 spawn `tmux attach -t work`(令牌命中,不弹面板)
 - [ ] 改 shell 再冷启 → 令牌失效 → 回落 `claude --resume`(令牌绑定精确 shell)
 
-## GAP-7.5 Agent Session Restore
+## GAP-7.5 智能体会话恢复
 
 ```toml
 [[vault.agents]]
@@ -67,7 +67,7 @@ pureterm agents install claude-code   # SessionStart 默认已注册([[vault.age
 - [ ] pane 里跑 `claude`(SessionStart hook 触发)→ `<data_dir>/agents/claude-code-sessions.json` 有记录
 - [ ] **⌘Q** 退出 app(不 ⌘W —— 关 tab 会 kill session);重开 GUI → 死 session 自动 `claude --resume <id>` 回来
 
-## GAP-7.6 Vault agent registry / detect-resume
+## GAP-7.6 Vault 智能体注册表 / detect-resume
 
 在 PureTerm **外**(普通终端)跑一个 `claude`(产生可 resume 的 session),然后在 GUI:
 
@@ -76,7 +76,7 @@ pureterm agents install claude-code   # SessionStart 默认已注册([[vault.age
 - [ ] 状态栏显示 `⚡ claude-code`(active);hibernate 后 `❄`;Feed pending 时 `⏳ N`
 - [ ] `pureterm agents detect` / `pureterm agents registry`(CLI 等价)
 
-## GAP-7.3 Agent Hibernation
+## GAP-7.3 智能体休眠
 
 ```toml
 [agent.hibernation]

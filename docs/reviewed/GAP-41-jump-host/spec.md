@@ -1,6 +1,6 @@
 ---
 gap: GAP-41
-title: Jump Host
+title: 跳板机
 category: SSH/网络
 plan_type: feature
 priority: P3

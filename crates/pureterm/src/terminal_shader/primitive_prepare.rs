@@ -17,13 +17,13 @@ use super::pipeline::{GpuResources, TerminalPipeline};
 use super::primitive::TerminalPrimitive;
 use super::vertices::{BgImageVertex, ScreenUniforms};
 
-/// 1x1 placeholder pixel data used when an atlas has no dirty content yet.
-/// Keeps the bind group valid even before the first glyph is rasterized.
+/// 1x1 占位像素数据,用于图集尚无脏内容的时刻。
+/// 即使尚未光栅化任何字形,也能使绑定组保持有效。
 pub(super) const PLACEHOLDER_GRAY: &[u8] = &[0u8];
 pub(super) const PLACEHOLDER_COLOR: &[u8] = &[0u8, 0u8, 0u8, 0u8];
 
-/// Build + upload the BgColor pass per-frame buffers (vertices / indices /
-/// uniform / bind group). No-op when there are no bg vertices.
+/// 构建并上传 BgColor 通道的每帧缓冲(顶点 / 索引 /
+/// 统一缓冲 / 绑定组)。无 bg 顶点时为空操作。
 pub(super) fn prepare_bg_color_pass(
     prim: &TerminalPrimitive,
     pipeline: &TerminalPipeline,
@@ -55,10 +55,10 @@ pub(super) fn prepare_bg_color_pass(
     }
 }
 
-/// GAP-54: build + upload the background image pass (vertices / indices /
-/// uniforms / texture bind group). Skipped when no image installed or
-/// opacity == 0. Texture upload is signature-gated so identical images
-/// across frames don't re-upload.
+/// GAP-54:构建并上传背景图通道(顶点 / 索引 /
+/// 统一缓冲 / 纹理绑定组)。未安装图片或
+/// opacity == 0 时跳过。纹理上传以签名门控,相同的图片
+/// 在帧间不会重复上传。
 pub(super) fn prepare_bg_image_pass(
     prim: &TerminalPrimitive,
     pipeline: &mut TerminalPipeline,
@@ -67,21 +67,21 @@ pub(super) fn prepare_bg_image_pass(
     bounds: &Rectangle,
     gpu: &mut GpuResources,
 ) {
-    // Build vertices + indices + uniform + texture bind group. Skip
-    // when no image is installed or opacity is 0.
+    // 构建顶点 + 索引 + 统一缓冲 + 纹理绑定组。未安装图片
+    // 或 opacity 为 0 时跳过。
     let bg_image: Option<&DecodedBackground> = prim.background_image.as_ref();
     if let (Some(img), true) = (bg_image, prim.background_opacity > 0.0) {
         let mode = prim.background_mode;
         let opacity = prim.background_opacity;
-        // Build the screen-space quad for the image. Modes:
-        //   Center  → sub-rect of the viewport at image native size
-        //   Tile    → repeat the viewport (uv wraps via Repeat sampler)
-        //   Stretch → full-viewport quad with uv 0..1
+        // 为图片构建屏幕空间四边形。模式:
+        //   Center  → 视口子矩形,按图片原始尺寸
+        //   Tile    → 平铺视口(uv 通过 Repeat 采样器回绕)
+        //   Stretch → 全视口四边形,uv 0..1
         let (vp_w, vp_h) = (bounds.width, bounds.height);
         let (iw, ih) = (img.width as f32, img.height as f32);
         let (qx, qy, qw, qh) = match mode {
             BackgroundMode::Center => {
-                // Clamp to viewport.
+                // 钳制到视口。
                 let w = iw.min(vp_w);
                 let h = ih.min(vp_h);
                 let x = ((vp_w - w) * 0.5).max(0.0);
@@ -109,7 +109,7 @@ pub(super) fn prepare_bg_image_pass(
             usage: wgpu::BufferUsages::INDEX,
         });
 
-        // Uniform buffer (per-pane; uses screen dimensions + bg fields).
+        // 统一缓冲(每窗格一份;使用屏幕尺寸 + bg 字段)。
         let bg_uniforms = ScreenUniforms {
             corner_radius: 0.0,
             screen_width: vp_w,
@@ -134,7 +134,7 @@ pub(super) fn prepare_bg_image_pass(
             entries: &[wgpu::BindGroupEntry { binding: 0, resource: ub.as_entire_binding() }],
         });
 
-        // Texture: upload (or skip) based on signature.
+        // 纹理:根据签名上传(或跳过)。
         if gpu.bg_image_signature != prim.background_signature {
             let tex = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
                 label: Some("BgImage Tex"),
@@ -167,26 +167,26 @@ pub(super) fn prepare_bg_image_pass(
         gpu.bg_image_index_count = idx.len() as u32;
     } else {
         gpu.bg_image_index_count = 0;
-        // Drop per-frame buffers but keep the texture (signature still valid).
+        // 丢弃每帧缓冲但保留纹理(签名仍然有效)。
         gpu.bg_image_vertex_buffer = None;
         gpu.bg_image_index_buffer = None;
         gpu.bg_image_uniform_bind_group = None;
     }
 }
 
-/// Synchronize the grayscale (R8) + color (RGBA8) glyph atlas textures.
+/// 同步灰度(R8)+ 彩色(RGBA8)字形图集纹理。
 ///
-/// Per atlas, decide whether to (a) recreate the texture (first frame or
-/// size grew) or (b) just upload the new dirty data via `queue.write_texture`.
-/// The bind group is only rebuilt when a texture is actually recreated,
-/// eliminating per-frame GPU churn.
+/// 每个图集决定:(a) 重建纹理(首帧或尺寸增大)
+/// 或 (b) 仅通过 `queue.write_texture` 上传新的脏数据。
+/// 仅当纹理真正重建时才重建绑定组,
+/// 消除每帧的 GPU 抖动。
 ///
-/// CRITICAL: when `take_dirty_data()` returns None on a steady-state frame
-/// (no new glyphs), the existing texture/view/bind_group must be preserved.
-/// The 1x1 placeholder is only used on the very first frame when the texture
-/// is None — folding it into a per-frame size check would cause the texture
-/// to be destroyed and re-created as 1x1 on every static frame, wiping the
-/// glyph cache and rendering text invisible (Fix 3.5).
+/// 关键:当稳态帧的 `take_dirty_data()` 返回 None(无新字形)时,
+/// 必须保留既有的纹理 / 视图 / 绑定组。1x1 占位纹理
+/// 只在纹理为 None 的首帧使用——把它并入每帧尺寸检查,
+/// 会导致每个静态帧都把纹理销毁并重建为 1x1,
+/// 清空字形缓存,
+/// 使文本不可见(Fix 3.5)。
 pub(super) fn prepare_atlas_textures(
     prim: &TerminalPrimitive,
     pipeline: &mut TerminalPipeline,
@@ -219,9 +219,9 @@ pub(super) fn prepare_atlas_textures(
             write_atlas_regions_r8(queue, tex, atlas, w);
         }
     } else if pipeline.grayscale_atlas_texture.is_none() {
-        // First frame, no glyphs rasterized yet: create a 1x1 placeholder
-        // so the bind group is valid. Subsequent frames without new data
-        // fall through to the "do nothing" branch below.
+        // 首帧尚未光栅化任何字形:创建 1x1 占位纹理,
+        // 使绑定组有效。后续无新数据的帧会落入下面的
+        // “什么都不做”分支。
         let tex = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
             label: Some("Gray Atlas Placeholder"),
             size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
@@ -238,7 +238,7 @@ pub(super) fn prepare_atlas_textures(
         );
         views_changed = true;
     }
-    // Else: texture exists and no new data → preserve texture/view.
+    // 否则:纹理存在且无新数据 → 保留纹理 / 视图。
 
     if let Some(atlas) = &prim.color_atlas {
         let (w, h) = (atlas.width, atlas.height);
@@ -280,10 +280,10 @@ pub(super) fn prepare_atlas_textures(
         );
         views_changed = true;
     }
-    // Else: texture exists and no new data → preserve texture/view.
+    // 否则:纹理存在且无新数据 → 保留纹理 / 视图。
 
-    // Recreate atlas bind group only when views changed (texture was
-    // recreated) or the bind group hasn't been built yet.
+    // 仅当视图变化(纹理被重建)或绑定组尚未建立时,
+    // 才重建图集绑定组。
     if views_changed || pipeline.text_atlas_bind_group.is_none() {
         let gray_view = pipeline.grayscale_atlas_view.as_ref().unwrap();
         let color_view = pipeline.color_atlas_view.as_ref().unwrap();
@@ -300,10 +300,10 @@ pub(super) fn prepare_atlas_textures(
     }
 }
 
-/// Same size, partial upload (Fix 2): one `write_texture` per dirty rect,
-/// byte-offset into the Arc-shared atlas buffer. Wgpu requires bytes_per_row
-/// to be a multiple of COPY_BYTES_PER_ROW_ALIGNMENT (256); the atlas
-/// allocator emits power-of-two widths so this holds. R8Unorm = 1 byte/px.
+/// 同尺寸、部分上传(Fix 2):每个脏矩形一次 `write_texture`,
+/// 字节偏移进入 Arc 共享的图集缓冲。wgpu 要求 bytes_per_row
+/// 是 COPY_BYTES_PER_ROW_ALIGNMENT(256)的倍数;图集
+/// 分配器输出 2 的幂宽度,因此恒成立。R8Unorm = 1 字节/像素。
 fn write_atlas_regions_r8(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &AtlasDirty, w: u32) {
     for region in &atlas.regions {
         let byte_offset = (region.y as usize * w as usize + region.x as usize);
@@ -317,7 +317,7 @@ fn write_atlas_regions_r8(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &Atla
             &atlas.data[byte_offset..],
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(w), // R8Unorm = 1 byte per pixel
+                bytes_per_row: Some(w), // R8Unorm = 每像素 1 字节
                 rows_per_image: Some(region.h),
             },
             wgpu::Extent3d {
@@ -329,8 +329,8 @@ fn write_atlas_regions_r8(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &Atla
     }
 }
 
-/// RGBA = 4 bytes per pixel; bytes_per_row must be a multiple of 256
-/// (atlas width is a power of two so this holds).
+/// RGBA = 每像素 4 字节;bytes_per_row 必须是 256 的倍数
+/// (图集宽度为 2 的幂,因此恒成立)。
 fn write_atlas_regions_rgba(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &AtlasDirty, w: u32) {
     for region in &atlas.regions {
         let byte_offset = (region.y as usize * w as usize + region.x as usize) * 4;
@@ -344,7 +344,7 @@ fn write_atlas_regions_rgba(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &At
             &atlas.data[byte_offset..],
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(w * 4), // Rgba8UnormSrgb = 4 bytes per pixel
+                bytes_per_row: Some(w * 4), // Rgba8UnormSrgb = 每像素 4 字节
                 rows_per_image: Some(region.h),
             },
             wgpu::Extent3d {
@@ -356,8 +356,8 @@ fn write_atlas_regions_rgba(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &At
     }
 }
 
-/// Build + upload the CellText pass per-frame buffers (vertices / indices /
-/// uniform / bind group). No-op when there are no text vertices.
+/// 构建并上传 CellText 通道的每帧缓冲(顶点 / 索引 /
+/// 统一缓冲 / 绑定组)。无文本顶点时为空操作。
 pub(super) fn prepare_cell_text_pass(
     prim: &TerminalPrimitive,
     pipeline: &TerminalPipeline,
@@ -387,7 +387,7 @@ pub(super) fn prepare_cell_text_pass(
     }
 }
 
-// Suppress unused-import warning when this module is compiled without any
-// downstream caller referencing `Viewport` (e.g. feature-gated paths).
+// 当本模块在没有下游调用方引用 `Viewport` 的情况下编译
+// (例如 feature 门控路径)时,抑制未使用导入的警告。
 #[allow(dead_code)]
 fn _viewport_use_hint(_vp: &Viewport) {}

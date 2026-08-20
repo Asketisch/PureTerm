@@ -67,7 +67,7 @@ impl TextVertex {
     }
 }
 
-// GAP-54: vertex for the background image pass (position + UV).
+// GAP-54:背景图 pass 的顶点(position + UV)。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct BgImageVertex {
@@ -90,10 +90,10 @@ impl BgImageVertex {
     }
 }
 
-// T-core-graphics v3: vertex for the image quad pass.
-// Layout is identical to `BgImageVertex` (`position: vec2f, uv: vec2f`),
-// but a separate type lets the image quad pipeline evolve independently
-// (e.g. add per-image tinting, alpha, or z in the future).
+// T-core-graphics v3:image quad pass 的顶点。
+// 布局与 `BgImageVertex`(`position: vec2f, uv: vec2f`)完全一致,
+// 但独立成类型使 image quad 管线可以独立演进
+//(例如未来加入逐图像着色、alpha 或 z)。
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct ImageQuadVertex {
@@ -122,11 +122,11 @@ pub struct ScreenUniforms {
     pub corner_radius: f32,
     pub screen_width: f32,
     pub screen_height: f32,
-    /// GAP-54: background image opacity in [0,1]; 0 = no image.
+    /// GAP-54:背景图不透明度,取值 [0,1];0 = 无图像。
     pub bg_opacity: f32,
-    /// GAP-54: 0 = Center, 1 = Tile, 2 = Stretch. u32 to keep 4-byte alignment.
+    /// GAP-54:0 = 居中,1 = 平铺,2 = 拉伸。用 u32 以保持 4 字节对齐。
     pub bg_mode: u32,
-    /// GAP-54: image native dimensions in pixels (used for centering math).
+    /// GAP-54:图像原生像素尺寸(用于居中计算)。
     pub bg_img_width: f32,
     pub bg_img_height: f32,
 }

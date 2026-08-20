@@ -7,152 +7,147 @@
 
 use std::collections::HashMap;
 
-// ── Side effects (write operations returned to the iced main loop) ──────
+// ── 副作用（写操作返回给 iced 主循环）──────────────────────────
 
-/// A side effect returned by a write-method handler.
+/// 写方法 handler 返回给主循环处理的副作用。
 ///
-/// The main `update()` loop processes these after dispatching the IPC
-/// response, mapping each variant to the appropriate `Message` or internal
-/// method call.
+/// 主 `update()` 循环在分发 IPC 响应后处理这些副作用，把每个变体
+/// 映射为对应的 `Message` 或内部方法调用。
 #[derive(Debug, Clone)]
 pub enum IpcSideEffect {
-    // Tab operations
+    // Tab 操作
     NewTab,
     CloseTab { index: usize },
     SwitchTab { index: usize },
-    // Split / pane operations
+    // 拆分 / 面板操作
     SplitHorizontal,
     SplitVertical,
     ClosePane,
-    /// GAP-3.5: split the active pane and open the new pane as a web pane
-    /// (wry WebView) loading `url`. `direction` mirrors `SplitHorizontal`/
-    /// `SplitVertical`.
+    /// GAP-3.5：拆分活动面板，并把新面板作为网页面板（wry WebView）打开，
+    /// 加载 `url`。`direction` 与 `SplitHorizontal` / `SplitVertical` 对应。
     SplitPaneWeb { direction: crate::split_tree::SplitDirection, url: String },
     SwapPane,
     ToggleZoom,
     EqualizeSplits,
     FocusNextPane,
     FocusPrevPane,
-    // GAP-6.6: tmux-compatible layout ops.
-    /// resize a pane's split ratio by a signed delta (tmux `resize-pane -L/-R/-U/-D N`).
-    /// `pane_id` None ⇒ active; `delta_ratio` is clamped to MIN/MAX inside `resize_ratio`.
+    // GAP-6.6：与 tmux 兼容的布局操作。
+    /// 按带符号增量调整面板的拆分比例（tmux `resize-pane -L/-R/-U/-D N`）。
+    /// `pane_id` 为 None 表示活动面板；`delta_ratio` 在 `resize_ratio` 内被限制在 MIN/MAX 之间。
     ResizePane { pane_id: Option<u64>, delta_ratio: f32 },
-    /// focus the geometrically-adjacent pane (tmux `select-pane -L/-R/-U/-D`).
-    /// `pane_id` None ⇒ active; `direction` selects the neighbor via `find_adjacent`.
+    /// 聚焦几何上相邻的面板（tmux `select-pane -L/-R/-U/-D`）。
+    /// `pane_id` 为 None 表示活动面板；`direction` 通过 `find_adjacent` 选择邻居。
     FocusGeometric { pane_id: Option<u64>, direction: crate::split_tree::SplitDirection },
-    /// swap two panes by id (tmux `swap-pane -s A -t B`); both must share a tab.
+    /// 按 id 交换两个面板（tmux `swap-pane -s A -t B`）；两者必须同属一个 Tab。
     SwapPaneById { src: u64, dst: u64 },
-    /// break a pane into its own tab (tmux `break-pane`); None ⇒ active.
+    /// 把面板拆分成独立的 Tab（tmux `break-pane`）；None 表示活动面板。
     DetachPane { pane_id: Option<u64> },
-    /// join-pane — move a pane (`src_pane_id`) from its tab into `dst_tab_index`
-    /// as a new sibling (tmux `join-pane -s A -t <tab>`).
+    /// join-pane —— 把一个面板（`src_pane_id`）从其 Tab 移动到 `dst_tab_index`
+    /// 作为新兄弟面板（tmux `join-pane -s A -t <tab>`）。
     AttachPane { src_pane_id: u64, dst_tab_index: usize, direction: crate::split_tree::SplitDirection },
-    /// GAP-6.6: pipe-pane — tap a pane's PTY output to a shell command. The
-    /// main loop resolves pane → daemon `session_id` and forwards to
-    /// `pipe.set`. `command` None ⇒ clear. Unix-only (daemon-backed).
+    /// GAP-6.6：pipe-pane —— 把面板的 PTY 输出导入 shell 命令。主循环把面板
+    /// 解析为守护进程 `session_id` 并转发给 `pipe.set`。`command` 为 None
+    /// 表示清除。仅 Unix（由守护进程支撑）。
     #[cfg(unix)]
     PipePane { pane_id: Option<u64>, command: Option<String> },
-    // Config
+    // 配置
     ReloadConfig,
-    // SSH
+    // SSH 连接
     #[cfg(unix)]
     SshConnect { profile_index: usize },
-    /// GAP-5.6: disconnect the active SSH pane (or a specific one). The iced
-    /// loop flags the pane user-initiated-close (so it won't auto-reconnect)
-    /// and writes `exit\r`.
+    /// GAP-5.6：断开活动 SSH 面板（或指定面板）。iced 循环把面板标记为
+    /// 用户主动关闭（因此不会自动重连）并写入 `exit\r`。
     #[cfg(unix)]
     SshDisconnect { pane_id: Option<u64> },
-    /// GAP-7.9: write `text` into a pane's PTY. `pane_id` None ⇒ active pane.
-    /// Fire-and-forget; the request is replied to immediately with
-    /// `{"sent": true, "length": <n>}` and the actual `write_to_pty` happens
-    /// in the main loop (mirrors `SshDisconnect`'s pane resolution). Drives
-    /// the MCP `send_text` tool + `pureterm surface send-text`.
+    /// GAP-7.9：把 `text` 写入面板的 PTY。`pane_id` 为 None 表示活动面板。
+    /// 即发即忘；请求立即以 `{"sent": true, "length": <n>}` 应答，实际的
+    /// `write_to_pty` 在主循环中发生（镜像 `SshDisconnect` 的面板解析）。
+    /// 驱动 MCP `send_text` 工具与 `pureterm surface send-text`。
     #[cfg(unix)]
     SendText { pane_id: Option<u64>, text: String },
-    /// GAP-7.4: a `[[agent.hook]]` SessionEnd rule fired → clear that agent
-    /// session's Feed approval memory (Always/All/Bypass). Fire-and-forget;
-    /// the request itself is replied to immediately with `{"ok": true}`.
+    /// GAP-7.4：`[[agent.hook]]` 的 SessionEnd 规则触发 → 清除该 agent 会话
+    /// 的 Feed 审批记忆（Always/All/Bypass）。即发即忘；请求本身立即以
+    /// `{"ok": true}` 应答。
     #[cfg(unix)]
     FeedClearSession { session_id: String },
-    /// GAP-7.5: a `[[agent.hook]]` SessionStart fired → persist the agent
-    /// session id (for cold resume via `claude --resume`) and associate it
-    /// with the owning pane. Fire-and-forget; replied immediately.
+    /// GAP-7.5：`[[agent.hook]]` 的 SessionStart 触发 → 持久化 agent 会话 id
+    /// （用于通过 `claude --resume` 冷恢复）并与所属面板关联。即发即忘；
+    /// 立即应答。
     #[cfg(unix)]
     AgentSessionStarted { session_id: String, kind: Option<String>, cwd: Option<String> },
-    /// GAP-09: post a desktop notification from the CLI (`pureterm notify`) or
-    /// external IPC caller. `pane_id` None ⇒ active pane. Fire-and-forget; the
-    /// main loop records it in the store (source `Cli`), refreshes the Dock
-    /// badge, and fires a gated toast.
+    /// GAP-09：从 CLI（`pureterm notify`）或外部 IPC 调用方发出桌面通知。
+    /// `pane_id` 为 None 表示活动面板。即发即忘；主循环把它记录到存储
+    /// （来源 `Cli`）、刷新 Dock 徽标并触发一条门控 toast。
     ShowNotification { title: Option<String>, body: String, pane_id: Option<u64> },
-    /// GAP-48: switch workspace by id, name, or creation-order index.
+    /// GAP-48：按 id、名称或创建顺序索引切换工作区。
     SwitchWorkspace {
         id: Option<u64>,
         name: Option<String>,
         index: Option<usize>,
-        /// GAP-25: when true, switch matching workspace in every window of
-        /// this process and broadcast to other PureTerm instances.
+        /// GAP-25：为 true 时，在本进程的每个窗口切换匹配的工作区，
+        /// 并向其他 PureTerm 实例广播。
         all_windows: bool,
     },
-    /// GAP-25: open a new independent window with tab bar + workspaces.
+    /// GAP-25：打开一个带有 Tab 栏和工作区的全新独立窗口。
     NewWindow,
-    /// GAP-47/48: open an ad-hoc SSH tab from `pureterm://ssh/…` or
-    /// `pureterm script ssh`.
+    /// GAP-47/48：从 `pureterm://ssh/…` 或 `pureterm script ssh` 打开一个
+    /// 临时 SSH Tab。
     #[cfg(unix)]
     SshOpenTarget { target: String, port: Option<u16> },
 }
 
-// ── AppSnapshot ──────────────────────────────────────────────────────────
+// ── AppSnapshot 快照 ───────────────────────────────────────────────────────
 
-/// Read-only snapshot of application state passed to method handlers.
+/// 传给方法 handler 的应用状态只读快照。
 ///
-/// Constructed in the main `update()` loop on each IPC message so handlers
-/// see a consistent view of tabs, panes, config, etc.
+/// 在每条 IPC 消息的 `update()` 主循环中构造，使 handler 能看到
+/// Tab、面板、配置等一致的应用视图。
 #[derive(Debug, Clone)]
 pub struct AppSnapshot {
-    /// Number of open windows (currently always 0 or 1).
+    /// 打开的窗口数（当前恒为 0 或 1）。
     pub window_count: usize,
-    /// Tab titles.
+    /// Tab 标题。
     pub tab_titles: Vec<String>,
-    /// Raw `TabId.0` values — stable identifiers for tab operations.
+    /// 原始 `TabId.0` 值——Tab 操作的稳定标识符。
     pub tab_ids: Vec<u64>,
-    /// Number of panes per tab.
+    /// 每个 Tab 的面板数。
     pub pane_counts: Vec<usize>,
-    /// Currently active tab index.
+    /// 当前活动 Tab 索引。
     pub active_tab_index: usize,
-    /// App version.
+    /// 应用版本。
     pub version: String,
-    /// Configured SSH profile names (unix only).
+    /// 已配置的 SSH 配置文件名称（仅 Unix）。
     pub ssh_profile_names: Vec<String>,
-    /// Path to the config file.
+    /// 配置文件路径。
     pub config_path: Option<String>,
-    /// Current working directory for each tab's active surface (OSC 7).
+    /// 每个 Tab 活动 surface 的当前工作目录（OSC 7）。
     pub tab_cwds: Vec<Option<String>>,
-    /// Active pane ID (.0) per tab.
+    /// 每个 Tab 的活动面板 ID（.0）。
     pub active_pane_ids: Vec<u64>,
-    /// GAP-6.6: every pane's stable id (DFS order, `.0`) per tab. Lets
-    /// `pane.list` / `surface.list` expose each pane's own id (the legacy
-    /// `active_pane_ids` only gave the focused pane per tab) so tmux `%N`
-    /// targeting can address any pane.
+    /// GAP-6.6：每个 Tab 各面板的稳定 id（DFS 顺序，`.0`）。使
+    /// `pane.list` / `surface.list` 能暴露每个面板自己的 id（旧的
+    /// `active_pane_ids` 每 Tab 只给出聚焦面板），从而 tmux `%N`
+    /// 定位可以寻址任意面板。
     pub pane_ids: Vec<Vec<u64>>,
-    /// GAP-5.6: per-SSH-pane connection state (DFS order across tabs). Empty
-    /// on non-unix (no SSH panes). Surfaced via the `ssh.state` Socket API
-    /// method so agents / MCP / CLI can query which panes are connected.
+    /// GAP-5.6：每个 SSH 面板的连接状态（跨 Tab 按 DFS 顺序）。非 Unix
+    /// 平台为空（没有 SSH 面板）。通过 `ssh.state` Socket API 方法暴露，
+    /// 使 agent / MCP / CLI 能查询哪些面板已连接。
     pub ssh_pane_states: Vec<SshPaneState>,
-    /// GAP-15: per-pane shell context (OSC 133 marks) keyed by `PaneId.0`.
-    /// Surfaced via the `shell.context` Socket API method / MCP
-    /// `get_shell_context`. Built from `pane_shell_state` + `pane_cwds`.
+    /// GAP-15：以 `PaneId.0` 为键的每个面板的 shell 上下文（OSC 133 标记）。
+    /// 通过 `shell.context` Socket API 方法 / MCP `get_shell_context` 暴露。
+    /// 由 `pane_shell_state` + `pane_cwds` 构建。
     pub pane_shell_contexts: HashMap<u64, crate::shell_context::ShellContextSummary>,
-    /// GAP-10: configured `[[triggers]]` rules (no `send_text` secrets).
+    /// GAP-10：已配置的 `[[triggers]]` 规则（不含 `send_text` 秘密）。
     pub triggers: Vec<TriggerListEntry>,
-    /// GAP-48: workspace ids (creation order) for `workspace.list` / switch.
+    /// GAP-48：工作区 id（创建顺序），用于 `workspace.list` / 切换。
     pub workspace_ids: Vec<u64>,
-    /// GAP-48: workspace display names aligned with `workspace_ids`.
+    /// GAP-48：与 `workspace_ids` 对齐的工作区显示名称。
     pub workspace_names: Vec<String>,
-    /// GAP-48: active workspace id (`.0`).
+    /// GAP-48：活动工作区 id（`.0`）。
     pub active_workspace_id: u64,
 }
 
-/// GAP-10: one trigger rule for `trigger.list` / MCP `trigger_list`.
+/// GAP-10：`trigger.list` / MCP `trigger_list` 的一条触发器规则。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TriggerListEntry {
     pub index: usize,
@@ -161,11 +156,11 @@ pub struct TriggerListEntry {
     pub action: String,
 }
 
-/// GAP-5.6: one SSH pane's connection state for the `ssh.state` Socket API
-/// method. Cross-platform struct (uses owned `String`s); SSH panes only exist
-/// on unix so the snapshot vec is empty elsewhere. `state` / `failure_kind`
-/// are the lowercase slugs from [`crate::ssh::reconnect`] (`connected`,
-/// `reconnecting`, `failed`, ... / `auth`, `network`, ...).
+/// GAP-5.6：`ssh.state` Socket API 方法中一个 SSH 面板的连接状态。
+/// 跨平台结构（使用自有 `String`）；SSH 面板只存在于 Unix，所以其他
+/// 平台的快照向量为空。`state` / `failure_kind` 是来自
+/// [`crate::ssh::reconnect`] 的小写 slug（`connected`、`reconnecting`、
+/// `failed`…/`auth`、`network`…）。
 #[derive(Debug, Clone, Default)]
 pub struct SshPaneState {
     pub pane_id: u64,

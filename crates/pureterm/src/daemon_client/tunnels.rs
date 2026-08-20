@@ -1,13 +1,13 @@
-//! SSH tunnel operations: start, list, stop, provide_auth.
+//! SSH 隧道操作:start、list、stop、provide_auth。
 
 use std::io;
 use std::path::Path;
 
 use super::rpc;
 
-/// GAP-5.2: start a russh SOCKS5 tunnel in the daemon. Binds the local listener
-/// synchronously then spawns the async connect, so the returned `tunnel_id` is
-/// immediately usable — poll `tunnel_list` for `connecting → connected`.
+/// GAP-5.2:在守护进程中启动一条 russh SOCKS5 隧道。同步绑定本地监听器,
+/// 然后派发异步连接,因此返回的 `tunnel_id` 立即可用——
+/// 轮询 `tunnel_list` 观察 `connecting → connected`。
 pub fn tunnel_start(
     socket: &Path,
     host: &str,
@@ -36,7 +36,7 @@ pub fn tunnel_start(
     if let Some(pw) = password {
         params["password"] = serde_json::Value::String(pw.to_string());
     }
-    // GAP-5.4: request ssh-agent forwarding + agent-key auth on the tunnel.
+    // GAP-5.4:在隧道上请求 ssh-agent 转发 + 代理密钥认证。
     if forward_agent {
         params["forward_agent"] = serde_json::Value::Bool(true);
     }
@@ -49,8 +49,8 @@ pub fn tunnel_start(
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing tunnel_id"))
 }
 
-/// GAP-5.2: list daemon tunnels. Each element is the raw `{ id, host, user,
-/// port, local_addr, status, error? }` object from `tunnel.list`.
+/// GAP-5.2:列出守护进程的隧道。每个元素是 `tunnel.list` 返回的
+/// 原始 `{ id, host, user, port, local_addr, status, error? }` 对象。
 pub fn tunnel_list(socket: &Path) -> io::Result<Vec<serde_json::Value>> {
     let resp = rpc(socket, "tunnel.list", None)?;
     if let Some(err) = &resp.error {
@@ -66,7 +66,7 @@ pub fn tunnel_list(socket: &Path) -> io::Result<Vec<serde_json::Value>> {
     Ok(tunnels.clone())
 }
 
-/// GAP-5.2: stop a daemon tunnel by id. Returns the daemon's `stopped` flag.
+/// GAP-5.2:按 id 停止守护进程隧道。返回守护进程的 `stopped` 标志。
 pub fn tunnel_stop(socket: &Path, tunnel_id: &str) -> io::Result<bool> {
     let resp = rpc(
         socket,
@@ -82,7 +82,7 @@ pub fn tunnel_stop(socket: &Path, tunnel_id: &str) -> io::Result<bool> {
         .unwrap_or(false))
 }
 
-/// GAP-5.2: supply the auth secret to a tunnel parked in `need_auth`.
+/// GAP-5.2:向停在 `need_auth` 状态的隧道提供认证密钥。
 pub fn tunnel_provide_auth(socket: &Path, tunnel_id: &str, secret: &str) -> io::Result<()> {
     let resp = rpc(
         socket,

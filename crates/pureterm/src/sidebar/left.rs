@@ -1,11 +1,11 @@
-//! GAP-19: Left sidebar — Workspace list + Git branch summary.
+//! GAP-19:左侧边栏——工作区列表 + Git 分支摘要。
 
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Background, Border, Color, Element, Length, Shadow, Theme};
 
 use crate::iced_app::{Message, WorkspaceId};
 
-/// Snapshot of one workspace row for the left sidebar.
+/// 左侧边栏中一个工作区行的快照。
 pub struct WorkspaceRow {
     pub id: WorkspaceId,
     pub name: String,
@@ -13,7 +13,7 @@ pub struct WorkspaceRow {
     pub tab_count: usize,
 }
 
-/// Git branch summary for the left sidebar footer.
+/// 供左侧边栏底部使用的 Git 分支摘要。
 pub struct GitSummary<'a> {
     pub branch: Option<&'a str>,
     pub ahead: Option<usize>,

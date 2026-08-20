@@ -1,6 +1,6 @@
 ---
 gap: GAP-26
-title: Workspace Groups
+title: 工作区分组
 category: UI/外壳
 plan_type: feature
 priority: P3

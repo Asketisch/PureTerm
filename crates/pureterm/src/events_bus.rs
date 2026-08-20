@@ -1,18 +1,18 @@
-//! GAP-6.7: the in-process event hub.
+//! GAP-6.7:进程内事件中枢。
 //!
-//! [`EventBus`] is the single sink every producer calls. Each [`EventBus::emit`]
-//! does two things: (1) append the event to `events.jsonl` (via
-//! [`events_log`](crate::events_log), with 16 MiB rotation), and (2) broadcast
-//! it to in-process subscribers over a `tokio::sync::broadcast` channel whose
-//! capacity ([`EVENT_BUFFER`]) is the in-memory replay window for late
-//! subscribers.
+//! [`EventBus`] 是所有生产者调用的唯一出口。每次 [`EventBus::emit`]
+//! 做两件事:(1) 把事件追加到 `events.jsonl`(经
+//! [`events_log`](crate::events_log),带 16 MiB 轮转);(2) 通过
+//! `tokio::sync::broadcast` 通道广播给进程内订阅者,该通道的
+//! 容量([`EVENT_BUFFER`])是内存回放窗口,服务于
+//! 迟到的订阅者。
 //!
-//! The GUI owns one `Arc<EventBus>`; the hook shim and external CLI never touch
-//! it (they reach events via the file). `emit` is `&self` (interior mutability)
-//! so it stays callable when a future off-thread producer appears.
+//! GUI 持有一个 `Arc<EventBus>`;hook shim 与外部 CLI 从不触碰它
+//! (它们经由文件读取事件)。`emit` 为 `&self`(内部可变性),
+//! 以便将来出现跨线程生产者时仍可调用。
 //!
-//! Real-time external consumption is file tailing (`pureterm events tail`), not
-//! streaming IPC — see [`events_log::tail_follow`](crate::events_log::tail_follow).
+//! 对外的实时消费采用文件尾部跟踪(`pureterm events tail`),
+//! 而非流式 IPC —— 见 [`events_log::tail_follow`](crate::events_log::tail_follow)。
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,22 +24,22 @@ use tokio::sync::broadcast;
 use crate::events::{AppEvent, Category};
 use crate::events_log;
 
-/// Broadcast capacity = in-memory replay window for late subscribers.
+/// 广播容量 = 迟到订阅者的内存回放窗口。
 pub const EVENT_BUFFER: usize = 4096;
 
 pub struct EventBus {
     tx: broadcast::Sender<AppEvent>,
     seq: AtomicU64,
-    /// Guards the append+rotate critical section against off-thread producers.
-    /// Today every emit runs on the iced main loop, so this is uncontended, but
-    /// the lock keeps `emit` correct by construction if that changes.
+    /// 保护追加 + 轮转的临界区,防止跨线程生产者并发。
+    /// 目前所有 emit 都在 iced 主循环上执行,因此无竞争;
+    /// 但该锁能保证即使将来变化,`emit` 依然天然正确。
     log_lock: Mutex<()>,
     path: PathBuf,
 }
 
 impl EventBus {
-    /// Build a bus that writes to `path`. Wrap in `Arc` for sharing across the
-    /// app + iced Subscription.
+    /// 构建一个写入 `path` 的总线。用 `Arc` 包装,以便在
+    /// app 与 iced Subscription 之间共享。
     pub fn new(path: PathBuf) -> Arc<Self> {
         let (tx, _) = broadcast::channel(EVENT_BUFFER);
         Arc::new(Self {
@@ -50,23 +50,23 @@ impl EventBus {
         })
     }
 
-    /// The log path this bus writes to.
+    /// 本总线写入的日志路径。
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Subscribe to the live in-process stream. Late subscribers only get the
-    /// most recent [`EVENT_BUFFER`] events; a receiver that lags past capacity
-    /// gets [`broadcast::error::RecvError::Lagged`] (consumers must tolerate it).
+    /// 订阅实时进程内事件流。迟到的订阅者只能拿到
+    /// 最近 [`EVENT_BUFFER`] 条事件;落后超过容量的接收者
+    /// 会收到 [`broadcast::error::RecvError::Lagged`](消费方必须容忍)。
     pub fn subscribe(&self) -> broadcast::Receiver<AppEvent> {
         self.tx.subscribe()
     }
 
-    /// Record one event: assigns a monotonic `seq` + timestamp, persists to the
-    /// JSONL log, broadcasts to subscribers. Returns the assigned `seq`.
+    /// 记录一条事件:分配单调递增的 `seq` + 时间戳,持久化到
+    /// JSONL 日志,并广播给订阅者。返回分配的 `seq`。
     ///
-    /// A send with no subscribers returns `Err` — that's fine, the file is the
-    /// source of truth and the CLI tails it.
+    /// 无订阅者时发送返回 `Err` —— 无妨,文件才是
+    /// 事实来源,CLI 通过尾部跟踪读取它。
     pub fn emit(
         &self,
         cat: Category,
@@ -84,10 +84,10 @@ impl EventBus {
             data,
         };
         {
-            // Poison-resilient: if a prior `emit` panicked while holding this
-            // std Mutex (the critical section swallows its own I/O errors, so a
-            // poison is unlikely), recover the guard instead of panicking on the
-            // iced main thread (which would kill all future notifications).
+            // 抗中毒:若之前的 `emit` 在持有该
+            // std Mutex 时 panic(临界区已吞掉自身 I/O 错误,
+            // 中毒可能性很低),则恢复该守卫,而不是在
+            // iced 主线程上 panic(否则会毁掉未来所有通知)。
             let _guard = self.log_lock.lock().unwrap_or_else(|e| e.into_inner());
             events_log::append_to_path(&self.path, &event);
         }
@@ -142,7 +142,7 @@ mod tests {
 
     #[test]
     fn emit_with_no_subscriber_still_persists() {
-        // No subscribe() call — broadcast::send returns Err; emit must not panic.
+        // 未调用 subscribe() —— broadcast::send 返回 Err;emit 不应 panic。
         let dir = tempfile::tempdir().unwrap();
         let bus = bus_in(&dir);
         bus.emit(Category::App, "app.started", None, Value::Null);

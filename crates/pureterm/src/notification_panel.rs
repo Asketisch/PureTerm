@@ -1,33 +1,33 @@
-//! GAP-09: Notifications overlay panel — a read-only history of recent
-//! notifications (OSC 9/99/777 + bells) with the source pane, source type,
-//! occasion, and timestamp. Clicking an entry focuses its source pane.
+//! GAP-09:通知叠加面板——最近通知(OSC 9/99/777 与响铃)的
+//! 只读历史,含来源窗格、来源类型、
+//! 场合与时间戳。点击条目会聚焦其来源窗格。
 //!
-//! This module owns the panel *state*. The view (`App::view_notifications_panel`)
-//! and the `Message` wiring live in `iced_app.rs`, which has the app's private
-//! fields (the `NotificationStore`, pane ids, terminal contexts) in scope.
+//! 本模块持有面板的*状态*。视图(`App::view_notifications_panel`)
+//! 与 `Message` 接线位于 `iced_app.rs`,那里有应用的私有
+//! 字段(`NotificationStore`、窗格 id、终端上下文)。
 //!
-//! The panel reads the in-memory `NotificationStore` live each frame, so the
-//! state here is just the open flag — no async fetch, no staleness, no snapshot.
+//! 面板每帧实时读取内存中的 `NotificationStore`,因此
+//! 这里的状态只有 open 标志——无异步取数、无过期、无快照。
 
-/// State for the Notifications overlay panel.
+/// 通知叠加面板的状态。
 #[derive(Debug, Clone, Default)]
 pub struct NotificationPanelState {
-    /// Panel visibility.
+    /// 面板可见性。
     pub open: bool,
 }
 
 impl NotificationPanelState {
-    /// Fresh closed panel (used at app startup).
+    /// 初始的关闭状态面板(应用启动时使用)。
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Toggle visibility (the ⌘⇧M action).
+    /// 切换可见性(⌘⇧M 动作)。
     pub fn toggle(&mut self) {
         self.open = !self.open;
     }
 
-    /// Close the panel.
+    /// 关闭面板。
     pub fn close(&mut self) {
         self.open = false;
     }

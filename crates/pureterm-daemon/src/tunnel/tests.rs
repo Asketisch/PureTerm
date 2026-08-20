@@ -39,46 +39,46 @@ fn provide_auth_unknown_errors() {
     assert!(mgr.provide_auth("nope", "s".into()).is_err());
 }
 
-/// `read_dst_addr` is async over a real socket; this exercises the IPv4 /
-/// IPv6 / domain formatting paths by feeding a cursor-backed mock stream
-/// through the same Tokio codec. We instead unit-test the pure formatting
-/// invariants the function relies on.
+/// `read_dst_addr` 对真实 socket 是异步的;这里用一个 cursor 背书的
+/// 模拟流经同一 Tokio codec 喂入,演练 IPv4 /
+/// IPv6 / 域名格式化路径。我们改为单元测试该函数所依赖的纯格式化
+/// 不变量。
 #[test]
 fn ipv4_format_is_dotted_quad() {
-    // Mirrors the 0x01 branch of read_dst_addr.
+    // 镜像 read_dst_addr 的 0x01 分支。
     let b = [192u8, 168, 1, 42];
     assert_eq!(format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3]), "192.168.1.42");
 }
 
 #[test]
 fn port_is_big_endian_from_two_bytes() {
-    // Mirrors the port decode in serve_socks5.
+    // 镜像 serve_socks5 的端口解码。
     assert_eq!(u16::from_be_bytes([0x1F, 0x90]), 8080);
     assert_eq!(u16::from_be_bytes([0x00, 0x50]), 80);
 }
 
-// ── GAP-5.2 remote_dns resolution decision (--no-remote-dns) ──────────
+// ── GAP-5.2 remote_dns 解析决策(--no-remote-dns) ──────────────────────────
 #[test]
 fn remote_dns_domain_is_forwarded_verbatim() {
-    // Default: the gateway resolves the domain (socks5h / --socks5-hostname).
+    // 默认:由网关解析域名(socks5h / --socks5-hostname)。
     assert!(forward_verbatim(true, "internal.corp"));
 }
 
 #[test]
 fn no_remote_dns_domain_is_resolved_locally() {
-    // --no-remote-dns: resolve here so the domain never leaks to the gateway.
+    // --no-remote-dns:在本地解析,使域名绝不泄漏给网关。
     assert!(!forward_verbatim(false, "internal.corp"));
 }
 
 #[test]
 fn ip_literal_is_forwarded_verbatim_regardless_of_remote_dns() {
-    // IP literals need no DNS — never spend a lookup, never change representation.
+    // IP 字面量无需 DNS——绝不做查找,也不改变表示形式。
     assert!(forward_verbatim(true, "10.0.0.1"));
     assert!(forward_verbatim(false, "10.0.0.1"));
     assert!(forward_verbatim(false, "::1"));
 }
 
-// ── GAP-5.2 SSH connect-addr formatting (IPv6 literal safety) ─────────
+// ── GAP-5.2 SSH 连接地址格式化(IPv6 字面量安全) ───────────────────────────────────
 #[test]
 fn connect_addr_hostname_is_host_colon_port() {
     assert_eq!(format_connect_addr("gw.example", 22), "gw.example:22");
@@ -91,11 +91,11 @@ fn connect_addr_ipv4_literal_is_unbracketed() {
 
 #[test]
 fn connect_addr_ipv6_literal_is_bracketed() {
-    // An IPv6 literal contains ':' → must bracket or "2001:db8::1:22" won't parse.
+    // IPv6 字面量含 ':' → 必须加方括号,否则 "2001:db8::1:22" 无法解析。
     assert_eq!(format_connect_addr("2001:db8::1", 22), "[2001:db8::1]:22");
 }
 
-// ── GAP-5.2 TOFU host-key decision ────────────────────────────────────
+// ── GAP-5.2 TOFU 主机密钥决策 ───────────────────────────────────────────────
 const KEY_A_B64: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
 const KEY_B_B64: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIAMKERgfJi00O0JJUFdeZWxzeoGIj5adpKuyucDHztXc";
 
@@ -121,7 +121,7 @@ fn host_key_match_accepts() {
     let path = tmp.path().join("kh");
     let kh = KnownHosts::open(path.clone()).unwrap();
     assert!(decide_host_key(Some(&kh), "gw", &pubkey(KEY_A_B64)));
-    // Reload from the file the first connect wrote → Match must still accept.
+    // 从首次连接写入的文件重载 → Match 必须仍接受。
     let kh2 = KnownHosts::open(path).unwrap();
     assert!(decide_host_key(Some(&kh2), "gw", &pubkey(KEY_A_B64)));
 }
@@ -132,7 +132,7 @@ fn host_key_mismatch_rejects() {
     let path = tmp.path().join("kh");
     let kh = KnownHosts::open(path.clone()).unwrap();
     assert!(decide_host_key(Some(&kh), "gw", &pubkey(KEY_A_B64)));
-    // Present a different key for the now-known host → reject.
+    // 对现已已知的主机呈现不同密钥 → 拒绝。
     let kh2 = KnownHosts::open(path).unwrap();
     assert!(!decide_host_key(Some(&kh2), "gw", &pubkey(KEY_B_B64)));
 }

@@ -1,8 +1,8 @@
-//! GAP-26: Workspace Groups — tree grouping for the left sidebar.
+//! GAP-26: 工作区分组 —— 左侧栏的树形分组。
 
 use serde::{Deserialize, Serialize};
 
-/// One `[[workspace_groups]]` entry in `pureterm.toml`.
+/// `pureterm.toml` 里的一条 `[[workspace_groups]]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkspaceGroup {
     pub name: String,
@@ -16,7 +16,7 @@ fn default_expanded() -> bool {
     true
 }
 
-/// Resolve which group (if any) contains a workspace name.
+/// 解析某个工作区名称从属于哪个分组(若存在)。
 pub fn group_for_workspace<'a>(
     groups: &'a [WorkspaceGroup],
     workspace_name: &str,
@@ -26,7 +26,7 @@ pub fn group_for_workspace<'a>(
         .find(|g| g.workspaces.iter().any(|w| w == workspace_name))
 }
 
-/// Workspaces not listed in any group land in "Ungrouped".
+/// 未列入任何分组的工作区归入 "Ungrouped"。
 pub fn ungrouped_workspaces(groups: &[WorkspaceGroup], all_names: &[String]) -> Vec<String> {
     let grouped: std::collections::HashSet<&str> = groups
         .iter()

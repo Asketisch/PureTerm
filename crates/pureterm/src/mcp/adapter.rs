@@ -1,15 +1,15 @@
-//! GAP-7.10 (Phase C): install PureTerm's MCP server into an agent client's
-//! config — `pureterm mcp install claude-code|codex|claude-desktop`.
+//! GAP-7.10 (Phase C): install PureTerm MCP 服务器到 agent 客户端的
+//! 配置中——`通过 pureterm mcp install claude-code|codex|claude-desktop` 安装。
 //!
-//! Each adapter writes a server entry that spawns `pureterm mcp serve`. The
-//! entry is namespaced under a key we own (`mcpServers.pureterm` for JSON
-//! clients, `[mcp_servers.pureterm]` for TOML), so install is **idempotent**
-//! (remove-then-reinsert) and uninstall touches only our entry, preserving any
-//! other servers the user configured.
+//! 每个适配器写入一个启动 `pureterm mcp serve` 的服务器条目。该条目
+//! 位于我们独占的命名空间键下(`mcpServers.pureterm`,对应 JSON
+//! 客户端;`[mcp_servers.pureterm]` 对应 TOML),因此安装是**幂等**的
+//! (先删后插);卸载只动我们的条目,保留用户配置的
+//! 其他任何服务器。
 //!
-//! JSON clients (Claude Code `.mcp.json`, Claude Desktop) reuse the locked
-//! JSON RMW engine from `agent_adapters`; the TOML client (Codex) has a
-//! parallel `locked_toml_rmw`.
+//! JSON 客户端(Claude Code 的 `.mcp.json`、Claude Desktop)复用 `agent_adapters`
+//! 中的加锁 JSON RMW 引擎;TOML 客户端(Codex)则有并行的
+//! `locked_toml_rmw` 实现。
 
 use std::path::{Path, PathBuf};
 
@@ -19,22 +19,22 @@ use toml_edit::{DocumentMut, Item};
 
 use crate::agent_adapters::{locked_json_rmw, AdapterError};
 
-/// The server key we own in every client config. Other PureTerm-registered
-/// servers would collide, but `pureterm` is our product name — the namespace
-/// is ours by convention.
+/// 我们在每个客户端配置中独占的服务器键。其他 PureTerm 注册的
+/// 服务器可能冲突,但 `pureterm` 是我们的产品名——该命名空间
+/// 按约定归我们所有。
 const SERVER_KEY: &str = "pureterm";
 
-/// Args every client uses to launch us: `<bin> mcp serve`.
+/// 所有客户端启动我们时使用的参数:`<bin> mcp serve`。
 fn serve_args() -> Vec<String> {
     vec!["mcp".to_string(), "serve".to_string()]
 }
 
-// ── JSON apply (Claude Code `.mcp.json` + Claude Desktop) ──────────────────
-// Shape (MCP standard for both clients):
-//   { "mcpServers": { "pureterm": { "command": "<bin>", "args": ["mcp","serve"] } } }
+// ── JSON 应用(Claude Code `.mcp.json` + Claude Desktop) ──────────────────
+// 结构(MCP 对两类客户端的标准):
+// 结构示例: { "mcpServers": { "pureterm": { "command": "<bin>", "args": ["mcp","serve"] } } }
 
-/// Insert/refresh our server under `mcpServers.pureterm`. Idempotent: removes
-/// any prior `pureterm` entry first, so re-running install never duplicates.
+/// 在 `mcpServers.pureterm` 下插入/刷新我们的服务器。幂等:先移除
+/// 之前的 `pureterm` 条目,重复安装不会产生副本。
 pub fn apply_mcp_json_install(root: &mut Value, bin: &Path) {
     let Some(obj) = root.as_object_mut() else {
         return;
@@ -46,7 +46,7 @@ pub fn apply_mcp_json_install(root: &mut Value, bin: &Path) {
         .get_mut("mcpServers")
         .and_then(|v| v.as_object_mut())
         .expect("just inserted mcpServers as object");
-    // Remove-then-insert = idempotent refresh (drops a stale bin path, etc.).
+    // 先删后插 = 幂等刷新(同时丢弃过期的二进制路径等)。
     servers.remove(SERVER_KEY);
     servers.insert(
         SERVER_KEY.to_string(),
@@ -57,8 +57,8 @@ pub fn apply_mcp_json_install(root: &mut Value, bin: &Path) {
     );
 }
 
-/// Remove our server; if `mcpServers` is left empty, drop it too so we don't
-/// litter the config with an empty table. Other servers are untouched.
+/// 移除我们的服务器;若 `mcpServers` 因此为空,则一并删除,避免
+/// 在配置中残留空表。其他服务器不受影响。
 pub fn apply_mcp_json_uninstall(root: &mut Value) {
     let Some(servers) = root
         .as_object_mut()
@@ -75,21 +75,21 @@ pub fn apply_mcp_json_uninstall(root: &mut Value) {
     }
 }
 
-/// True iff our server key is present (regardless of the recorded bin path —
-/// we own the key, so any `pureterm` entry is ours).
+/// 我们的服务器键是否存在(与记录的二进制路径无关——
+/// 我们独占该键,任何 `pureterm` 条目都属于我们)。
 pub fn has_mcp_json(root: &Value) -> bool {
     root.get("mcpServers")
         .and_then(|s| s.get(SERVER_KEY))
         .is_some()
 }
 
-// ── TOML apply (Codex `~/.codex/config.toml`) ─────────────────────────────
-// Shape: [mcp_servers.pureterm] with command + args.
+// ── TOML 应用(Codex `~/.codex/config.toml`) ─────────────────────────────
+// 结构: [mcp_servers.pureterm],含 command + args。
 
-/// Insert/refresh `[mcp_servers.pureterm]`. Idempotent: removes a prior table
-/// first. Foreign `[mcp_servers.*]` tables (and the rest of the doc) survive.
+/// 插入/刷新 `[mcp_servers.pureterm]`。幂等:先移除旧表,
+/// 其他 `[mcp_servers.*]` 表(以及文档其余部分)保持不变。
 pub fn apply_codex_toml_install(doc: &mut DocumentMut, bin: &Path) {
-    // Ensure `mcp_servers` table exists.
+    // 确保 `mcp_servers` 表存在。
     if !doc.contains_table("mcp_servers") {
         doc.insert("mcp_servers", Item::Table(toml_edit::Table::new()));
     }
@@ -102,19 +102,19 @@ pub fn apply_codex_toml_install(doc: &mut DocumentMut, bin: &Path) {
     tbl.insert("command", toml_edit::value(bin.to_string_lossy().to_string()));
     let arr = toml_edit::Array::from_iter(serve_args().into_iter());
     tbl.insert("args", toml_edit::value(arr));
-    // `[mcp_servers.pureterm]` is explicitly decorative; `decor_mut` left default.
+    // `[mcp_servers.pureterm]` 的装饰仅作显式展示;`decor_mut` 保持默认。
     mcp_servers.insert(SERVER_KEY, Item::Table(tbl));
 }
 
-/// Remove `[mcp_servers.pureterm]`; leave `[mcp_servers]` (other servers may
-/// remain) — toml_edit keeps the parent table even if empty, which is fine.
+/// 移除 `[mcp_servers.pureterm]`;保留 `[mcp_servers]`(其他服务器可能
+/// 仍存在)——toml_edit 即使空表也会保留父表,这没问题。
 pub fn apply_codex_toml_uninstall(doc: &mut DocumentMut) {
     if let Some(mcp_servers) = doc.get_mut("mcp_servers").and_then(|t| t.as_table_mut()) {
         mcp_servers.remove(SERVER_KEY);
     }
 }
 
-/// True iff `[mcp_servers.pureterm]` is present.
+/// `[mcp_servers.pureterm]` 是否存在。
 pub fn has_codex_toml(doc: &DocumentMut) -> bool {
     doc.get("mcp_servers")
         .and_then(|t| t.as_table())
@@ -122,12 +122,12 @@ pub fn has_codex_toml(doc: &DocumentMut) -> bool {
         .is_some()
 }
 
-// ── Locked TOML RMW (parallel to agent_adapters::locked_json_rmw) ──────────
+// ── 加锁 TOML RMW(与 agent_adapters::locked_json_rmw 类似) ──────────
 
-/// Advisory-locked read-modify-write over a TOML file, mirroring
-/// `locked_json_rmw`: fs2 exclusive lock + atomic `NamedTempFile::persist`.
-/// A missing/empty file is treated as a fresh empty document. A syntactically
-/// invalid TOML file errors out (never silently clobbers the user's config).
+/// 对 TOML 文件进行带建议锁的读-改-写,与
+/// `locked_json_rmw` 类似:fs2 排他锁 + 原子的 `NamedTempFile::persist`。
+/// 缺失/空文件视为全新的空文档。语法非法的 TOML 文件会报错
+/// (绝不会静默破坏用户的配置)。
 fn locked_toml_rmw<F>(path: &Path, mutate: F) -> Result<(), AdapterError>
 where
     F: FnOnce(&mut DocumentMut) -> Result<(), AdapterError>,
@@ -175,7 +175,7 @@ where
     res
 }
 
-// ── Adapter trait ─────────────────────────────────────────────────────────
+// ── 适配器 trait ─────────────────────────────────────────────────────────
 
 pub trait McpClientAdapter {
     fn id(&self) -> &'static str;
@@ -186,9 +186,9 @@ pub trait McpClientAdapter {
     fn is_installed(&self, bin: &Path) -> bool;
 }
 
-// ── Claude Code: project-scoped `.mcp.json` (cwd) ─────────────────────────
-// Claude Code reads `.mcp.json` at the project root for project-scoped MCP
-// servers — the natural fit for "agent working inside this PureTerm project".
+// ── Claude Code:项目级 `.mcp.json`(当前目录) ─────────────────────────
+// Claude Code 在项目根目录读取 `.mcp.json`,用于项目级 MCP
+// 服务器——非常适合'在 PureTerm 项目内工作的 agent'。
 
 pub struct ClaudeCodeAdapter {
     path_override: Option<PathBuf>,
@@ -220,7 +220,7 @@ impl McpClientAdapter for ClaudeCodeAdapter {
         if let Some(p) = &self.path_override {
             return Ok(p.clone());
         }
-        // Project-scoped: the `.mcp.json` in the current working directory.
+        // 项目级:当前工作目录下的 `.mcp.json`。
         Ok(std::env::current_dir()?.join(".mcp.json"))
     }
     fn install(&self, bin: &Path) -> Result<PathBuf, AdapterError> {
@@ -253,7 +253,7 @@ impl McpClientAdapter for ClaudeCodeAdapter {
     }
 }
 
-// ── Claude Desktop: macOS app-support config ──────────────────────────────
+// ── Claude Desktop:macOS 应用支持配置 ──────────────────────────────
 
 pub struct ClaudeDesktopAdapter {
     path_override: Option<PathBuf>,
@@ -286,7 +286,7 @@ impl McpClientAdapter for ClaudeDesktopAdapter {
             return Ok(p.clone());
         }
         let home = dirs::home_dir().ok_or(AdapterError::NoHome)?;
-        // macOS path; on other OSes this simply won't exist until created.
+        // macOS 路径;在其他系统上该文件创建前不存在。
         Ok(home
             .join("Library/Application Support/Claude/claude_desktop_config.json"))
     }
@@ -320,7 +320,7 @@ impl McpClientAdapter for ClaudeDesktopAdapter {
     }
 }
 
-// ── Codex: ~/.codex/config.toml (TOML) ────────────────────────────────────
+// ── Codex 客户端:`~/.codex/config.toml`(TOML) ────────────────────────────────────
 
 pub struct CodexAdapter {
     path_override: Option<PathBuf>,
@@ -388,7 +388,7 @@ impl McpClientAdapter for CodexAdapter {
     }
 }
 
-// ── Registry + dispatch ───────────────────────────────────────────────────
+// ── 注册表 + 分发 ───────────────────────────────────────────────────
 
 pub fn registry() -> Vec<Box<dyn McpClientAdapter>> {
     vec![
@@ -420,7 +420,7 @@ mod tests {
         CodexAdapter::at(path)
     }
 
-    // ── pure JSON apply functions (Claude Code + Claude Desktop share these) ──
+    // ── 纯 JSON 应用函数(Claude Code 与 Claude Desktop 共用) ──
 
     #[test]
     fn json_install_adds_pureterm_server() {
@@ -435,9 +435,9 @@ mod tests {
     fn json_install_into_existing_mcpservers() {
         let mut root = json!({ "mcpServers": { "filesystem": { "command": "npx" } } });
         apply_mcp_json_install(&mut root, &bin());
-        // Foreign server preserved.
+        // 外部服务器保留。
         assert_eq!(root["mcpServers"]["filesystem"]["command"], "npx");
-        // Ours added.
+        // 我们的服务器已添加。
         assert_eq!(root["mcpServers"]["pureterm"]["args"], json!(["mcp", "serve"]));
     }
 
@@ -445,7 +445,7 @@ mod tests {
     fn json_install_is_idempotent() {
         let mut root = json!({});
         apply_mcp_json_install(&mut root, &bin());
-        apply_mcp_json_install(&mut root, &bin()); // re-run = refresh, not duplicate
+        apply_mcp_json_install(&mut root, &bin()); // 再次运行 = 刷新而非重复
         let servers = root["mcpServers"].as_object().unwrap();
         assert_eq!(servers.len(), 1, "pureterm should be the only server");
     }
@@ -463,7 +463,7 @@ mod tests {
         assert_eq!(root["mcpServers"]["filesystem"]["command"], "npx");
     }
 
-    // ── pure TOML apply functions (Codex) ──
+    // ── 纯 TOML 应用函数(Codex) ──
 
     #[test]
     fn toml_install_adds_pureterm_table() {
@@ -534,7 +534,7 @@ mod tests {
         );
     }
 
-    // ── end-to-end via the adapters (file-based, tempdir) ──
+    // ── 通过适配器的端到端测试(基于文件、临时目录) ──
 
     #[test]
     fn claude_code_install_roundtrip_via_adapter() {
@@ -542,7 +542,7 @@ mod tests {
         let adp = claude_code_adapter_at(dir.path().join(".mcp.json"));
         let path = adp.install(&bin()).unwrap();
         assert!(adp.is_installed(&bin()), "is_installed after install");
-        // Raw file has our server.
+        // 原始文件包含我们的服务器。
         let bytes = std::fs::read(&path).unwrap();
         let root: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(root["mcpServers"]["pureterm"]["args"], json!(["mcp", "serve"]));

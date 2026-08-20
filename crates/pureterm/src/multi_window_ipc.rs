@@ -1,7 +1,7 @@
-//! GAP-25: Multi-window cross-process IPC — fan-out workspace.switch.
+//! GAP-25:多窗口跨进程 IPC——扇出 workspace.switch。
 //!
-//! Each PureTerm process registers its GUI socket in a shared registry file.
-//! `workspace.switch` with `all_windows: true` broadcasts to every live instance.
+//! 每个 PureTerm 进程把自己的 GUI socket 注册进一份共享的注册表文件。
+//! `workspace.switch` 带 `all_windows: true` 时向每个存活实例广播。
 
 use std::path::{Path, PathBuf};
 
@@ -16,7 +16,7 @@ pub fn registry_path() -> PathBuf {
     listener::socket_dir().join(REGISTRY_NAME)
 }
 
-/// Register this process's IPC socket (idempotent append if missing).
+/// 注册本进程的 IPC socket(已存在则幂等追加)。
 pub fn register_window_socket(socket_path: &Path) {
     let reg = registry_path();
     if let Some(parent) = reg.parent() {
@@ -40,7 +40,7 @@ pub fn register_window_socket(socket_path: &Path) {
     }
 }
 
-/// Remove stale entries whose socket files no longer exist.
+/// 移除 socket 文件已不存在的失效条目。
 pub fn prune_registry() {
     let reg = registry_path();
     if !reg.exists() {
@@ -62,7 +62,7 @@ pub fn prune_registry() {
     }
 }
 
-/// List registered socket paths (pruned).
+/// 列出已注册的 socket 路径(已清理失效项)。
 pub fn list_window_sockets() -> Vec<PathBuf> {
     prune_registry();
     let reg = registry_path();
@@ -78,7 +78,7 @@ pub fn list_window_sockets() -> Vec<PathBuf> {
         .collect()
 }
 
-/// Broadcast `workspace.switch` to all registered PureTerm instances except `skip`.
+/// 向所有已注册的 PureTerm 实例广播 `workspace.switch`(除 `skip` 外)。
 pub fn broadcast_workspace_switch(
     params: Value,
     skip_socket: Option<&Path>,
@@ -94,7 +94,7 @@ pub fn broadcast_workspace_switch(
     results
 }
 
-/// Build params for a cross-window workspace switch.
+/// 构造跨窗口 workspace 切换的参数字典。
 pub fn workspace_switch_params(
     id: Option<u64>,
     name: Option<&str>,

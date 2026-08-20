@@ -42,7 +42,7 @@ pureterm tmux capture-pane -t %0 -p
 - [ ] `-S 0` 只取当前视口(可见部分);`-S -` 取全滚动历史
 - [ ] 输出到 stdout(无 `[pureterm tmux]` 噪声;不带 `-p` 时有提示)
 
-### list-panes
+### list-panes(列出窗格)
 
 ```bash
 pureterm tmux list-panes
@@ -53,7 +53,7 @@ pureterm tmux list-panes -F "#{pane_id} tab=#{tab_index} active=#{pane_active} c
 - [ ] 默认格式含 `pane_id` / `pane_index` / `tab_index` / `tab_title` / `active`
 - [ ] `-F` 自定义格式串变量正确替换;`#{pane_active}` 对聚焦 pane 为 `1`
 
-### send-keys
+### send-keys(发送按键)
 
 ```bash
 pureterm tmux send-keys -t %0 "echo hello-tmux" Enter
@@ -64,7 +64,7 @@ pureterm tmux send-keys -t %0 Up            # 方向键
 - [ ] 已知名(Enter/Tab/Escape/Space/BSpace/Up/Down/…)翻译正确;字面量(如 `ls`)原样拼接
 - [ ] `-t` 省略 → 写活跃 pane;`%N` / `:+` / `:-` 都能命中
 
-### split-window
+### split-window(分屏)
 
 ```bash
 pureterm tmux split-window        # 默认上下堆叠(vertical)
@@ -74,7 +74,7 @@ pureterm tmux split-window -h     # 左右并排(horizontal)
 - [ ] 无 `-h`:活跃 pane 上下分成两块(水平分割线)
 - [ ] `-h`:左右并排(竖直分割线);新 pane 各自起 shell
 
-### kill-pane
+### kill-pane(关闭窗格)
 
 ```bash
 pureterm tmux kill-pane           # 关闭活跃 pane
@@ -83,7 +83,7 @@ pureterm tmux kill-pane           # 关闭活跃 pane
 - [ ] 活跃 pane 关闭,PTY/daemon session 结束;剩余 pane 重排
 - [ ] (已知限制)`-t %N` 定向关闭**未实现** —— 现仍关活跃 pane 并 warn,见下方「已知限制」
 
-### select-pane
+### select-pane(选择窗格)
 
 ```bash
 pureterm tmux select-pane :+      # 下一个
@@ -93,7 +93,7 @@ pureterm tmux select-pane :-      # 上一个
 - [ ] `:+` / `:-` 在 DFS 序里移动焦点(高亮边框跳到目标 pane)
 - [ ] (已知限制)`-L/-R/-U/-D` 几何方向、`-l` last **未实现**,报 phase-2 错误
 
-### resize-pane
+### resize-pane(缩放窗格)
 
 ```bash
 pureterm tmux resize-pane -R 5    # 右扩
@@ -104,7 +104,7 @@ pureterm tmux resize-pane -x 100 -y 30    # 绝对列/行
 - [ ] 方向 + 数量改变分割比例(每个 amount ≈ 3% ratio),分割线实时移动
 - [ ] `-x` / `-y` 绝对尺寸生效;比例被 clamp 到 [MIN_RATIO, MAX_RATIO],不爆框
 
-### swap-pane
+### swap-pane(交换窗格)
 
 ```bash
 pureterm tmux swap-pane -s %1 -t %2   # 按 id 交换两 pane 内容位置

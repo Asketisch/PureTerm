@@ -1,6 +1,6 @@
 ---
 gap: GAP-38
-title: File Transfer
+title: 文件传输
 category: SSH/网络
 plan_type: feature
 priority: P4

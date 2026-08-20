@@ -5,15 +5,15 @@
 
 use std::path::PathBuf;
 
-/// GAP-24: `[statusbar]` settings — Enhanced Status Bar. A missing/malformed
-/// table yields `Default` (all segments, 1s refresh, sparklines on, 24px bar)
-/// so a bad config never breaks startup. `components` is the ordered list of
-/// segment ids; `refresh_interval_secs` bounds stat sampling + git subprocess
-/// cadence; `show_sparklines` toggles canvas mini-graphs; `bar_height` is the
-/// pixel floor (auto-grows to 28 when sparklines are on, for legibility);
-/// `clock_format` is a `chrono` format string; `clock_show_seconds` is true →
-/// render seconds (when the format contains `%S` / `%s`, the renderer
-/// strips those tokens before formatting if it's false).
+/// GAP-24：`[statusbar]` 设置 —— 增强状态栏。表缺失/畸形时
+/// 返回 `Default`（全部分段、1s 刷新、sparkline 开启、24px 高），
+/// 坏配置永远不会导致启动失败。`components` 是分段 id 的有序列表；
+/// `refresh_interval_secs` 约束状态采样与 git 子进程的节奏；
+/// `show_sparklines` 切换画布迷你图；`bar_height` 是像素下限
+/// （sparkline 开启时自动长到 28，保证可读性）；`clock_format` 是
+/// `chrono` 格式字符串；`clock_show_seconds` 为 true → 渲染秒
+/// （当格式含 `%S` / `%s` 且该值为 false 时，渲染器会在格式化前
+/// 去掉这些 token）。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct StatusBarConfig {
     pub components: Vec<String>,
@@ -44,8 +44,8 @@ impl Default for StatusBarConfig {
 }
 
 impl StatusBarConfig {
-    /// Effective bar height in pixels: the configured floor, auto-grown to
-    /// ≥28 when sparklines are on so the canvas mini-graphs stay legible.
+    /// 实际状态栏高度（像素）：配置的下限，sparkline 开启时自动
+    /// 长到 ≥28，保证画布迷你图可读。
     pub fn effective_height(&self) -> f32 {
         if self.show_sparklines {
             (self.bar_height as f32).max(28.0)
@@ -55,13 +55,12 @@ impl StatusBarConfig {
     }
 }
 
-/// GAP-32: `[git]` settings — Git Integration. A missing/malformed table yields
-/// `Default` so a bad config never breaks startup. `panel_enabled` gates the
-/// `⌘⇧B` overlay panel; `show_pr` gates the `gh` PR subprocess; `pr_refresh_ticks`
-/// throttles PR refreshes against the status-bar tick (gh is slow/networked);
-/// `lazygit_cmd` overrides the lazygit binary name (default `lazygit`);
-/// `tab_title_branch` (default off) appends the current branch to a tab's
-/// *derived* title only — a program-set OSC title (GAP-1.3) always wins.
+/// GAP-32：`[git]` 设置 —— Git 集成。表缺失/畸形时返回 `Default`，
+/// 坏配置永远不会导致启动失败。`panel_enabled` 控制 `⌘⇧B` 覆盖面板；
+/// `show_pr` 控制 `gh` PR 子进程；`pr_refresh_ticks` 按状态栏 tick
+/// 节流 PR 刷新（gh 慢且走网络）；`lazygit_cmd` 覆盖 lazygit
+/// 二进制名（默认 `lazygit`）；`tab_title_branch`（默认关）只把当前
+/// 分支追加到 tab 的*派生*标题 —— 程序设置的 OSC 标题（GAP-1.3）始终优先。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GitConfig {
     pub panel_enabled: bool,
@@ -76,23 +75,23 @@ impl Default for GitConfig {
         Self {
             panel_enabled: true,
             show_pr: true,
-            // ~30 status-bar ticks (default 1s) between PR refreshes.
+            // 约 30 个状态栏 tick（默认 1s）刷新一次 PR。
             pr_refresh_ticks: 30,
             lazygit_cmd: None,
             // Opt-in (spec marks tab-title branch "可选"): off by default so the
-            // tab title stays the shell's OSC title unless the user asks for it.
+            // tab 标题保持 shell 的 OSC 标题，除非用户要求显示分支。
             tab_title_branch: false,
         }
     }
 }
 
-/// GAP-19: `[sidebar]` settings — dual sidebar widths (px). Values are clamped
-/// to 120–480 at runtime. A missing/malformed table yields `Default`.
+/// GAP-19：`[sidebar]` 设置 —— 双栏侧栏宽度（像素）。运行时
+/// 限制在 120–480。表缺失/畸形时返回 `Default`。
 #[derive(Clone, Debug, PartialEq)]
 pub struct SidebarConfig {
     pub left_width: f32,
     pub right_width: f32,
-    /// When true, the left sidebar starts open on launch.
+    /// 为 true 时，左侧栏在启动时默认展开。
     pub left_default_open: bool,
 }
 
@@ -106,26 +105,24 @@ impl Default for SidebarConfig {
     }
 }
 
-/// GAP-15: `[shell_integration]` settings — Shell Integration. A missing/
-/// malformed table yields `Default` (so a bad config never breaks startup).
+/// GAP-15：`[shell_integration]` 设置 —— Shell 集成。表缺失/畸形时
+/// 返回 `Default`（这样坏配置永远不会导致启动失败）。
 ///
-/// `enabled` is the master switch: false short-circuits the injector to OSC 7
-/// only (cwd reporting still works, no OSC 133 marks). `inject_zsh`/`inject_bash`
-/// gate per-shell hook injection. `per_shell` (t-core-shell-integ) is the
-/// per-shell opt-in map; an absent key defaults to true for backward-compat.
-/// `include_command_text` controls whether the recovered command text is
-/// sliced from the grid and included in `shell.command_finished` events /
-/// `get_shell_context` (privacy knob).
+/// `enabled` 是总开关：false 时注入器短路为只注入 OSC 7
+/// （cwd 上报仍可用，但没有 OSC 133 标记）。`inject_zsh`/`inject_bash`
+/// 控制各 shell 的 hook 注入。`per_shell`（t-core-shell-integ）是
+/// 按 shell 选择加入的映射；键缺失时默认为 true 以兼容旧行为。
+/// `include_command_text` 控制是否从网格切出恢复的命令文本并加入
+/// `shell.command_finished` 事件 / `get_shell_context`（隐私开关）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellIntegrationConfig {
     pub enabled: bool,
     pub inject_zsh: bool,
     pub inject_bash: bool,
     pub include_command_text: bool,
-    /// t-core-shell-integ: per-shell opt-in. Keys are `Shell::as_str()`
-    /// values (`zsh`/`bash`/`fish`/`nu`/`elvish`/`pwsh`). Absent keys
-    /// default to true (matches the pre-t-core-closure behavior of every
-    /// supported shell on by default).
+    /// t-core-shell-integ：按 shell 选择加入。键是 `Shell::as_str()` 的值
+    /// （`zsh`/`bash`/`fish`/`nu`/`elvish`/`pwsh`）。键缺失时默认为
+    /// true（与 t-core-closure 之前所有受支持 shell 默认开启一致）。
     pub per_shell: std::collections::HashMap<String, bool>,
 }
 
@@ -141,15 +138,15 @@ impl Default for ShellIntegrationConfig {
     }
 }
 
-/// GAP-09: `[notification]` settings — Notification System. A missing/malformed
-/// table yields `Default` (so a bad config never breaks startup); each key is
-/// loaded independently (mirrors `GitConfig` / `ShellIntegrationConfig`).
+/// GAP-09：`[notification]` 设置 —— 通知系统。表缺失/畸形时返回
+/// `Default`（这样坏配置永远不会导致启动失败）；每个键独立加载
+/// （镜像 `GitConfig` / `ShellIntegrationConfig`）。
 ///
-/// `enabled` is the master switch (false ⇒ no store, no ring, no badge, no
-/// toast, no audit event). `desktop_notifications` gates the intrusive macOS
-/// toast; `dock_badge` gates the Dock unread count; `ring` gates the per-pane
-/// attention ring. `bell_passthrough` surfaces BEL (0x07) as an attention
-/// signal; `bell_throttle_ms` coalesces bell-derived notifications per pane.
+/// `enabled` 是总开关（false 时无存储、无响铃、无角标、无 toast、
+/// 无审计事件）。`desktop_notifications` 控制侵入性的 macOS
+/// toast；`dock_badge` 控制 Dock 未读数；`ring` 控制每面板的
+/// 注意响铃。`bell_passthrough` 把 BEL（0x07）作为注意信号；
+/// `bell_throttle_ms` 按面板合并来自响铃的通知。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NotificationConfig {
     pub enabled: bool,
@@ -168,29 +165,29 @@ impl Default for NotificationConfig {
             dock_badge: true,
             ring: true,
             bell_passthrough: true,
-            // 1 bell-derived notification per second per pane (stops
-            // `while true; printf '\a'` spam from flooding the store/toast).
+            // 每面板每秒最多 1 条响铃派生通知（防止 `while true; printf '\a'`
+            // 刷屏淹没 store/toast）。
             bell_throttle_ms: 1000,
         }
     }
 }
 
-/// GAP-02: `[error_recovery]` settings — LLM-powered fix suggestions when a
-/// command fails (non-zero exit via Shell Integration). A missing/malformed
-/// table yields `Default`. API keys are env-only (`api_key_env` overrides the
-/// provider default env var); never stored in TOML.
+/// GAP-02：`[error_recovery]` 设置 —— 命令失败（经 Shell Integration
+/// 检测到非零退出）时由 LLM 提供修复建议。表缺失/畸形时返回 `Default`。
+/// API 密钥只走环境变量（`api_key_env` 覆盖提供商的默认环境变量名）；
+/// 绝不存进 TOML。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ErrorRecoveryConfig {
     pub enabled: bool,
     pub auto_analyze: bool,
-    /// `"anthropic"` or `"openai"`.
+    /// 可选 `"anthropic"` 或 `"openai"`。
     pub provider: String,
     pub model: String,
     pub max_output_lines: usize,
     pub max_tokens: u32,
-    /// Optional env var name for the API key (overrides provider default).
+    /// API 密钥的可选环境变量名（覆盖提供商默认值）。
     pub api_key_env: Option<String>,
-    /// OpenAI-compatible base URL (OpenAI provider only).
+    /// OpenAI 兼容的 base URL（仅 OpenAI 提供商）。
     pub openai_base_url: Option<String>,
 }
 
@@ -209,18 +206,17 @@ impl Default for ErrorRecoveryConfig {
     }
 }
 
-/// GAP-01: `[ai_chat]` settings — built-in AI Chat Panel LLM backend. A
-/// missing/malformed table yields `Default`. API keys are env-only; never
-/// stored in TOML.
+/// GAP-01：`[ai_chat]` 设置 —— 内置 AI 聊天面板的 LLM 后端。
+/// 表缺失/畸形时返回 `Default`。API 密钥只走环境变量；绝不存进 TOML。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AiChatConfig {
-    /// `"anthropic"` or `"openai"`.
+    /// 可选 `"anthropic"` 或 `"openai"`。
     pub provider: String,
     pub model: String,
     pub max_tokens: u32,
-    /// Optional env var name for the API key (overrides provider default).
+    /// API 密钥的可选环境变量名（覆盖提供商默认值）。
     pub api_key_env: Option<String>,
-    /// OpenAI-compatible base URL (OpenAI provider only).
+    /// OpenAI 兼容的 base URL（仅 OpenAI 提供商）。
     pub openai_base_url: Option<String>,
 }
 
@@ -236,11 +232,11 @@ impl Default for AiChatConfig {
     }
 }
 
-/// GAP-07: `[soul]` — SOUL.md / STYLE.md / SKILL.md / MEMORY.md for AI personality.
+/// GAP-07：`[soul]` —— 用于 AI 人格的 SOUL.md / STYLE.md / SKILL.md / MEMORY.md。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SoulConfig {
     pub enabled: bool,
-    /// Override directory (default `~/.config/pureterm/ai/`).
+    /// 覆盖目录（默认 `~/.config/pureterm/ai/`）。
     pub directory: Option<PathBuf>,
 }
 
@@ -253,7 +249,7 @@ impl Default for SoulConfig {
     }
 }
 
-/// GAP-08: `[natural_language]` — `# description` → shell command card.
+/// GAP-08：`[natural_language]` —— `# 描述` → shell 命令卡片。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NaturalLanguageConfig {
     pub enabled: bool,
@@ -269,12 +265,12 @@ impl Default for NaturalLanguageConfig {
     }
 }
 
-/// GAP-33: `[port_scanner]` — listening-port sidebar tab.
+/// GAP-33：`[port_scanner]` —— 监听端口的侧栏标签页。
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct PortScannerConfig {
     pub enabled: bool,
     pub interval_secs: u64,
-    /// Exclude ports strictly below this value (default 1024 = system ports).
+    /// 排除严格低于此值的端口（默认 1024 = 系统端口）。
     pub min_port: u16,
 }
 
@@ -288,7 +284,7 @@ impl Default for PortScannerConfig {
     }
 }
 
-/// GAP-51: `[block_output]` — block-based output scaffold (off by default).
+/// GAP-51：`[block_output]` —— 基于块的输出脚手架（默认关闭）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BlockOutputConfig {
     pub enabled: bool,
@@ -300,11 +296,11 @@ impl Default for BlockOutputConfig {
     }
 }
 
-/// GAP-36: `[semantic_history]` — Cmd-click file:line → editor.
+/// GAP-36：`[semantic_history]` —— Cmd-点击 file:line → 编辑器。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SemanticHistoryConfig {
     pub enabled: bool,
-    /// Fallback editor when `$EDITOR` is unset (`code`, `vim`, `emacs`, …).
+    /// `$EDITOR` 未设置时的兜底编辑器（`code`、`vim`、`emacs` 等）。
     pub editor: String,
 }
 

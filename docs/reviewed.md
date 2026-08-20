@@ -9,7 +9,7 @@
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
 | 核心架构 | 1 | 1 | — | — | — | — |
-| AI Agent | 8 | 2 | 1 | 3 | 1 | 1 |
+| AI 智能体 | 8 | 2 | 1 | 3 | 1 | 1 |
 | 终端交互 | 12 | 2 | 1 | 4 | 4 | 1 |
 | UI/外壳 | 24 | — | 2 | 3 | 3 | 16 |
 | 开发者工具 | 6 | — | 1 | 3 | 1 | 1 |
@@ -26,7 +26,7 @@
 |-----|------|----------|-----------|--------|------|
 | GAP-2.1 | Surface/Pane/Workspace/Window 四层抽象 | arch | P0 | ✅ | [spec](reviewed/GAP-2.1-workspace/spec.md) · [plan](reviewed/GAP-2.1-workspace/plan.md) · [test-plan](reviewed/GAP-2.1-workspace/test-plan.md) |
 
-## AI Agent（8）
+## AI 智能体（8）
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
@@ -44,7 +44,7 @@
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
 | GAP-09 | Notification System（OSC 9/99/777 + Bell → ring/面板/Dock/toast/CLI） | wrap-up | P0 | ✅ | [spec](reviewed/GAP-09-notification/spec.md) · [test-plan](reviewed/GAP-09-notification/test-plan.md) |
-| GAP-15 | Shell Integration（OSC 133 A/B/C/D + shell.context MCP） | wrap-up | P0 | ✅ | [spec](reviewed/GAP-15-shell-integration/spec.md) |
+| GAP-15 | Shell 集成（OSC 133 A/B/C/D + shell.context MCP） | wrap-up | P0 | ✅ | [spec](reviewed/GAP-15-shell-integration/spec.md) |
 | GAP-10 | Triggers（regex 匹配输出 → highlight/notify/send_text/exec） | feature | P1 | ✅ | [spec](reviewed/GAP-10-triggers/spec.md) |
 | GAP-1.3 | 标题栈 (CSI 22/23t + OSC 0/2) | feature | P2 | ✅ | [spec](reviewed/GAP-1.3-title-stack/spec.md) · [test-plan](reviewed/GAP-1.3-title-stack/test-plan.md) |
 | GAP-11 | Instant Replay MVP（events.jsonl 回放 + CLI export） | feature | P2 | ✅ | [spec](reviewed/GAP-11-instant-replay/spec.md) |
@@ -52,7 +52,7 @@
 | GAP-4.2 | Smart Selection Hover Preview（tooltip + 语义右键 / ⌘⇧O） | enhance | P2 | ✅ | [spec](reviewed/GAP-4.2-hover-preview/spec.md) |
 | GAP-1.2 | DECSCL（VT100–VT400 级别跟踪） | feature | P3 | ✅ | [spec](reviewed/GAP-1.2-decscl/spec.md) |
 | GAP-13 | Broadcast Input（⌘⌃B 多 pane 广播） | feature | P3 | ✅ | [spec](reviewed/GAP-13-broadcast-input/spec.md) |
-| GAP-14 | Enhanced Vim（operators/registers MVP） | enhance | P3 | ✅ | [spec](reviewed/GAP-14-enhanced-vim-mode/spec.md) |
+| GAP-14 | 增强 Vim（operators/registers MVP） | enhance | P3 | ✅ | [spec](reviewed/GAP-14-enhanced-vim-mode/spec.md) |
 | GAP-18 | BiDi 双向文本（unicode-bidi MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-18-bidi-support/spec.md) |
 | GAP-17 | Sixel / 图形协议 scaffold | feature | P4 | ✅ | [spec](reviewed/GAP-17-sixel-graphics-protocol/spec.md) |
 
@@ -70,7 +70,7 @@
 | GAP-31 | Quake-style Dock（F12 下拉窗口 MVP） | feature | P3 | ✅ | [spec](reviewed/GAP-31-quake-dock/spec.md) |
 | GAP-20 | macOS 毛玻璃效果 MVP | platform | P4 | ✅ | [spec](reviewed/GAP-20-glass-effect/spec.md) |
 | GAP-21 | Dock Badge（通知 + Feed 角标 + Dock 最近 Workspace 菜单） | wrap-up | P4 | ✅ | [spec](reviewed/GAP-21-dock-badge/spec.md) |
-| GAP-22 | Touch Bar scaffold | platform | P4 | ✅ | [spec](reviewed/GAP-22-touch-bar/spec.md) |
+| GAP-22 | Touch Bar 脚手架 | platform | P4 | ✅ | [spec](reviewed/GAP-22-touch-bar/spec.md) |
 | GAP-23 | 可视化 Tab Bar 配置 | feature | P4 | ✅ | [spec](reviewed/GAP-23-tab-bar/spec.md) |
 | GAP-27 | Settings Panel（独立 Iced 进程） | feature | P4 | ✅ | [spec](reviewed/GAP-27-settings-panel/spec.md) |
 | GAP-28 | 自定义窗口边框 | feature | P4 | ✅ | [spec](reviewed/GAP-28-window-border/spec.md) |
@@ -89,7 +89,7 @@
 
 | GAP | 简述 | 规划类型 | 项目优先级 | Review | 详情 |
 |-----|------|----------|-----------|--------|------|
-| GAP-37 | Password Manager（op/lpass/keychain） | integration | P3 | ✅ | [spec](reviewed/GAP-37-password-manager/spec.md) |
+| GAP-37 | 密码管理器（op/lpass/keychain） | integration | P3 | ✅ | [spec](reviewed/GAP-37-password-manager/spec.md) |
 | GAP-36 | Semantic History（⌘-click file:line → 编辑器） | feature | P2 | ✅ | [spec](reviewed/GAP-36-semantic-history/spec.md) |
 | GAP-33 | Port Scanner（右侧边栏 Ports 标签 + lsof 周期扫描） | feature | P2 | ✅ | [spec](reviewed/GAP-33-port-scanner/spec.md) |
 | GAP-32 | Git Integration（porcelain + gh PR + 面板） | integration | P2 | ✅ | [spec](reviewed/GAP-32-git-integration/spec.md) · [test-plan](reviewed/GAP-32-git-integration/test-plan.md) |
@@ -103,12 +103,12 @@
 | GAP-5.6 | SSH Reconnect 状态机 | integration | P0 | ✅ | [spec](reviewed/GAP-5.6-ssh-reconnect/spec.md) · [test-plan](reviewed/GAP-5.6-ssh-reconnect/test-plan.md) |
 | GAP-5.2 | SOCKS5/HTTP CONNECT 隧道 | integration | P1 | ✅ | [spec](reviewed/GAP-5.2-socks5-tunnel/spec.md) · [test-plan](reviewed/GAP-5.2-socks5-tunnel/test-plan.md) |
 | GAP-40 | SSH 端口转发 -L/-R/-X UI（MVP） | integration | P2 | ✅ | [spec](reviewed/GAP-40-ssh-forwarding/spec.md) |
-| GAP-5.4 | SSH Agent Forwarding | integration | P2 | ✅ | [spec](reviewed/GAP-40-ssh-forwarding/spec.md) |
+| GAP-5.4 | SSH Agent 转发 | integration | P2 | ✅ | [spec](reviewed/GAP-40-ssh-forwarding/spec.md) |
 | GAP-43 | 远程文件浏览（`remote.listdir/read/write/find` + Files 侧栏） | feature | P2 | ✅ | [spec](reviewed/GAP-43-remote-server/spec.md) |
-| GAP-5.3 | smallest-screen-wins PTY resize | feature | P2 | ✅ | [spec](reviewed/GAP-5.3-pty-resize/spec.md) |
+| GAP-5.3 | 小屏优先 PTY 缩放 | feature | P2 | ✅ | [spec](reviewed/GAP-5.3-pty-resize/spec.md) |
 | GAP-39 | Serial & Telnet（CLI 探测 + profile 字段） | feature | P3 | ✅ | [spec](reviewed/GAP-39-serial-telnet/spec.md) |
-| GAP-41 | SSH Jump Host（ProxyJump -J） | feature | P3 | ✅ | [spec](reviewed/GAP-41-jump-host/spec.md) |
-| GAP-42 | SSH Login Scripts（login_commands） | feature | P3 | ✅ | [spec](reviewed/GAP-42-login-scripts/spec.md) |
+| GAP-41 | SSH 跳板机（ProxyJump -J） | feature | P3 | ✅ | [spec](reviewed/GAP-41-jump-host/spec.md) |
+| GAP-42 | SSH 登录脚本（login_commands） | feature | P3 | ✅ | [spec](reviewed/GAP-42-login-scripts/spec.md) |
 | GAP-38 | SCP 文件传输 | feature | P4 | ✅ | [spec](reviewed/GAP-38-file-transfer/spec.md) |
 | GAP-44 | 共享会话 stub（config + invite + serve stub） | feature | P4 | ✅ | [spec](reviewed/GAP-44-shared-sessions/spec.md) |
 

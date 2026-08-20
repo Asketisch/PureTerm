@@ -28,15 +28,15 @@ use crate::tty::windows::{Pty, cmdline, win32_string};
 
 const PIPE_CAPACITY: usize = crate::event_loop::READ_BUFFER_SIZE;
 
-/// Load the pseudoconsole API from conpty.dll if possible, otherwise use the
-/// standard Windows API.
+/// 尽可能从 conpty.dll 加载伪控制台 API,否则用标准
+/// Windows API(见下一行)。
 ///
-/// The conpty.dll from the Windows Terminal project
-/// supports loading OpenConsole.exe, which offers many improvements and
-/// bugfixes compared to the standard conpty that ships with Windows.
+/// Windows Terminal 项目的 conpty.dll
+/// 支持加载 OpenConsole.exe,相比 Windows 自带的 conpty
+/// 有许多改进与修复。
 ///
-/// The conpty.dll and OpenConsole.exe files will be searched in PATH and in
-/// the directory where Alacritty's executable is located.
+/// conpty.dll 与 OpenConsole.exe 会在 PATH 以及 Alacritty
+/// 可执行文件所在目录中查找。
 type CreatePseudoConsoleFn =
     unsafe extern "system" fn(COORD, HANDLE, HANDLE, u32, *mut HPCON) -> HRESULT;
 type ResizePseudoConsoleFn = unsafe extern "system" fn(HPCON, COORD) -> HRESULT;
@@ -56,7 +56,7 @@ impl ConptyApi {
                 conpty
             },
             None => {
-                // Cannot load conpty.dll - use the standard Windows API.
+                // 无法加载 conpty.dll——使用标准 Windows API。
                 info!("Using Windows API for pseudoconsole");
                 Self {
                     create: CreatePseudoConsole,
@@ -67,7 +67,7 @@ impl ConptyApi {
         }
     }
 
-    /// Try loading ConptyApi from conpty.dll library.
+    /// 尝试从 conpty.dll 库加载 ConptyApi。
     fn load_conpty() -> Option<Self> {
         type LoadedFn = unsafe extern "system" fn() -> isize;
         unsafe {
@@ -88,7 +88,7 @@ impl ConptyApi {
     }
 }
 
-/// RAII Pseudoconsole.
+/// RAII 伪控制台。
 pub struct Conpty {
     pub handle: HPCON,
     api: ConptyApi,
@@ -96,29 +96,29 @@ pub struct Conpty {
 
 impl Drop for Conpty {
     fn drop(&mut self) {
-        // XXX: This will block until the conout pipe is drained. Will cause a deadlock if the
-        // conout pipe has already been dropped by this point.
+        // XXX:这会阻塞直到 conout 管道被排空。若此时
+        // conout 管道已被丢弃,会死锁。
         //
-        // See PR #3084 and https://docs.microsoft.com/en-us/windows/console/closepseudoconsole.
+        // 见 PR #3084 与微软文档 ClosePseudoConsole。
         unsafe { (self.api.close)(self.handle) }
     }
 }
 
-// The ConPTY handle can be sent between threads.
+// ConPTY 句柄可跨线程发送。
 unsafe impl Send for Conpty {}
 
 pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     let api = ConptyApi::new();
     let mut pty_handle: HPCON = 0;
 
-    // Passing 0 as the size parameter allows the "system default" buffer
-    // size to be used. There may be small performance and memory advantages
-    // to be gained by tuning this in the future, but it's likely a reasonable
-    // start point.
+    // 尺寸参数传 0 允许使用“系统默认”缓冲
+    // 大小。未来调优或有小的性能与内存
+    // 收益,但这应是合理的
+    // 起点。
     let (conout, conout_pty_handle) = miow::pipe::anonymous(0)?;
     let (conin_pty_handle, conin) = miow::pipe::anonymous(0)?;
 
-    // Create the Pseudo Console, using the pipes.
+    // 用这两个管道创建伪控制台。
     let result = unsafe {
         (api.create)(
             window_size.into(),
@@ -133,7 +133,7 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
 
     let mut success;
 
-    // Prepare child process startup info.
+    // 准备子进程启动信息。
 
     let mut size: usize = 0;
 
@@ -143,16 +143,16 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
 
     startup_info_ex.StartupInfo.cb = mem::size_of::<STARTUPINFOEXW>() as u32;
 
-    // Setting this flag but leaving all the handles as default (null) ensures the
-    // PTY process does not inherit any handles from this Alacritty process.
+    // 设置该标志且把句柄留为默认(null),确保 PTY
+    // 进程不继承本 Alacritty 进程的任何句柄。
     startup_info_ex.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;
 
-    // Create the appropriately sized thread attribute list.
+    // 创建尺寸合适的线程属性列表。
     unsafe {
         let failure =
             InitializeProcThreadAttributeList(ptr::null_mut(), 1, 0, &mut size as *mut usize) > 0;
 
-        // This call was expected to return false.
+        // 此调用预期返回 false。
         if failure {
             return Err(Error::last_os_error());
         }
@@ -160,12 +160,12 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
 
     let mut attr_list: Box<[u8]> = vec![0; size].into_boxed_slice();
 
-    // Set startup info's attribute list & initialize it
+    // 设置启动信息的属性列表并初始化
     //
-    // Lint failure is spurious; it's because winapi's definition of PROC_THREAD_ATTRIBUTE_LIST
-    // implies it is one pointer in size (32 or 64 bits) but really this is just a dummy value.
-    // Casting a *mut u8 (pointer to 8 bit type) might therefore not be aligned correctly in
-    // the compiler's eyes.
+    // lint 失败是误报;因为 winapi 对 PROC_THREAD_ATTRIBUTE_LIST 的定义
+    // 暗示它是一个指针大小(32/64 位),但这只是个哑值。
+    // 因此在编译器看来,转换 *mut u8(8 位类型指针)
+    // 可能对齐不正确。
     #[allow(clippy::cast_ptr_alignment)]
     {
         startup_info_ex.lpAttributeList = attr_list.as_mut_ptr() as _;
@@ -184,7 +184,7 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
         }
     }
 
-    // Set thread attribute list's Pseudo Console to the specified ConPTY.
+    // 把线程属性列表的伪控制台设为指定 ConPTY。
     unsafe {
         success = UpdateProcThreadAttribute(
             startup_info_ex.lpAttributeList,
@@ -201,7 +201,7 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
         }
     }
 
-    // Prepare child process creation arguments.
+    // 准备子进程创建参数。
     let cmdline = win32_string(&cmdline(config));
     let cwd = config.working_directory.as_ref().map(win32_string);
     let mut creation_flags = EXTENDED_STARTUPINFO_PRESENT;
@@ -243,12 +243,12 @@ pub fn new(config: &Options, window_size: WindowSize) -> Result<Pty> {
     Ok(Pty::new(conpty, conout, conin, child_watcher))
 }
 
-// Windows environment variables are case-insensitive, and the caller is responsible for
-// deduplicating environment variables, so do that here while converting.
+// Windows 环境变量不区分大小写,调用方负责去重,
+// 因此在转换时一并完成。
 //
-// https://learn.microsoft.com/en-us/previous-versions/troubleshoot/windows/win32/createprocess-cannot-eliminate-duplicate-variables#environment-variables
+// 微软文档:CreateProcess 无法消除重复的环境变量。
 fn convert_custom_env(custom_env: &HashMap<String, String>) -> Option<Vec<u16>> {
-    // Windows inherits parent's env when no `lpEnvironment` parameter is specified.
+    // 未指定 `lpEnvironment` 参数时 Windows 继承父进程环境。
     if custom_env.is_empty() {
         return None;
     }
@@ -271,7 +271,7 @@ fn convert_custom_env(custom_env: &HashMap<String, String>) -> Option<Vec<u16>> 
         }
     }
 
-    // Pull the current process environment after, to avoid overwriting the user provided one.
+    // 稍后再拉取当前进程环境,避免覆盖用户提供的。
     for (inherited_key, inherited_value) in std::env::vars_os() {
         if all_env_keys.insert(inherited_key.to_ascii_uppercase()) {
             add_windows_env_key_value_to_block(
@@ -286,13 +286,13 @@ fn convert_custom_env(custom_env: &HashMap<String, String>) -> Option<Vec<u16>> 
     Some(converted_block)
 }
 
-// According to the `lpEnvironment` parameter description:
-// https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessa#parameters
+// 依据 `lpEnvironment` 参数说明:
+// 完整说明见微软 CreateProcessA 文档的 parameters 一节。
 //
-// > An environment block consists of a null-terminated block of null-terminated strings. Each
-// string is in the following form:
+// > 环境块由若干以 null 结尾的字符串组成的 null 结尾块。
+// > 每个字符串形如 name=value:
 // >
-// > name=value\0
+// > 形如 name=value\0 的字符串。
 fn add_windows_env_key_value_to_block(block: &mut Vec<u16>, key: &OsStr, value: &OsStr) {
     block.extend(key.encode_wide());
     block.push('=' as u16);

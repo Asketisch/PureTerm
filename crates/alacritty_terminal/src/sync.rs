@@ -1,48 +1,48 @@
-//! Synchronization types.
+//! 同步原语类型。
 //!
-//! Most importantly, a fair mutex is included.
+//! 最重要的是包含一个公平互斥量。
 
 use parking_lot::{Mutex, MutexGuard};
 
-/// A fair mutex.
+/// 公平互斥量。
 ///
-/// Uses an extra lock to ensure that if one thread is waiting that it will get
-/// the lock before a single thread can re-lock it.
+/// 用一把额外的锁保证:若有线程在等待,它会在同一线程重新加锁前
+/// 拿到锁。
 pub struct FairMutex<T> {
-    /// Data.
+    /// 数据。
     data: Mutex<T>,
-    /// Next-to-access.
+    /// 下一个访问者。
     next: Mutex<()>,
 }
 
 impl<T> FairMutex<T> {
-    /// Create a new fair mutex.
+    /// 创建新的公平互斥量。
     pub fn new(data: T) -> FairMutex<T> {
         FairMutex { data: Mutex::new(data), next: Mutex::new(()) }
     }
 
-    /// Acquire a lease to reserve the mutex lock.
+    /// 获取租约以预留互斥锁。
     ///
-    /// This will prevent others from acquiring a terminal lock, but block if anyone else is
-    /// already holding a lease.
+    /// 这会阻止他人获取终端锁,但若已有他人持有租约则
+    /// 阻塞。
     pub fn lease(&self) -> MutexGuard<'_, ()> {
         self.next.lock()
     }
 
-    /// Lock the mutex.
+    /// 锁定互斥量。
     pub fn lock(&self) -> MutexGuard<'_, T> {
-        // Must bind to a temporary or the lock will be freed before going
-        // into data.lock().
+        // 必须绑定到临时值,否则锁在进入 data.lock()
+        // 之前就被释放。
         let _next = self.next.lock();
         self.data.lock()
     }
 
-    /// Unfairly lock the mutex.
+    /// 不公平地锁定互斥量。
     pub fn lock_unfair(&self) -> MutexGuard<'_, T> {
         self.data.lock()
     }
 
-    /// Unfairly try to lock the mutex.
+    /// 不公平地尝试锁定互斥量。
     pub fn try_lock_unfair(&self) -> Option<MutexGuard<'_, T>> {
         self.data.try_lock()
     }

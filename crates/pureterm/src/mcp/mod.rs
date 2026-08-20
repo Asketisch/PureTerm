@@ -1,33 +1,33 @@
-//! GAP-7.10: Model Context Protocol (MCP) server — exposes PureTerm's terminal
-//! surface to AI agents (Claude Code, Codex) as native, structured tools.
+//! GAP-7.10:模型上下文协议(MCP)服务器——把 PureTerm 的终端
+//! 界面以原生、结构化的工具形式暴露给 AI agent(Claude Code、Codex)。
 //!
-//! `pureterm mcp serve` runs a **stdio MCP server**. Each MCP tool call is a
-//! thin adapter over the existing GUI JSON-RPC Socket API
-//! (`ipc::client::send_rpc`) — see `server` below. The server is feature-gated
-//! behind `mcp-server` (pulls `rmcp`); the roster / whitelist / config here are
-//! pure and always compiled so they stay unit-testable without the feature.
+//! `pureterm mcp serve` 运行一个 **stdio MCP 服务器**。每次 MCP 工具调用都是
+//! 对现有 GUI JSON-RPC Socket API 的薄适配器
+//! (`ipc::client::send_rpc`)——见下方 `server`。服务器由特性开关门控:
+//! 需启用 `mcp-server`(引入 `rmcp`);此处的工具表/白名单/配置是
+//! 纯代码且始终编译,未启用特性也能单元测试。
 //!
-//! New tools belong to the `mcp.*` namespace and never touch the external-CLI
-//! `agent.*` namespace (GAP-7.1–7.7).
+//! 新工具归入 `mcp.*` 命名空间,绝不触碰外部 CLI 的
+//! `agent.*` 命名空间(GAP-7.1–7.7)。
 
 use crate::app_config::McpConfig;
 
-// Feature-gated rmcp server (`pureterm mcp serve`). Compiled only with
-// `mcp-server`; the roster/whitelist/config helpers above stay always-on so
-// they stay unit-testable without pulling rmcp.
+// rmcp server 由特性开关门控(`pureterm mcp serve`)。仅在启用
+// `mcp-server` 时编译;上方的工具表/白名单/配置辅助保持常开,
+// 从而无需引入 rmcp 即可单元测试。
 #[cfg(feature = "mcp-server")]
 mod server;
 #[cfg(feature = "mcp-server")]
 pub use server::run_server;
 
-/// GAP-7.10 (Phase C): agent-client install adapters (`pureterm mcp install`).
-/// Always compiled (no rmcp) — pure config RMW, mirrors `agent_adapters`.
+/// GAP-7.10(Phase C):agent 客户端安装适配器(`pureterm mcp install`)。
+/// 始终编译(无 rmcp)——纯配置 RMW,镜像 `agent_adapters`。
 pub mod adapter;
 
-/// One MCP tool this server exposes. `rpc_method` is the GUI Socket API method
-/// the tool forwards to — or `"(in-process)"` for the few tools (GAP-04 desktop
-/// ops) that run locally in the MCP server with no Socket hop; `description`
-/// is what the agent sees in its tool list.
+/// 本服务器暴露的一个 MCP 工具。`rpc_method` 是该工具转发到的 GUI Socket API 方法
+/// —— 少数工具(GAP-04 桌面操作)则为 `"(in-process)"`,表示
+/// 在 MCP 服务器进程内本地运行、不经 Socket;`description`
+/// 是 agent 在其工具列表中看到的内容。
 #[derive(Clone, Copy, Debug)]
 pub struct ToolSpec {
     pub name: &'static str,
@@ -35,10 +35,10 @@ pub struct ToolSpec {
     pub description: &'static str,
 }
 
-/// The full roster of MCP tools PureTerm can expose. v1 covers pane read/write
-/// + layout driving + the embedded browser. Add entries here; the `#[tool]`
-/// bodies in `server` forward each via its `rpc_method`, except entries marked
-/// `"(in-process)"` which run locally in the server (GAP-04 desktop ops).
+/// PureTerm 可暴露的 MCP 工具全集。v1 覆盖窗格读写、
+/// 布局驱动以及内置浏览器。在此处新增条目;`server` 中的 `#[tool]`
+/// 函数体通过各自的 `rpc_method` 转发,标记为
+/// `"(in-process)"` 的条目则在服务器内本地运行(GAP-04 桌面操作)。
 pub const TOOLS: &[ToolSpec] = &[
     ToolSpec {
         name: "capture_pane",
@@ -172,17 +172,17 @@ pub const TOOLS: &[ToolSpec] = &[
     },
 ];
 
-/// Resolve a tool spec by name (case-sensitive). Returns `None` for unknown
-/// tools — callers treat that as a server bug (the roster is exhaustive).
+/// 按名称解析工具规格(区分大小写)。未知工具返回 `None`——
+/// 调用方将其视为服务器缺陷(工具表已枚举全部)。
 pub fn tool_spec(name: &str) -> Option<&'static ToolSpec> {
     TOOLS.iter().find(|t| t.name == name)
 }
 
-/// Apply the `[mcp].enabled_tools` whitelist to the roster. Semantics:
-/// - `None` (key absent) or an **empty** slice → all tools (the friendly
-///   default; an empty array reads as "no restriction", not "no tools").
-/// - Otherwise → only tools whose name appears in `enabled`, in roster order.
-///   Unknown entries are silently dropped (they're a config typo, not a crash).
+/// 把 `[mcp].enabled_tools` 白名单应用到工具表。语义:
+/// - `None`(键缺失)或**空**数组 → 全部工具(友好默认:
+///   空数组表示「不限制」,而非「无工具」)。
+/// - 否则 → 只保留名称出现在 `enabled` 中的工具,按工具表顺序。
+///   未知条目被静默丢弃(那是配置笔误,不是崩溃)。
 pub fn enabled_tools(whitelist: Option<&[String]>) -> Vec<&'static ToolSpec> {
     match whitelist {
         None => TOOLS.iter().collect(),
@@ -194,8 +194,8 @@ pub fn enabled_tools(whitelist: Option<&[String]>) -> Vec<&'static ToolSpec> {
     }
 }
 
-/// The tool names this server will advertise, after applying `cfg.enabled_tools`.
-/// Convenience for `mcp list-tools` and the ServerHandler info.
+/// 应用 `cfg.enabled_tools` 之后,本服务器将通告的工具名。
+/// 供 `mcp list-tools` 与 ServerHandler 信息使用。
 pub fn enabled_tool_names(cfg: &McpConfig) -> Vec<&'static str> {
     let wl: Option<&[String]> = if cfg.enabled_tools.is_empty() {
         None
@@ -243,11 +243,11 @@ mod tests {
 
     #[test]
     fn desktop_tools_use_in_process_sentinel() {
-        // GAP-04 desktop tools run inside the MCP server process (no Socket
-        // hop), so `rpc_method` is the in-process sentinel — NOT a fictional
-        // `computer_use.*` Socket method, for which no GUI dispatcher exists.
-        // Advertising a non-existent method would mislead agents / `mcp
-        // list-tools` output; this locks the truthful value.
+        // GAP-04 桌面工具在 MCP 服务器进程内运行(不经 Socket),
+        // 因此 `rpc_method` 是进程内哨兵——而非虚构的
+        // `computer_use.*` Socket 方法(该类方法不存在 GUI 分发器)。
+        // 通告不存在的方法会误导 agent 与 `mcp`
+        // list-tools 输出;此断言锁定了真实取值。
         for name in ["desktop_screenshot", "desktop_click", "desktop_type", "desktop_key"] {
             let spec = tool_spec(name).unwrap_or_else(|| panic!("{name} must be in roster"));
             assert_eq!(
@@ -260,9 +260,9 @@ mod tests {
 
     #[test]
     fn browser_tools_cover_full_op_set() {
-        // GAP-7.8 DoD: an agent can drive every functional browser op. The full
-        // set (navigate/click/type/extract/scroll/wait/get_url/get_title + the
-        // macOS screenshot) must all be exposed to MCP.
+        // GAP-7.8 完成标准:agent 可驱动全部功能浏览器操作。完整
+        // 集合(navigate/click/type/extract/scroll/wait/get_url/get_title +
+        // macOS 截图)必须全部暴露给 MCP。
         let browser: Vec<&str> = TOOLS
             .iter()
             .filter(|t| t.rpc_method.starts_with("browser."))
@@ -296,13 +296,13 @@ mod tests {
 
     #[test]
     fn empty_whitelist_yields_all_tools_not_none() {
-        // An empty array is "no restriction", not "disable everything".
+        // 空数组表示「不限制」,而非「全部禁用」。
         assert_eq!(enabled_tools(Some(&[])).len(), TOOLS.len());
     }
 
     #[test]
     fn whitelist_keeps_listed_tools_in_roster_order() {
-        // Names given out of order; result follows TOOLS order, not input order.
+        // 传入顺序打乱;结果遵循 TOOLS 顺序,而非输入顺序。
         let names = vec!["send_text".to_string(), "capture_pane".to_string()];
         let got: Vec<&str> = enabled_tools(Some(&names))
             .into_iter()

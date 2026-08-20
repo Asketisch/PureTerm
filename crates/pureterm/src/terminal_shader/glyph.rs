@@ -15,18 +15,18 @@ pub struct GlyphState {
     pub rasterizer: Rasterizer,
     pub font_key: FontKey,
     pub font_size: Size,
-    /// Actual rasterization size (logical size × scale_factor) for HiDPI support.
+    /// 实际光栅化尺寸(逻辑尺寸 × scale_factor),用于 HiDPI 支持。
     pub scaled_font_size: Size,
     pub cell_width: f32,
     pub cell_height: f32,
     pub font_descent: f32,
     pub scale_factor: f32,
-    /// Stored font config for reconfigure without caller providing them again.
+    /// 保存字体配置,重配置时无需调用方再次提供。
     pub font_family: String,
     pub size_pt: f32,
-    /// T-core-shaper v2: pluggable shaper (Monospace by default, swappable
-    /// for `RustyBuzzShaper` once the host wires a real font blob through
-    /// `AppConfig::shaper`).
+    /// T-core-shaper v2:可插拔的整形器(默认 Monospace,一旦宿主
+    /// 通过 `AppConfig::shaper` 接入真实字体数据,即可替换为
+    /// `RustyBuzzShaper`)。
     pub shaper: Arc<dyn Shaper>,
 }
 
@@ -42,7 +42,7 @@ impl GlyphState {
         });
         let metrics = rasterizer.metrics(font_key, scaled_font_size).expect("Failed to get metrics");
 
-        // Convert physical metrics back to logical for grid calculations
+        // 把物理度量换算回逻辑坐标,用于网格计算
         let cell_width = (metrics.average_advance / scale_factor as f64).floor().max(1.0) as f32;
         let cell_height = (metrics.line_height / scale_factor as f64).floor().max(1.0) as f32;
         let font_descent = metrics.descent / scale_factor as f32;
@@ -59,26 +59,26 @@ impl GlyphState {
             scale_factor,
             font_family: font_family.to_string(),
             size_pt,
-            // T-core-shaper: v1 monospace cluster shaper; v2 swaps in
-            // `RustyBuzzShaper` when `[shaper] backend = "rustybuzz"` is
-            // set in the config (see `app_config.rs` B.4).
+            // T-core-shaper:v1 使用等宽簇整形器;v2 在配置
+            // `[shaper] backend = "rustybuzz"` 时切换为 `RustyBuzzShaper`
+            // (见 `app_config.rs` B.4 配置说明)。
             shaper: Arc::new(pureterm_alacritty_runtime::shaper::MonospaceShaper::new()),
         }
     }
 
-    /// T-core-shaper v2: install a custom shaper (e.g. a
-    /// `RustyBuzzShaper` constructed from a real font blob).
+    /// T-core-shaper v2:安装自定义整形器(例如用真实字体数据
+    /// 构造的 `RustyBuzzShaper`)。
     pub fn set_shaper(&mut self, shaper: Arc<dyn Shaper>) {
         self.shaper = shaper;
     }
 
-    /// T-core-shaper v2: shape a string using the active shaper, returning
-    /// the per-glyph advances the caller can use to step the cursor.
+    /// T-core-shaper v2:用当前整形器处理字符串,返回
+    /// 各字形的推进量,调用方可据此移动光标。
     pub fn shape_text(&self, text: &str) -> ShapedRun {
         self.shaper.shape(text, self.cell_width)
     }
 
-    /// Reconfigure font family, size, and scale factor together.
+    /// 同时重新配置字体族、字号与缩放因子。
     pub fn reconfigure_scaled(&mut self, font_family: &str, size_pt: f32, scale_factor: f32) {
         self.scale_factor = scale_factor;
         self.font_family = font_family.to_string();
@@ -92,7 +92,7 @@ impl GlyphState {
         });
         let metrics = self.rasterizer.metrics(font_key, scaled_font_size).expect("Failed to get metrics");
 
-        // Convert physical metrics back to logical for grid calculations
+        // 把物理度量换算回逻辑坐标,用于网格计算
         self.font_key = font_key;
         self.font_size = font_size;
         self.scaled_font_size = scaled_font_size;
@@ -102,8 +102,8 @@ impl GlyphState {
         self.atlas = WgpuGlyphAtlas::new();
     }
 
-    /// Update only the scale factor, keeping the current font family and size.
-    /// Returns true if the scale factor actually changed.
+    /// 仅更新缩放因子,保留当前字体族与字号。
+    /// 若缩放因子确实发生变化则返回 true。
     pub fn update_scale_factor(&mut self, scale_factor: f32) -> bool {
         if (self.scale_factor - scale_factor).abs() < 0.01 {
             return false;
@@ -114,11 +114,11 @@ impl GlyphState {
 
     pub fn get_or_rasterize(&mut self, c: char) -> Option<CachedGlyph> {
         if let Some(cached) = self.atlas.get(0, c) {
-            // Atlas stores physical-pixel glyphs; scale offsets to logical
-            // for vertex positioning. Cache hit must apply the same
-            // normalization as the new-rasterize path below — otherwise
-            // on Retina (scale_factor=2.0) the consumer gets 2× the
-            // expected logical width and the glyph overflows its cell.
+            // Atlas 存储物理像素字形;顶点定位需按比例换算回逻辑坐标,
+            // 命中缓存时必须与下方新光栅化路径
+            // 采用相同的归一化,否则在 Retina(scale_factor=2.0)上
+            // 消费方会得到 2 倍于
+            // 预期的逻辑宽度,字形将溢出所在单元格。
             return Some(CachedGlyph {
                 u: cached.u,
                 v: cached.v,
@@ -138,7 +138,7 @@ impl GlyphState {
         match self.rasterizer.get_glyph(glyph_key) {
             Ok(glyph) => {
                 let cached = self.atlas.insert(0, c, &glyph);
-                // Atlas stores physical-pixel glyphs; scale offsets to logical for vertex positioning
+                // Atlas 存储物理像素字形;顶点定位时按比例换算回逻辑坐标
                 Some(CachedGlyph {
                     u: cached.u,
                     v: cached.v,

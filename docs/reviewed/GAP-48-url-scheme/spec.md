@@ -1,6 +1,6 @@
 ---
 gap: GAP-48
-title: URL Scheme
+title: URL 协议
 category: 平台
 plan_type: platform
 priority: P2

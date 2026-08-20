@@ -1,4 +1,4 @@
-# PureTerm fish completion
+# PureTerm fish 补全
 
 complete -c pureterm -n '__fish_use_subcommand' -l print-events -d 'Print all events to STDOUT'
 complete -c pureterm -n '__fish_use_subcommand' -l ref-test -d 'Generates ref test'

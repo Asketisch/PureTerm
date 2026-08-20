@@ -1,8 +1,8 @@
-//! GAP-11: Instant Replay MVP — session timeline from `events.jsonl`.
+//! GAP-11:即时回放 MVP——来自 `events.jsonl` 的会话时间线。
 //!
-//! Full DVR (delta encoding + grid snapshots) is deferred. This module loads
-//! replayable events (shell marks, surface output, session lifecycle) from the
-//! unified event log and supports export + in-app scrubbing.
+//! 完整 DVR(增量编码 + 网格快照)暂缓。本模块从统一事件日志加载
+//! 可回放事件(shell 标记、表面输出、会话生命周期),
+//! 并支持导出与应用内拖动浏览。
 
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
@@ -12,7 +12,7 @@ use serde_json::Value;
 
 use crate::events::{AppEvent, Category};
 
-/// Categories included in a session replay timeline.
+/// 会话回放时间线包含的类别。
 const REPLAY_CATEGORIES: &[Category] = &[
     Category::Shell,
     Category::Surface,
@@ -21,7 +21,7 @@ const REPLAY_CATEGORIES: &[Category] = &[
     Category::Workspace,
 ];
 
-/// One scrubbable frame in the replay timeline.
+/// 回放时间线中一个可拖动浏览的帧。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ReplayFrame {
     pub seq: u64,
@@ -69,8 +69,8 @@ fn summarize_event(ev: &AppEvent) -> String {
     }
 }
 
-/// Load replay frames from a JSONL log (newest-first in memory, chronological
-/// order returned).
+/// 从 JSONL 日志加载回放帧(内存中新→旧,返回时按时间顺序)。
+/// 返回时按时间顺序)。
 pub fn load_replay_from_path(
     path: &Path,
     session_id: Option<&str>,
@@ -108,7 +108,7 @@ pub fn load_replay_from_path(
     frames
 }
 
-/// Export replay frames to a standalone JSONL file (one frame per line).
+/// 把回放帧导出到独立的 JSONL 文件(每行一帧)。
 pub fn export_replay_jsonl(
     events_path: &Path,
     out_path: &Path,
@@ -127,7 +127,7 @@ pub fn export_replay_jsonl(
     Ok(frames.len())
 }
 
-/// In-app replay viewer state (scrub index + overlay visibility).
+/// 应用内回放查看器状态(拖动索引 + 覆盖层可见性)。
 #[derive(Debug, Clone, Default)]
 pub struct ReplayViewer {
     pub open: bool,
@@ -170,7 +170,7 @@ impl ReplayViewer {
     }
 }
 
-/// CLI: list recent replay frames (newest first).
+/// CLI:列出最近的回放帧(最新在前)。
 pub fn list_replay(path: &Path, session_id: Option<&str>, limit: usize) {
     let mut frames = load_replay_from_path(path, session_id, limit);
     frames.reverse();

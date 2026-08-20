@@ -1,84 +1,78 @@
-//! T-core-tmux-cc: tmux control mode (-CC) envelope parser.
+//! T-core-tmux-cc：tmux 控制模式（-CC）信封解析器。
 //!
-//! tmux's control mode (`tmux -CC`) speaks a line-oriented protocol on
-//! stdout. Each notification is one of:
+//! tmux 的控制模式（`tmux -CC`）在 stdout 上使用面向行的协议。
+//! 每条通知是以下之一：
 //!
-//! - `%begin <pane-id> <seconds-since-epoch> <width> x <height>` … `%end`
-//!   — frame-bounded command output (when the server is replaying a
-//!   reattach).
-//! - `%output <pane-id> <bytes>` — live PTY bytes (the primary "feed" path).
-//! - `%input <pane-id> <bytes>` — input sent to the pane (server → client).
-//! - `%session-changed <session-id> <session-name>` — reattach to a
-//!   different session.
-//! - `%windows <w> <s>` … `%end` — window list snapshot.
-//! - `%error <msg>` — server-side error.
-//! - `%pause` / `%continue` — flow control.
-//! - `%subscription-changed <name> <value> <?>` — capability flag flipped.
+//! - `%begin <pane-id> <秒自纪元> <width> x <height>` … `%end`
+//!   —— 帧界定的命令输出（服务器重放重连时）。
+//! - `%output <pane-id> <bytes>` —— 实时 PTY 字节（主要的“喂养”路径）。
+//! - `%input <pane-id> <bytes>` —— 发送到面板的输入（服务器 → 客户端）。
+//! - `%session-changed <session-id> <session-name>` —— 重连到不同会话。
+//! - `%windows <w> <s>` … `%end` —— 窗口列表快照。
+//! - `%error <msg>` —— 服务器侧错误。
+//! - `%pause` / `%continue` —— 流控。
+//! - `%subscription-changed <name> <value> <?>` —— 能力标志翻转。
 //!
-//! v1 parses the eight core envelopes and forwards each to
-//! [`TmuxControlEvent`]. The PTY layer in [`super::pty`] routes the
-//! `%output` bytes into an `alacritty_terminal::Term` (so the existing
-//! rendering / grid code path is reused verbatim) and serializes
-//! keystrokes back as `%input` envelopes.
+//! v1 解析八种核心信封并把每种转发给 [`TmuxControlEvent`]。[`super::pty`]
+//! 中的 PTY 层把 `%output` 字节路由进 `alacritty_terminal::Term`
+//! （从而原样复用现有的渲染 / 网格代码路径），并把按键序列化回
+//! `%input` 信封。
 
 use std::collections::HashMap;
 
-/// One parsed tmux control-mode notification.
+/// 一条已解析的 tmux 控制模式通知。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TmuxEnvelope {
-    /// `%begin %<pane_id> <ts> <W> x <H>` — frame header; payloads follow
-    /// until the matching `%end`.
+    /// `%begin %<pane_id> <ts> <W> x <H>` —— 帧头；载荷持续到匹配的
+    /// `%end`。
     Begin {
         pane_id: u32,
         timestamp: u32,
         cols: u16,
         rows: u16,
     },
-    /// `%end` — close the most recent `%begin`.
+    /// `%end` —— 关闭最近的 `%begin`。
     End,
-    /// `%output %<pane_id> <bytes>` — raw PTY bytes to feed to the
-    /// terminal emulator. The bytes are base64-encoded; we decode them
-    /// here.
+    /// `%output %<pane_id> <bytes>` —— 喂给终端模拟器的原始 PTY 字节。
+    /// 字节是 base64 编码的；我们在这里解码。
     Output { pane_id: u32, bytes: Vec<u8> },
-    /// `%input %<pane_id> <bytes>` — echoed input the server captured
-    /// (informational; the GUI doesn't need to act on it).
+    /// `%input %<pane_id> <bytes>` —— 服务器捕获的回显输入
+    /// （信息性；GUI 无需对其采取行动）。
     Input { pane_id: u32, bytes: Vec<u8> },
-    /// `%session-changed <sid> <name>` — reattach.
+    /// `%session-changed <sid> <name>` —— 重连。
     SessionChanged { session_id: String, name: String },
-    /// `%windows <w> <s>` — server is sending the window list. The
-    /// payload is parsed by [`parse_windows_payload`].
+    /// `%windows <w> <s>` —— 服务器正在发送窗口列表。载荷由
+    /// [`parse_windows_payload`] 解析。
     WindowsHeader { w: u32, s: u32 },
-    /// `%error <message>` — server-side error.
+    /// `%error <message>` —— 服务器侧错误。
     Error(String),
-    /// `%pause` / `%continue` — flow control. The GUI should stop / resume
-    /// forwarding `%output` bytes (we don't act on it today; the parser
-    /// still surfaces the event so future code can).
+    /// `%pause` / `%continue` —— 流控。GUI 应停止 / 恢复转发 `%output`
+    /// 字节（我们今天不处理它；解析器仍呈现该事件，便于未来代码处理）。
     Pause,
     Continue,
-    /// `%subscription-changed <name> <value> [<flags>]` — capability flag.
+    /// `%subscription-changed <name> <value> [<flags>]` —— 能力标志。
     SubscriptionChanged {
         name: String,
         value: String,
         flags: Option<String>,
     },
-    /// Anything else — a future tmux version added it. Forwarded as raw
-    /// text so the caller can decide whether to log it.
+    /// 其他任何内容——未来的 tmux 版本添加的。以原始文本转发，便于调用方
+    /// 决定是否记录。
     Unknown(String),
 }
 
 impl TmuxEnvelope {
-    /// Serialize this envelope to the line form tmux -CC expects on
-    /// stdin. Only envelopes the GUI needs to *send* (Input, Output
-    /// mirror, etc.) round-trip cleanly; the rest return `Unknown`
-    /// payloads for the caller to inspect.
+    /// 把此信封序列化为 tmux -CC 在 stdin 上期望的行形式。只有 GUI 需要
+    /// *发送* 的信封（Input、Output 镜像等）能干净往返；其余返回 `Unknown`
+    /// 载荷供调用方检查。
     pub fn serialize(&self) -> String {
         match self {
             Self::Input { pane_id, bytes } => {
-                // tmux -CC accepts `%input %<id> <base64-of-bytes>\n`.
+                // tmux -CC 接受 `%input %<id> <base64-of-bytes>\n`。
                 use std::io::Write;
                 let mut buf = Vec::with_capacity(bytes.len() * 4 / 3 + 16);
                 buf.extend_from_slice(format!("%input %{pane_id} ").as_bytes());
-                // Minimal base64 encoder (avoid pulling in extra dep).
+                // 最小化的 base64 编码器（避免引入额外依赖）。
                 const TBL: &[u8; 64] =
                     b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
                 let mut i = 0;
@@ -137,11 +131,11 @@ impl TmuxEnvelope {
     }
 }
 
-/// Parse one line of tmux control-mode output. Lines that don't start
-/// with `%` are returned as `Unknown` (raw line).
+/// 解析一行 tmux 控制模式输出。不以 `%` 开头的行返回为 `Unknown`
+/// （原始行）。
 ///
-/// The byte stream from tmux is UTF-8 (we treat it as such); the
-/// `%output` payload is base64 — we decode that here.
+/// 来自 tmux 的字节流是 UTF-8（我们按此处理）；`%output` 载荷是
+/// base64——我们在这里解码。
 pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
     let trimmed = line.trim_end_matches(['\r', '\n']);
     if !trimmed.starts_with('%') {
@@ -149,14 +143,14 @@ pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
     }
     let mut it = trimmed.splitn(3, ' ');
     let head = it.next()?;
-    let head = &head[1..]; // drop '%'
+    let head = &head[1..]; // 去掉 '%'
     let arg1 = it.next().unwrap_or("");
     let rest = it.next().unwrap_or("");
 
     match head {
         "begin" => {
-            // "%begin %0 1700000000 200 x 50"
-            // Pane id can be "%N" or "pane_id:…" ; we take the raw token.
+            // 帧头形如 “%begin %0 1700000000 200 x 50”
+            // 面板 id 可以是 “%N” 或 “pane_id:…”；我们取原始 token。
             let pane_id = arg1.trim_start_matches('%').parse().ok()?;
             let mut rest_it = rest.split_whitespace();
             let ts = rest_it.next()?.parse().ok()?;
@@ -172,13 +166,11 @@ pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
         },
         "end" => Some(TmuxEnvelope::End),
         "output" => {
-            // "%output %0 <base64>"
+            // "%output %0 <base64>"（示例格式）
             let pane_id = arg1.trim_start_matches('%').parse().ok()?;
-            // The payload is everything after the first space; tmux
-            // splits the base64 across multiple "%output" lines when long.
-            // We accept the entire remainder (the chunking is handled at
-            // the framing layer; the GUI reassembles consecutive Output
-            // envelopes for the same pane_id).
+            // 载荷是第一个空格之后的所有内容；base64 很长时 tmux 会
+            // 把它拆成多条 "%output" 行。我们接受整个剩余部分（分块在
+            // 成帧层处理；GUI 会把同一 pane_id 的连续 Output 信封重新组装）。
             let bytes = base64_decode(rest.as_bytes())?;
             Some(TmuxEnvelope::Output { pane_id, bytes })
         },
@@ -188,19 +180,19 @@ pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
             Some(TmuxEnvelope::Input { pane_id, bytes })
         },
         "session-changed" | "session_changed" => {
-            // "%session-changed $0 main" — sid in arg1, name in rest.
+            // “%session-changed $0 main” —— sid 在 arg1，名称在 rest。
             let sid = arg1.to_string();
             let name = rest.to_string();
             Some(TmuxEnvelope::SessionChanged { session_id: sid, name })
         },
         "windows" => {
-            // "%windows <w> <s>" — w in arg1, s in rest.
+            // “%windows <w> <s>” —— w 在 arg1，s 在 rest。
             let w = arg1.parse().ok()?;
             let s = rest.parse().ok()?;
             Some(TmuxEnvelope::WindowsHeader { w, s })
         },
         "error" => {
-            // "%error <message>" — message spans arg1 + rest.
+            // “%error <message>” —— 消息横跨 arg1 + rest。
             let mut msg = String::from(arg1);
             if !rest.is_empty() {
                 if !msg.is_empty() {
@@ -213,9 +205,9 @@ pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
         "pause" => Some(TmuxEnvelope::Pause),
         "continue" => Some(TmuxEnvelope::Continue),
         "subscription-changed" | "subscription_changed" => {
-            // "%subscription-changed <name> <value> [<flags>]"
+            // "%subscription-changed <name> <value> [<flags>]"（示例格式）
             let name = arg1.to_string();
-            // `rest` is "<value> [<flags>]"
+            // `rest` 即 "<value> [<flags>]"
             let mut it = rest.splitn(2, ' ');
             let value = it.next().unwrap_or("").to_string();
             let flags = it.next().map(|s| s.to_string());
@@ -225,8 +217,8 @@ pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
     }
 }
 
-/// Parse the payload of a `%windows` envelope. Each line is a single
-/// `window-id:window-index` pair, e.g. `@0:0`.
+/// 解析 `%windows` 信封的载荷。每行是一个 `window-id:window-index`
+/// 对，例如 `@0:0`。
 pub fn parse_windows_payload(payload: &str) -> Vec<(String, u32)> {
     payload
         .lines()
@@ -237,9 +229,8 @@ pub fn parse_windows_payload(payload: &str) -> Vec<(String, u32)> {
         .collect()
 }
 
-/// Parse a multi-line tmux -CC blob into a flat sequence of envelopes.
-/// One envelope per line (the protocol is line-oriented). Lines that
-/// don't start with `%` are returned as `Unknown`.
+/// 把多行 tmux -CC 数据块解析为扁平的信封序列。每行一个信封
+/// （协议是面向行的）。不以 `%` 开头的行返回为 `Unknown`。
 pub fn parse_envelopes(blob: &str) -> Vec<TmuxEnvelope> {
     blob.lines()
         .filter(|l| !l.is_empty())
@@ -247,9 +238,9 @@ pub fn parse_envelopes(blob: &str) -> Vec<TmuxEnvelope> {
         .collect()
 }
 
-/// Serialize a tmux command. The result is the line to write to the
-/// `tmux` child's stdin (control-mode client → server). The mirror layer
-/// uses this to forward resize / send-keys / new-window events.
+/// 序列化一条 tmux 命令。结果是写入 `tmux` 子进程 stdin 的行
+/// （控制模式客户端 → 服务器）。镜像层用它转发 resize /
+/// send-keys / new-window 事件。
 pub fn serialize_command(cmd: &TmuxCommand<'_>) -> String {
     match cmd {
         TmuxCommand::RefreshClient => "refresh-client".into(),
@@ -257,9 +248,8 @@ pub fn serialize_command(cmd: &TmuxCommand<'_>) -> String {
             format!("resize-pane -t {id} -x {cols} -y {rows}")
         },
         TmuxCommand::SendKeys { id, keys } => {
-            // Send-keys takes a list of literal keys. Base64-encode any
-            // binary payload so a `\x1b` in the key bytes doesn't corrupt
-            // the line.
+            // Send-keys 接受字面键列表。对任何二进制载荷做 base64 编码，
+            // 使键字节中的 `\x1b` 不会破坏行。
             let b64 = base64_encode(keys);
             format!("send-keys -t {id} -H {b64}")
         },
@@ -276,7 +266,7 @@ pub fn serialize_command(cmd: &TmuxCommand<'_>) -> String {
     }
 }
 
-/// A tmux control-mode command (client → server).
+/// 一条 tmux 控制模式命令（客户端 → 服务器）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TmuxCommand<'a> {
     RefreshClient,
@@ -285,7 +275,7 @@ pub enum TmuxCommand<'a> {
     NewWindow { name: Option<&'a str>, cwd: Option<&'a str> },
 }
 
-/// RFC 4648 base64 encoder (alphabet `A-Za-z0-9+/`, `=` padding).
+/// RFC 4648 base64 编码器（字母表 `A-Za-z0-9+/`，`=` 填充）。
 fn base64_encode(input: &[u8]) -> String {
     const ALPH: &[u8; 64] =
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -316,10 +306,9 @@ fn base64_encode(input: &[u8]) -> String {
     out
 }
 
-/// RFC 4648 base64 decoder. Returns `None` on invalid length, padding
-/// position, or non-alphabet bytes. Mirrors the one in
-/// `alacritty_terminal::event_loop` (kept private there to avoid a
-/// cross-crate dep just for base64).
+/// RFC 4648 base64 解码器。长度无效、填充位置错误或非字母表字节时
+/// 返回 `None`。镜像 `alacritty_terminal::event_loop` 中的那个
+/// （在那里保持私有，以避免仅为 base64 引入跨 crate 依赖）。
 fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     fn val(b: u8) -> Option<u8> {
         match b {
@@ -359,19 +348,17 @@ fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Iterate over the envelopes in a (possibly multi-line) tmux stdout
-/// buffer. Lines that start with `%` produce an envelope; others are
-/// returned as `Unknown`. The iterator yields `None` on EOF.
+/// 遍历（可能多行的）tmux stdout 缓冲区中的信封。以 `%` 开头的行产生
+/// 信封；其余返回为 `Unknown`。迭代器在 EOF 时产出 `None`。
 pub fn iter_envelopes(buf: &str) -> impl Iterator<Item = TmuxEnvelope> + '_ {
     buf.lines().filter_map(parse_envelope)
 }
 
-/// Split a tmux stdout stream into the per-pane payload buffer. Each
-/// `%begin` opens a frame; everything until the matching `%end` is
-/// concatenated as the pane's "initial replay" payload (used for
-/// scrollback recovery on reattach).
+/// 把 tmux stdout 流拆分为按面板的载荷缓冲区。每个 `%begin` 打开一个
+/// 帧；直到匹配 `%end` 之前的所有内容拼接为该面板的“初始重放”载荷
+/// （用于重连时的回滚恢复）。
 ///
-/// Returns a `pane_id → Vec<u8>` map of concatenated replay payloads.
+/// 返回拼接后重放载荷的 `pane_id → Vec<u8>` 映射。
 pub fn collect_replay_payloads(buf: &str) -> HashMap<u32, Vec<u8>> {
     let mut out: HashMap<u32, Vec<u8>> = HashMap::new();
     let mut current: Option<u32> = None;
@@ -421,14 +408,14 @@ mod tests {
 
     #[test]
     fn parse_output_envelope_decodes_base64() {
-        // Base64 of "hello" = "aGVsbG8="
+        // “hello” 的 base64 = “aGVsbG8=”
         let env = parse_envelope("%output %0 aGVsbG8=").unwrap();
         assert_eq!(env, TmuxEnvelope::Output { pane_id: 0, bytes: b"hello".to_vec() });
     }
 
     #[test]
     fn parse_input_envelope() {
-        // Base64 of "ls\n" = "bHMK"
+        // “ls\n” 的 base64 = “bHMK”
         let env = parse_envelope("%input %0 bHMK").unwrap();
         assert_eq!(env, TmuxEnvelope::Input { pane_id: 0, bytes: b"ls\n".to_vec() });
     }
@@ -498,8 +485,8 @@ mod tests {
 
     #[test]
     fn nested_begin_end_groups_replay_payloads() {
-        // Two `Begin…End` frames; the first holds "foo" for pane 0, the
-        // second "bar" for pane 1.
+        // 两个 `Begin…End` 帧；第一个为面板 0 持有 “foo”，第二个为
+        // 面板 1 持有 “bar”。
         let buf = "%begin %0 1 80 x 24\n%output %0 Zm9v\n%end\n%begin %1 1 80 x 24\n%output %1 YmFy\n%end\n";
         let payloads = collect_replay_payloads(buf);
         assert_eq!(payloads.get(&0), Some(&b"foo".to_vec()));
@@ -532,7 +519,7 @@ mod tests {
     fn serialize_send_keys_base64() {
         let keys = b"\x1b[A";
         let cmd = serialize_command(&TmuxCommand::SendKeys { id: "%0", keys });
-        // b"\x1b[A" base64 = "G1tB"
+        // b“\x1b[A” 的 base64 = “G1tB”
         assert!(cmd.starts_with("send-keys -t %0 -H G1tB"));
     }
 

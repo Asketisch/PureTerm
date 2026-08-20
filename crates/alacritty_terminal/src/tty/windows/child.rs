@@ -29,7 +29,7 @@ struct ChildExitSender {
     child_handle: AtomicPtr<c_void>,
 }
 
-/// WinAPI callback to run when child process exits.
+/// 子进程退出时运行的 WinAPI 回调。
 extern "system" fn child_exit_callback(ctx: *mut c_void, timed_out: BOOLEAN) {
     if timed_out != 0 {
         return;
@@ -106,19 +106,19 @@ impl ChildExitWatcher {
         *self.interest.lock().unwrap() = None;
     }
 
-    /// Retrieve the process handle of the underlying child process.
+    /// 获取底层子进程的进程句柄。
     ///
-    /// This function does **not** pass ownership of the raw handle to you,
-    /// and the handle is only guaranteed to be valid while the hosted application
-    /// has not yet been destroyed.
+    /// 本函数**不**把裸句柄的所有权移交给你,
+    /// 句柄只在宿主应用尚未销毁期间
+    /// 保证有效。
     ///
-    /// If you terminate the process using this handle, the terminal will get a
-    /// timeout error, and the child watcher will emit an `Exited` event.
+    /// 若你用该句柄终止进程,终端会得到超时错误,
+    /// 子进程观察器会发出 `Exited` 事件。
     pub fn raw_handle(&self) -> HANDLE {
         self.child_handle.load(Ordering::Relaxed) as HANDLE
     }
 
-    /// Retrieve the Process ID associated to the underlying child process.
+    /// 获取底层子进程关联的进程 ID。
     pub fn pid(&self) -> Option<NonZeroU32> {
         self.pid
     }
@@ -154,11 +154,11 @@ mod tests {
 
         child.kill().unwrap();
 
-        // Poll for the event or fail with timeout if nothing has been sent.
+        // 轮询事件;超时仍未收到则失败。
         let mut events = polling::Events::new();
         poller.wait(&mut events, Some(WAIT_TIMEOUT)).unwrap();
         assert_eq!(events.iter().next().unwrap().key, PTY_CHILD_EVENT_TOKEN);
-        // Verify that at least one `ChildEvent::Exited` was received.
+        // 验证至少收到一个 `ChildEvent::Exited`。
         let expected_status = ExitStatus::from_raw(1);
         assert_eq!(
             child_exit_watcher.event_rx().try_recv(),

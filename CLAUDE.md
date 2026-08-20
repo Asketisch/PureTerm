@@ -1,6 +1,6 @@
-# PureTerm - 基于 Alacritty 的终端模拟器
+# PureTerm - GPU 加速终端模拟器
 
-基于 Alacritty 上游源码构建的 GPU 加速终端模拟器。
+基于 vendored 终端内核构建的 GPU 加速终端模拟器。
 
 ## 快速开始
 
@@ -74,13 +74,13 @@ todo/ → progressing/ → done/（待 review）→ reviewed/（已 review）
 
 ## 维护规则
 
-- vendored Alacritty 源码不做无关格式化或重构，便于同步上游
+- vendored 终端内核源码不做无关格式化或重构，便于同步上游
 - 新功能应在主路径（`crates/pureterm/src/`）实现；`pureterm-alacritty-runtime` 已精简为只承载 `glyph_atlas`，不再扩展
-- 修改 alacritty 源码时在修改处添加注释说明原因
+- 修改 vendored 终端内核源码时在修改处添加注释说明原因
 - 已实现特性维护在 [FEATURES.md](FEATURES.md)，新特性闭环后同步更新
 - 特性 spec 按生命周期维护在 `docs/` 对应目录，详见上方「特性生命周期」
 
-## graphify
+## 代码图谱(graphify)
 
 本项目在 graphify-out/ 目录下有一个知识图谱，包含核心节点、社区结构和跨文件关系。
 

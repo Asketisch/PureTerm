@@ -11,8 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "docs" / "featuresList"
 DST = ROOT / "docs" / "features"
 
-# file_stem (without .md) → metadata
-# dir naming per plan; gap id for frontmatter
+# file_stem(不含 .md)→ 元数据
+# 目录命名遵循 plan;frontmatter 用 gap id
 META: dict[str, dict] = {
     "01-ai-chat-panel": {
         "gap": "GAP-01", "dir": "GAP-01-ai-chat-panel", "title": "AI Chat Panel",
@@ -370,7 +370,7 @@ META: dict[str, dict] = {
     },
 }
 
-# stem → target dir for cross-link rewrites
+# stem → 跨链接重写用的目标目录
 STEM_TO_DIR: dict[str, str] = {k: v["dir"] for k, v in META.items()}
 
 
@@ -396,7 +396,7 @@ def yaml_frontmatter(m: dict) -> str:
 
 
 def fix_links(content: str) -> str:
-    # featuresList/NN-slug.md → ../GAP-XX-slug/spec.md
+    # featuresList/NN-slug.md → ../GAP-XX-slug/spec.md(路径重写)
     def repl_featureslist(match: re.Match) -> str:
         stem = match.group(1)
         if stem in STEM_TO_DIR:
@@ -408,7 +408,7 @@ def fix_links(content: str) -> str:
         repl_featureslist,
         content,
     )
-    # bare references like (09-notification-system.md)
+    # 形如 (09-notification-system.md) 的裸引用
     def repl_bare(match: re.Match) -> str:
         stem = match.group(1)
         if stem in STEM_TO_DIR:
@@ -420,12 +420,12 @@ def fix_links(content: str) -> str:
         repl_bare,
         content,
     )
-    # GAP-09 Notification System style links
+    # GAP-09 Notification System 风格的链接
     content = content.replace(
         "[GAP-09 Notification System](09-notification-system.md)",
         "[GAP-09 Notification System](../GAP-09-notification/spec.md)",
     )
-    # manual-e2e paths from features dir: ../manual-e2e/...
+    # features 目录中的 manual-e2e 路径:../manual-e2e/...
     content = re.sub(
         r"\[`docs/manual-e2e/",
         r"[`../../manual-e2e/",

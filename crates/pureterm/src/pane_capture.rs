@@ -1,18 +1,18 @@
-//! GAP-60: Pane screenshot / export.
+//! GAP-60: 面板截图 / 导出。
 //!
-//! - `.txt` exports the raw terminal text content (always available).
-//! - `.png` exports an RGBA8 framebuffer snapshot of the rendered pane.
-//!   The snapshot is supplied by the caller (an iced `Surface`/`wgpu` read
-//!   happens in the renderer thread; this module only encodes the bytes).
-//! - `.svg` is a stub (rebuilds the terminal as text inside an SVG `<rect>`
-//!   of the configured cell size; the GPU-rendered cell shading is not
-//!   reproduced).
+//! - `.txt`:导出终端原始文本内容(始终可用)。
+//! - `.png`:导出所渲染面板的 RGBA8 帧缓冲快照。
+//!   快照由调用方提供(iced `Surface`/`wgpu` 读取发生在渲染线程,
+//!   本模块仅负责编码字节)。
+//! - `.svg` 为桩实现(将终端重建为 SVG `<rect>` 内的文本,
+//!   按配置的单元格尺寸布局;GPU 渲染的单元格着色
+//!   无法还原)。
 
 use std::path::Path;
 
 use image::{ImageBuffer, Rgba, RgbaImage};
 
-/// `[pane_capture]` config.
+/// `[pane_capture]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaneCaptureConfig {
     pub enabled: bool,
@@ -28,7 +28,7 @@ impl Default for PaneCaptureConfig {
     }
 }
 
-/// Export terminal text content to a file. PNG rendering deferred; `.txt` always works.
+/// 将终端文本内容导出到文件。PNG 渲染延后;`.txt` 始终可用。
 pub fn export_text_snapshot(content: &str, output: &Path) -> Result<(), String> {
     if content.is_empty() {
         return Err("empty snapshot".into());
@@ -36,10 +36,10 @@ pub fn export_text_snapshot(content: &str, output: &Path) -> Result<(), String> 
     std::fs::write(output, content).map_err(|e| e.to_string())
 }
 
-/// Encode a framebuffer as PNG and write to `output`. `width` / `height`
-/// are the framebuffer dimensions in pixels; `rgba` must be exactly
-/// `width * height * 4` bytes long (RGBA8, premultiplied alpha is fine
-/// for the `image` crate).
+/// 将帧缓冲编码为 PNG 并写入 `output`。`width` / `height`
+/// 为帧缓冲以像素计的尺寸;`rgba` 必须恰好
+/// `width * height * 4` 字节长(RGBA8,预乘 alpha
+/// 对 `image` crate 来说也没问题)。
 pub fn export_png(rgba: &[u8], width: u32, height: u32, output: &Path) -> Result<(), String> {
     if width == 0 || height == 0 {
         return Err("zero-sized framebuffer".into());
@@ -61,9 +61,9 @@ pub fn export_png(rgba: &[u8], width: u32, height: u32, output: &Path) -> Result
     img.save(output).map_err(|e| format!("save png: {e}"))
 }
 
-/// Build a minimal SVG wrapping the text content. The result is a
-/// plain monospace block; cell background colors and font weights are
-/// not preserved (kept as a stub for the SVG path).
+/// 构建一个包裹文本内容的最小 SVG。结果是
+/// 纯等宽块;不保留单元格背景色与字重
+/// (作为 SVG 路径的桩保留)。
 pub fn export_svg_stub(content: &str, cell_w: u32, cell_h: u32, output: &Path) -> Result<(), String> {
     if cell_w == 0 || cell_h == 0 {
         return Err("zero cell size".into());
@@ -74,7 +74,7 @@ pub fn export_svg_stub(content: &str, cell_w: u32, cell_h: u32, output: &Path) -
     let mut body = String::new();
     for (i, line) in lines.iter().enumerate() {
         let y = (i as u32 + 1) * cell_h;
-        // HTML-escape the few chars that break SVG text rendering.
+        // 对会破坏 SVG 文本渲染的少数字符做 HTML 转义。
         let escaped = line
             .replace('&', "&amp;")
             .replace('<', "&lt;")
@@ -86,9 +86,9 @@ pub fn export_svg_stub(content: &str, cell_w: u32, cell_h: u32, output: &Path) -
             escaped = escaped
         ));
     }
-    // Build SVG via string concatenation rather than a single format!
-    // call. format! treats '#' followed by a digit as a format-spec
-    // marker in some positions; the chunked form sidesteps that quirk.
+    // 用字符串拼接构建 SVG,而不是单个 format!
+    // 调用。format! 在部分位置把 '#' 后跟数字当作格式说明符,
+    // 分块形式绕开了这个怪癖。
     let svg = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}\" height=\"{h}\" viewBox=\"0 0 {w} {h}\"><rect width=\"100%\" height=\"100%\" fill=\"black\"/>{body}</svg>",
         w = width, h = height, body = body
@@ -96,9 +96,9 @@ pub fn export_svg_stub(content: &str, cell_w: u32, cell_h: u32, output: &Path) -
     std::fs::write(output, svg).map_err(|e| e.to_string())
 }
 
-/// Dispatch by file extension. Supports `txt`/`text`/`png`/`svg` (case
-/// insensitive). Falls back to `cfg.default_format` when the extension
-/// is unknown.
+/// 按文件扩展名分发。支持 `txt`/`text`/`png`/`svg`(大小写
+/// 不敏感)。当扩展名未知时,会回退到
+/// `cfg.default_format`。
 pub fn export_snapshot_with_png(
     content: &str,
     rgba: &[u8],
@@ -115,9 +115,9 @@ pub fn export_snapshot_with_png(
     }
 }
 
-/// Backwards-compatible stub: writes the text content with a placeholder
-/// note for non-txt formats. Kept for callers that haven't yet been
-/// wired to the GPU readback.
+/// 向后兼容的桩:把文本内容连同占位
+/// 备注写入非 txt 格式。供尚未接入
+/// GPU 回读的调用方使用。
 pub fn export_snapshot(content: &str, output: &Path, format: &str) -> Result<(), String> {
     match format.to_ascii_lowercase().as_str() {
         "txt" | "text" => export_text_snapshot(content, output),
@@ -156,11 +156,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pt-cap-png-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("out.png");
-        // 2x2 RGBA, all red opaque.
+        // 2x2 RGBA,全部为不透明红色。
         let rgba = vec![255u8, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255];
         export_png(&rgba, 2, 2, &path).unwrap();
         let bytes = std::fs::read(&path).unwrap();
-        // PNG magic: 89 50 4E 47 0D 0A 1A 0A
+        // PNG 魔数:89 50 4E 47 0D 0A 1A 0A
         assert_eq!(&bytes[0..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -170,7 +170,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pt-cap-png-bad-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("out.png");
-        // 2x2 expected, but only 2 RGBA bytes.
+        // 期望 2x2,但只有 2 个 RGBA 字节。
         let rgba = vec![0u8; 2];
         let r = export_png(&rgba, 2, 2, &path);
         assert!(r.is_err());

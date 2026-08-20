@@ -1,6 +1,6 @@
 ---
 gap: GAP-35
-title: LSP Client
+title: LSP 客户端
 category: 开发者工具
 plan_type: integration
 priority: P1
@@ -47,7 +47,7 @@ LSP Client 是终端内代码补全和诊断的基础，业界将其作为核心
 6. 配置：`lsp.servers = { rust = "rust-analyzer", go = "gopls" }`
 7. 与 AI Chat 联动：LSP 诊断可作为 AI 上下文
 
-## MVP（2026-06-29）
+## MVP（2026-06-29，最小可行产品）
 
 - `crates/pureterm-lsp/` — JSON-RPC stdio client，hover + completion + diagnostics
 - 诊断转发：状态栏 `lsp` 段 + AI Chat `[Terminal context]` 块

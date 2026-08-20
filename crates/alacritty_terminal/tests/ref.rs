@@ -115,7 +115,7 @@ fn ref_test(dir: &Path) {
 
     parser.advance(&mut terminal, &recording);
 
-    // Truncate invisible lines from the grid.
+    // 从网格截掉不可见行。
     let mut term_grid = terminal.grid().clone();
     term_grid.initialize_all();
     term_grid.truncate();

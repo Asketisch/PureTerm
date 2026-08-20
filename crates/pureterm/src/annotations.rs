@@ -1,13 +1,13 @@
-//! GAP-12: Annotations & Marks MVP — grid marks from OSC 133 + user notes.
+//! GAP-12:注解与标记 MVP——来自 OSC 133 的网格标记 + 用户笔记。
 //!
-//! Marks are collected from shell-integration OSC 133 events. User annotations
-//! attach optional text to a grid row (via OSC extension or in-app action).
+//! 标记收集自 shell 集成的 OSC 133 事件。用户注解
+//! 把可选的文本附加到网格行(经 OSC 扩展或应用内动作)。
 
 use std::collections::HashMap;
 
 use alacritty_terminal::event::{ShellMark, ShellMarkKind};
 
-/// Semantic mark type on a terminal row.
+/// 终端行上的语义标记类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MarkType {
     Prompt,
@@ -29,7 +29,7 @@ impl MarkType {
     }
 }
 
-/// One mark anchored to a grid row.
+/// 锚定到网格行的一个标记。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GridMark {
     pub row: usize,
@@ -37,14 +37,14 @@ pub struct GridMark {
     pub label: Option<String>,
 }
 
-/// User annotation on a row (note text).
+/// 行上的用户注解(笔记文本)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LineAnnotation {
     pub row: usize,
     pub text: String,
 }
 
-/// Per-pane marks + annotations store.
+/// 每个窗格的标记 + 注解存储。
 #[derive(Debug, Clone, Default)]
 pub struct PaneMarks {
     pub marks: Vec<GridMark>,
@@ -52,7 +52,7 @@ pub struct PaneMarks {
 }
 
 impl PaneMarks {
-    /// Record an OSC 133 shell mark as a grid mark.
+    /// 把 OSC 133 shell 标记记录为网格标记。
     pub fn apply_shell_mark(&mut self, mark: &ShellMark) {
         let kind = match mark.kind {
             ShellMarkKind::PromptStart => MarkType::Prompt,
@@ -75,7 +75,7 @@ impl PaneMarks {
         self.marks.sort_by_key(|m| m.row);
     }
 
-    /// OSC extension: `\x1b]777;PureTerm;annotate;<hex>\x07` decoded payload.
+    /// OSC 扩展:`\x1b]777;PureTerm;annotate;<hex>\x07` 的解码负载。
     pub fn apply_osc_annotation(&mut self, row: usize, text: String) {
         if text.is_empty() {
             return;
@@ -101,7 +101,7 @@ impl PaneMarks {
         self.apply_osc_annotation(row, text);
     }
 
-    /// Jump to the previous mark strictly above `cursor_row`.
+    /// 跳到严格位于 `cursor_row` 上方的上一个标记。
     pub fn prev_mark_row(&self, cursor_row: usize) -> Option<usize> {
         self.marks
             .iter()
@@ -110,7 +110,7 @@ impl PaneMarks {
             .max()
     }
 
-    /// Jump to the next mark strictly below `cursor_row`.
+    /// 跳到严格位于 `cursor_row` 下方的下一个标记。
     pub fn next_mark_row(&self, cursor_row: usize) -> Option<usize> {
         self.marks
             .iter()
@@ -131,7 +131,7 @@ impl PaneMarks {
     }
 }
 
-/// Decode hex payload from PureTerm OSC annotate extension.
+/// 解码 PureTerm OSC 注解扩展的十六进制负载。
 pub fn decode_osc_hex(payload: &str) -> Option<String> {
     if payload.is_empty() {
         return None;

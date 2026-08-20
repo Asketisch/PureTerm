@@ -1,20 +1,20 @@
-//! A circular HSV color wheel widget for Iced.
-//! Based on iced_color_wheel by nickbrannigan (BSD-2 License)
+//! Iced 的圆形 HSV 色轮组件。
+//! 基于 nickbrannigan 的 iced_color_wheel 改写(BSD-2 许可证)
 
 use iced::widget::canvas::{self, Action, Frame, Geometry, Path, Stroke};
 use iced::{mouse, Color, Event, Point, Rectangle, Renderer, Size, Theme};
 use std::cell::Cell;
 use std::f32::consts::PI;
 
-// Rendering resolution
+// 渲染分辨率
 const HUE_STEPS: usize = 360;
 const SAT_STEPS: usize = 128;
 
 // ---------------------------------------------------------------------------
-// HSV <-> RGB helpers
+// HSV <-> RGB 辅助函数
 // ---------------------------------------------------------------------------
 
-/// Convert HSV (h: 0-360, s: 0-1, v: 0-1) to iced::Color.
+/// 把 HSV(h: 0-360,s: 0-1,v: 0-1)转换为 iced::Color。
 pub fn hsv_to_color(h: f32, s: f32, v: f32) -> Color {
     let h = ((h % 360.0) + 360.0) % 360.0;
     let s = s.clamp(0.0, 1.0);
@@ -41,7 +41,7 @@ pub fn hsv_to_color(h: f32, s: f32, v: f32) -> Color {
     Color::from_rgb(r + m, g + m, b + m)
 }
 
-/// Convert iced::Color to HSV (h: 0-360, s: 0-1, v: 0-1).
+/// 把 iced::Color 转换为 HSV(h: 0-360,s: 0-1,v: 0-1)。
 pub fn color_to_hsv(c: Color) -> (f32, f32, f32) {
     let r = c.r;
     let g = c.g;
@@ -68,7 +68,7 @@ pub fn color_to_hsv(c: Color) -> (f32, f32, f32) {
     (h, s, v)
 }
 
-/// Convert HSV to hex string (#RRGGBB).
+/// 把 HSV 转换为 hex 字符串(#RRGGBB)。
 pub fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
     let c = hsv_to_color(h, s, v);
     format!(
@@ -79,7 +79,7 @@ pub fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
     )
 }
 
-/// Parse a hex string (#RRGGBB or RRGGBB) to iced::Color.
+/// 解析 hex 字符串(#RRGGBB 或 RRGGBB)为 iced::Color。
 pub fn hex_to_color(hex: &str) -> Option<Color> {
     let hex = hex.trim_start_matches('#');
     if hex.len() != 6 {
@@ -92,13 +92,13 @@ pub fn hex_to_color(hex: &str) -> Option<Color> {
 }
 
 // ---------------------------------------------------------------------------
-// Canvas program — the wheel rendering + interaction
+// Canvas 程序——色轮渲染 + 交互
 // ---------------------------------------------------------------------------
 
-/// A circular HSV color wheel canvas program for Iced.
+/// Iced 的圆形 HSV 色轮 canvas 程序。
 ///
-/// Generic over any message type. Provide a callback that maps `(hue, saturation)`
-/// to your app's message type.
+/// 对任意消息类型泛型。提供一个把 `(hue, saturation)`
+/// 映射到你的应用消息类型的回调。
 pub struct WheelProgram<Message> {
     pub hue: f32,
     pub saturation: f32,
@@ -107,7 +107,7 @@ pub struct WheelProgram<Message> {
 }
 
 impl<Message> WheelProgram<Message> {
-    /// Create a new wheel program.
+    /// 创建新的色轮程序。
     pub fn new(
         hue: f32,
         saturation: f32,
@@ -123,7 +123,7 @@ impl<Message> WheelProgram<Message> {
     }
 }
 
-/// Internal canvas state (persists across frames).
+/// 内部 canvas 状态(跨帧保留)。
 pub struct WheelState {
     is_dragging: bool,
     wheel_cache: canvas::Cache,
@@ -188,18 +188,18 @@ impl<Message: Clone> canvas::Program<Message> for WheelProgram<Message> {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        // Invalidate wheel cache when brightness changes
+        // 亮度变化时使色轮缓存失效
         if state.last_value.get() != self.value {
             state.wheel_cache.clear();
             state.last_value.set(self.value);
         }
 
-        // Draw the wheel (cached — only recomputed when value or size changes)
+        // 绘制色轮(有缓存——仅在明度或尺寸变化时重算)
         let wheel = state.wheel_cache.draw(renderer, bounds.size(), |frame| {
             draw_wheel(frame, bounds.size(), self.value);
         });
 
-        // Draw the selector (lightweight — just 2 circles, always fresh)
+        // 绘制选择器(轻量——仅 2 个圆,总是新画)
         let mut selector_frame = Frame::new(renderer, bounds.size());
         draw_selector(
             &mut selector_frame,
@@ -230,7 +230,7 @@ impl<Message: Clone> canvas::Program<Message> for WheelProgram<Message> {
 }
 
 // ---------------------------------------------------------------------------
-// Geometry helpers
+// 几何辅助
 // ---------------------------------------------------------------------------
 
 fn wheel_geometry(size: Size) -> (f32, f32, f32) {
@@ -266,7 +266,7 @@ fn wheel_position_to_hs(pos: Point, size: Size) -> (f32, f32) {
 }
 
 // ---------------------------------------------------------------------------
-// Drawing
+// 绘制
 // ---------------------------------------------------------------------------
 
 fn draw_wheel(frame: &mut Frame, size: Size, value: f32) {

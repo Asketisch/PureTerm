@@ -6,248 +6,248 @@ use std::sync::Arc;
 use crate::term::ClipboardType;
 use crate::vte::ansi::Rgb;
 
-/// Semantic prompt marker kind from OSC 133 shell integration.
+/// OSC 133 shell 集成的语义提示标记类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShellMarkKind {
-    /// OSC 133;A — prompt starts.
+    /// OSC 133;A —— 提示符开始。
     PromptStart,
-    /// OSC 133;B — command line starts.
+    /// OSC 133;B —— 命令行开始。
     CommandStart,
-    /// OSC 133;C — command output starts.
+    /// OSC 133;C —— 命令输出开始。
     OutputStart,
-    /// OSC 133;D — command output ends.
+    /// OSC 133;D —— 命令输出结束。
     OutputEnd,
 }
 
-/// A semantic prompt mark detected from OSC 133 sequences.
+/// 从 OSC 133 序列检测到的语义提示标记。
 //
-// PureTerm (GAP-15): added `PartialEq, Eq` so this can ride `TerminalEvent`,
-// whose enum requires them (used in update-loop matching / dedup). All fields
-// are already `Eq`, so this is a safe additive derive with no behavior change.
+// PureTerm(GAP-15):加了 `PartialEq, Eq`,使其能搭 `TerminalEvent`,
+// 后者的枚举要求它们(用于 update 循环匹配/去重)。所有字段
+// 本就 `Eq`,这是安全的增量派生,行为不变。
 //
-// PureTerm (GAP-15): added `command`. The exact command text can't be recovered
-// from the grid (by the time the B-event is handled, the command's output is
-// already in the grid from the same PTY read, and scrolling drifts the row), so
-// the shell sends it hex-encoded in the B mark's `cmd=` param and the scanner
-// decodes it here. Only present for CommandStart marks the shell chose to annotate.
+// PureTerm(GAP-15):加了 `command`。精确命令文本无法从网格恢复
+//(B 事件被处理时,命令输出已随同一次 PTY 读进入网格,
+// 滚动还会让行漂移),因此 shell 在 B 标记的 `cmd=` 参数里
+// 以 hex 编码发送,扫描器在此解码。仅出现在 shell 选择
+// 附加注释的 CommandStart 标记上。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellMark {
-    /// The kind of marker.
+    /// 标记的类型。
     pub kind: ShellMarkKind,
-    /// Cursor row when the mark was detected (grid line index).
+    /// 检测到标记时的光标行(网格行索引)。
     pub row: usize,
-    /// Exit code, only present for OutputEnd marks.
+    /// 退出码,仅 OutputEnd 标记有。
     pub exit_code: Option<i32>,
-    /// Duration in microseconds, only present for OutputEnd marks.
+    /// 时长(微秒),仅 OutputEnd 标记有。
     pub duration_us: Option<u64>,
-    /// Exact command text (hex-decoded from the B mark's `cmd=` param), only
-    /// present for CommandStart marks. See struct doc for why this is sent
-    /// rather than recovered from the grid.
+    /// 精确命令文本(从 B 标记的 `cmd=` 参数 hex 解码),仅
+    /// CommandStart 标记有。为何发送而非从网格恢复,
+    /// 见结构体文档。
     pub command: Option<String>,
 }
 
-/// GAP-09: when a desktop notification should be shown (maps to the kitty OSC 99 `o` key).
+/// GAP-09:何时应显示桌面通知(映射 kitty OSC 99 的 `o` 键)。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotifyOccasion {
-    /// `o=always` (default) — toast when the source pane is not visible.
+    /// `o=always`(默认)——源窗格不可见时通知。
     Always,
-    /// `o=unfocused` — toast only when the application window is not focused.
+    /// `o=unfocused` —— 仅应用窗口未聚焦时通知。
     Unfocused,
-    /// `o=invisible` — toast only when the source pane is invisible
-    /// (unfocused app OR in a non-active tab).
+    /// `o=invisible` —— 仅源窗格不可见
+    ///(应用未聚焦或在非活动标签页)时通知。
     Invisible,
 }
 
-/// GAP-09: origin of a desktop notification.
+/// GAP-09:桌面通知的来源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotifySource {
-    /// iTerm2 legacy OSC 9 (`\x1b]9;<msg>`).
+    /// iTerm2 遗留 OSC 9(`\x1b]9;<msg>`)。
     Osc9,
-    /// kitty OSC 99 (chunked, `p`/`i`/`d`/`e`/`o` metadata).
+    /// kitty OSC 99(分块,`p`/`i`/`d`/`e`/`o` 元数据)。
     Osc99,
-    /// urxvt OSC 777 (`\x1b]777;notify;<title>;<body>`).
+    /// urxvt 的 OSC 777(`\x1b]777;notify;<title>;<body>`)。
     Osc777,
-    /// Terminal bell (0x07), surfaced via bell passthrough.
+    /// 终端响铃(0x07),经响铃直通呈现。
     Bell,
-    /// `pureterm notify` CLI (posted over the GUI IPC socket).
+    /// `pureterm notify` CLI(经 GUI IPC socket 发布)。
     Cli,
 }
 
-/// T-core-graphics: protocol used to transfer a graphics payload.
+/// T-core-graphics:传输图形载荷所用协议。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphicsProtocol {
-    /// DEC Sixel (`\x1bPq ... \x1b\\`) — pixel-based, 6-bit palette.
+    /// DEC Sixel(`\x1bPq ... \x1b\\`)——像素式,6 位调色板。
     Sixel,
-    /// Kitty graphics protocol (`\x1b_G ... \x1b\\`) — chunked, base64.
+    /// Kitty 图形协议(`\x1b_G ... \x1b\\`)——分块,base64。
     Kitty,
-    /// iTerm2 inline image (`\x1b]1337;File=...`) — legacy.
+    /// iTerm2 内联图像(`\x1b]1337;File=...`)——遗留。
     ITerm2,
 }
 
-/// T-core-graphics: encoded payload format for a graphics image.
+/// T-core-graphics:图形图像的载荷编码格式。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphicsFormat {
-    /// 32-bit RGBA pixels (already decoded).
+    /// 32 位 RGBA 像素(已解码)。
     Rgba,
-    /// PNG (still encoded; will be decoded by the renderer).
+    /// PNG(仍为编码态;由渲染器解码)。
     Png,
-    /// Raw RGB (24-bit).
+    /// 原始 RGB(24 位)。
     Rgb,
 }
 
-/// T-core-graphics: a placement (anchor) of an image onto the grid.
+/// T-core-graphics:图像到网格的一个放置(锚点)。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphicsPlacement {
-    /// Unique id of the image.
+    /// 图像的唯一 id。
     pub id: u32,
-    /// Top-left grid column.
+    /// 左上角网格列。
     pub col: u16,
-    /// Top-left grid row (grid-relative, not screen-relative).
+    /// 左上角网格行(相对网格而非屏幕)。
     pub row: u16,
-    /// Width in cells.
+    /// 宽度(单元格)。
     pub cols: u16,
-    /// Height in cells.
+    /// 高度(单元格)。
     pub rows: u16,
-    /// Z-order (newer overlays older). Monotonically increasing.
+    /// Z 序(新者覆盖旧者)。单调递增。
     pub z: u32,
 }
 
-/// T-core-graphics: a fully-decoded graphics image ready for the renderer.
+/// T-core-graphics:已完全解码、可供渲染器的图形图像。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GraphicsImage {
-    /// Protocol that produced the image.
+    /// 产出该图像的协议。
     pub protocol: GraphicsProtocol,
-    /// Payload encoding.
+    /// 载荷编码。
     pub format: GraphicsFormat,
-    /// Placement onto the grid.
+    /// 到网格的放置。
     pub placement: GraphicsPlacement,
-    /// Pixel width (or image width when format = Rgba/Rgb).
+    /// 像素宽(或 format = Rgba/Rgb 时的图像宽)。
     pub width: u32,
-    /// Pixel height.
+    /// 像素高。
     pub height: u32,
-    /// Decoded RGBA bytes (length = width * height * 4). `None` if the
-    /// renderer should decode from `encoded` itself (e.g. PNG).
+    /// 已解码 RGBA 字节(长度 = width * height * 4)。渲染器
+    /// 应自行从 `encoded` 解码(如 PNG)时为 `None`。
     pub pixels: Option<Vec<u8>>,
-    /// Still-encoded bytes (e.g. PNG when format = Png). Empty when `pixels`
-    /// is `Some`.
+    /// 仍为编码态的字节(如 format = Png 时的 PNG)。`pixels`
+    /// 为 `Some` 时为空。
     pub encoded: Vec<u8>,
 }
 
-/// T-core-plugin-runtime v3: a parser-hook OSC sequence destined for a
-/// named plugin. Emitted by `event_loop::scan_plugin_osc` whenever the
-/// PTY byte stream contains
-/// `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` (or ST-terminated).
-/// The host dispatches on `name` to route `payload` to the plugin's
-/// `HostFn::Parser` callback.
+/// T-core-plugin-runtime v3:发给指定插件的解析器钩子 OSC 序列。
+/// 由 `event_loop::scan_plugin_osc` 在 PTY 字节流包含
+/// `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07`(或 ST 终止)时发出。
+/// 宿主按 `name` 分派,把 `payload` 路由到插件的
+/// `HostFn::Parser` 回调。
+/// `HostFn::Parser` 回调。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PluginOsc {
-    /// Plugin manifest name (lowercase `[a-z0-9_-]+`).
+    /// 插件清单名(小写 `[a-z0-9_-]+`)。
     pub name: String,
-    /// Raw payload bytes between the second `;` and the terminator.
-    /// Untouched — the plugin decides how to interpret it.
+    /// 第二个 `;` 与终止符之间的原始载荷字节。
+    /// 原样传递——由插件决定如何解释。
     pub payload: Vec<u8>,
 }
 
-/// GAP-09: a desktop notification surfaced from the PTY (OSC 9/99/777),
-/// synthesized from a bell, or posted via the CLI.
+/// GAP-09:从 PTY(OSC 9/99/777)浮出的桌面通知、
+/// 由响铃合成、或经 CLI 发布。
 //
-// PureTerm (GAP-09): added so notifications ride `Event::Notification`, exactly
-// like `ShellMark` rides `Event::ShellMark`. Derives `PartialEq, Eq` because the
-// pureterm-crate `TerminalEvent` wraps it and derives the same — every field is
-// `Option<String>`/`String`/`Copy`-enum, so this is a safe additive derive.
-// Timestamps are deliberately NOT here (they are mutable/GUI-side state and
-// would break `Eq`); they live only on the pureterm-side `NotificationEntry`.
+// PureTerm(GAP-09):加入以便通知搭 `Event::Notification`,正如
+// `ShellMark` 搭 `Event::ShellMark`。派生 `PartialEq, Eq` 是因为
+// pureterm crate 的 `TerminalEvent` 包装它并派生相同——每个字段都是
+// `Option<String>`/`String`/`Copy` 枚举,派生安全且只增不改。
+// 时间戳有意不放在这里(它们是可变的 GUI 侧状态,会
+// 破坏 `Eq`);只存在于 pureterm 侧的 `NotificationEntry`。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Notification {
-    /// Best-effort title; `None` for OSC 9 and bell.
+    /// 尽力而为的标题;OSC 9 与响铃为 `None`。
     pub title: Option<String>,
-    /// Message body.
+    /// 消息正文。
     pub body: String,
-    /// kitty OSC 99 `i`, sanitized to `[a-zA-Z0-9_-+.]`, used to dedup/update
-    /// in-flight notifications. `None` for OSC 9/777/bell/CLI.
+    /// kitty OSC 99 的 `i`,净化为 `[a-zA-Z0-9_-.+]`,用于去重/更新
+    /// 在途通知。OSC 9/777/响铃/CLI 为 `None`。
     pub id: Option<String>,
-    /// kitty OSC 99 `o`; defaults to `Always` when unset.
+    /// kitty OSC 99 的 `o`;未设置时默认 `Always`。
     pub occasion: NotifyOccasion,
-    /// Where the notification came from.
+    /// 通知来源。
     pub source: NotifySource,
 }
 
-/// Terminal event.
+/// 终端事件。
 ///
-/// These events instruct the UI over changes that can't be handled by the terminal emulation layer
-/// itself.
+/// 这些事件就终端仿真层自身无法处理的变更
+/// 通知 UI。
 #[derive(Clone)]
 pub enum Event {
-    /// Grid has changed possibly requiring a mouse cursor shape change.
+    /// 网格变化,可能需要改变鼠标光标形状。
     MouseCursorDirty,
 
-    /// Window title change.
+    /// 窗口标题变化。
     Title(String),
 
-    /// Reset to the default window title.
+    /// 重置为默认窗口标题。
     ResetTitle,
 
-    /// Request to store a text string in the clipboard.
+    /// 请求把文本串存入剪贴板。
     ClipboardStore(ClipboardType, String),
 
-    /// Request to write the contents of the clipboard to the PTY.
+    /// 请求把剪贴板内容写入 PTY。
     ///
-    /// The attached function is a formatter which will correctly transform the clipboard content
-    /// into the expected escape sequence format.
+    /// 附带的函数是格式化器,把剪贴板内容正确变换为
+    /// 期望的转义序列格式。
     ClipboardLoad(ClipboardType, Arc<dyn Fn(&str) -> String + Sync + Send + 'static>),
 
-    /// Request to write the RGB value of a color to the PTY.
+    /// 请求把某颜色的 RGB 值写入 PTY。
     ///
-    /// The attached function is a formatter which will correctly transform the RGB color into the
-    /// expected escape sequence format.
+    /// 附带的函数是格式化器,把 RGB 颜色正确变换为
+    /// 期望的转义序列格式。
     ColorRequest(usize, Arc<dyn Fn(Rgb) -> String + Sync + Send + 'static>),
 
-    /// Write some text to the PTY.
+    /// 向 PTY 写一些文本。
     ///
-    /// Wrapped in `Arc` so multi-window fan-out clones a pointer instead of
-    /// duplicating the heap allocation. Hot path: DSR/CPR responses, device
-    /// attribute queries, and similar PTY-output escape sequences that may
-    /// be sent to every terminal window.
+    /// 包在 `Arc` 里,使多窗口扇出克隆指针而非复制
+    /// 堆分配。热路径:DSR/CPR 应答、设备
+    /// 属性查询等可能发给每个终端窗口的
+    /// PTY 输出转义序列。
     PtyWrite(Arc<String>),
 
-    /// Request to write the text area size.
+    /// 请求写入文本区尺寸。
     TextAreaSizeRequest(Arc<dyn Fn(WindowSize) -> String + Sync + Send + 'static>),
 
-    /// Cursor blinking state has changed.
+    /// 光标闪烁状态变化。
     CursorBlinkingChange,
 
-    /// New terminal content available.
+    /// 新的终端内容可用。
     Wakeup,
 
-    /// Terminal bell ring.
+    /// 终端响铃。
     Bell,
 
-    /// Shutdown request.
+    /// 关闭请求。
     Exit,
 
-    /// Child process exited.
+    /// 子进程退出。
     ChildExit(ExitStatus),
 
-    /// Shell integration semantic mark (OSC 133).
+    /// shell 集成语义标记(OSC 133)。
     ShellMark(ShellMark),
 
-    /// Working directory changed via OSC 7.
+    /// 工作目录经 OSC 7 变化。
     CwdChanged(String),
 
-    /// GAP-09: desktop notification (OSC 9/99/777 or bell-derived).
+    /// GAP-09:桌面通知(OSC 9/99/777 或响铃合成)。
     Notification(Notification),
 
-    /// T-core-graphics: decoded graphics image (Sixel / Kitty / iTerm2).
-    /// Carries either decoded RGBA pixels or a still-encoded payload plus
-    /// the grid placement; the renderer decides when to blit.
+    /// T-core-graphics:解码后的图形图像(Sixel / Kitty / iTerm2)。
+    /// 携带已解码 RGBA 像素或仍为编码态的载荷,以及
+    /// 网格放置;渲染器决定何时 blit。
     GraphicsImage(GraphicsImage),
 
-    /// T-core-plugin-runtime v3: parser hook output. Plugins register a
-    /// `TerminalParserHook` Provides capability; the host forwards any
-    /// `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` sequence here so
-    /// the plugin's `HostFn::Parser` callback can act on it. `name` is
-    /// the plugin's manifest name (lowercase, `[a-z0-9_-]+`); `payload`
-    /// is the raw bytes between the second `;` and the terminator.
+    /// T-core-plugin-runtime v3:解析器钩子输出。插件注册
+    /// `TerminalParserHook` Provides 能力;宿主转发任何
+    /// `\x1b]1337;PureTerm-Plugin-<name>;<payload>\x07` 序列到这里,
+    /// 由插件的 `HostFn::Parser` 回调处理。`name` 为
+    /// 插件清单名(小写、`[a-z0-9_-]+`);`payload` 为
+    /// 第二个 `;` 与终止符之间的原始字节。
     PluginOsc(PluginOsc),
 }
 
@@ -281,11 +281,11 @@ impl Debug for Event {
     }
 }
 
-/// Byte sequences are sent to a `Notify` in response to some events.
+/// 字节序列以响应某些事件发送给 `Notify`。
 pub trait Notify {
-    /// Notify that an escape sequence should be written to the PTY.
+    /// 通知把一段转义序列写入 PTY。
     ///
-    /// TODO this needs to be able to error somehow.
+    /// TODO:这需要某种错误报告能力。
     fn notify<B: Into<Cow<'static, [u8]>>>(&self, _: B);
 }
 
@@ -297,17 +297,17 @@ pub struct WindowSize {
     pub cell_height: u16,
 }
 
-/// Types that are interested in when the display is resized.
+/// 关注显示尺寸何时变化的所有类型。
 pub trait OnResize {
     fn on_resize(&mut self, window_size: WindowSize);
 }
 
-/// Event Loop for notifying the renderer about terminal events.
+/// 把终端事件通知渲染器的事件循环。
 pub trait EventListener {
     fn send_event(&self, _event: Event) {}
 }
 
-/// Null sink for events.
+/// 事件的空接收器。
 pub struct VoidListener;
 
 impl EventListener for VoidListener {}

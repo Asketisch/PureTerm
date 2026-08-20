@@ -1,21 +1,20 @@
-//! GAP-7.8: agent-browser command execution layer.
+//! GAP-7.8：agent 浏览器命令执行层。
 //!
-//! Drives an embedded WebView pane over JSON-RPC (`browser.*`). Each op maps
-//! to a tiny JS payload; wry's `evaluate_script_with_callback` runs it and
-//! hands the (Promise-aware, on WKWebView) return value back as a JSON string.
-//! We correlate **per-op** via a `tokio::sync::oneshot` captured in that
-//! callback — no global pending registry, no subscription plumbing. The iced
-//! `Task::perform` that owns the other end of the oneshot adds a `tokio::time`
-//! backstop so a vanished callback (page navigated mid-op) can never hang the
-//! JSON-RPC reply.
+//! 通过 JSON-RPC（`browser.*`）驱动内嵌的 WebView 面板。每个操作映射到
+//! 一小段 JS 载荷；wry 的 `evaluate_script_with_callback` 执行它，并把
+//! （WKWebView 上可感知 Promise 的）返回值以 JSON 字符串形式交还。
+//! 我们**按操作**通过捕获在该回调中的 `tokio::sync::oneshot` 关联——
+//! 没有全局待处理注册表，没有订阅管道。持有 oneshot 另一端的 iced
+//! `Task::perform` 加了 `tokio::time` 兜底，使消失的回调（操作中途页面
+//! 跳转）永远不会挂起 JSON-RPC 回复。
 //!
-//! MVP ops: navigate / click / type / extract / scroll / wait / get_url /
-//! get_title + `screenshot` (real WKWebView snapshot via `takeSnapshotWith…`,
-//! macOS-only; other platforms get a structured "macOS-only" error). Adding an
-//! op = (1) a `BrowserOp` arm (2) a `build_js` arm (3) a `parse_op` arm (4) a
-//! CLI subcommand; the IPC + EventBus + reply wiring is generic.
+//! MVP 操作：navigate / click / type / extract / scroll / wait / get_url /
+//! get_title + `screenshot`（通过 `takeSnapshotWith…` 拍摄真实 WKWebView
+//! 快照，仅 macOS；其他平台得到结构化的“仅 macOS”错误）。新增一个操作 =
+//! （1）加 `BrowserOp` 分支（2）加 `build_js` 分支（3）加 `parse_op` 分支
+//! （4）加 CLI 子命令；IPC + EventBus + 回复接线是通用的。
 //!
-//! See plan「GAP-3.5 + GAP-5.2 + GAP-7.8」Phase D.
+//! 参见计划「GAP-3.5 + GAP-5.2 + GAP-7.8」Phase D。
 
 use std::time::Duration;
 
@@ -24,34 +23,34 @@ use tokio::sync::oneshot;
 
 use super::BrowserContext;
 
-/// The wire "result" of an op, produced either by the JS callback (JS ops), by
-/// Rust directly (`navigate`/`screenshot`), or by the timeout backstop.
+/// 操作的线路“结果”：由 JS 回调（JS 操作）、Rust 直接生成
+/// （`navigate`/`screenshot`）或超时兜底产生。
 #[derive(Debug, Clone)]
 pub enum BrowserReply {
-    /// Op succeeded; carry the JSON result object (e.g. `{"clicked": true}`).
+    /// 操作成功；携带 JSON 结果对象（例如 `{"clicked": true}`）。
     Done(Value),
-    /// Op failed; the human-readable reason becomes the JSON-RPC error message.
+    /// 操作失败；人类可读的原因成为 JSON-RPC 错误消息。
     Error(String),
 }
 
-/// Everything the iced main loop needs to finish a `browser.*` request once the
-/// JS callback (or timeout) resolves. Carried by `Message::BrowserOpResolved`.
+/// 一旦 JS 回调（或超时）完成，iced 主循环完成 `browser.*` 请求所需的
+/// 全部信息。由 `Message::BrowserOpResolved` 携带。
 ///
-/// `reply_tx` is the cloned IPC reply handle (same pattern as
-/// `feed.request_approval`): the main loop sends exactly one response through
-/// it, taking the `oneshot::Sender` so a late timeout can't double-reply.
+/// `reply_tx` 是克隆的 IPC 回复句柄（与 `feed.request_approval` 相同的
+/// 模式）：主循环通过它恰好发送一次响应，取走 `oneshot::Sender`，使迟到
+/// 的超时无法二次回复。
 #[derive(Clone)]
 pub struct BrowserResolved {
     pub ipc_id: u64,
     pub reply_tx: crate::ipc::ReplyTx,
     pub reply: BrowserReply,
-    /// EventBus kind, e.g. `"browser.click"`.
+    /// EventBus 种类，例如 `"browser.click"`。
     pub ev_kind: String,
-    /// EventBus payload (op specifics, no outcome — the handler tags ok/error).
+    /// EventBus 载荷（操作的细节，不含结果——由处理器标注 ok/error）。
     pub ev_payload: Value,
 }
 
-// Manual `Debug` — `oneshot::Sender` isn't `Debug`, but `Message` derives it.
+// 手动 `Debug`——`oneshot::Sender` 不是 `Debug`，但 `Message` 派生它。
 impl std::fmt::Debug for BrowserResolved {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BrowserResolved")
@@ -62,9 +61,9 @@ impl std::fmt::Debug for BrowserResolved {
     }
 }
 
-/// The agent-browser op. Constructed from a `browser.<verb>` method + params by
-/// [`parse_op`]; serde-derived so it can be logged/serialized, but the live path
-/// builds it explicitly (the wire method name is the discriminant, not a tag).
+/// agent 浏览器操作。由 `browser.<动词>` 方法 + 参数经 [`parse_op`] 构造；
+/// 派生 serde 以便记录/序列化，但实时路径显式构建它（线路方法名是判别式，
+/// 不是标签）。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum BrowserOp {
     Navigate { url: String },
@@ -79,7 +78,7 @@ pub enum BrowserOp {
 }
 
 impl BrowserOp {
-    /// The verb half of the method name (`navigate` for `browser.navigate`).
+    /// 方法名的动词部分（`browser.navigate` 的 `navigate`）。
     pub fn verb(&self) -> &'static str {
         match self {
             BrowserOp::Navigate { .. } => "navigate",
@@ -94,8 +93,8 @@ impl BrowserOp {
         }
     }
 
-    /// EventBus payload describing the op (no outcome). The handler merges in
-    /// `ok`/`error` after resolution.
+    /// 描述该操作的 EventBus 载荷（不含结果）。处理器在完成后并入
+    /// `ok`/`error`。
     pub fn event_payload(&self) -> Value {
         match self {
             BrowserOp::Navigate { url } => json!({ "verb": "navigate", "url": url }),
@@ -118,9 +117,8 @@ impl BrowserOp {
         }
     }
 
-    /// How long the JS op may run before the Rust backstop replies with a
-    /// timeout error. `wait` is given its own (possibly caller-supplied)
-    /// deadline + grace; the rest are short.
+    /// JS 操作在 Rust 兜底回复超时错误前允许运行多久。`wait` 有自己的
+    /// （可能由调用方提供）截止时间 + 宽限；其余都是短超时。
     pub fn timeout(&self) -> Duration {
         match self {
             BrowserOp::Wait { .. } => Duration::from_millis(self.wait_deadline_ms() + 1_500),
@@ -128,7 +126,7 @@ impl BrowserOp {
         }
     }
 
-    /// Effective `wait` deadline in ms (caller override or 5 s default).
+    /// `wait` 的有效截止时间（毫秒）（调用方覆盖或默认 5 秒）。
     fn wait_deadline_ms(&self) -> u64 {
         if let BrowserOp::Wait { timeout_ms, .. } = self {
             timeout_ms.unwrap_or(5_000)
@@ -137,11 +135,10 @@ impl BrowserOp {
         }
     }
 
-    /// Sensitivity gate: a navigation to a **different origin** than the pane's
-    /// current page is audited as `browser.request` (the agent is steering the
-    /// browser somewhere new). MVP emits + proceeds; a full interactive
-    /// feed-panel block is deferred (the two-phase-reply wiring would need a
-    /// browser-specific approval overlay).
+    /// 敏感度闸门：导航到与面板当前页面**不同源**的地址会被审计为
+    /// `browser.request`（agent 正在把浏览器引向新位置）。MVP 会发出事件并
+    /// 继续；完整的交互式 feed 面板拦截被推迟（两阶段回复接线需要一个
+    /// 浏览器专用的审批浮层）。
     pub fn is_sensitive_navigate(&self, current_url: &str) -> Option<&str> {
         match self {
             BrowserOp::Navigate { url } if origin_of(url) != origin_of(current_url) => Some(url),
@@ -149,11 +146,10 @@ impl BrowserOp {
         }
     }
 
-    /// Build the JS for an op. Returns a value (or a Promise that resolves to
-    /// one) that wry serializes to JSON for the callback. Everything is wrapped
-    /// in try/catch so the callback **always** fires with a `{ok,…}` object —
-    /// WKWebView drops the completion handler on a thrown exception on some
-    /// platforms, and we never want to hang the reply.
+    /// 为一个操作构建 JS。返回一个值（或解析为该值的 Promise），wry 把它
+    /// 序列化为 JSON 传给回调。所有内容都包在 try/catch 中，使回调**总是**
+    /// 以 `{ok,…}` 对象触发——在某些平台上，WKWebView 会在抛出异常时丢弃
+    /// 完成处理器，而我们绝不想挂起回复。
     fn build_js(&self) -> String {
         match self {
             BrowserOp::Click { selector } => js_click(selector),
@@ -163,8 +159,8 @@ impl BrowserOp {
             BrowserOp::Wait { selector, .. } => js_wait(selector, self.wait_deadline_ms()),
             BrowserOp::GetUrl => "(function(){try{return {ok:true,url:location.href};}catch(e){return {ok:false,error:String(e&&e.message||e)};}})()".to_string(),
             BrowserOp::GetTitle => "(function(){try{return {ok:true,title:document.title};}catch(e){return {ok:false,error:String(e&&e.message||e)};}})()".to_string(),
-            // navigate/screenshot never reach build_js (handled in Rust); keep a
-            // defensive arm so the match stays exhaustive.
+            // navigate/screenshot 从不进入 build_js（在 Rust 中处理）；保留一个
+            // 防御性分支使 match 保持穷尽。
             BrowserOp::Navigate { .. } | BrowserOp::Screenshot => {
                 "(function(){return {ok:false,error:'op handled in Rust'};})()".to_string()
             }
@@ -172,13 +168,13 @@ impl BrowserOp {
     }
 }
 
-/// Kick off `op` against `ctx`. Resolves `tx` exactly once:
-/// - `navigate` → `ctx.load_url` + immediate ack (load is fire-and-forget).
-/// - `screenshot` → real WKWebView snapshot (`takeSnapshotWithConfiguration`,
-///   macOS-only); non-macOS resolves with a structured "macOS-only" error.
-/// - everything else → JS via `evaluate_script_with_callback`; the callback
-///   owns `tx`. If the webview isn't realized yet, resolve immediately with an
-///   error (the agent should `navigate` first / the pane is mid-attach).
+/// 对 `ctx` 启动 `op`。恰好解析一次 `tx`：
+/// - `navigate` → `ctx.load_url` + 立即确认（加载即发即忘）。
+/// - `screenshot` → 真实 WKWebView 快照（`takeSnapshotWithConfiguration`，
+///   仅 macOS）；非 macOS 以结构化的“仅 macOS”错误解析。
+/// - 其他 → 通过 `evaluate_script_with_callback` 执行 JS；回调持有 `tx`。
+///   若 webview 尚未就绪，立即以错误解析（agent 应先 `navigate` /
+///   面板正在挂载中）。
 pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<BrowserReply>) {
     match op {
         BrowserOp::Navigate { url } => {
@@ -193,9 +189,9 @@ pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<Browser
                 return;
             }
             // Real WKWebView snapshot (replaces the prior "wry 未暴露" stub). The
-            // `tx` moves into the Obj-C completion-handler block below; if the
-            // near-impossible `is_realized`/`take()` race drops it, the `rx` side
-            // surfaces "browser op channel closed" — same property as the JS path.
+            // `tx` 移入下面的 Obj-C 完成处理器块；若几乎不可能发生的
+            // `is_realized`/`take()` 竞争丢弃了它，`rx` 侧会报“浏览器操作通道已
+            // 关闭”——与 JS 路径性质相同。
             #[cfg(target_os = "macos")]
             {
                 let _ = ctx.with_wry_webview(|wk| macos_take_snapshot(wk, tx));
@@ -215,15 +211,14 @@ pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<Browser
                 return;
             }
             let js = other.build_js();
-            // wry's callback is `Fn` (not `FnOnce`), but `oneshot::Sender::send`
-            // consumes the sender. Guard it behind a `Mutex<Option<Sender>>` so
-            // the closure stays `Fn` and only the first invocation actually sends
-            // (a spurious second fire — e.g. page navigating mid-op — is a no-op).
+            // wry 的回调是 `Fn`（不是 `FnOnce`），但 `oneshot::Sender::send` 会消耗
+            // sender。把它放在 `Mutex<Option<Sender>>` 后面保护，使闭包保持 `Fn`，
+            // 且只有第一次调用真正发送（虚假的第二次触发——例如操作中途页面跳转——
+            // 是空操作）。
             let tx = std::sync::Mutex::new(Some(tx));
             ctx.evaluate_with_callback(&js, move |json_str| {
-                // `.ok()` (not `.unwrap()`): this closure fires on the wry/main
-                // thread; a poisoned mutex must not panic the GUI. Mirrors the
-                // screenshot completion-handler path below.
+                // `.ok()`（而非 `.unwrap()`）：此闭包在 wry/主线程触发；毒化的互斥锁
+                // 不能让 GUI panic。与下面的截图完成处理器路径一致。
                 if let Some(s) = tx.lock().ok().and_then(|mut g| g.take()) {
                     let _ = s.send(parse_js_reply(json_str));
                 }
@@ -232,16 +227,16 @@ pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<Browser
     }
 }
 
-/// GAP-7.8 (macOS): kick off a WKWebView `takeSnapshotWithConfiguration:
-/// completionHandler:` and wire its async completion into `tx`. WebKit fires the
-/// completion on a later main-loop iteration (guaranteed main thread).
+/// GAP-7.8（macOS）：启动 WKWebView `takeSnapshotWithConfiguration:
+/// completionHandler:` 并把它的异步完成接入 `tx`。WebKit 在稍后的
+/// 主循环迭代触发完成回调（保证在主线程）。
 ///
-/// `tx` is wrapped in `Mutex<Option<_>>` because the wry/block2 callback is `Fn`
-/// (not `FnOnce`) — the block sends exactly once via `take()`, so a spurious
-/// second fire is a no-op. Mirrors [`crate::macos_eyedropper::start_sample`].
-/// `wk` is `&WryWebView` (a `WKWebView` subclass); `takeSnapshot…` is an
-/// inherited `WKWebView` method, callable on it the same way wry itself calls
-/// `evaluateJavaScript…` / `loadRequest` on the same type.
+/// `tx` 用 `Mutex<Option<_>>` 包裹，因为 wry/block2 的回调是 `Fn`
+/// （不是 `FnOnce`）——块通过 `take()` 恰好发送一次，所以虚假的第二次
+/// 触发是空操作。与 [`crate::macos_eyedropper::start_sample`] 一致。
+/// `wk` 是 `&WryWebView`（`WKWebView` 的子类）；`takeSnapshot…` 是继承自
+/// `WKWebView` 的方法，可以像 wry 自身在同一类型上调用
+/// `evaluateJavaScript…` / `loadRequest` 那样调用它。
 #[cfg(target_os = "macos")]
 fn macos_take_snapshot(wk: &wry::WryWebView, tx: oneshot::Sender<BrowserReply>) {
     use block2::RcBlock;
@@ -250,8 +245,8 @@ fn macos_take_snapshot(wk: &wry::WryWebView, tx: oneshot::Sender<BrowserReply>) 
     use objc2_foundation::NSError;
     use std::sync::Mutex;
 
-    // `execute()` runs on the iced main thread, and takeSnapshot must too.
-    // Defensive: if somehow off-main, fail loudly rather than hit WebKit UB.
+    // `execute()` 在 iced 主线程运行，takeSnapshot 也必须在主线程。
+    // 防御性：若处于非主线程，大声失败而不是触发 WebKit 未定义行为。
     if MainThreadMarker::new().is_none() {
         let _ = tx.send(BrowserReply::Error(
             "screenshot: must run on the main thread".into(),
@@ -262,13 +257,13 @@ fn macos_take_snapshot(wk: &wry::WryWebView, tx: oneshot::Sender<BrowserReply>) 
     let tx_cell = Mutex::new(Some(tx));
     let block = RcBlock::new(move |img: *mut NSImage, err: *mut NSError| {
         let reply = if !err.is_null() {
-            // SAFETY: WebKit guarantees `err` is a valid NSError during callback.
+            // SAFETY：WebKit 保证回调期间 `err` 是有效的 NSError。
             let e: &NSError = unsafe { &*err };
             BrowserReply::Error(format!("screenshot failed: {}", e.localizedDescription()))
         } else if img.is_null() {
             BrowserReply::Error("screenshot returned a nil image".into())
         } else {
-            // SAFETY: WebKit guarantees `img` is a valid NSImage during callback.
+            // SAFETY：WebKit 保证回调期间 `img` 是有效的 NSImage。
             match unsafe { ns_image_to_png_data_url(&*img) } {
                 Ok(url) => BrowserReply::Done(json!({ "ok": true, "screenshot": url })),
                 Err(msg) => BrowserReply::Error(msg),
@@ -279,20 +274,20 @@ fn macos_take_snapshot(wk: &wry::WryWebView, tx: oneshot::Sender<BrowserReply>) 
         }
     });
 
-    // SAFETY: `wk` is a live WKWebView subclass instance; `block` is a heap Fn
-    // block whose lifetime RcBlock guarantees. The call returns immediately —
-    // `block` fires on a later main-loop tick, sending once on `tx`.
-    // `None` config = WebKit defaults (full bounds).
+    // SAFETY：`wk` 是存活的 WKWebView 子类实例；`block` 是堆上 Fn 块，
+    // 其生命周期由 RcBlock 保证。调用立即返回——`block` 在稍后的主循环
+    // tick 触发，在 `tx` 上发送一次。
+    // `None` 配置 = WebKit 默认值（完整边界）。
     unsafe {
         wk.takeSnapshotWithConfiguration_completionHandler(None, &block);
     }
 }
 
-/// GAP-7.8 (macOS): `NSImage` → `data:image/png;base64,…`. Chain:
-/// TIFF data → `NSBitmapImageRep` → PNG rep → bytes → base64.
+/// GAP-7.8（macOS）：`NSImage` → `data:image/png;base64,…`。链路：
+/// TIFF 数据 → `NSBitmapImageRep` → PNG 表示 → 字节 → base64。
 ///
-/// # Safety
-/// `img` must point to a valid `NSImage` for the duration of this call.
+/// # 安全性
+/// 本次调用期间 `img` 必须指向有效的 `NSImage`。
 #[cfg(target_os = "macos")]
 unsafe fn ns_image_to_png_data_url(img: &objc2_app_kit::NSImage) -> Result<String, String> {
     use base64::Engine;
@@ -301,15 +296,15 @@ unsafe fn ns_image_to_png_data_url(img: &objc2_app_kit::NSImage) -> Result<Strin
     use std::ffi::c_void;
     use std::ptr::NonNull;
 
-    // NSImage → TIFF data.
+    // NSImage → TIFF 数据。
     let tiff = img
         .TIFFRepresentation()
         .ok_or_else(|| "screenshot: NSImage produced no TIFF data".to_string())?;
-    // TIFF data → a bitmap rep.
+    // TIFF 数据 → 位图表示。
     let rep = NSBitmapImageRep::imageRepWithData(&tiff)
         .ok_or_else(|| "screenshot: could not build NSBitmapImageRep".to_string())?;
-    // Bitmap rep → PNG bytes. `properties` is an empty dict (no PNG options);
-    // `NSBitmapImageRepPropertyKey` is a type alias for `NSString`.
+    // 位图表示 → PNG 字节。`properties` 是空字典（无 PNG 选项）；
+    // `NSBitmapImageRepPropertyKey` 是 `NSString` 的类型别名。
     let props = NSDictionary::<NSBitmapImageRepPropertyKey, objc2::runtime::AnyObject>::new();
     let png = unsafe { rep.representationUsingType_properties(NSBitmapImageFileType::PNG, &props) }
         .ok_or_else(|| "screenshot: PNG encoding returned no data".to_string())?;
@@ -317,8 +312,8 @@ unsafe fn ns_image_to_png_data_url(img: &objc2_app_kit::NSImage) -> Result<Strin
     let len = png.length();
     let mut buf = vec![0u8; len];
     if len > 0 {
-        // SAFETY: `png` is a valid NSData of exactly `len` bytes; `buf` is `len`
-        // bytes of writable storage.
+        // SAFETY：`png` 是恰好 `len` 字节的有效 NSData；`buf` 是 `len` 字节
+        // 可写存储。
         unsafe {
             png.getBytes_length(NonNull::new_unchecked(buf.as_mut_ptr() as *mut c_void), len);
         }
@@ -327,9 +322,9 @@ unsafe fn ns_image_to_png_data_url(img: &objc2_app_kit::NSImage) -> Result<Strin
     Ok(format!("data:image/png;base64,{b64}"))
 }
 
-/// Interpret the wry callback payload. Empty → the JS returned null/undefined
-/// or threw (page may have navigated). `{ok:false,error}` → op-level error.
-/// Anything else → the op's result object.
+/// 解读 wry 回调载荷。空 → JS 返回了 null/undefined 或抛出了异常
+/// （页面可能已跳转）。`{ok:false,error}` → 操作级错误。其他 → 操作的
+/// 结果对象。
 fn parse_js_reply(s: String) -> BrowserReply {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -345,15 +340,15 @@ fn parse_js_reply(s: String) -> BrowserReply {
                 .to_string(),
         ),
         Ok(v) => BrowserReply::Done(v),
-        // Non-object fragment (e.g. a bare string) — wrap as the result.
+        // 非对象片段（例如裸字符串）——作为结果包裹。
         Err(_) => BrowserReply::Done(Value::String(s)),
     }
 }
 
-// ── Method → op parsing ──────────────────────────────────────────────────
+// ── 方法 → 操作解析 ──────────────────────────────────────────────────
 
-/// Parse a `browser.<verb>` method + params into a [`BrowserOp`]. `pane_id` is
-/// consumed by the caller (it's a pane selector, not part of the op).
+/// 把 `browser.<动词>` 方法 + 参数解析为 [`BrowserOp`]。`pane_id` 由
+/// 调用方消费（它是面板选择器，不是操作的一部分）。
 pub fn parse_op(method: &str, params: Option<&Value>) -> Result<BrowserOp, String> {
     let verb = method.strip_prefix("browser.").unwrap_or(method);
     let p = |k: &str| params.and_then(|v| v.get(k));
@@ -363,10 +358,10 @@ pub fn parse_op(method: &str, params: Option<&Value>) -> Result<BrowserOp, Strin
     match verb {
         "navigate" => {
             let raw = s("url").ok_or_else(|| "missing 'url'".to_string())?;
-            // GAP-7.8: normalize via the shared `loadable_url` core so a bare
-            // `localhost:8080` actually loads (WKWebView can't take it raw).
-            // Strict — non-URL input errors instead of a silent search fallback
-            // (an agent should hear about garbage, not land on a search page).
+            // GAP-7.8：通过共享的 `loadable_url` 核心规范化，使裸的
+            // `localhost:8080` 真正可加载（WKWebView 不能直接接受它）。
+            // 严格——非 URL 输入直接报错，而不是静默回退到搜索
+            // （agent 应当被告知垃圾输入，而不是落在搜索页上）。
             let url = super::url::loadable_url(raw)
                 .ok_or_else(|| format!("not a loadable URL: {raw:?}"))?;
             Ok(BrowserOp::Navigate { url })
@@ -398,17 +393,17 @@ pub fn parse_op(method: &str, params: Option<&Value>) -> Result<BrowserOp, Strin
     }
 }
 
-/// GAP-7.8 Phase C verdict: is a tunnel's reported `status` safe to bind a
-/// webview's SOCKS5 proxy to?
+/// GAP-7.8 Phase C 判定：隧道报告的 `status` 是否安全到可以把 webview 的
+/// SOCKS5 代理绑定到它？
 ///
-/// `bind_browser_tunnel` reads `local_addr` from the daemon's tunnel list, but
-/// `local_addr` is recorded even for `stopped` / `failed` / `need_auth` /
-/// `connecting` tunnels (`pureterm-daemon::tunnel` keeps the would-be address
-/// with no live listener). Binding one of those rebuilds the webview pointing
-/// at a dead port and `navigate` then acks `{navigated:true}` while the page
-/// never loads — a silent fake-success. Filtering on `status` (not just the
-/// presence of `local_addr`) is what prevents it. Status strings are contracted
-/// (`tunnel.rs::status_strings_match_cli_contract`).
+/// `bind_browser_tunnel` 从守护进程的隧道列表读取 `local_addr`，但
+/// `stopped` / `failed` / `need_auth` / `connecting` 隧道也会记录
+/// `local_addr`（`pureterm-daemon::tunnel` 保留了一个没有存活监听器的
+/// 预备地址）。绑定其中任何一个都会让 webview 指向一个死端口，
+/// `navigate` 随后确认 `{navigated:true}` 而页面从不加载——一个静默的
+/// 假成功。按 `status` 过滤（而不只是看 `local_addr` 是否存在）正是为了
+/// 防止这一点。状态字符串是有约定的
+/// （`tunnel.rs::status_strings_match_cli_contract`）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum BindTunnelVerdict {
     Bind,
@@ -422,15 +417,15 @@ pub(crate) fn bind_tunnel_verdict(status: &str) -> BindTunnelVerdict {
         "stopped" => BindTunnelVerdict::Reject("tunnel is stopped"),
         "failed" => BindTunnelVerdict::Reject("tunnel failed to connect"),
         "need_auth" => BindTunnelVerdict::Reject("tunnel is waiting for authentication"),
-        // Unknown status string (e.g. a future daemon variant) — refuse rather
-        // than risk binding to a non-live listener.
+        // 未知的状态字符串（例如未来的守护进程变体）——拒绝，而不是冒险绑定
+        // 到非存活监听器。
         _ => BindTunnelVerdict::Reject("tunnel is not connected"),
     }
 }
 
-// ── JS builders ──────────────────────────────────────────────────────────
+// ── JS 构建器 ──────────────────────────────────────────────────────────
 
-/// Embed `s` as a safe JS string literal (JSON string == JS string literal).
+/// 把 `s` 嵌入为安全的 JS 字符串字面量（JSON 字符串 == JS 字符串字面量）。
 fn js_str(s: &str) -> String {
     serde_json::to_string(s).unwrap_or_else(|_| "''".into())
 }
@@ -471,9 +466,9 @@ fn js_scroll(x: i64, y: i64, selector: Option<&str>) -> String {
     )
 }
 
-/// `wait` returns a **Promise**; WKWebView's `evaluateJavaScript` awaits it and
-/// fires the wry callback on settlement — so the Rust side gets exactly one
-/// resolution (found / timeout) without polling.
+/// `wait` 返回一个 **Promise**；WKWebView 的 `evaluateJavaScript` 会等待它，
+/// 并在结算时触发 wry 回调——因此 Rust 侧无需轮询就能得到恰好一次
+/// 解析（找到 / 超时）。
 fn js_wait(selector: &str, timeout_ms: u64) -> String {
     let sel = js_str(selector);
     format!(
@@ -481,8 +476,8 @@ fn js_wait(selector: &str, timeout_ms: u64) -> String {
     )
 }
 
-/// Best-effort origin (`scheme://host[:port]`) for the sensitivity gate. Drops
-/// path/query/userinfo. Two URLs with the same origin aren't "sensitive".
+/// 敏感度闸门用的尽力而为的 origin（`scheme://host[:port]`）。去掉
+/// 路径/查询/用户信息。同源的两个 URL 不算“敏感”。
 fn origin_of(url: &str) -> String {
     let no_frag = url.split('#').next().unwrap_or(url);
     let no_query = no_frag.split('?').next().unwrap_or(no_frag);
@@ -494,7 +489,7 @@ fn origin_of(url: &str) -> String {
 }
 
 fn origin_host(rest: &str) -> String {
-    // Take up to the first '/' (strip path); keep host[:port].
+    // 取到第一个 '/' 为止（去掉路径）；保留 host[:port]。
     rest.split('/').next().unwrap_or(rest).to_string()
 }
 
@@ -511,14 +506,14 @@ mod tests {
 
     #[test]
     fn parse_navigate_normalizes_loadable_url() {
-        // GAP-7.8: bare host:port is made loadable (the motivating dev-server
-        // case — `browser navigate localhost:8080` must reach WKWebView with a
-        // scheme). Already-schemed input passes through unchanged.
+        // GAP-7.8：裸的 host:port 会被转成可加载（动机是开发服务器场景——
+        // `browser navigate localhost:8080` 必须以带 scheme 的形式到达
+        // WKWebView）。已有 scheme 的输入原样通过。
         let op = parse_op("browser.navigate", Some(&json!({"url":"localhost:8080"}))).unwrap();
         assert!(matches!(op, BrowserOp::Navigate { url } if url == "http://localhost:8080"));
         let op = parse_op("browser.navigate", Some(&json!({"url":"example.com"}))).unwrap();
         assert!(matches!(op, BrowserOp::Navigate { url } if url == "https://example.com"));
-        // Non-URL input is rejected — no silent search fallback on the agent path.
+        // 非 URL 输入被拒绝——agent 路径上不做静默搜索回退。
         assert!(parse_op("browser.navigate", Some(&json!({"url":"hello world"}))).is_err());
     }
 
@@ -569,9 +564,9 @@ mod tests {
     fn sensitivity_flags_cross_origin_only() {
         let nav = BrowserOp::Navigate { url: "https://other.example/page".into() };
         assert!(nav.is_sensitive_navigate("https://example.com/").is_some());
-        // same origin, different path → not sensitive
+        // 同源不同路径 → 不敏感
         assert!(nav.is_sensitive_navigate("https://other.example/home").is_none());
-        // non-navigate ops are never sensitive
+        // 非 navigate 操作从不敏感
         assert!(BrowserOp::Click { selector: "x".into() }.is_sensitive_navigate("https://a.io/").is_none());
     }
 
@@ -604,16 +599,16 @@ mod tests {
         let tricky = "a'\"</script>";
         let js = js_type(tricky, tricky);
         assert!(js.contains("function"));
-        // The raw quote/backslash must NOT leak unescaped into the IIFE arg list
-        // (it's inside a JSON-quoted JS string). Sanity: balanced parens.
+        // 原始引号/反斜杠绝不能未转义地漏进 IIFE 参数列表
+        // （它位于 JSON 引号包裹的 JS 字符串内）。合理性检查：括号平衡。
         assert_eq!(js.matches('(').count(), js.matches(')').count());
     }
 
     #[test]
     fn bind_verdict_only_allows_connected() {
-        // GAP-7.8: only a `connected` tunnel has a live SOCKS5 listener; every
-        // other recorded status still carries a (dead) `local_addr` and must be
-        // refused so `navigate` can't fake-success onto a dead proxy.
+        // GAP-7.8：只有 `connected` 隧道有存活的 SOCKS5 监听器；其他已记录
+        // 的状态仍带有（死掉的）`local_addr`，必须拒绝，使 `navigate` 无法对
+        // 死代理假成功。
         assert_eq!(bind_tunnel_verdict("connected"), BindTunnelVerdict::Bind);
 
         for (status, want_contains) in [

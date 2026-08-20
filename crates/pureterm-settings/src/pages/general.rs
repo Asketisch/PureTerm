@@ -91,14 +91,14 @@ impl GeneralState {
                 crate::config_io::set_string(doc, &["terminal"], "osc52", &v);
             }
             GeneralMsg::LocaleChanged(_display) => {
-                // Locale change is handled in app.rs before this is called
+                // locale 变更在 app.rs 中先于此调用被处理
             }
         }
     }
 
-    /// Replay this page's in-memory state onto `doc`. Used at Save time to
-    /// patch the latest on-disk document under the `mutate_config` lock,
-    /// instead of writing back the (potentially stale) document we loaded
+    /// 把本页内存状态重放到 `doc` 上。保存时经
+    /// `mutate_config` 锁补丁最新的磁盘文档,
+    /// 而不是写回(可能过期的)加载时的文档
     /// when settings opened. See plan §改动 4.
     pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
         if self.shell.is_empty() {
@@ -126,7 +126,7 @@ impl GeneralState {
 }
 
 pub fn view(state: &GeneralState, i18n: &I18n) -> Element<'static, Message> {
-    // Language selector
+    // 语言选择器
     let locale_options: Vec<String> = i18n
         .available_locales()
         .iter()

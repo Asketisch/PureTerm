@@ -1,32 +1,32 @@
-//! GAP-7.6: agent process detection.
+//! GAP-7.6:agent 进程检测。
 //!
-//! Enumerate running processes on the host and match them against the `detect`
-//! substrings declared in `[[vault.agents]]`. Used by `pureterm agents detect`
-//! to surface agents running *outside* PureTerm (e.g. a `claude` started in
-//! another terminal) so the user can resume them in a new pane.
+//! 枚举主机上运行的进程,与 `[[vault.agents]]` 里声明的 `detect`
+//! 子串进行匹配。`pureterm agents detect` 用它发现运行在 *PureTerm*
+//! *外部* 的 agent(例如在另一个终端里启动的 `claude`),
+//! 以便用户在新的窗格中恢复它们。
 //!
-//! Platform model mirrors `status_bar.rs` / `idle_probe.rs`: macOS shells out
-//! to `ps`, Linux reads `/proc`. No `sysinfo` dependency — keep process
-//! enumeration consistent with existing code; detection is low-frequency
-//! (startup + manual CLI), not a hot path.
+//! 平台模型与 `status_bar.rs` / `idle_probe.rs` 一致:macOS 使用
+//! `ps`,Linux 读取 `/proc`。不引入 `sysinfo` 依赖——保持
+//! 与既有代码一致的进程枚举;检测属于低频操作
+//! (启动 + 手动 CLI),不是热路径。
 //!
-//! `detect` is a **substring** (not a shell command, unlike cmux's style) to
-//! avoid injection and shell-portability pitfalls.
+//! `detect` 是**子串**(不是 shell 命令,与 cmux 的风格不同),
+//! 以避免注入与跨 shell 兼容性问题。
 
 use crate::app_config::VaultAgentEntry;
 
-/// A host process that matched a `[[vault.agents]]` `detect` substring.
+/// 匹配了某个 `[[vault.agents]]` `detect` 子串的主机进程。
 #[derive(Debug, Clone)]
 pub struct DetectedAgent {
-    /// The matching `[[vault.agents]]` kind.
+    /// 匹配到的 `[[vault.agents]]` kind。
     pub kind: String,
     pub pid: u32,
-    /// `comm + " " + args` of the matched process (for display/diagnostics).
+    /// 匹配进程的 `comm + " " + args`(用于展示 / 诊断)。
     pub cmdline: String,
 }
 
-/// Effective `detect` substring for an entry: the configured value, or the
-/// lowercased `kind` if absent.
+/// 条目的有效 `detect` 子串:配置值,
+/// 若缺省则为小写的 `kind`。
 fn detect_substring(entry: &VaultAgentEntry) -> String {
     entry
         .detect
@@ -34,9 +34,9 @@ fn detect_substring(entry: &VaultAgentEntry) -> String {
         .unwrap_or_else(|| entry.kind.to_lowercase())
 }
 
-/// Process base names that almost never *are* the agent but frequently contain
-/// the agent name as an argument (e.g. `grep claude`). Excluded to cut false
-/// positives. Also covers shells/multiplexers for safety.
+/// 几乎从不 *是* agent、却常把 agent 名当参数的进程基名
+/// (例如 `grep claude`)。排除它们以减少误报;
+/// 同时覆盖 shell / 多路复用器以保证安全。
 fn is_filter_process(comm_base: &str) -> bool {
     matches!(
         comm_base,
@@ -53,10 +53,10 @@ fn is_filter_process(comm_base: &str) -> bool {
     )
 }
 
-/// Enumerate all host processes as `(pid, comm, cmdline)`.
+/// 枚举全部主机进程为 `(pid, comm, cmdline)`。
 #[cfg(target_os = "macos")]
 fn enumerate_processes() -> Vec<(u32, String, String)> {
-    // Trailing `=` on each field suppresses the header row.
+    // 每个字段末尾的 `=` 用于抑制表头行。
     let output = match std::process::Command::new("ps")
         .args(["-axo", "pid=,comm=,args="])
         .output()
@@ -67,7 +67,7 @@ fn enumerate_processes() -> Vec<(u32, String, String)> {
     parse_ps_table(&String::from_utf8_lossy(&output.stdout))
 }
 
-/// Enumerate all host processes as `(pid, comm, cmdline)`.
+/// 枚举全部主机进程为 `(pid, comm, cmdline)`。
 #[cfg(target_os = "linux")]
 fn enumerate_processes() -> Vec<(u32, String, String)> {
     let mut out = Vec::new();
@@ -86,7 +86,7 @@ fn enumerate_processes() -> Vec<(u32, String, String)> {
             .ok()
             .map(|s| s.trim().to_string())
             .unwrap_or_default();
-        // `/proc/<pid>/cmdline` is NUL-separated; join argv with spaces.
+        // `/proc/<pid>/cmdline` 以 NUL 分隔;用空格拼接 argv。
         let cmdline = std::fs::read(format!("/proc/{pid}/cmdline"))
             .ok()
             .map(|bytes| {
@@ -104,16 +104,16 @@ fn enumerate_processes() -> Vec<(u32, String, String)> {
     out
 }
 
-/// Non-macOS/non-Linux targets (e.g. Windows): detection unsupported, return
-/// empty. Cold-resume (GAP-7.5) still works there; only host-wide scan is a
-/// no-op.
+/// 非 macOS / 非 Linux 目标(如 Windows):检测不可用,返回
+/// 空列表。冷恢复(GAP-7.5)在那里仍可用;只有
+/// 全主机扫描为空操作。
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn enumerate_processes() -> Vec<(u32, String, String)> {
     Vec::new()
 }
 
-/// Parse `ps -axo pid=,comm=,args=` rows: leading digits = pid, next token =
-/// comm (a path), remainder = args. Our own pid is excluded at parse time.
+/// 解析 `ps -axo pid=,comm=,args=` 输出行:前导数字 = pid,
+/// 下一个 token = comm(路径),其余 = args。解析时排除我们自己的 pid。
 fn parse_ps_table(stdout: &str) -> Vec<(u32, String, String)> {
     let self_pid = std::process::id();
     let mut out = Vec::new();
@@ -139,16 +139,16 @@ fn parse_ps_table(stdout: &str) -> Vec<(u32, String, String)> {
     out
 }
 
-/// Case-insensitive substring match. Empty needle never matches.
+/// 大小写不敏感的子串匹配。空 needle 永不匹配。
 fn matches_detect(haystack_lower: &str, needle: &str) -> bool {
     let needle = needle.to_lowercase();
     !needle.is_empty() && haystack_lower.contains(&needle)
 }
 
-/// Scan host processes and return those matching any `[[vault.agents]]`
-/// `detect` substring. Each process is attributed to the first matching kind.
-/// Filter processes (grep/rg/ps/shells/...) and our own pid are excluded to
-/// cut false positives (e.g. `detect = "claude"` matching `grep claude`).
+/// 扫描主机进程,返回匹配任意 `[[vault.agents]]` `detect` 子串的进程。
+/// 每个进程归属于第一个匹配的 kind。过滤进程
+/// (grep/rg/ps/shell/...)以及自身 pid 都会被排除,
+/// 以减少误报(例如 `detect = "claude"` 匹配到 `grep claude`)。
 pub fn scan(agents: &[VaultAgentEntry]) -> Vec<DetectedAgent> {
     if agents.is_empty() {
         return Vec::new();
@@ -159,7 +159,7 @@ pub fn scan(agents: &[VaultAgentEntry]) -> Vec<DetectedAgent> {
         if is_filter_process(comm_base) {
             continue;
         }
-        // Match against `comm` + `args` (case-insensitive).
+        // 对 `comm` + `args` 做匹配(大小写不敏感)。
         let haystack_lower = format!("{comm} {args}").to_lowercase();
         for entry in agents {
             if matches_detect(&haystack_lower, &detect_substring(entry)) {
@@ -168,22 +168,22 @@ pub fn scan(agents: &[VaultAgentEntry]) -> Vec<DetectedAgent> {
                     pid,
                     cmdline: format!("{comm} {args}").trim().to_string(),
                 });
-                break; // first matching kind wins
+                break; // 第一个匹配的 kind 生效
             }
         }
     }
     out
 }
 
-/// Cross-reference detected agents with persisted `agent_sessions` records,
-/// attaching the most-recent (`last_seen`) session_id per kind when available.
+/// 将检测到的 agent 与持久化的 `agent_sessions` 记录交叉引用,
+/// 每个 kind 尽可能附加最近(`last_seen`)的 session_id。
 ///
-/// `load` is injected so the kind-LATEST heuristic is unit-testable without the
-/// on-disk session store; the public `with_sessions` passes `agent_sessions::load`.
+/// 注入 `load` 使“kind 最新”启发式无需磁盘即可单测;公开的
+/// `with_sessions` 传入 `agent_sessions::load`。
 ///
-/// **Limitation**: detected host processes carry no pid↔session_id link (the
-/// session store keys on kind, not pid), so the attached id is the kind's
-/// latest known session — a *resume hint*, not a proven correspondence.
+/// **局限**:检测到的主机进程不带 pid↔session_id 关联
+/// (会话存储按 kind 而非 pid 建键),因此附加的 id 是
+/// 该 kind 最近已知的会话——是 *恢复提示*,并非确凿的对应。
 pub fn with_sessions_from(
     detected: Vec<DetectedAgent>,
     load: impl Fn(&str) -> Vec<crate::agent_sessions::AgentSessionRecord>,
@@ -202,9 +202,9 @@ pub fn with_sessions_from(
         .collect()
 }
 
-/// Cross-reference detected agents with the on-disk `agent_sessions` store,
-/// attaching the most-recent (`last_seen`) session_id per kind when available.
-/// See [`with_sessions_from`] for the limitation (kind-LATEST heuristic).
+/// 将检测到的 agent 与磁盘上的 `agent_sessions` 存储交叉引用,
+/// 每个 kind 尽可能附加最近(`last_seen`)的 session_id。
+/// 局限见 [`with_sessions_from`](kind-LATEST 启发式)。
 pub fn with_sessions(
     detected: Vec<DetectedAgent>,
 ) -> Vec<(DetectedAgent, Option<String>)> {
@@ -231,10 +231,10 @@ mod tests {
 
     #[test]
     fn with_sessions_attaches_kind_latest_session_id() {
-        // Inject a loader returning seeded records; assert the kind-LATEST
-        // heuristic (max last_seen). DOCUMENTED LIMITATION: the attached id is
-        // the kind's latest known session — a resume HINT, not a proven
-        // pid↔session correspondence (host pids carry no session link).
+        // 注入一个返回种子记录的加载器;断言“kind 最新”启发式
+        // (取最大 last_seen)。文档中的局限:附加的 id 是该 kind
+        // 最近已知的会话——是恢复提示,并非确凿的
+        // pid↔session 对应(主机 pid 不带会话关联)。
         let detected_vec = vec![detected("claude-code", 1)];
         let out = with_sessions_from(detected_vec, |_| vec![rec("old", 1), rec("new", 2)]);
         assert_eq!(out.len(), 1);
@@ -285,7 +285,7 @@ mod tests {
     fn parse_ps_table_skips_self_and_headerless() {
         let stdout = "  123 /usr/local/bin/claude claude --resume abc\n  456 /bin/grep grep claude\n";
         let rows = parse_ps_table(stdout);
-        // Both non-self pids parsed; filtering happens in scan(), not here.
+        // 非自身 pid 都被解析;过滤发生在 scan() 中,而非这里。
         assert!(rows.iter().any(|(p, _, _)| *p == 123));
         assert!(rows.iter().any(|(p, _, _)| *p == 456));
     }
@@ -295,9 +295,9 @@ mod tests {
         assert!(scan(&[]).is_empty());
     }
 
-    /// Integration: spawn a known long-lived process and confirm `scan` finds
-    /// it. Polls up to ~2s (the host `ps`/`/proc` snapshot may lag the spawn)
-    /// and reaps the child via a Drop guard so a panic never orphans it.
+    /// 集成测试:启动一个已知的长生命周期进程,确认 `scan` 能找到
+    /// 它。最多轮询约 2 秒(宿主 `ps`/`/proc` 快照可能滞后于启动)
+    /// 并通过 Drop 守卫回收子进程,panic 也不会留下孤儿进程。
     #[test]
     fn scan_finds_spawned_sleep() {
         use std::time::{Duration, Instant};
@@ -310,7 +310,7 @@ mod tests {
             }
         }
 
-        // `sleep` is not a filter process and lives long enough to be sampled.
+        // `sleep` 不是过滤进程,且存活时间足够长可被采样。
         let child = std::process::Command::new("sleep")
             .arg("30")
             .spawn()

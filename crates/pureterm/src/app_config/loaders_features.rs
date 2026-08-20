@@ -24,7 +24,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-13: `[broadcast_input]`
+    /// GAP-13: `[broadcast_input]` —— 广播输入
     pub fn load_broadcast_input(path: &Path) -> crate::broadcast_input::BroadcastConfig {
         let mut cfg = crate::broadcast_input::BroadcastConfig::default();
         let Some(table) = Self::load_table(path, "broadcast_input") else {
@@ -36,7 +36,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-18: `[terminal].bidi_mode`
+    /// GAP-18: `[terminal].bidi_mode` —— 双向文本模式
     pub fn load_bidi_mode(path: &Path) -> crate::bidi::BidiMode {
         let Some(table) = Self::load_table(path, "terminal") else {
             return crate::bidi::BidiMode::default();
@@ -48,7 +48,7 @@ impl AppConfig {
             .unwrap_or_default()
     }
 
-    /// GAP-26: `[[workspace_groups]]`
+    /// GAP-26: `[[workspace_groups]]` —— 工作区分组
     pub fn load_workspace_groups(path: &Path) -> Vec<crate::workspace_groups::WorkspaceGroup> {
         #[derive(serde::Deserialize)]
         struct Wrap {
@@ -64,7 +64,7 @@ impl AppConfig {
             .unwrap_or_default()
     }
 
-    /// GAP-30: `[toolbelt]`
+    /// GAP-30: `[toolbelt]` —— 工具带
     pub fn load_toolbelt(path: &Path) -> crate::toolbelt::ToolbeltConfig {
         let mut cfg = crate::toolbelt::ToolbeltConfig::default();
         let Some(table) = Self::load_table(path, "toolbelt") else {
@@ -82,7 +82,7 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-31: `[quake]`
+    /// GAP-31: `[quake]` —— quake dock 下拉窗
     pub fn load_quake(path: &Path) -> crate::quake_dock::QuakeDockConfig {
         let mut cfg = crate::quake_dock::QuakeDockConfig::default();
         let Some(table) = Self::load_table(path, "quake") else {
@@ -97,9 +97,9 @@ impl AppConfig {
         cfg
     }
 
-    // ── P4 GAP config loaders ───────────────────────────────────────────
+    // ── P4 阶段 GAP 配置加载器 ─────────────────────────────────────────────────────
 
-    /// GAP-05: `[voice_input]`
+    /// GAP-05: `[voice_input]` —— 语音输入
     pub fn load_voice_input(path: &Path) -> crate::voice_input::VoiceInputConfig {
         let mut cfg = crate::voice_input::VoiceInputConfig::default();
         let Some(table) = Self::load_table(path, "voice_input") else {
@@ -117,10 +117,10 @@ impl AppConfig {
         cfg
     }
 
-    /// GAP-17: `[terminal_graphics]`. T-core-closure adds `max_image_bytes`
-    /// and `max_concurrent_images` so pathological chunked-graphics PNG
-    /// payloads (multi-MB) are rejected at the config level before they pin the
-    /// store.
+    /// GAP-17: `[terminal_graphics]`。T-core-closure 新增 `max_image_bytes`
+    /// 与 `max_concurrent_images`,使病态的超大分块图
+    /// 形 PNG 负载(数 MB)在钉住
+    /// 存储之前,于配置层即被拒绝。
     pub fn load_terminal_graphics(path: &Path) -> crate::terminal_graphics::TerminalGraphicsConfig {
         let mut cfg = crate::terminal_graphics::TerminalGraphicsConfig::default();
         let Some(table) = Self::load_table(path, "terminal_graphics") else {
@@ -138,15 +138,15 @@ impl AppConfig {
         cfg
     }
 
-    /// T-core-shaper v2: `[shaper]` block — backend, language, fallback chain.
+    /// T-core-shaper v2:`[shaper]` 配置块——后端、语言、回退链。
     ///
-    /// The loader in `shaper_config::ShaperConfig::load` does the actual
-    /// TOML parse; this is a thin alias for ergonomics.
+    /// 真正的 TOML 解析在 `shaper_config::ShaperConfig::load` 中完成,
+    /// 此处仅为易用性提供一个薄封装。
     pub fn load_shaper(path: &Path) -> crate::shaper_config::ShaperConfig {
         crate::shaper_config::ShaperConfig::load(path)
     }
 
-    /// Load the `[semantic_history]` table (GAP-36).
+    /// 加载 `[semantic_history]` 表(GAP-36)。
     pub fn load_semantic_history(path: &Path) -> SemanticHistoryConfig {
         let mut cfg = SemanticHistoryConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -172,7 +172,7 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[block_output]` table (GAP-51 scaffold).
+    /// 加载 `[block_output]` 表(GAP-51 脚手架)。
     pub fn load_block_output(path: &Path) -> BlockOutputConfig {
         let mut cfg = BlockOutputConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -192,10 +192,10 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[notification]` table (GAP-09). A missing/malformed table
-    /// yields `Default`. Mirrors `load_git`: read_to_string → toml::from_str →
-    /// walk `value.get("notification").as_table()`; each key is independently
-    /// optional.
+    /// 加载 `[notification]` 表(GAP-09)。缺失或格式错误的表
+    /// 回退为 `Default`。与 `load_git` 保持一致:read_to_string → toml::from_str →
+    /// 遍历 `value.get("notification").as_table()`;每个键均独立
+    /// 可选。
     pub fn load_notification(path: &Path) -> NotificationConfig {
         let mut cfg = NotificationConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -225,8 +225,8 @@ impl AppConfig {
             cfg.bell_passthrough = b;
         }
         if let Some(n) = table.get("bell_throttle_ms").and_then(|v| v.as_integer()) {
-            // Clamp to ≥0 (0 disables throttling, not divide-by-zero since the
-            // store compares wall-clock ms, not a modulo).
+            // 限制为 ≥0(0 表示不节流;不会除零,因为
+            // 存储比较的是墙钟毫秒数,而非取模)。
             cfg.bell_throttle_ms = n.max(0) as u64;
         }
         cfg

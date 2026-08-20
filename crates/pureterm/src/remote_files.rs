@@ -1,25 +1,25 @@
-//! GAP-43: remote file browse — sidebar Files tab via `remote.listdir` / `remote.read`.
+//! GAP-43:远程文件浏览——经 `remote.listdir` / `remote.read` 的侧边栏 Files 标签页。
 
 use std::path::Path;
 
 use crate::daemon_client::{self, RemoteFileEntry, RemoteFileRead, RemoteFindMatch};
 use crate::iced_app::Message;
 
-/// Max preview bytes for `remote.read` (matches daemon default).
+/// `remote.read` 的预览最大字节数(与守护进程默认一致)。
 pub const PREVIEW_MAX_BYTES: u64 = 65_536;
 
-/// Sidebar state for the Files tab (daemon session directory listing + preview).
+/// Files 标签页的侧边栏状态(守护进程会话的目录列表 + 预览)。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RemoteFilesState {
     pub path: String,
     pub entries: Vec<RemoteFileEntry>,
     pub loading: bool,
     pub error: Option<String>,
-    /// Session this listing belongs to (stale async results are ignored).
+    /// 该列表所属的会话(过期的异步结果会被忽略)。
     pub session_id: Option<String>,
-    /// Human-readable label for the sidebar header.
+    /// 侧边栏头部的人可读标签。
     pub session_label: Option<String>,
-    /// Selected file path (relative to session cwd root for listdir paths).
+    /// 选中的文件路径(对 listdir 路径而言是相对会话 cwd 根)。
     pub preview_path: Option<String>,
     pub preview_loading: bool,
     pub preview: Option<RemoteFileRead>,
@@ -160,7 +160,7 @@ fn sort_entries(mut entries: Vec<RemoteFileEntry>) -> Vec<RemoteFileEntry> {
     entries
 }
 
-/// Join a directory path with an entry name for `remote.listdir`.
+/// 为 `remote.listdir` 拼接目录路径与条目名。
 pub fn join_dir(base: &str, name: &str) -> String {
     if base == "." || base.is_empty() {
         name.to_string()
@@ -169,7 +169,7 @@ pub fn join_dir(base: &str, name: &str) -> String {
     }
 }
 
-/// Parent path for the "up" button (`None` at root).
+/// “向上”按钮的父路径(根目录时为 `None`)。
 pub fn parent_dir(path: &str) -> Option<String> {
     if path == "." || path.is_empty() {
         return None;
@@ -188,7 +188,7 @@ pub fn parent_dir(path: &str) -> Option<String> {
     }
 }
 
-/// Async `remote.listdir` off the GUI thread.
+/// 在 GUI 线程之外异步执行 `remote.listdir`。
 pub fn spawn_listdir(session_id: String, path: String, gen: u64) -> iced::Task<Message> {
     iced::Task::perform(
         async move {
@@ -211,7 +211,7 @@ pub fn spawn_listdir(session_id: String, path: String, gen: u64) -> iced::Task<M
     )
 }
 
-/// Async `remote.read` for file preview.
+/// 供文件预览的异步 `remote.read`。
 pub fn spawn_read(
     session_id: String,
     path: String,
@@ -239,7 +239,7 @@ pub fn spawn_read(
     )
 }
 
-/// Async `remote.find` for filename search.
+/// 供文件名搜索的异步 `remote.find`。
 pub fn spawn_find(
     session_id: String,
     base: String,
@@ -268,7 +268,7 @@ pub fn spawn_find(
     )
 }
 
-/// Async `remote.write` for saving preview edits.
+/// 供保存预览编辑的异步 `remote.write`。
 pub fn spawn_write(
     session_id: String,
     path: String,

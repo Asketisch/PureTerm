@@ -109,7 +109,7 @@ fn config_deserialize() {
     )
     .unwrap();
 
-    // Verify fields were deserialized correctly.
+    // 验证字段已正确反序列化。
     assert_eq!(test.field1, 3);
     assert_eq!(test.field2, Test::default().field2);
     assert_eq!(test.field3, Some(32));
@@ -123,7 +123,7 @@ fn config_deserialize() {
     assert_eq!(test.nesting.field4, 8);
     assert_eq!(test.flatten.flatty, 123);
 
-    // Verify all log messages are correct.
+    // 验证所有日志消息都正确。
     let mut error_logs = logger.error_logs.lock().unwrap();
     error_logs.sort_unstable();
     assert_eq!(error_logs.as_slice(), [
@@ -144,7 +144,7 @@ fn config_deserialize() {
     ]);
 }
 
-/// Logger storing all messages for later validation.
+/// 把全部消息存起来供稍后校验的日志器。
 #[derive(Default)]
 struct Logger {
     error_logs: Arc<Mutex<Vec<String>>>,

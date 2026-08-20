@@ -20,26 +20,26 @@ use pureterm_alacritty_runtime::renderer::image_atlas::ImageAtlas;
 
 use crate::terminal_shader::{ImageQuadDraw, ImageQuadVertex};
 
-// --- 1. ImageQuadVertex layout ---
+// --- 1. ImageQuadVertex 内存布局 ---
 
 #[test]
 fn image_quad_vertex_size_is_16_bytes() {
-    // 2 floats for position + 2 floats for uv = 16 bytes total. Used by the
-    // wgpu vertex buffer layout in `ImageQuadVertex::desc`.
+    // 2 个 float 表示位置 + 2 个 float 表示 uv,共 16 字节。供
+    // `ImageQuadVertex::desc` 中的 wgpu 顶点缓冲布局使用。
     assert_eq!(std::mem::size_of::<ImageQuadVertex>(), 16);
 }
 
 #[test]
 fn image_quad_vertex_is_pod() {
-    // Smoke test: `bytemuck::Pod` / `Zeroable` allow us to use
-    // `bytemuck::cast_slice` on `Vec<ImageQuadVertex>` for buffer upload.
+    // 冒烟测试:`bytemuck::Pod` / `Zeroable` 允许我们对
+    // `Vec<ImageQuadVertex>` 使用 `bytemuck::cast_slice` 上传缓冲。
     let v = ImageQuadVertex {
         position: [1.0, 2.0],
         uv: [0.5, 0.25],
     };
     let bytes: &[u8] = bytemuck::bytes_of(&v);
     assert_eq!(bytes.len(), 16);
-    // Zero roundtrip
+    // 零拷贝往返(zero roundtrip)
     let zero = ImageQuadVertex {
         position: [0.0; 2],
         uv: [0.0; 2],
@@ -50,9 +50,9 @@ fn image_quad_vertex_is_pod() {
 
 #[test]
 fn image_quad_vertex_desc_matches_layout() {
-    // Verify the wgpu vertex buffer layout matches our struct layout:
-    // attribute 0 (position vec2f) at offset 0, attribute 1 (uv vec2f) at
-    // offset 8. If this drifts, wgpu will panic at pipeline creation.
+    // 校验 wgpu 顶点缓冲布局与结构体布局一致:
+    // 属性 0(position vec2f)位于偏移 0,属性 1(uv vec2f)位于
+    // 偏移 8。若两者漂移,wgpu 会在创建管线时报错。
     use crate::terminal_shader::ImageQuadVertex as Q;
     let desc = Q::desc();
     assert_eq!(desc.array_stride, 16);
@@ -63,7 +63,7 @@ fn image_quad_vertex_desc_matches_layout() {
     assert_eq!(desc.attributes[1].format, wgpu::VertexFormat::Float32x2);
 }
 
-// --- 2. ImageQuadDraw ordering & invariants ---
+// --- 2. ImageQuadDraw 顺序与不变量 ---
 
 #[test]
 fn image_quad_draw_z_orders_ascending() {
@@ -102,9 +102,9 @@ fn image_quad_draw_z_orders_ascending() {
 
 #[test]
 fn image_quad_draw_screen_rect_calculation() {
-    // The vertex shader maps (col * cell_w, row * cell_h) → screen quad.
-    // Verify that the multiplication matches the expected logical-pixel
-    // rectangle for typical cell dimensions.
+    // 顶点着色器把 (col * cell_w, row * cell_h) 映射为屏幕四边形。
+    // 校验该乘法与期望的逻辑像素矩形一致,
+    // 针对典型单元格尺寸。
     let cell_w = 8.0_f32;
     let cell_h = 16.0_f32;
     let draw = ImageQuadDraw {
@@ -122,14 +122,14 @@ fn image_quad_draw_screen_rect_calculation() {
     assert_eq!((qx, qy, qw, qh), (40.0, 48.0, 80.0, 80.0));
 }
 
-// --- 3. ImageQuadState / ImageAtlas dirty-region contract ---
+// --- 3. ImageQuadState / ImageAtlas 脏区域契约 ---
 
 #[test]
 fn image_quad_state_insert_marks_dirty() {
     let mut atlas = ImageAtlas::new();
     let rgba = Arc::new(vec![0u8; 32 * 32 * 4]);
     let placement = atlas.insert(1, rgba, 32, 32).expect("small image should pack");
-    // Atlas UV coordinates must be in [0..=1] and u < u2, v < v2.
+    // 图集 UV 坐标必须在 [0..=1] 内,且 u < u2、v < v2。
     assert!(placement.u >= 0.0 && placement.u <= 1.0);
     assert!(placement.v >= 0.0 && placement.v <= 1.0);
     assert!(placement.u2 > placement.u);
@@ -141,7 +141,7 @@ fn image_quad_state_insert_marks_dirty() {
     assert!(dirty.is_some(), "take_dirty_data after insert should yield Some");
     let dirty = dirty.unwrap();
     assert!(!dirty.regions.is_empty(), "at least one dirty region expected");
-    assert_eq!(dirty.width, 2048); // ImageAtlas ATLAS_SIZE
+    assert_eq!(dirty.width, 2048); // 即 ImageAtlas 的 ATLAS_SIZE
     assert_eq!(dirty.height, 2048);
 }
 
@@ -157,17 +157,17 @@ fn image_quad_state_multiple_inserts_each_dirty() {
     }
     assert_eq!(atlas.len(), n);
     let dirty = atlas.take_dirty_data().expect("dirty after 5 inserts");
-    // Each image lives in its own rect; the row-stride allocator should emit
-    // up to n regions (one per image, unless two images overlap a single
-    // dirty rect which is rare given the 16×16 footprint on a 2048² atlas).
+    // 每张图像位于自己的矩形内;行步长分配器应输出
+    // 最多 n 个区域(每图一个;除非两张图像重叠到同一个
+    // 脏矩形 —— 在 2048² 图集上这种 16×16 重叠很少见)。
     assert!(
         dirty.regions.len() >= 1 && dirty.regions.len() <= n,
         "regions.len()={} should be in [1, {}]",
         dirty.regions.len(),
         n
     );
-    // Take again: should now be empty (the dirty flag was cleared by the
-    // first `take_dirty_data`).
+    // 再次取出:现在应为空(脏标记已被第一次
+    // `take_dirty_data` 清除)。
     assert!(atlas.take_dirty_data().is_none());
 }
 
@@ -187,7 +187,7 @@ fn image_quad_state_lookup_returns_same_uv() {
 
 #[test]
 fn image_quad_state_oversized_rejected() {
-    // ATLAS_SIZE = 2048. Inserting a 2049-px image should be rejected.
+    // ATLAS_SIZE = 2048。插入 2049 像素的图像应被拒绝。
     let mut atlas = ImageAtlas::new();
     let rgba = Arc::new(vec![0u8; 2049 * 4 * 4]);
     let r = atlas.insert(1, rgba, 2049, 4);
@@ -196,22 +196,22 @@ fn image_quad_state_oversized_rejected() {
 
 #[test]
 fn image_quad_state_wrong_byte_len_rejected() {
-    // Bytes don't match width * height * 4 → rejection (defends against
-    // upstream corruption).
+    // 字节数与 width * height * 4 不符 → 拒绝(防御
+    // 上游数据损坏)。
     let mut atlas = ImageAtlas::new();
-    let rgba = Arc::new(vec![0u8; 100]); // 10×10 should need 400 bytes
+    let rgba = Arc::new(vec![0u8; 100]); // 10×10 应需要 400 字节
     let r = atlas.insert(1, rgba, 10, 10);
     assert!(r.is_none());
 }
 
-// --- 4. ImageStore → ImageQuadDraw population ---
+// --- 4. ImageStore → ImageQuadDraw 填充 ---
 
 #[test]
 fn image_store_iterators_cover_all_images() {
     use crate::terminal_graphics::ImageStore;
 
     let mut store = ImageStore::new(16, 4 * 1024 * 1024);
-    // Two chunked-graphics images (id != 0) + two Sixel (id == 0).
+    // 两张分块图形图像(id != 0)+ 两张 Sixel(id == 0)。
     for id in [101u32, 102u32] {
         let img = GraphicsImage {
             protocol: GraphicsProtocol::Kitty,
@@ -253,8 +253,8 @@ fn image_store_iterators_cover_all_images() {
     assert_eq!(store.len(), 4);
     let total: usize = store.sequential().count() + store.by_id_values().count();
     assert_eq!(total, 4, "all 4 images must be iterable");
-    // No id collision between the two iterators (Sixel has id=0, which is
-    // not present in `by_id`).
+    // 两个迭代器之间无 id 冲突(Sixel 的 id 为 0,
+    // 不存在于 `by_id` 中)。
     let mut seen_ids: Vec<u32> = store.sequential().map(|i| i.placement.id).collect();
     seen_ids.extend(store.by_id_values().map(|i| i.placement.id));
     seen_ids.sort_unstable();
@@ -295,7 +295,7 @@ fn image_store_z_monotonic_per_insertion() {
     }
 }
 
-// --- 5. End-to-end: pipeline from store → ImageQuadState → dirty ---
+// --- 5. 端到端:从存储到 ImageQuadState 再到脏区 ---
 
 #[test]
 fn e2e_pipeline_store_to_atlas_to_dirty() {
@@ -324,9 +324,9 @@ fn e2e_pipeline_store_to_atlas_to_dirty() {
     let mut state = ImageQuadState::new();
     assert!(!state.is_dirty());
 
-    // Simulate `prepare()` drain: pull every image from the store, push
-    // its RGBA into the atlas. (The real pipeline goes through the
-    // `decode_rx` channel + `decode` worker — those are covered by
+    // 模拟 `prepare()` 的排空:从存储中取出所有图像,
+    // 把其 RGBA 推进图集。(真实管线经由
+    // `decode_rx` 通道与 `decode` worker —— 已由
     // `image_decode_worker::tests`.)
     for entry in store.sequential().chain(store.by_id_values()) {
         if let Some(pixels) = &entry.pixels {
@@ -340,6 +340,6 @@ fn e2e_pipeline_store_to_atlas_to_dirty() {
     assert_eq!(dirty.width, 2048);
     assert_eq!(dirty.height, 2048);
 
-    // And `take_dirty_data()` clears the dirty flag.
+    // 而 `take_dirty_data()` 会清除脏标记。
     assert!(state.take_dirty_data().is_none());
 }

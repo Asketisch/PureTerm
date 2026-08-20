@@ -1,5 +1,5 @@
-# PureTerm default configuration
-# Full documentation: https://github.com/user/pureterm
+# PureTerm 默认配置
+# 完整文档:https://github.com/user/pureterm
 
 [env]
 TERM = "xterm-256color"
@@ -22,31 +22,31 @@ save_to_clipboard = false
 [mouse]
 hide_when_typing = false
 
-# GAP-24: Enhanced Status Bar. `components` is the ordered list of segments;
-# chips are grouped visually into 4 clusters (Context / Runtime / System /
-# Meta). The Context / Runtime / System groups render left-to-right in the
-# order they appear in `components`; Meta (cursor + clock) and the ⌘K
-# entry point sit on the right edge separated by a flexible spacer. Hidden
-# when a segment is absent (e.g. battery on a desktop). Unknown ids are
-# skipped with a one-time warning.
+# GAP-24:增强状态栏。`components` 为有序分段列表,
+# 芯片视觉上分为 4 个簇(上下文 / 运行时 / 系统 /
+# 元信息)。上下文 / 运行时 / 系统组按在 `components`
+# 中出现的顺序从左到右渲染;元信息(光标 + 时钟)与 ⌘K
+# 入口点位于右缘,由弹性间隔分隔。分段缺失时
+# 该芯片隐藏(如桌面机无电池)。未知 id
+# 跳过并发出一次性警告。
 #
-# Recognized ids: cwd, git, ssh, vimode, process, agent, cpu, memory,
+# 支持的 id:cwd, git, ssh, vimode, process, agent, cpu, memory,
 # network, clock, battery, cursor, notifications, trigger_count, codeindex,
-# lsp. `notifications` is on by default; the others need to be added to
-# `components` to show up.
+# lsp。`notifications` 默认开启;其余需加入
+# `components` 才会显示。
 #
-# `refresh_interval_secs` bounds system-stat sampling + git subprocess
-# cadence. `show_sparklines` toggles the canvas mini-graphs (cpu/memory/
-# network); when on, the bar auto-grows to ≥28px for legibility
-# (`bar_height` is the floor). `clock_format` is a chrono format string
-# passed straight to `chrono::Local::now().format(...)`; the default
-# `%H:%M:%S` shows hours/minutes/seconds. `clock_show_seconds = false`
-# strips any `%S` / `%s` token from the format on the fly, so the same
-# format string reads cleanly whether seconds are on or off.
+# `refresh_interval_secs` 限制系统采样与 git 子进程
+# 的刷新频率。`show_sparklines` 切换画布迷你图(cpu/内存/
+# 网络);开启后栏高自动增至 ≥28px 以保证可读性
+# (`bar_height` 为下限)。`clock_format` 是 chrono 格式串,
+# 直接传给 `chrono::Local::now().format(...)`;默认
+# `%H:%M:%S` 显示时/分/秒。`clock_show_seconds = false`
+# 会在运行时从格式串中剥离 `%S` / `%s` 令牌,使同一
+# 格式串在秒开/关时都显示干净。
 #
-# Misc: the git segment no longer uses Nerd Font Private-Use-Area glyphs
-# (the old `\u{e0a0}` branch icon replaced with `[br] <name>`), so the bar
-# stays readable on systems without Nerd Fonts installed.
+# 其他:git 分段不再使用 Nerd Font 私用区字形
+# (旧版 `\u{e0a0}` 分支图标改为 `[br] <name>`),因此在
+# 未安装 Nerd Font 的系统上依然可读。
 [statusbar]
 components = ["cwd", "git", "ssh", "vimode", "process", "agent", "cpu", "memory", "network", "clock", "battery", "cursor", "notifications"]
 refresh_interval_secs = 1
@@ -55,49 +55,49 @@ bar_height = 24
 clock_format = "%H:%M:%S"
 clock_show_seconds = true
 
-# GAP-19: Dual Sidebar — ⌘B left (Workspaces + Git summary), ⌘⇧B right
-# (Find / Feed / Git tabs). Widths in px, clamped to 120–480.
+# GAP-19:双侧边栏 — ⌘B 左侧(工作区 + Git 摘要),⌘⇧B 右侧
+# (查找 / 动态 / Git 标签页)。宽度单位 px,钳制在 120–480。
 [sidebar]
 left_width = 240
 right_width = 240
 # left_default_open = false
 
-# GAP-35: LSP client (rust-analyzer MVP). Opt-in — set `enabled = true` when
-# `rust-analyzer` is on PATH. Diagnostics surface in the status bar (`lsp`
-# segment) and AI Chat context after opening a `.rs` file via hover preview.
+# GAP-35:LSP 客户端(rust-analyzer MVP)。可选 — `rust-analyzer`
+# 在 PATH 上时将 `enabled` 设为 `true`。诊断显示在状态栏(`lsp`
+# 分段)与 AI 对话上下文中,经悬停预览打开 `.rs` 文件后生效。
 [lsp]
 enabled = false
 
 [lsp.servers]
 rust = "rust-analyzer"
 
-# section controls the Git sidebar tab and the `gh` PR subprocess.
+# 该段控制 Git 侧边栏标签与 `gh` PR 子进程。
 [git]
-panel_enabled = true       # Git tab in the right sidebar (legacy ⌘⇧B alias)
-show_pr = true             # query the linked PR via `gh` (needs `gh auth`)
-pr_refresh_ticks = 30      # PR refresh cadence in status-bar ticks (~30s)
-# lazygit_cmd = "lazygit"  # override the lazygit binary name for the panel button
+panel_enabled = true       # 右侧边栏的 Git 标签(旧 ⌘⇧B 别名)
+show_pr = true             # 经 `gh` 查询关联 PR(需 `gh auth`)
+pr_refresh_ticks = 30      # PR 刷新频率(状态栏 tick 计,约 30s)
+# lazygit_cmd = "lazygit"  # 覆盖面板按钮的 lazygit 二进制名
 
-# GAP-09: Notification System — OSC 9/99/777 + bell → per-pane attention ring,
-# status-bar unread count (🔔 above), Dock badge, and macOS desktop toasts.
+# GAP-09:通知系统 — OSC 9/99/777 + 响铃 → 每窗格注意力环、
+# 状态栏未读计数(上方 🔔)、Dock 角标与 macOS 桌面吐司。
 [notification]
-enabled = true                # master switch (false ⇒ no ring/badge/toast/audit)
-desktop_notifications = true  # macOS toast (UNUserNotificationCenter; needs bundle id)
-dock_badge = true             # unread count on the app icon
-ring = true                   # amber attention ring around the pane
-bell_passthrough = true       # surface BEL (0x07) as an attention signal
-bell_throttle_ms = 1000       # ≤1 bell-derived notif per pane per this window
+enabled = true                # 主开关(false ⇒ 无环/角标/吐司/审计)
+desktop_notifications = true  # macOS 吐司(UNUserNotificationCenter;需 bundle id)
+dock_badge = true             # 应用图标上的未读计数
+ring = true                   # 窗格周围的琥珀色注意力环
+bell_passthrough = true       # 将 BEL(0x07)呈现为注意力信号
+bell_throttle_ms = 1000       # 该时间窗内每窗格 ≤1 条响铃派生通知
 
-# GAP-10: Triggers — regex on terminal *output* → highlight / notify / send_text / exec /
-# set_variable / set_mark / fold. Templates: {match}, $1–$9, ${var:NAME}, \n\r\t\xNN.
-# Uncomment and customize (never commit real passwords in send_text):
+# GAP-10:触发器 — 对终端*输出*做正则匹配 → 高亮 / 通知 / send_text / exec /
+# set_variable / set_mark / fold。模板:{match}, $1–$9, ${var:NAME}, \n\r\t\xNN。
+# 取消注释并自定义(切勿在 send_text 里提交真实密码):
 #
-# Security: when a match originates from an SSH/remote pane, `exec` and
-# cross-pane `send_text` are BLOCKED by default — remote-controlled text must
-# not drive local code execution / keystroke injection. Opt in (top-level,
-# NOT under [triggers] which is an array):
-#   allow_exec_on_remote = true
-# Same-pane `send_text` (e.g. sudo auto-reply) is never blocked.
+# 安全:当匹配来自 SSH/远程窗格时,`exec` 与
+# 跨窗格 `send_text` 默认被*阻止* — 远程受控文本不得
+# 驱动本地代码执行 / 按键注入。若要放开(顶层配置,
+# 不在 [triggers] 数组内):
+#   allow_exec_on_remote = true(放开远程 exec)
+# 同窗格 `send_text`(如 sudo 自动应答)永不被阻止。
 #
 # [[triggers]]
 # name = "error-spot"
@@ -122,7 +122,7 @@ bell_throttle_ms = 1000       # ≤1 bell-derived notif per pane per this window
 # action = "fold"
 # mark = "build_start"
 #
-# GAP-02: Error Recovery — auto LLM fix suggestions on non-zero exit (needs Shell Integration).
+# GAP-02:错误恢复 — 非零退出时自动 LLM 修复建议(依赖 Shell Integration)。
 [error_recovery]
 enabled = true
 auto_analyze = true
@@ -133,21 +133,21 @@ provider = "anthropic"
 # api_key_env = "ANTHROPIC_API_KEY"
 # openai_base_url = "https://api.openai.com/v1"
 #
-# GAP-33: Port Scanner — right sidebar "Ports" tab lists listening TCP ports
-# (via `lsof`, refreshed every N seconds). Click row copies localhost:PORT; ↗
-# opens http://localhost:PORT in the browser. Ports below min_port are hidden.
+# GAP-33:端口扫描 — 右侧边栏 "Ports" 标签列出监听中的 TCP 端口
+# (经 `lsof`,每 N 秒刷新)。点击行复制 localhost:PORT;↗
+# 在浏览器打开 http://localhost:PORT。低于 min_port 的端口隐藏。
 [port_scanner]
 enabled = true
 interval = 5
 min_port = 1024
 
-# GAP-36: Semantic History — ⌘-click file:line in terminal output opens the
-# file in your editor. `$EDITOR` overrides `editor` below; default is VS Code.
+# GAP-36:语义历史 — ⌘-点击终端输出中的 file:line,
+# 在编辑器中打开该文件。`$EDITOR` 覆盖下方的 `editor`;默认 VS Code。
 [semantic_history]
 enabled = true
 editor = "code"
 
-# GAP-01: AI Chat Panel — ⌘⇧L toggles the right-docked chat overlay (⌘L is Browser).
+# GAP-01:AI 对话面板 — ⌘⇧L 切换右停靠对话浮层(⌘L 是浏览器)。
 [ai_chat]
 provider = "anthropic"
 # model = "claude-3-5-sonnet-latest"
@@ -155,30 +155,30 @@ provider = "anthropic"
 # api_key_env = "ANTHROPIC_API_KEY"
 # openai_base_url = "https://api.openai.com/v1"
 #
-# GAP-07: Soul System — personality files in ~/.config/pureterm/ai/
-# (SOUL.md, STYLE.md, SKILL.md, MEMORY.md) injected into AI Chat system prompt.
+# GAP-07:灵魂系统 — ~/.config/pureterm/ai/ 下的人格文件
+# (SOUL.md, STYLE.md, SKILL.md, MEMORY.md)注入 AI 对话系统提示词。
 [soul]
 enabled = true
 # directory = "/custom/path/to/ai"
 #
-# GAP-08: Natural language commands — type `# find large files` + Enter to
-# generate a shell command (shared LLM provider with `[ai_chat]`).
+# GAP-08:自然语言命令 — 输入 `# find large files` + 回车
+# 生成 shell 命令(与 `[ai_chat]` 共享 LLM provider)。
 [natural_language]
 enabled = true
 # max_tokens = 512
 #
-# GAP-47: AppleScript bridge MVP — external scripts call `pureterm script …`
-# (e.g. via `osascript` → `do shell script`). Full NSAppleEventManager deferred.
+# GAP-47:AppleScript 桥 MVP — 外部脚本调用 `pureterm script …`
+# (例如经 `osascript` → `do shell script`)。完整 NSAppleEventManager 延后。
 [applescript]
 enabled = true
 #
-# GAP-48: pureterm:// URL scheme — macOS Info.plist CFBundleURLTypes + handler.
-# Set register_on_launch = true to call LSSetDefaultHandlerForURLScheme at startup.
+# GAP-48:pureterm:// URL scheme — macOS Info.plist CFBundleURLTypes + 处理器。
+# 设置 register_on_launch = true 可在启动时调用 LSSetDefaultHandlerForURLScheme。
 [url_scheme]
 enabled = true
 register_on_launch = false
 #
-# GAP-40 / GAP-5.3 / GAP-37: SSH global knobs (per-profile forwards in [[ssh.profiles]]).
+# GAP-40 / GAP-5.3 / GAP-37:SSH 全局旋钮(每配置档的前置在 [[ssh.profiles]])。
 [ssh]
 smallest_screen_wins = true
 password_manager = "auto"   # auto | keychain | 1password | lastpass
@@ -192,79 +192,79 @@ password_manager = "auto"   # auto | keychain | 1password | lastpass
 # remote_forwards = ["9000:127.0.0.1:22"]
 # forward_x11 = false
 #
-# Status bar: add "trigger_count" to [statusbar] components for ⚡ N hit counter.
+# 状态栏:向 [statusbar] components 添加 "trigger_count" 以启用 ⚡ N 命中计数。
 #
-# GAP-51: Block-based output scaffold (off by default). When enabled, each OSC
-# 133 D mark appends OutputBlock + `block.finished`; open right sidebar Blocks
-# tab for list/filter/jump. Grid slicing / sum-tree viewport still deferred.
+# GAP-51:块式输出脚手架(默认关闭)。启用后每个 OSC
+# 133 D 标记追加 OutputBlock + `block.finished`;打开右侧边栏 Blocks
+# 标签页可列表/过滤/跳转。网格切片 / 和树视口仍延后。
 [block_output]
 enabled = false
 #
-# ── P3 GAP MVPs (2026-06-29) ─────────────────────────────────────────────
+# ── P3 批次 GAP MVP(2026-06-29) ─────────────────────────────────────────────
 #
-# GAP-06: Ambient Agents — local task queue (cloud/SSE deferred).
+# GAP-06:环境智能体 — 本地任务队列(云/SSE 延后)。
 [ambient_agents]
 enabled = false
 poll_interval_secs = 30
 #
-# GAP-13: Broadcast keyboard input to sibling panes (⌘⌃B).
+# GAP-13:广播键盘输入到兄弟窗格(⌘⌃B)。
 [broadcast_input]
 enabled = true
 #
-# GAP-18: BiDi text mode for RTL scripts.
+# GAP-18:BiDi 文本模式(用于 RTL 脚本)。
 [terminal]
 bidi_mode = "auto"   # auto | ltr | rtl
 #
-# GAP-26: Workspace sidebar groups.
+# GAP-26:工作区侧边栏分组。
 # [[workspace_groups]]
 # name = "Work"
 # workspaces = ["dev", "staging"]
 #
-# GAP-30: Toolbelt right-sidebar tab (⌘⇧T).
+# GAP-30:工具带右侧边栏标签(⌘⇧T)。
 [toolbelt]
 enabled = true
 tools = ["history", "directories", "snippets", "paste_history"]
 #
-# GAP-31: Quake-style dock (F12 default; enable to use).
+# GAP-31:Quake 式坞(默认 F12;启用后使用)。
 [quake]
 enabled = false
 height_fraction = 0.45
 #
-# GAP-46: UI locale (Settings + main app via pureterm-settings I18n).
+# GAP-46:UI 语言(设置 + 主应用,经 pureterm-settings I18n)。
 [pureterm]
 locale = "en"
 #
-# ── P4 GAP MVPs (disabled by default unless noted) ────────────────────────
+# ── P4 GAP MVP(默认关闭,另有注明除外) ────────────────────────
 #
-# GAP-05: Voice input (Whisper API URL required when enabled).
+# GAP-05:语音输入(启用时需要 Whisper API URL)。
 [voice_input]
 enabled = false
 # api_url = "https://api.openai.com/v1/audio/transcriptions"
 #
-# GAP-17: Sixel / chunked inline graphics.
+# GAP-17:Sixel / 分块内联图形。
 [terminal_graphics]
 enabled = false
 max_images = 64
-# T-core-closure: per-image byte cap. 32 MiB matches the default in
-# `TerminalGraphicsConfig`; raise to 256 MiB for high-res screenshots, lower
-# to 4 MiB to keep memory tight on shared hosts.
+# T-core-closure:每图像字节上限。32 MiB 与
+# `TerminalGraphicsConfig` 默认一致;高分辨率截图可提到 256 MiB,
+# 共享主机上想省内存可降到 4 MiB。
 max_image_bytes = 33554432
 
-# T-core-shaper v2: Harfbuzz via rustybuzz + per-script fallback chain.
-# Set `backend = "rustybuzz"` and provide a primary font blob (or rely on
-# the per-fallback-entry path) for true complex-script shaping (Arabic
-# final-form, Devanagari reph, emoji ZWJ sequences). The default
-# `monospace` shaper is the v1 pure-Rust cluster shaper — it correctly
-# handles Latin / CJK width but doesn't shape complex scripts.
+# T-core-shaper v2:Harfbuzz 经 rustybuzz + 每脚本回退链。
+# 设置 `backend = "rustybuzz"` 并提供主字体 blob(或依赖
+# 每回退条目路径)即可获得真正的复杂文字整形(阿拉伯文
+# 末位形、天城文 reph、emoji ZWJ 序列)。默认
+# `monospace` shaper 是 v1 纯 Rust 簇整形器 — 正确处理
+# 拉丁 / CJK 宽度,但不整形复杂文字。
 [shaper]
 backend = "monospace"
 language = "en-US"
 enable_features = true
 
-# Per-script fallback font chain. The first entry is the primary monospace
-# font; subsequent entries are tried in order for characters the primary
-# font doesn't cover. `path = ""` is allowed (the loader falls back to
-# the platform's system font lookup).
+# 每脚本回退字体链。首条为主等宽
+# 字体;后续条目按序尝试主字体
+# 未覆盖的字符。`path = ""` 允许(加载器回退到
+# 平台系统字体查找)。
 fallback_chain = [
     { name = "Monospace", path = "", script = "monospace" },
     { name = "CJK JP",    path = "", script = "cjk-jp" },
@@ -274,7 +274,7 @@ fallback_chain = [
     { name = "Serif",     path = "", script = "serif" },
 ]
 #
-# GAP-20 / GAP-55: Window glass + opacity/blur (`[window]` nested tables).
+# GAP-20 / GAP-55:窗口玻璃 + 透明度/模糊(`[window]` 嵌套表)。
 [window]
 # [window.glass]
 # enabled = false
@@ -288,94 +288,94 @@ fallback_chain = [
 # opacity = 0.92
 # blur = false
 #
-# GAP-22: Touch Bar (macOS).
+# GAP-22:Touch Bar(macOS 触控栏)。
 [touch_bar]
 enabled = false
 #
-# GAP-23: Visual tab bar.
+# GAP-23:可视化标签栏。
 [tab_bar]
 enabled = true
 position = "top"
 height = 28.0
 #
-# GAP-29: Environment badge overlay.
+# GAP-29:环境徽章浮层。
 [badge]
 enabled = false
 # text = "DEV"
 # color = "#FF3B30"
 # position = "bottom-right"
 #
-# GAP-34: File preview on path selection.
+# GAP-34:路径选中时的文件预览。
 [file_preview]
 enabled = true
 #
-# GAP-38: SCP/SFTP transfers.
+# GAP-38:SCP/SFTP 传输。
 [file_transfer]
 enabled = false
 #
-# GAP-44: Shared sessions (stub).
+# GAP-44:共享会话(桩)。
 [shared_session]
 enabled = false
 port = 8765
 #
-# GAP-45: Auto-update.
+# GAP-45:自动更新。
 [update]
 enabled = false
 auto_check = false
 channel = "stable"
 #
-# GAP-49: Plugins.
+# GAP-49:插件。
 [plugins]
 enabled = false
 #
-# GAP-50: Cloud sync (local bundle MVP).
+# GAP-50:云同步(本地 bundle MVP)。
 [cloud_sync]
 enabled = false
 #
-# GAP-52: Workflows (`[[workflows]]` entries).
+# GAP-52:工作流(`[[workflows]]` 条目)。
 [workflows]
 enabled = true
 #
-# GAP-53: Notebooks.
+# GAP-53:笔记本。
 [notebooks]
 enabled = false
 #
-# GAP-54: Background image.
+# GAP-54:背景图。
 [background]
 enabled = false
 # image = "/path/to/wallpaper.png"
 # opacity = 0.35
 # mode = "center"
 #
-# GAP-56: Focus follows mouse (split panes).
+# GAP-56:焦点跟随鼠标(分屏窗格)。
 [focus_follows_mouse]
 enabled = false
 delay_ms = 150
 #
-# GAP-57: Haptic feedback (macOS).
+# GAP-57:触觉反馈(macOS)。
 [haptic]
 enabled = false
 #
-# GAP-58: Extended theme colors.
+# GAP-58:扩展主题色。
 [theme]
 enabled = false
 follow_system = false
 #
-# GAP-59: Emoji rendering.
+# GAP-59:emoji 渲染。
 [emoji]
 enabled = true
 dedicated_atlas = false
 #
-# GAP-60: Pane capture export.
+# GAP-60:窗格捕获导出。
 [pane_capture]
 enabled = true
 default_format = "txt"
 #
-# GAP-61: Print support.
+# GAP-61:打印支持。
 [print]
 enabled = false
 #
-# GAP-4.6: Accessibility / VoiceOver announcements.
+# GAP-4.6:辅助功能 / VoiceOver 播报。
 [accessibility]
 enabled = true
 announce_tab_changes = true

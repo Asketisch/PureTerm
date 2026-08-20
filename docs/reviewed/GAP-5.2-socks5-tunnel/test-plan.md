@@ -57,7 +57,7 @@ pureterm ssh tunnel-list     # 看 tunnel.list(状态/错误)
 ## 场景 3 —— agent 转发往返(GAP-5.4 Track B 即隧道)
 
 1. 本机先 `ssh-add` 一个 key。
-2. `pureterm ssh tunnel alice@gw --local-port 1080 -A`(`-A`/`--forward-agent`)。
+2. `pureterm ssh tunnel alice@gw --local-port 1080 -A`(即 `-A`/`--forward-agent`)。
 3. 隧道起来后,**在网关上**用 agent(经隧道访问网关能 reach 的第三台):
    ```bash
    # 经隧道 SOCKS5 让网关上的 ssh 用转发的 agent 免密连第三台

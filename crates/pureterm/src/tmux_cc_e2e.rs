@@ -1,29 +1,29 @@
-//! T-core-tmux-cc v3 E2E tests (checklist C.6).
+//! T-core-tmux-cc v3 E2E 测试(清单 C.6)。
 //!
-//! These tests spawn a **real** `tmux -CC` subprocess — the first such
-//! test in this codebase. Default-`#[ignore]`d; run manually with:
-//!   cargo test -p pureterm --bin pureterm -- tmux_cc_e2e --include-ignored --nocapture
+//! 这些测试会启动一个**真实**的 `tmux -CC` 子进程——本代码库里首个此类测试。
+//! 默认标了 `#[ignore]`;手动运行:
+//!   手动运行:cargo test -p pureterm --bin pureterm -- tmux_cc_e2e --include-ignored --nocapture
 //!
-//! Pre-flight: `tmux` must be on `$PATH` and support control mode
-//! (any tmux 1.5+ — currently verified against tmux 3.6a on macOS).
+//! 前置条件:`tmux` 必须在 `$PATH` 中且支持控制模式
+//! (任意 tmux 1.5+;当前在 macOS 上以 tmux 3.6a 验证)。
 //!
-//! ## What we verify
+//! ## 验证内容
 //!
-//! 1. **`tmux_three_windows_smoke`** — Spawn `tmux -CC new-session`,
-//!    send 2 `new-window` commands, confirm 3 windows appear in the
-//!    `%windows` envelope stream (mirrors what the GUI's split-tree
-//!    mirror consumes).
+//! 1. **`tmux_three_windows_smoke`** — 启动 `tmux -CC new-session`,
+//!    发送 2 条 `new-window` 命令,确认 `%windows` 信封流中
+//!    出现 3 个窗口(镜像 GUI 分割树镜像消费的内容)。
+//! 
 //!
-//! 2. **`tmux_reattach_replay_smoke`** — Spawn `tmux -CC new-session`,
-//!    write some keystrokes via `send_input`, capture the
-//!    `%begin/%output/%end` replay payload, kill the child, then
-//!    `tmux -CC attach -t <session>` and verify the same envelope
-//!    sequence is re-emitted (proves the cross-restart reattach
-//!    contract).
+//! 2. **`tmux_reattach_replay_smoke`** — 启动 `tmux -CC new-session`,
+//!    通过 `send_input` 写入若干按键,捕获
+//!    `%begin/%output/%end` 重放载荷,杀掉子进程,然后
+//!    `tmux -CC attach -t <session>` 并验证相同的信封
+//!    序列被重新发出(证明跨重启的重连契约)。
+//! 
 //!
-//! 3. **`tmux_session_changed_envelope`** — Confirm a
-//!    `%session-changed <sid> <name>` envelope arrives and `session_id`
-//!    is populated on the `TmuxChild` handle.
+//! 3. **`tmux_session_changed_envelope`** — 确认
+//!    `%session-changed <sid> <name>` 信封到达且 `session_id`
+//!    已填入 `TmuxChild` 句柄。
 
 #![cfg(unix)]
 
@@ -33,8 +33,8 @@ use std::time::{Duration, Instant};
 use crate::tmux_cc::envelope::{serialize_command, TmuxCommand, TmuxEnvelope};
 use crate::tmux_cc::pty::{TmuxChild, TmuxSpawnArgs};
 
-/// Run `cmd` and wait up to `timeout` for the predicate to return
-/// `true`. Returns whether the predicate fired before the deadline.
+/// 运行 `cmd`,最多等待 `timeout` 直到谓词返回
+/// `true`。返回谓词是否在截止时间前满足。
 fn wait_for<P: Fn() -> bool>(timeout: Duration, predicate: P) -> bool {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
@@ -46,7 +46,7 @@ fn wait_for<P: Fn() -> bool>(timeout: Duration, predicate: P) -> bool {
     false
 }
 
-/// Probe whether `tmux` is on `$PATH`. Returns `true` if found.
+/// 探测 `tmux` 是否在 `$PATH` 上。找到则返回 `true`。
 fn tmux_on_path() -> bool {
     Command::new("which")
         .arg("tmux")
@@ -55,7 +55,7 @@ fn tmux_on_path() -> bool {
         .unwrap_or(false)
 }
 
-/// Drain envelopes for up to `timeout`, returning whatever arrived.
+/// 最多 `timeout` 时间内排空信封,返回所有到达的信封。
 fn drain_envelopes(child: &mut TmuxChild, timeout: Duration) -> Vec<TmuxEnvelope> {
     let deadline = Instant::now() + timeout;
     let mut out = Vec::new();
@@ -76,8 +76,8 @@ fn tmux_three_windows_smoke() {
         "tmux not on $PATH — install with `brew install tmux` or skip"
     );
 
-    // Unique session tag so this test doesn't collide with other test runs
-    // or with an existing session the user has live.
+    // 唯一会话标记,避免本测试与其他测试运行、或用户现场已有会话冲突
+    // 或与用户正在使用的会话冲突。
     let tag = format!(
         "e2e3win-{}-{}",
         std::process::id(),
@@ -86,16 +86,16 @@ fn tmux_three_windows_smoke() {
     let mut child = TmuxChild::spawn(&TmuxSpawnArgs::new_session(&tag, 80, 24))
         .expect("spawn tmux -CC new-session");
 
-    // Drain initial envelopes (session-changed + windows header).
+    // 排空初始信封(session-changed + windows 头)。
     let initial = drain_envelopes(&mut child, Duration::from_millis(500));
     assert!(
         initial.iter().any(|e| matches!(e, TmuxEnvelope::SessionChanged { .. })),
         "expected %session-changed in initial drain, got {initial:?}"
     );
 
-    // Send two `new-window` commands. The `-P -F` flags print the new
-    // window id; we don't capture it here, just confirm the call doesn't
-    // error.
+    // 发送两条 `new-window` 命令。`-P -F` 标志会打印新的窗口 id;
+    // 这里不捕获它,只确认调用不
+    // 出错。
     let cmd_str = serialize_command(&TmuxCommand::NewWindow {
         name: Some("win-a"),
         cwd: None,
@@ -111,17 +111,17 @@ fn tmux_three_windows_smoke() {
         .send_envelope(&TmuxEnvelope::Unknown(cmd_str))
         .expect("send new-window #2");
 
-    // Refresh so the server flushes its %windows state.
+    // 刷新,促使服务器冲刷其 %windows 状态。
     child
         .send_envelope(&TmuxEnvelope::Unknown(serialize_command(
             &TmuxCommand::RefreshClient,
         )))
         .expect("send refresh-client");
 
-    // Collect the next batch — should contain three %windows headers
-    // (one per window) and a flood of %output replays. We don't assert
-    // exactly three because tmux's response timing is implementation
-    // defined; we just assert the count of distinct window ids reported.
+    // 收集下一批——应包含三个 %windows 头
+    // (每窗口一个)以及大量 %output 重放。我们不精确断言为三,
+    // 因为 tmux 的响应时序是实现
+    // 定义的;我们只断言报告的窗口 id 去重数量。
     let after = drain_envelopes(&mut child, Duration::from_millis(800));
     let window_headers: Vec<_> = after
         .iter()
@@ -135,7 +135,7 @@ fn tmux_three_windows_smoke() {
         "expected at least one %windows header after creating new-windows, got {window_headers:?}"
     );
 
-    // Cleanup: kill the session we created so subsequent runs don't leak.
+    // 清理:杀掉我们创建的会话,避免后续运行泄漏。
     let _ = child.terminate();
     let _ = Command::new("tmux")
         .args(["kill-session", "-t", &format!("pureterm-{tag}")])
@@ -153,37 +153,37 @@ fn tmux_reattach_replay_smoke() {
         Instant::now().elapsed().as_nanos()
     );
 
-    // Phase 1: new-session + send a few bytes.
+    // 阶段 1:new-session + 发送几个字节。
     let mut child1 = TmuxChild::spawn(&TmuxSpawnArgs::new_session(&tag, 80, 24))
         .expect("spawn tmux -CC new-session");
-    // Wait for the server to come up + session-changed to arrive.
+    // 等待服务器就绪 + session-changed 到达。
     let _ = wait_for(Duration::from_secs(2), || child1.session_id().is_some());
     assert!(
         child1.session_id().is_some(),
         "session_id never populated on initial spawn"
     );
 
-    // Send some input to populate the pane (so reattach has something
-    // to replay).
+    // 发送一些输入以填充窗格(让重连时有内容
+    // 可重放)。
     child1
         .send_input(b"echo reattach-marker\n")
         .expect("send echo");
 
-    // Let the server process the input + emit %output.
+    // 让服务器处理输入并发出 %output。
     std::thread::sleep(Duration::from_millis(500));
 
-    // Phase 2: kill the GUI-side child (not the tmux server).
+    // 阶段 2:杀掉 GUI 侧子进程(不是 tmux 服务器)。
     child1.terminate().expect("terminate child1");
 
-    // Phase 3: attach with the same session name. tmux replays the
-    // captured output as a %begin %<id> <ts> <W>x<H> ... %end frame.
+    // 阶段 3:用同一会话名 attach。tmux 会以
+    // %begin %<id> <ts> <W>x<H> ... %end 帧的形式重放已捕获的输出。
     let target = format!("pureterm-{tag}");
     let mut child2 = TmuxChild::spawn(&TmuxSpawnArgs::attach(&target))
         .expect("spawn tmux -CC attach");
 
     let reattach_envelopes = drain_envelopes(&mut child2, Duration::from_secs(3));
 
-    // We expect at least one %begin … %output … %end frame on reattach.
+    // 我们期望重连时至少出现一个 %begin … %output … %end 帧。
     let begin_count = reattach_envelopes
         .iter()
         .filter(|e| matches!(e, TmuxEnvelope::Begin { .. }))
@@ -211,7 +211,7 @@ fn tmux_reattach_replay_smoke() {
         reattach_envelopes.len()
     );
 
-    // Cleanup.
+    // 清理。
     let _ = child2.terminate();
     let _ = Command::new("tmux")
         .args(["kill-session", "-t", &target])

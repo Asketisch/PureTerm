@@ -1,7 +1,7 @@
 ---
 gap: GAP-06
-title: Ambient Agents
-category: AI Agent
+title: 环境智能体
+category: AI 智能体
 plan_type: feature
 priority: P3
 effort: XL

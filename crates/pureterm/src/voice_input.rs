@@ -1,10 +1,10 @@
-//! GAP-05: Voice input — push-to-talk transcription MVP (Whisper API deferred).
+//! GAP-05:语音输入——按住说话的转写 MVP(Whisper API 留待后续)。
 
-/// `[voice_input]` config.
+/// `[voice_input]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VoiceInputConfig {
     pub enabled: bool,
-    /// OpenAI Whisper or compatible endpoint (empty = disabled).
+    /// OpenAI Whisper 或兼容端点(空 = 禁用)。
     pub api_url: String,
     pub push_to_talk: bool,
 }
@@ -35,7 +35,7 @@ impl VoiceInputState {
         }
         self.recording = !self.recording;
         if !self.recording {
-            // MVP: stub transcript until cpal + Whisper wired.
+            // MVP:先返回占位转写文本,待 cpal + Whisper 接入。
             self.last_transcript = Some(String::from("(voice transcription stub)"));
         }
         Ok(())

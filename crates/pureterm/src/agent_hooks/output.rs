@@ -20,7 +20,7 @@ pub struct DecisionOutput {
 
 /// 把聚合后的 Decision 渲染成 Claude Code 协议要求的 stdout JSON + 退出码(纯函数)。
 ///
-/// - PreToolUse + Deny/Ask → `hookSpecificOutput.permissionDecision`。
+/// - 当事件为 PreToolUse 且决策为 Deny/Ask → 输出 `hookSpecificOutput.permissionDecision`。
 /// - 其它事件 + Deny → 通用 `{"decision":"block","reason":...}`。
 /// - Passthrough/Allow → 静默放行(无 stdout,exit 0)。
 pub fn format_decision_output(event: &str, decision: &Decision) -> DecisionOutput {

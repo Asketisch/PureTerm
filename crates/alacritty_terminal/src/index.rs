@@ -1,6 +1,6 @@
-//! Line and Column newtypes for strongly typed tty/grid/terminal APIs.
+//! tty/grid/terminal API 所用的行与列 newtype。
 
-/// Indexing types and implementations for Grid and Line.
+/// Grid 与 Line 的索引类型及实现。
 use std::cmp::{Ord, Ordering, max, min};
 use std::fmt;
 use std::ops::{Add, AddAssign, Deref, Sub, SubAssign};
@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::grid::Dimensions;
 
-/// The side of a cell.
+/// 单元格的一侧。
 pub type Side = Direction;
 
-/// Horizontal direction.
+/// 水平方向。
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Direction {
     Left,
@@ -30,21 +30,21 @@ impl Direction {
     }
 }
 
-/// Terminal grid boundaries.
+/// 终端网格边界。
 pub enum Boundary {
-    /// Cursor's range of motion in the grid.
+    /// 光标在网格中的活动范围。
     ///
-    /// This is equal to the viewport when the user isn't scrolled into the history.
+    /// 用户未滚动进历史时,它等于视口。
     Cursor,
 
-    /// Topmost line in history until the bottommost line in the terminal.
+    /// 从历史最顶行到终端最底行。
     Grid,
 
-    /// Unbounded.
+    /// 无界。
     None,
 }
 
-/// Index in the grid using row, column notation.
+/// 用行列记法的网格索引。
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Point<L = Line, C = Column> {
@@ -59,7 +59,7 @@ impl<L, C> Point<L, C> {
 }
 
 impl Point {
-    /// Subtract a number of columns from a point.
+    /// 从点减去若干列。
     #[inline]
     #[must_use = "this returns the result of the operation, without modifying the original"]
     pub fn sub<D>(mut self, dimensions: &D, boundary: Boundary, rhs: usize) -> Self
@@ -73,7 +73,7 @@ impl Point {
         self.grid_clamp(dimensions, boundary)
     }
 
-    /// Add a number of columns to a point.
+    /// 向点加上若干列。
     #[inline]
     #[must_use = "this returns the result of the operation, without modifying the original"]
     pub fn add<D>(mut self, dimensions: &D, boundary: Boundary, rhs: usize) -> Self
@@ -86,7 +86,7 @@ impl Point {
         self.grid_clamp(dimensions, boundary)
     }
 
-    /// Clamp a point to a grid boundary.
+    /// 把点钳制到网格边界。
     #[inline]
     #[must_use = "this returns the result of the operation, without modifying the original"]
     pub fn grid_clamp<D>(mut self, dimensions: &D, boundary: Boundary) -> Self
@@ -128,15 +128,15 @@ impl<L: Ord, C: Ord> Ord for Point<L, C> {
     }
 }
 
-/// A line.
+/// 一行。
 ///
-/// Newtype to avoid passing values incorrectly.
+/// Newtype,避免传错值。
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Line(pub i32);
 
 impl Line {
-    /// Clamp a line to a grid boundary.
+    /// 把行钳制到网格边界。
     #[must_use]
     pub fn grid_clamp<D: Dimensions>(self, dimensions: &D, boundary: Boundary) -> Self {
         match boundary {
@@ -222,9 +222,9 @@ impl PartialEq<usize> for Line {
     }
 }
 
-/// A column.
+/// 一列。
 ///
-/// Newtype to avoid passing values incorrectly.
+/// Newtype,避免传错值。
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Default, Ord, PartialOrd)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Column(pub usize);

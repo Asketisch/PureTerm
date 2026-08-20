@@ -1,6 +1,6 @@
 ---
 gap: GAP-4.2
-title: Hover Preview
+title: 悬停预览
 category: 终端交互
 plan_type: enhance
 priority: P2

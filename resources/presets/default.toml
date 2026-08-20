@@ -1,7 +1,7 @@
-# PureTerm default keymap
-# This file documents the hardcoded defaults. Placing it in your config
-# as [[keyboard.bindings]] has no effect (defaults are always loaded first).
-# Override any binding by re-declaring it with a different action.
+# PureTerm 默认键位方案
+# 本文件记录硬编码的默认值。把它放进你的配置
+# 作为 [[keyboard.bindings]] 不会生效(默认值总是先加载)。
+# 重新声明某绑定并改 action 即可覆盖。
 
 [[keyboard.bindings]]
 key = "T"
@@ -93,7 +93,7 @@ key = "P"
 mods = "Command"
 action = "OpenCommandPalette"
 
-# Search (GAP-3.8 / GAP-4.3)
+# 搜索(GAP-3.8 / GAP-4.3)
 [[keyboard.bindings]]
 key = "f"
 mods = "Command"

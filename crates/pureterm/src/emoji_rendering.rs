@@ -1,17 +1,17 @@
-//! GAP-59: Emoji dedicated rendering channel.
+//! GAP-59:emoji 专用渲染通道。
 //!
-//! A separate color atlas for emoji glyphs (Apple Color Emoji on macOS,
-//! Noto Color Emoji on Linux). The atlas is an Rgba8UnormSrgb wgpu
-//! texture; glyphs are rasterized via `crossfont` and uploaded on demand.
-//! `is_complex_emoji` detects ZWJ sequences so callers can route them
-//! through the dedicated path (rather than the grayscale text pass).
+//! 为 emoji 字形使用独立的彩色 atlas(macOS 上为 Apple Color Emoji,
+//! Linux 上为 Noto Color Emoji)。atlas 是 Rgba8UnormSrgb 的 wgpu
+//! 纹理;字形经 `crossfont` 光栅化并按需上传。
+//! `is_complex_emoji` 检测 ZWJ 序列,调用方可将此类 emoji
+//! 路由到专用路径(而非灰度文本通道)。
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EmojiRenderingConfig {
     pub enabled: bool,
     pub dedicated_atlas: bool,
     pub font_fallback: String,
-    /// Optional second fallback (e.g. "Noto Color Emoji" on Linux).
+    /// 可选的第二回退字体(如 Linux 上的 "Noto Color Emoji")。
     pub font_fallback_secondary: String,
 }
 
@@ -31,23 +31,23 @@ impl EmojiRenderingConfig {
         self.enabled && self.dedicated_atlas
     }
 
-    /// Returns an iterator over font names to try, in order. Always
-    /// non-empty; the OS / platform default is the first entry.
+    /// 按顺序返回待尝试字体的迭代器。始终非空;
+    /// 操作系统/平台默认字体是第一个条目。
     pub fn fallback_chain(&self) -> impl Iterator<Item = &str> {
         std::iter::once(self.font_fallback.as_str())
             .chain(std::iter::once(self.font_fallback_secondary.as_str()))
             .filter(|s| !s.is_empty())
     }
 
-    /// Detect ZWJ emoji sequence (basic MVP heuristic).
+    /// 检测 ZWJ emoji 序列(基础 MVP 启发式)。
     pub fn is_complex_emoji(s: &str) -> bool {
         s.contains('\u{200D}') || s.chars().count() > 1
     }
 }
 
-/// A rasterized emoji glyph ready to be uploaded to a color atlas.
-/// `width` / `height` are in pixels; `data` is RGBA8 (premultiplied
-/// alpha as produced by `crossfont::BitmapBuffer::Rgba`).
+/// 已光栅化、可上传到彩色 atlas 的 emoji 字形。
+/// `width` / `height` 单位为像素;`data` 为 RGBA8(预乘
+/// alpha,与 `crossfont::BitmapBuffer::Rgba` 产出一致)。
 #[derive(Clone, Debug)]
 pub struct EmojiGlyph {
     pub character: char,
@@ -57,11 +57,11 @@ pub struct EmojiGlyph {
 }
 
 impl EmojiGlyph {
-    /// True iff the glyph has at least one non-transparent pixel.
+    /// 当且仅当字形至少有一个非透明像素时返回 true。
     pub fn has_visible_content(&self) -> bool {
-        // RGBA: skip every 4th byte (alpha channel). A glyph with
-        // 100% transparent pixels would round-trip as zero alpha on all
-        // entries, which `any` catches.
+        // RGBA:跳过每 4 个字节中的第 4 个(alpha 通道)。一个
+        // 全透明像素的字形在所有条目上都会表现为零 alpha,
+        // 这会被 `any` 捕获。
         self.data.chunks_exact(4).any(|c| c[3] != 0)
     }
 }
@@ -116,7 +116,7 @@ mod tests {
 
     #[test]
     fn emoji_glyph_visibility_check() {
-        // 2x2 RGBA, all transparent.
+        // 2x2 RGBA,全部透明。
         let empty = EmojiGlyph {
             character: ' ',
             width: 2,
@@ -124,7 +124,7 @@ mod tests {
             data: vec![0u8; 16],
         };
         assert!(!empty.has_visible_content());
-        // One opaque pixel.
+        // 只有一个不透明像素。
         let mut visible = empty.clone();
         visible.data[3] = 255;
         assert!(visible.has_visible_content());

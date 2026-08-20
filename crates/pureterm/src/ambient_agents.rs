@@ -1,18 +1,18 @@
-//! GAP-06: Ambient Agents MVP — local task queue + EventBus hooks.
+//! GAP-06:环境代理 MVP——本地任务队列 + EventBus 钩子。
 //!
-//! Full cloud async (SSE, webhooks, Slack/GitHub) is deferred. When
-//! `[ambient_agents].enabled = true`, CLI/MCP can enqueue tasks; results
-//! surface via notifications + status bar + optional right-sidebar Feed tab.
+//! 云端异步(SSE、webhooks、Slack/GitHub)留待后续。当
+//! `[ambient_agents].enabled = true` 时,CLI/MCP 可入队任务;结果
+//! 通过通知 + 状态栏 + 可选右侧边栏 Feed 页呈现。
 
 use serde::{Deserialize, Serialize};
 
-/// `[ambient_agents]` config. Default off — no background work until opted in.
+/// `[ambient_agents]` 配置。默认关闭——未显式开启前不做后台工作。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AmbientAgentsConfig {
     pub enabled: bool,
-    /// Poll interval for local task runner (seconds).
+    /// 本地任务运行器的轮询间隔(秒)。
     pub poll_interval_secs: u64,
-    /// Max retained completed tasks in memory.
+    /// 内存中最多保留的已完成任务数。
     pub max_history: usize,
 }
 

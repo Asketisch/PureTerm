@@ -1,47 +1,53 @@
-# Contributing to PureTerm
+# 贡献 PureTerm
 
-## Development Setup
+## 开发环境
 
 ```bash
-# Build
+# 构建
 cargo build
 
-# Run tests
+# 运行测试
 cargo test --workspace
 
-# Run with debug logging
+# 带调试日志运行
 RUST_LOG=debug cargo run
 
-# Check formatting
+# 检查格式
 cargo fmt --all -- --check
 
-# Run clippy
+# 运行 clippy
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-## Architecture
+## 架构
 
-PureTerm uses a 6-crate workspace:
+PureTerm 是一个 12 个 crate 的工作区:
 
-- `pureterm` — Binary entry point, event loop
-- `pureterm-core` — Config, theme, hotkeys, plugins
-- `pureterm-terminal` — VTE parser, screen grid, grapheme handling
-- `pureterm-session` — Session trait + Local/SSH/Serial/Telnet implementations
-- `pureterm-ui` — Surface, SplitTree, tabs, terminal panes, settings UI
-- `pureterm-gui` — Multi-pass GPU rendering, font system, shaders
+- `pureterm` — 二进制入口(Iced 事件循环、UI、Vi 模式、状态栏、插件)
+- `pureterm-alacritty-runtime` — 运行时封装(GPU 字体图集,精简版)
+- `pureterm-settings` — 独立设置进程(Iced 设置界面,Cmd+, 打开)
+- `pureterm-jsonrpc` — 传输无关的 JSON-RPC 2.0 类型(GUI IPC 与 daemon 共享)
+- `pureterm-daemon` — 持久化 PTY 守护进程(puretermd,会话跨 GUI 重启存活)
+- `pureterm-ssh` — 进程无关的 SSH PTY 启动(GUI 直连与 daemon 共用)
+- `pureterm-codeindex` — Tree-sitter 代码切块 + SQLite 关键词搜索
+- `pureterm-lsp` — JSON-RPC stdio LSP 客户端
+- `pureterm-computer-use` — 桌面截图 + 输入能力
+- `alacritty_terminal` — 终端内核、PTY、Grid(vendored 上游源码)
+- `alacritty_config` — 配置反序列化抽象(vendored 上游源码)
+- `alacritty_config_derive` — 配置 derive 宏(vendored 上游源码)
 
-See `crates/AGENTS.md` for detailed dependency graph and data flow.
+依赖关系与数据流详见 `crates/AGENTS.md`。
 
-## Pull Request Process
+## Pull Request 流程
 
-1. Create a feature branch from `main`
-2. Make your changes with clear commit messages
-3. Ensure `cargo fmt`, `cargo clippy`, and `cargo test` pass
-4. Submit a PR with a description of the changes
+1. 从 `main` 创建特性分支
+2. 以清晰的提交信息完成修改
+3. 确保 `cargo fmt`、`cargo clippy`、`cargo test` 全部通过
+4. 提交 PR 并在描述中说明变更内容
 
-## Coding Conventions
+## 代码规范
 
-- Follow standard Rust formatting (`cargo fmt`)
-- Resolve all clippy warnings
-- Use Chinese comments to match existing codebase style
-- UI elements must follow the rounded corner design language (see CLAUDE.md)
+- 遵循标准 Rust 格式(`cargo fmt`)
+- 解决所有 clippy 警告
+- 注释使用中文,与现有代码库风格一致
+- UI 元素必须遵循圆角设计语言(见 CLAUDE.md)

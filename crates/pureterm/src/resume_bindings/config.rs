@@ -6,15 +6,15 @@ use toml_edit::{ArrayOfTables, Item, Table};
 use crate::app_config::{AppConfig, ResumeBinding};
 
 
-/// Read all `[[resume.bindings]]` entries (thin wrapper over
+/// 读取全部 `[[resume.bindings]]` 条目(薄封装于
 /// `AppConfig::load_resume_bindings`).
 pub(crate) fn list_bindings(path: &Path) -> Vec<ResumeBinding> {
     AppConfig::load_resume_bindings(path)
 }
 
-/// Add or replace the binding keyed by `(kind, checkpoint)` via a scoped
-/// `mutate_config` write (preserves every other TOML section). `shell` is the
-/// already-split argv template.
+/// 添加或替换以 `(kind, checkpoint)` 为键的绑定,经一次带范围的
+/// `mutate_config` 写入(保留其他所有 TOML 段)。`shell` 是
+/// 已经切分好的 argv 模板。
 pub(crate) fn set_binding(
     path: &Path,
     kind: &str,
@@ -22,8 +22,8 @@ pub(crate) fn set_binding(
     shell: &[String],
     auto: bool,
 ) -> Result<(), ConfigError> {
-    // Load-modify-write under the advisory lock: replace the matching key or
-    // append, then rewrite the whole array (dedup later-wins, mirroring load).
+    // 在咨询锁下加载-修改-写入:替换匹配的键,
+    // 否则追加,然后整体重写数组(后写者胜,与加载一致)。
     let mut bindings = AppConfig::load_resume_bindings(path);
     let new = ResumeBinding {
         kind: kind.to_string(),
@@ -44,8 +44,8 @@ pub(crate) fn set_binding(
     write_bindings(path, &bindings)
 }
 
-/// Remove the binding keyed by `(kind, checkpoint)`. Returns `true` if a
-/// binding was actually removed.
+/// 移除以 `(kind, checkpoint)` 为键的绑定。若确实
+/// 移除了一个绑定则返回 `true`。
 pub(crate) fn remove_binding(path: &Path, kind: &str, checkpoint: &str) -> Result<bool, ConfigError> {
     let mut bindings = AppConfig::load_resume_bindings(path);
     let before = bindings.len();
@@ -57,8 +57,8 @@ pub(crate) fn remove_binding(path: &Path, kind: &str, checkpoint: &str) -> Resul
     Ok(removed)
 }
 
-/// Serialize the full binding list back to `[[resume.bindings]]` under an
-/// exclusive lock + atomic persist. Shared by `set_binding` / `remove_binding`.
+/// 在排它锁 + 原子持久化下,把完整绑定列表序列化回
+/// `[[resume.bindings]]`。`set_binding` / `remove_binding` 共用。
 pub(super) fn write_bindings(path: &Path, bindings: &[ResumeBinding]) -> Result<(), ConfigError> {
     config_io::mutate_config(path, |doc| {
         let mut arr = ArrayOfTables::new();

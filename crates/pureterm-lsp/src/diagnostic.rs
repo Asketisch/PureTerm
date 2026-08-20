@@ -1,4 +1,4 @@
-//! LSP diagnostic types + in-memory store.
+//! LSP 诊断类型 + 内存存储。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -63,7 +63,7 @@ impl DiagnosticStore {
         }
     }
 
-    /// Drop all tracked diagnostics (e.g. when the server dies, BUG-3).
+    /// 丢弃所有跟踪中的诊断(如服务器死亡时,BUG-3)。
     pub fn clear(&mut self) {
         self.by_uri.clear();
     }
@@ -83,7 +83,7 @@ impl DiagnosticStore {
         DiagnosticSummary { errors, warnings }
     }
 
-    /// Human-readable block for AI chat context (all tracked files).
+    /// 供 AI 聊天上下文使用的人类可读块(全部跟踪文件)。
     pub fn to_context_block(&self) -> String {
         if self.by_uri.is_empty() {
             return String::new();
@@ -156,10 +156,10 @@ pub fn parse_publish_diagnostics(params: &serde_json::Value) -> Option<(String, 
     Some((p.uri, diags))
 }
 
-/// Map a local path to an LSP `file://` URI (Unix MVP).
+/// 把本地路径映射为 LSP `file://` URI(Unix MVP)。
 ///
-/// Reserved bytes (spaces, non-ASCII, etc.) are percent-encoded so the URI is
-/// valid and round-trips against servers that normalize the same way (BUG-5).
+/// 保留字节(空格、非 ASCII 等)按百分号编码,使 URI
+/// 有效,并能与按同方式规范化的服务器往返(BUG-5)。
 pub fn path_to_uri(path: &Path) -> String {
     let abs = path
         .canonicalize()
@@ -167,7 +167,7 @@ pub fn path_to_uri(path: &Path) -> String {
     let mut out = String::from("file://");
     for &b in abs.to_string_lossy().as_bytes() {
         match b {
-            // Unreserved + path separator stay literal; everything else is encoded.
+            // 非保留字节与路径分隔符保持字面;其余一律编码。
             b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
                 out.push(b as char);
             }
@@ -183,7 +183,7 @@ fn uri_to_display_path(uri: &str) -> String {
         .to_string()
 }
 
-/// Language id for built-in LSP servers.
+/// 内置 LSP 服务器的语言 id。
 pub fn language_id(path: &Path) -> Option<&'static str> {
     match path.extension()?.to_str()? {
         "rs" => Some("rust"),
@@ -243,11 +243,11 @@ mod tests {
         assert_eq!(s.warnings, 1);
     }
 
-    /// BUG-5: `file://` URIs must percent-encode reserved bytes (spaces,
-    /// non-ASCII) instead of emitting an invalid raw URI.
+    /// BUG-5:`file://` URI 必须对保留字节(空格、
+    /// 非 ASCII)做百分号编码,而不是发出非法的原始 URI。
     #[test]
     fn path_to_uri_percent_encodes_reserved_bytes() {
-        // Non-existent path so canonicalize falls back to the raw path.
+        // 不存在的路径,使 canonicalize 回退到原始路径。
         let uri = path_to_uri(Path::new("/Users/a b/文 件.rs"));
         assert_eq!(uri, "file:///Users/a%20b/%E6%96%87%20%E4%BB%B6.rs");
     }

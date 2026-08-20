@@ -1,31 +1,31 @@
-//! OS-level autostart for `puretermd` (GAP-5.1 M4).
+//! `puretermd` 的 OS 级自启(GAP-5.1 M4)。
 //!
-//! Installs/uninstalls a per-user background service so `puretermd` is running
-//! at login — before the PureTerm GUI opens. This makes `pureterm ssh connect`
-//! work from the CLI immediately and lets the GUI re-use the existing daemon
-//! instead of spawn-on-demand.
+//! 安装/卸载一个每用户后台服务,使 `puretermd` 在登录时——
+//! PureTerm GUI 打开之前——就已运行。这让 `pureterm ssh connect`
+//! 从 CLI 立即可用,GUI 也能复用既有守护进程而非按需拉起。
+//! 
 //!
-//! - macOS:  a LaunchAgent (`~/Library/LaunchAgents/com.cnb.puretermd.plist`)
-//!           with `RunAtLoad` + `KeepAlive{SuccessfulExit:false}`. The latter
-//!           keeps the daemon alive across crashes (non-zero exit) but does NOT
-//!           respawn it when it exits 0 on a single-instance-lock collision
-//!           (`runtime::run` returns `Ok` in that case) — so there's no respawn
-//!           war with the GUI's spawn-on-demand.
-//! - Linux:  a systemd user service (`~/.config/systemd/user/puretermd.service`)
-//!           enabled with `systemctl --user enable --now`.
+//! - macOS:用 LaunchAgent(`~/Library/LaunchAgents/com.cnb.puretermd.plist`)
+//!          带 `RunAtLoad` + `KeepAlive{SuccessfulExit:false}`。后者
+//!          使守护进程跨崩溃(非零退出)存活,但在单实例锁冲突
+//!          导致的 0 退出时不重启(此时 `runtime::run` 返回 `Ok`)
+//!          ——因此不会与 GUI 的按需拉起打重启战。
+//!          
+//! - Linux:systemd 用户服务(`~/.config/systemd/user/puretermd.service`)
+//!          以 `systemctl --user enable --now` 启用。
 //!
-//! The `puretermd` binary path is resolved beside the calling executable (covers
-//! `cargo build` and the `.app` bundle), falling back to `puretermd` on `PATH`.
+//! `puretermd` 二进制路径解析为调用方可执行文件的同目录(覆盖
+//! `cargo build` 与 `.app` 捆绑),回退到 `PATH` 上的 `puretermd`。
 
 use std::io;
 use std::path::PathBuf;
 
 use crate::discovery;
 
-/// LaunchAgent / systemd unit label.
+/// LaunchAgent / systemd 单元标签。
 pub const LABEL: &str = "com.cnb.puretermd";
 
-/// Resolve the `puretermd` binary to embed in the service definition.
+/// 解析要写入服务定义的 `puretermd` 二进制路径。
 pub fn puretermd_path() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
@@ -38,7 +38,7 @@ pub fn puretermd_path() -> PathBuf {
     PathBuf::from("puretermd")
 }
 
-// ── macOS (launchd) ────────────────────────────────────────────────────────
+// ── macOS 的 launchd ────────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
 mod macos {
@@ -95,7 +95,7 @@ mod macos {
         std::fs::write(&plist, plist_xml)?;
 
         let domain = domain_target();
-        // Reload: bootout (ignore "not loaded"), then bootstrap.
+        // 重载:先 bootout(忽略“未加载”),再 bootstrap。
         let _ = Command::new("launchctl")
             .args(["bootout", &format!("{domain}/{LABEL}")])
             .output();
@@ -122,7 +122,7 @@ mod macos {
         Ok(())
     }
 
-    /// True if launchd currently has the job loaded + running.
+    /// launchd 当前已加载并运行该任务时为真。
     pub fn is_loaded() -> bool {
         let domain = domain_target();
         Command::new("launchctl")
@@ -133,7 +133,7 @@ mod macos {
     }
 }
 
-// ── Linux (systemd user service) ───────────────────────────────────────────
+// ── Linux(systemd 用户服务) ────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
 mod linux {

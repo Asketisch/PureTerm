@@ -1,51 +1,51 @@
-//! T-core-graphics v2: GPU image atlas for Sixel / chunked graphics / inline image.
+//! T-core-graphics v2:Sixel / 分块图形 / 内联图像的 GPU 图像图集。
 //!
-//! Mirrors the design of `glyph_atlas.rs` but stores RGBA pixels (Sixel
-//! and inline images are already RGBA; chunked-graphics PNG payload is
-//! decoded before insertion). Key differences from the glyph atlas:
+//! 镜像 `glyph_atlas.rs` 的设计,但存 RGBA 像素(Sixel
+//! 与内联图像本就是 RGBA;分块图形的 PNG 载荷在
+//! 插入前已解码)。与字形图集的关键差异:
 //!
-//! - **Single RGBA bitmap** — no separate grayscale path. Images are
-//!   always full-color.
-//! - **Larger max entries** — images are typically 100×–10 000× larger
-//!   than glyphs (multi-KB to multi-MB vs 100s of bytes), so the LRU
-//!   cap is tighter (the GPU upload is the bottleneck, not the CPU
-//!   bin-packing).
-//! - **Dirty-region tracking** — partial `queue.write_texture` calls
-//!   per image that changed this frame, so re-renders don't pay for
-//!   the full atlas each time.
+//! - **单一 RGBA 位图**——没有单独的灰度路径。图像
+//!   总是全彩的。
+//! - **更大的条目上限**——图像通常比字形大
+//!   100 倍到 10000 倍(数 KB 到数 MB 对几百字节),所以 LRU
+//!   上限更紧(GPU 上传是瓶颈,而不是 CPU
+//!   装箱)。
+//! - **脏区域跟踪**——对每帧变化的图像做部分
+//!   `queue.write_texture` 调用,重渲染不必每次为
+//!   整个图集付费。
 //!
-//! The atlas is a CPU-side bitmap of size [`ATLAS_SIZE`]² pixels with
-//! RGBA8. The render thread uploads only the changed [`DirtyRect`]
-//! sub-rectangles.
+//! 图集是一张 [`ATLAS_SIZE`]² 像素、RGBA8 的 CPU 侧位图。
+//! 渲染线程只上传变化的 [`DirtyRect`]
+//! 子矩形。
 
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// Atlas dimensions — same as `glyph_atlas` for shared texture code.
+/// 图集尺寸——与 `glyph_atlas` 相同,共享纹理代码。
 pub const ATLAS_SIZE: u32 = 2048;
 
-/// Maximum number of cached images before LRU eviction kicks in.
+/// 触发 LRU 逐出前可缓存图像的最大数量。
 const MAX_IMAGE_ENTRIES: usize = 256;
 
-/// Where a placed image lives in the atlas.
+/// 已放置图像在图集中的位置。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ImagePlacement {
-    /// Top-left U coordinate in atlas UV space (0..=1).
+    /// 图集 UV 空间中左上角的 U 坐标(0..=1)。
     pub u: f32,
-    /// Top-left V coordinate in atlas UV space (0..=1).
+    /// 图集 UV 空间中左上角的 V 坐标(0..=1)。
     pub v: f32,
-    /// Bottom-right U coordinate in atlas UV space (0..=1).
+    /// 图集 UV 空间中右下角的 U 坐标(0..=1)。
     pub u2: f32,
-    /// Bottom-right V coordinate in atlas UV space (0..=1).
+    /// 图集 UV 空间中右下角的 V 坐标(0..=1)。
     pub v2: f32,
-    /// Image width in pixels.
+    /// 图像宽度(像素)。
     pub width: u32,
-    /// Image height in pixels.
+    /// 图像高度(像素)。
     pub height: u32,
 }
 
-/// Sub-rectangle of the atlas that's been modified since the last upload.
+/// 自上次上传以来图集中被修改过的子矩形。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DirtyRect {
     pub x: u32,
@@ -54,8 +54,8 @@ pub struct DirtyRect {
     pub h: u32,
 }
 
-/// A queued dirty region to upload. The render thread slices
-/// `data[layout_offset..]` to extract the per-region bytes for
+/// 一个排队上传的脏区域。渲染线程切出
+/// `data[layout_offset..]` 以提取各区域的字节
 /// `queue.write_texture`.
 pub struct AtlasDirty {
     pub regions: Vec<DirtyRect>,
@@ -64,7 +64,7 @@ pub struct AtlasDirty {
     pub height: u32,
 }
 
-/// Occupied region tracked by the row-stride allocator.
+/// 行距分配器跟踪的占用区域。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Occupied {
     x: u32,
@@ -73,12 +73,12 @@ struct Occupied {
     h: u32,
 }
 
-/// CPU-side RGBA image atlas.
+/// CPU 侧 RGBA 图像图集。
 ///
-/// Allocator: simple row-stride "next free position" search. We walk a
-/// flat list of occupied rectangles and place each new image at the
-/// lowest non-overlapping y for the chosen x. This is O(n²) in the
-/// number of placed images but fine for our cap (256).
+/// 分配器:简单的行距“下一个空闲位置”搜索。我们遍历
+/// 已占矩形的扁平列表,把每个新图像放在所选 x 处
+/// 最低的不重叠 y。这在已放置图像数上是 O(n²),
+/// 但对我们的上限(256)足够。
 pub struct ImageAtlas {
     atlas: Vec<u8>,
     occupied: Vec<Occupied>,
@@ -100,7 +100,7 @@ impl ImageAtlas {
         }
     }
 
-    /// Insert an image and return its placement in the atlas.
+    /// 插入一幅图像并返回其在图集中的位置。
     pub fn insert(&mut self, id: u64, rgba: Arc<Vec<u8>>, width: u32, height: u32) -> Option<ImagePlacement> {
         if width == 0 || height == 0 {
             return None;
@@ -113,27 +113,27 @@ impl ImageAtlas {
             return None;
         }
 
-        // Already cached? Just refresh LRU.
+        // 已缓存?只刷新 LRU。
         if let Some(&placement) = self.cache.get(&id) {
             self.cache.shift_remove(&id);
             self.cache.insert(id, placement);
             return Some(placement);
         }
 
-        // LRU eviction: if we're at capacity, drop the oldest entry.
+        // LRU 逐出:达到容量时丢弃最旧条目。
         if self.cache.len() >= MAX_IMAGE_ENTRIES {
             if let Some((victim_id, _)) = self.cache.shift_remove_index(0) {
                 self.pixels.remove(&victim_id);
                 self.dims.remove(&victim_id);
-                // Note: we deliberately don't carve out the occupied rect
-                // — the bitmap is large enough that orphans don't matter,
-                // and removing them would invalidate all later placements.
+                // 注意:我们有意不挖掉已占矩形
+                //——位图足够大,孤儿区域无关紧要,
+                // 而移除它们会使之后所有放置失效。
             }
         }
 
-        // Find a non-overlapping position. We probe x = 0 in steps of
-        // `width`; for each x, we find the lowest y that doesn't
-        // overlap any existing rect and fits within the atlas height.
+        // 寻找不重叠位置。x 以 `width` 为步长从 0 探测;
+        // 对每个 x,找不与任何既有矩形重叠且不超出
+        // 图集高度的最低 y。
         let pos = self.allocate_rect(width, height)?;
         self.blit_rgba(pos.0, pos.1, width, height, &rgba);
 
@@ -160,10 +160,10 @@ impl ImageAtlas {
         Some(placement)
     }
 
-    /// Look up an image's placement without re-inserting.
+    /// 查找图像位置但不重新插入。
     pub fn get(&mut self, id: u64) -> Option<ImagePlacement> {
         if let Some(&placement) = self.cache.get(&id) {
-            // Update LRU.
+            // 更新 LRU。
             self.cache.shift_remove(&id);
             self.cache.insert(id, placement);
             Some(placement)
@@ -172,8 +172,8 @@ impl ImageAtlas {
         }
     }
 
-    /// Remove an image from the atlas (e.g. when the terminal
-    /// scrollbacks past it or the protocol sends a chunked-graphics `d=d`).
+    /// 从图集移除一幅图像(例如终端回滚越过它,
+    /// 或协议送来分块图形的 `d=d`)。
     pub fn remove(&mut self, id: u64) -> bool {
         let removed = self.cache.shift_remove(&id).is_some();
         if removed {
@@ -184,24 +184,24 @@ impl ImageAtlas {
         removed
     }
 
-    /// Number of images currently cached.
+    /// 当前缓存的图像数。
     pub fn len(&self) -> usize {
         self.cache.len()
     }
 
-    /// Returns true if the atlas has no images.
+    /// 图集无图像时返回 true。
     pub fn is_empty(&self) -> bool {
         self.cache.is_empty()
     }
 
-    /// Returns true if there are dirty regions to upload.
+    /// 有待上传的脏区域时返回 true。
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
 
-    /// Take the dirty upload payload. Returns `None` if the atlas
-    /// hasn't changed since the last call. After this call, the
-    /// `dirty` flag is reset.
+    /// 取脏上传载荷。自上次调用以来图集未变化时
+    /// 返回 `None`。调用之后
+    /// `dirty` 标志被复位。
     pub fn take_dirty_data(&mut self) -> Option<AtlasDirty> {
         if !self.dirty {
             return None;
@@ -222,32 +222,32 @@ impl ImageAtlas {
         })
     }
 
-    /// Force the atlas to be marked dirty on the next render.
+    /// 强制图集在下次渲染时标记为脏。
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }
 
-    /// Find a non-overlapping `(x, y)` for a rect of `w × h`.
+    /// 为 `w × h` 的矩形寻找不重叠的 `(x, y)`。
     ///
-    /// Scans `x` from 0 in steps of `w` (so we always land on a
-    /// `w`-aligned grid), and for each `x`, finds the lowest `y` that
-    /// doesn't overlap any existing rect and fits within ATLAS_SIZE.
+    /// `x` 以 `w` 为步长从 0 扫描(因此总落在
+    /// `w` 对齐的网格上);对每个 `x`,找不与任何
+    /// 既有矩形重叠且在 ATLAS_SIZE 内的最低 `y`。
     fn allocate_rect(&self, w: u32, h: u32) -> Option<(u32, u32)> {
         if w > ATLAS_SIZE || h > ATLAS_SIZE {
             return None;
         }
         let mut x = 0u32;
         while x + w <= ATLAS_SIZE {
-            // Find the lowest y at this x where a rect of (w, h) doesn't
-            // overlap any existing rect.
+            // 在此 x 处找 (w, h) 矩形不与任何既有矩形
+            // 重叠的最低 y。
             let y = self.lowest_free_y_at(x, w, h);
             if let Some(y) = y {
                 return Some((x, y));
             }
-            // No room at this x — try the next column.
+            // 此 x 处无空间——试下一列。
             x = x.saturating_add(w);
             if x == 0 {
-                // Overflow (w = 0 already filtered above).
+                // 溢出(w = 0 已在上游过滤)。
                 return None;
             }
         }
@@ -255,16 +255,16 @@ impl ImageAtlas {
     }
 
     fn lowest_free_y_at(&self, x: u32, w: u32, h: u32) -> Option<u32> {
-        // We test y values starting at 0, stepping by 1 if any rect
-        // overlaps. Because rects have finite height, eventually either
-        // we find a y or run off the atlas.
+        // y 从 0 起测,有矩形重叠则步进 1。由于矩形高度
+        // 有限,最终要么找到 y,要么
+        // 越出图集。
         let mut y = 0u32;
         while y + h <= ATLAS_SIZE {
             let probe = Occupied { x, y, w, h };
             if !self.occupied.iter().any(|o| overlaps(*o, probe)) {
                 return Some(y);
             }
-            // Jump past the tallest overlapping rect at this x-band.
+            // 跳过此 x 带内最高的重叠矩形。
             let tallest = self
                 .occupied
                 .iter()
@@ -312,7 +312,7 @@ impl Default for ImageAtlas {
 mod tests {
     use super::*;
 
-    /// Build a 16x16 RGBA image of a solid color.
+    /// 构造一幅 16x16 的纯色 RGBA 图像。
     fn solid_image(r: u8, g: u8, b: u8, a: u8) -> Arc<Vec<u8>> {
         Arc::new(vec![r, g, b, a].repeat(16 * 16))
     }
@@ -349,14 +349,14 @@ mod tests {
 
     #[test]
     fn lru_eviction_drops_oldest() {
-        // MAX_IMAGE_ENTRIES is 256; the LRU kicks in once we hit that.
+        // MAX_IMAGE_ENTRIES 为 256;达到即触发 LRU。
         let mut atlas = ImageAtlas::new();
         for id in 0..MAX_IMAGE_ENTRIES as u64 {
             atlas.insert(id, solid_image(0, 0, 0, 255), 16, 16).unwrap();
         }
         assert_eq!(atlas.len(), MAX_IMAGE_ENTRIES);
 
-        // Insert one more: triggers eviction of id=0.
+        // 再插入一幅:触发 id=0 的逐出。
         atlas
             .insert(MAX_IMAGE_ENTRIES as u64, solid_image(0, 0, 0, 255), 16, 16)
             .unwrap();
@@ -371,9 +371,9 @@ mod tests {
         for id in 0..MAX_IMAGE_ENTRIES as u64 {
             atlas.insert(id, solid_image(0, 0, 0, 255), 16, 16).unwrap();
         }
-        // Touch id=0 to make it MRU.
+        // 触碰 id=0 使其成为 MRU。
         assert!(atlas.get(0).is_some());
-        // Insert a new image: id=0 should survive, id=1 should be evicted.
+        // 插入新图像:id=0 应存活,id=1 应被逐出。
         atlas
             .insert(MAX_IMAGE_ENTRIES as u64, solid_image(0, 0, 0, 255), 16, 16)
             .unwrap();

@@ -1,26 +1,26 @@
-# PureTerm Cargo Configuration
-# Optimized for macOS ARM64 (Apple Silicon) + Linux CI builds.
+# PureTerm Cargo 配置
+# 为 macOS ARM64(Apple Silicon)+ Linux CI 构建优化。
 #
-# Note on linkers:
-#   - macOS 15+/Xcode 16+ ship a new default linker (ld-prime) that is already
-#     very fast. The old `zld` is unmaintained and incompatible with current
-#     toolchains, so we intentionally do NOT override the linker on macOS.
-#   - On Linux we keep mold/lld, which give large link-time wins in CI.
-#     If the linker is absent, Rust falls back to the system `ld`.
+# 关于链接器:
+#   - macOS 15+/Xcode 16+ 自带新的默认链接器(ld-prime),已经
+#     很快。旧的 `zld` 无人维护且与当前工具链不兼容,
+#     因此 macOS 上*有意*不覆盖链接器。
+#   - Linux 上保留 mold/lld,CI 链接时间大幅缩短。
+#     链接器缺失时 Rust 回退到系统 `ld`。
 
 [build]
 incremental = true
-# sccache: transparently caches rustc invocation outputs across builds and
-# across crates. When sccache is missing on PATH, cargo falls back to invoking
-# rustc directly — no hard error, so fresh checkouts and CI runners without
-# sccache still work. Install with `cargo install sccache --locked` (or
-# `brew install sccache` on macOS) for the speedup.
+# sccache:跨构建、跨 crate 透明缓存 rustc 调用输出。
+# sccache 不在 PATH 时,cargo 回退为
+# 直接调用 rustc — 无硬错误,新克隆与未装 sccache 的
+# CI runner 也能正常工作。用 `cargo install sccache --locked`(或
+# macOS 上 `brew install sccache`)安装即可提速。
 rustc-wrapper = "sccache"
 
-# ── Linux x86_64 CI: mold is fastest, lld is a good fallback ────────────────
+# ── Linux x86_64 CI:mold 最快,lld 是不错的兜底 ────────────────
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
 
-# ── Linux ARM64: lld ────────────────────────────────────────────────────────
+# ── Linux ARM64 架构:lld ────────────────────────────────────────────────────────
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=lld"]

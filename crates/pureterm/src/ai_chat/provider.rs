@@ -1,53 +1,48 @@
-//! Provider abstraction + shared SSE plumbing.
+//! 提供商抽象 + 共享的 SSE 管道。
 //!
-//! Two concerns:
-//! - [`SseMapping`] — provider-specific translation of one decoded
-//!   [`SseEvent`](super::sse::SseEvent) into zero or one
-//!   [`ChatEvent`](super::types::ChatEvent). **Stateful**: token usage is split
-//!   across events (Anthropic's `message_start` carries `input_tokens`,
-//!   `message_delta` carries `output_tokens`), so the mapper remembers them and
-//!   emits them on the terminal `Done`. This is the per-provider logic that's
-//!   fully unit-testable with **no HTTP** — feed it constructed `SseEvent`s.
-//! - `ChatProvider` + `run_sse` — the trait a concrete provider implements and
-//!   the shared read loop that drives [`super::sse::SseDecoder`] over a response
-//!   body byte-stream, mapping each event through the provider's `SseMapping`,
-//!   yielding `ChatEvent`s, and honouring cancellation. These need stream glue;
-//!   they land in the next TDD cycle alongside the (deferred) reqwest HTTP shim.
+//! 两个关注点：
+//! - [`SseMapping`] —— 把一条已解码的
+//!   [`SseEvent`](super::sse::SseEvent) 翻译为零或一条
+//!   [`ChatEvent`](super::types::ChatEvent) 的提供商特定转换。**有状态**：
+//!   令牌用量分散在多个事件中（Anthropic 的 `message_start` 携带
+//!   `input_tokens`，`message_delta` 携带 `output_tokens`），因此映射器记住
+//!   它们，并在终态 `Done` 时发出。这是逐提供商逻辑，**无需 HTTP** 即可
+//!   完全单元测试——喂给它构造好的 `SseEvent` 即可。
+//! - `ChatProvider` + `run_sse` —— 具体提供商实现的 trait，以及驱动
+//!   [`super::sse::SseDecoder`] 遍历响应体字节流的共享读循环；它把每个事件
+//!   经提供商的 `SseMapping` 映射，产出 `ChatEvent`，并尊重取消。这些需要
+//!   流胶水；它们与（延后的）reqwest HTTP shim 一起在下一个 TDD 周期落地。
 //!
-//! Phase 1 ships `SseMapping` + the two mappers headless; `ChatProvider`/`run_sse`
-//! follow once the streaming read loop is wired.
+//! 阶段 1 无头交付 `SseMapping` + 两个映射器；`ChatProvider`/`run_sse`
+//! 在流式读循环接线后跟进。
 
 use crate::ai_chat::sse::SseEvent;
 use crate::ai_chat::types::ChatEvent;
 
-/// Translate one decoded SSE event into zero or one chat events for a specific
-/// provider's wire format.
+/// 把一条已解码的 SSE 事件翻译为零或一条，针对特定提供商的线路格式
+/// 的聊天事件。
 ///
-/// `&mut self` because token usage arrives split across events (Anthropic's
-/// `message_start` → `input_tokens`, `message_delta` → `output_tokens`; OpenAI's
-/// optional `usage` chunk); the mapper accumulates and surfaces them on the
-/// terminal `Done`/`message_stop`/`[DONE]`.
+/// `&mut self` 是因为令牌用量跨事件拆分到达（Anthropic 的
+/// `message_start` → `input_tokens`，`message_delta` → `output_tokens`；
+/// OpenAI 的可选 `usage` 块）；映射器累积它们，并在终态
+/// `Done`/`message_stop`/`[DONE]` 时呈现。
 ///
-/// `Send` because the mapper lives inside the async read loop running on a tokio
-/// task.
+/// `Send` 是因为映射器位于运行在 tokio 任务上的异步读循环内部。
 pub trait SseMapping: Send {
     fn map(&mut self, ev: &SseEvent) -> Option<ChatEvent>;
 }
 
-/// Drive one streaming turn: feed byte chunks through [`SseDecoder`], map each
-/// decoded [`SseEvent`] via `mapper`, and return the resulting [`ChatEvent`]s in
-/// order. Stops after the first terminal event (`Done`/`Error`) or when the byte
-/// stream ends.
+/// 驱动一轮流式对话：把字节块喂给 [`SseDecoder`]，经 `mapper` 映射每条
+/// 已解码的 [`SseEvent`]，按顺序返回得到的 [`ChatEvent`]。在第一个终态事件
+/// （`Done`/`Error`）之后或字节流结束时停止。
 ///
-/// **HTTP-agnostic**: `bytes` is any stream of `Result<byte-chunk, transport
-/// error>`. In production a provider injects its reqwest response body; in tests
-/// we inject `stream::iter` over hand-written SSE byte fixtures — same coverage,
-/// no network. An `Err` chunk models a mid-stream transport failure and becomes a
-/// terminal [`ChatEvent::Error`].
+/// **与 HTTP 无关**：`bytes` 是任意 `Result<字节块, 传输错误>` 流。生产
+/// 中提供商注入其 reqwest 响应体；测试中注入覆盖手写 SSE 字节夹具的
+/// `stream::iter`——同样的覆盖，无网络。`Err` 块模拟流中途的传输失败，
+/// 变为终态 [`ChatEvent::Error`]。
 ///
-/// Cancellation (panel close / new turn / Stop) is handled one layer up by the
-/// provider dropping its consumer / signalling a `tokio::sync::Notify`; this core
-/// loop owns the byte→event translation only.
+/// 取消（面板关闭 / 新的一轮 / Stop）由上一层处理：提供商丢弃其消费者 /
+/// 发出 `tokio::sync::Notify` 信号；此核心循环只负责 字节→事件 的翻译。
 pub async fn run_sse<S, M, B, E>(mut bytes: S, mut mapper: M) -> Vec<ChatEvent>
 where
     S: iced::futures::Stream<Item = std::result::Result<B, E>> + Unpin,
@@ -74,16 +69,16 @@ where
                     }
                 }
             }
-            // Mid-stream transport failure → terminal ChatEvent::Error.
+            // 流中途的传输失败 → 终态 ChatEvent::Error。
             Err(e) => {
                 out.push(ChatEvent::Error(e.to_string()));
                 return out;
             }
         }
     }
-    // Stream ended. If no terminal event fired (server cut early without
-    // `message_stop`/`[DONE]`), we return what we have — no synthetic Done; the
-    // panel marks the turn incomplete.
+    // 流结束。若没有终态事件触发（服务器提前切断，没有
+    // `message_stop`/`[DONE]`），我们返回已有的内容——不合成 Done；
+    // 面板把这一轮标记为未完成。
     out
 }
 
@@ -94,8 +89,8 @@ mod tests {
     use crate::ai_chat::openai::OpenAiMap;
     use iced::futures::stream;
 
-    /// Run a `run_sse` future to completion on a lightweight current-thread
-    /// tokio runtime (no worker threads; the loop needs no tokio I/O).
+    /// 在轻量级当前线程 tokio 运行时上把 `run_sse` future 跑到完成
+    /// （无工作线程；循环不需要 tokio I/O）。
     fn block_on<F: std::future::Future>(f: F) -> F::Output {
         tokio::runtime::Builder::new_current_thread()
             .build()
@@ -103,14 +98,14 @@ mod tests {
             .block_on(f)
     }
 
-    /// Wrap one byte slice as a single-chunk `Result<Ok, String>` stream input
-    /// (fixes the error type so `vec![Ok(...)]` needs no annotation).
+    /// 把一个字节切片包装为单块 `Result<Ok, String>` 流输入
+    /// （固定错误类型，使 `vec![Ok(...)]` 无需注解）。
     fn one_chunk(b: &[u8]) -> Vec<std::result::Result<Vec<u8>, String>> {
         vec![Ok(b.to_vec())]
     }
 
-    /// A realistic Anthropic streaming turn: start, two text deltas, a
-    /// message_delta carrying output_tokens, then message_stop.
+    /// 一个逼真的 Anthropic 流式回合：start、两个文本增量、一个携带
+    /// output_tokens 的 message_delta，然后是 message_stop。
     const ANTHROPIC_TURN: &[u8] = b"\
 event: message_start\n\
 data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":12,\"output_tokens\":1}}}\n\n\
@@ -141,9 +136,8 @@ data: {\"type\":\"message_stop\"}\n\n";
 
     #[test]
     fn anthropic_turn_split_across_chunks_mid_line() {
-        // Split the byte stream at arbitrary offsets (mid-`data:` line, mid-event
-        // boundary) — the decoder must buffer partials across chunks exactly as a
-        // socket would deliver them split.
+        // 在任意偏移处切分字节流（`data:` 行中间、事件边界中间）——解码器必须
+        // 跨块缓冲不完整数据，就像 socket 拆分交付它们一样。
         let mid = ANTHROPIC_TURN.len() / 3;
         let mid2 = 2 * ANTHROPIC_TURN.len() / 3;
         let chunks: Vec<std::result::Result<Vec<u8>, String>> = vec![
@@ -166,15 +160,15 @@ data: {\"type\":\"message_stop\"}\n\n";
 
     #[test]
     fn terminal_done_stops_before_trailing_events() {
-        // Bytes AFTER message_stop (a trailing ghost delta) must be ignored —
-        // the loop returns on the first terminal event.
+        // message_stop 之后的字节（结尾的幽灵增量）必须被忽略——
+        // 循环在第一个终态事件处就返回。
         let mut payload = ANTHROPIC_TURN.to_vec();
         payload.extend(
             b"event: content_block_delta\n\
 data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ghost\"}}\n\n",
         );
         let events = block_on(run_sse(stream::iter(one_chunk(&payload)), AnthropicMap::new()));
-        assert_eq!(events.len(), 3); // no 4th "ghost" TextDelta
+        assert_eq!(events.len(), 3); // 没有第 4 个“幽灵” TextDelta
         assert_eq!(
             events[2],
             ChatEvent::Done {
@@ -184,8 +178,8 @@ data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_d
         );
     }
 
-    /// A realistic OpenAI-compatible turn: role-only first chunk, one content
-    /// delta, a finish_reason chunk, then [DONE].
+    /// 一个逼真的 OpenAI 兼容回合：仅 role 的第一块、一个内容增量、
+    /// 一个 finish_reason 块，然后 [DONE]。
     const OPENAI_TURN: &[u8] = b"\
 data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"},\"finish_reason\":null}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":null}]}\n\n\
@@ -211,8 +205,8 @@ data: [DONE]\n\n";
 
     #[test]
     fn transport_error_mid_stream_becomes_chat_error() {
-        // First chunk delivers a delta; the second chunk is a transport error,
-        // which must surface as a terminal ChatEvent::Error carrying the message.
+        // 第一块交付一个增量；第二块是传输错误，必须作为携带该消息的终态
+        // ChatEvent::Error 呈现。
         let first = b"event: content_block_delta\n\
 data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"partial\"}}\n\n";
         let chunks: Vec<std::result::Result<Vec<u8>, String>> = vec![
@@ -227,8 +221,8 @@ data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_d
 
     #[test]
     fn stream_ending_without_terminal_yields_no_synthetic_done() {
-        // If the server cuts early (no message_stop/[DONE]), we do NOT fabricate a
-        // Done — the panel marks the turn incomplete. A lone delta, no terminator.
+        // 若服务器提前切断（没有 message_stop/[DONE]），我们不编造 Done——
+        // 面板把这一轮标记为未完成。只有孤立的增量，没有终结符。
         let bytes = b"event: content_block_delta\n\
 data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"orphan\"}}\n\n";
         let events = block_on(run_sse(
@@ -240,13 +234,12 @@ data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_d
 }
 
 // ============================================================================
-// API-key handling (env-first; key NEVER in TOML/logs).
+// API 密钥处理（环境优先；密钥绝不进 TOML/日志）。
 // ============================================================================
 
-/// An LLM API key. Wraps the secret so its [`std::fmt::Debug`] impl never reveals
-/// the value — safe to log a struct that contains one. Security contract: keys
-/// resolve from the environment at provider construction and never round-trip
-/// through TOML/`toml_edit`/Settings.
+/// 一个 LLM API 密钥。包裹秘密，使其 [`std::fmt::Debug`] 实现绝不泄露
+/// 值——可以安全地记录包含它的结构体。安全契约：密钥在提供商构造时从
+/// 环境解析，绝不经 TOML/`toml_edit`/Settings 往返。
 #[derive(Clone)]
 pub struct SecretKey(String);
 
@@ -254,7 +247,7 @@ impl SecretKey {
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
-    /// Borrow the raw key (e.g. to set an Authorization header). Internal use.
+    /// 借用原始密钥（例如设置 Authorization 头）。内部使用。
     pub fn get(&self) -> &str {
         self.0.as_str()
     }
@@ -266,10 +259,10 @@ impl std::fmt::Debug for SecretKey {
     }
 }
 
-/// Resolve an API key, env-first. If `override_env` names a variable present in
-/// `lookup`, it wins; otherwise fall back to `default_env`. Returns `None` if
-/// neither is set. `lookup` abstracts environment access so this is unit-testable
-/// without touching (or racing on) the real process environment.
+/// 解析 API 密钥，环境优先。若 `override_env` 指定的变量存在于 `lookup`
+/// 中，它获胜；否则回退到 `default_env`。两者都未设置时返回 `None`。
+/// `lookup` 抽象了环境访问，因此无需接触（或竞争）真实进程环境即可
+/// 单元测试。
 pub fn resolve_key(
     lookup: impl Fn(&str) -> Option<String>,
     override_env: Option<&str>,
@@ -283,10 +276,10 @@ pub fn resolve_key(
     lookup(default_env).map(SecretKey::new)
 }
 
-/// Classify a reqwest transport error into a stable, URL-free category label.
-/// reqwest's `Display` embeds the request URL — which for OpenAI-compatible
-/// providers is the user's configured (possibly internal) base URL — so we never
-/// surface the raw error in a `ChatEvent::Error`; we surface this label instead.
+/// 把 reqwest 传输错误归类为稳定的、不含 URL 的类别标签。
+/// reqwest 的 `Display` 内嵌请求 URL——对于 OpenAI 兼容的提供商，那是
+/// 用户配置的（可能是内部的）基础 URL——所以我们绝不在 `ChatEvent::Error`
+/// 中呈现原始错误；而是呈现这个标签。
 pub fn classify_reqwest_error(e: &reqwest::Error) -> &'static str {
     if e.is_timeout() {
         "timeout"
@@ -302,16 +295,16 @@ pub fn classify_reqwest_error(e: &reqwest::Error) -> &'static str {
 }
 
 // ============================================================================
-// ChatProvider trait + streaming read loop.
+// ChatProvider trait + 流式读循环。
 // ============================================================================
 
-/// A streaming LLM provider (Anthropic Claude, any OpenAI-compatible endpoint).
+/// 一个流式 LLM 提供商（Anthropic Claude、任何 OpenAI 兼容端点）。
 ///
-/// `stream()` issues one completion request and returns a `ChatEvent` stream the
-/// panel drives via `iced::Task::stream`. `cancel` is signalled to abort the
-/// in-flight HTTP request promptly (panel close / new turn / Stop button).
+/// `stream()` 发起一个补全请求，并返回面板通过 `iced::Task::stream`
+/// 驱动的 `ChatEvent` 流。`cancel` 被发信号以迅速中止进行中的 HTTP 请求
+/// （面板关闭 / 新的一轮 / Stop 按钮）。
 pub trait ChatProvider: Send + Sync + 'static {
-    /// Stable identifier for logging/config ("anthropic", "openai").
+    /// 供日志/配置使用的稳定标识符（“anthropic”、“openai”）。
     fn id(&self) -> &'static str;
     fn stream(
         &self,
@@ -320,10 +313,10 @@ pub trait ChatProvider: Send + Sync + 'static {
     ) -> std::pin::Pin<Box<dyn iced::futures::Stream<Item = ChatEvent> + Send>>;
 }
 
-/// `tokio::sync::mpsc::Receiver` exposed as an `iced::futures::Stream`. The
-/// streaming read loop ([`run_sse_stream`] / [`drive_decode`]) pushes decoded
-/// `ChatEvent`s through the channel; the panel consumes this stream.
-/// `Receiver<T>` is `Unpin`, so the wrapper is too.
+/// 作为 `iced::futures::Stream` 暴露的 `tokio::sync::mpsc::Receiver`。
+/// 流式读循环（[`run_sse_stream`] / [`drive_decode`]）把已解码的
+/// `ChatEvent` 推过通道；面板消费此流。`Receiver<T>` 是 `Unpin` 的，
+/// 因此包装器也是。
 pub(super) struct MpscReceiverStream(tokio::sync::mpsc::Receiver<ChatEvent>);
 
 impl MpscReceiverStream {
@@ -342,11 +335,11 @@ impl iced::futures::Stream for MpscReceiverStream {
     }
 }
 
-/// The shared decode loop: feed `bytes` through the SSE decoder, map each event
-/// via `mapper`, push `ChatEvent`s to `tx`. Ends on: cancel, the first terminal
-/// event (`Done`/`Error`), the byte source ending, or the consumer dropping the
-/// stream (`send` fails). `bytes` is boxed+pinned so this accepts any stream —
-/// synthetic `stream::iter` in tests, reqwest's `bytes_stream()` in providers.
+/// 共享的解码循环：把 `bytes` 喂给 SSE 解码器，经 `mapper` 映射每个事件，
+/// 把 `ChatEvent` 推给 `tx`。在以下情况结束：取消、第一个终态事件
+/// （`Done`/`Error`）、字节源结束、或消费者丢弃流（`send` 失败）。
+/// `bytes` 被装箱+固定，因此这接受任意流——测试中的合成 `stream::iter`、
+/// 提供商中的 reqwest `bytes_stream()`。
 pub(super) async fn drive_decode<S, M, B, E>(
     bytes: S,
     mut mapper: M,
@@ -363,8 +356,8 @@ pub(super) async fn drive_decode<S, M, B, E>(
     let mut decoder = crate::ai_chat::sse::SseDecoder::new();
     loop {
         tokio::select! {
-            // Prompt abort (panel close / new turn / Stop) — breaks even if the
-            // byte source is blocked on the network.
+            // 快速中止（面板关闭 / 新的一轮 / Stop）——即使字节源阻塞在网络上也
+            // 会跳出。
             _ = cancel.notified() => break,
             chunk = bytes.next() => match chunk {
                 None => break,
@@ -373,7 +366,7 @@ pub(super) async fn drive_decode<S, M, B, E>(
                     for ev in decoder.drain() {
                         let Some(ce) = mapper.map(&ev) else { continue };
                         let terminal = ce.is_terminal();
-                        // Consumer dropped the stream → stop.
+                        // 消费者丢弃了流 → 停止。
                         if tx.send(ce).await.is_err() {
                             return;
                         }
@@ -389,13 +382,13 @@ pub(super) async fn drive_decode<S, M, B, E>(
             }
         }
     }
-    // tx drops here → the receiver (stream) closes → consumer sees `None`.
+    // tx 在此处析构 → 接收端（流）关闭 → 消费者看到 `None`。
 }
 
-/// Streaming counterpart of [`run_sse`]: spawn a decode task that pushes decoded
-/// `ChatEvent`s through a channel, yielding them incrementally (so the panel
-/// renders deltas as they arrive, not only at turn end). Aborts promptly when
-/// `cancel` is notified — even if the byte source is blocked on the network.
+/// [`run_sse`] 的流式对应物：生成一个解码任务，把已解码的 `ChatEvent`
+/// 推过通道，增量产出（使面板在增量到达时即时渲染，而不是只在回合
+/// 结束时）。`cancel` 收到通知时迅速中止——即使字节源阻塞在网络上也
+/// 如此。
 pub fn run_sse_stream<S, M, B, E>(
     bytes: S,
     mapper: M,
@@ -506,9 +499,8 @@ data: {\"type\":\"message_stop\"}\n\n";
 
     #[test]
     fn cancel_unblocks_a_pending_byte_source() {
-        // A byte source that never yields and never ends → the decode task blocks
-        // on `bytes.next()`. Signalling cancel must break the loop and close the
-        // channel promptly (well under the 2s timeout).
+        // 一个永不产出、永不结束的字节源 → 解码任务阻塞在 `bytes.next()` 上。
+        // 发出 cancel 信号必须打破循环并迅速关闭通道（远低于 2s 超时）。
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let cancel = Arc::new(tokio::sync::Notify::new());
@@ -520,7 +512,7 @@ data: {\"type\":\"message_stop\"}\n\n";
             cancel.notify_one();
             let done = tokio::time::timeout(Duration::from_secs(2), collect(s)).await;
             assert!(done.is_ok(), "stream did not close after cancel (timed out)");
-            assert!(done.unwrap().is_empty()); // no events, just closed
+            assert!(done.unwrap().is_empty()); // 无事件,流仅已关闭
         });
     }
 }
@@ -532,9 +524,8 @@ mod classify_tests {
 
     #[test]
     fn classify_reqwest_error_returns_stable_label() {
-        // A malformed URL fails at request-build time locally (no network). The
-        // contract: classify returns one of a fixed label set, never the raw
-        // error (which embeds the configured base URL).
+        // 格式错误的 URL 会在本地请求构建时失败（无网络）。契约：classify 返回
+        // 固定标签集合中的一个，绝不返回原始错误（它内嵌配置的基础 URL）。
         let rt = tokio::runtime::Runtime::new().unwrap();
         let label: &str = rt.block_on(async {
             let tried = tokio::time::timeout(

@@ -1,6 +1,6 @@
 ---
 gap: GAP-4.6
-title: Accessibility
+title: 辅助功能
 category: 视觉
 plan_type: platform
 priority: P4

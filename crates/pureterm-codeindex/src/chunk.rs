@@ -1,4 +1,4 @@
-//! Tree-sitter AST chunking for Rust, Python, and JavaScript.
+//! 基于 Tree-sitter 的 AST 分块,支持 Rust、Python 与 JavaScript。
 
 use tree_sitter::{Language, Node, Parser, Tree};
 
@@ -108,10 +108,10 @@ fn collect_chunks(
         if let Some(chunk) = node_to_chunk(lang, source, tree, node) {
             out.push(chunk);
         }
-        // Fall through and keep descending so nested definitions — methods inside
-        // `impl`/`mod`, methods inside Python/JS classes — get their own chunks too.
-        // (Previously this `return`ed, folding every nested def into its parent and
-        // making them invisible to find_symbol/search_code — see GAP-03 audit.)
+        // 落入穿透继续下潜,使嵌套定义——`impl`/`mod` 里的方法、
+        // Python/JS 类里的方法——也能得到自己的块。
+        // (此前这里直接 `return`,把每个嵌套定义折叠进父级,
+        // 使 find_symbol/search_code 看不到它们——见 GAP-03 审计。)
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -198,7 +198,7 @@ mod tests {
         assert!(chunks.iter().any(|c| c.symbol_name.as_deref() == Some("add")));
     }
 
-    // Regression for GAP-03 B1: nested definitions must get their own chunks.
+    // GAP-03 B1 回归:嵌套定义必须得到自己的块。
     #[test]
     fn rust_impl_methods_are_chunked() {
         let src = "struct Foo;\nimpl Foo {\n    fn bar(&self) {}\n    fn baz(&self) {}\n}\n";

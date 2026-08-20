@@ -1,13 +1,13 @@
-//! GAP-57: MacBook haptic feedback.
+//! GAP-57:MacBook 触感反馈。
 //!
-//! macOS: `NSHapticFeedbackManager.defaultPerformer().performFeedbackPattern(_:performanceTime:)`
-//! fires the system trackpad haptic actuator. Errors (no Mac, no force-touch
-//! trackpad, the API rejected the request) are logged and otherwise ignored
-//! — haptics are best-effort and never block the UI thread.
+//! macOS 上 `NSHapticFeedbackManager.defaultPerformer().performFeedbackPattern(_:performanceTime:)`
+//! 触发系统触控板震动马达。错误(非 Mac、无力度触控
+//! 触控板、API 拒绝请求)只记日志,其余忽略
+//! —— 触感反馈尽力而为,绝不阻塞 UI 线程。
 //!
-//! Other platforms: no-op (the system has no equivalent API surface).
+//! 其它平台:空操作(系统没有等价的 API)。
 
-/// Haptic event kinds.
+/// 触感事件类型。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HapticEvent {
     TabSwitch,
@@ -15,7 +15,7 @@ pub enum HapticEvent {
     Notification,
 }
 
-/// `[haptic]` config.
+/// `[haptic]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HapticConfig {
     pub enabled: bool,
@@ -48,10 +48,10 @@ impl HapticConfig {
     }
 }
 
-/// Result of a haptic request. `Fired` means the API acknowledged the
-/// request; `Skipped` / `Failed` distinguish user-disabled vs. platform
-/// rejection (mostly the former on non-Macs and the latter on Macs that
-/// lack a force-touch trackpad).
+/// 触感请求的结果。`Fired` 表示 API 已受理
+/// 请求;`Skipped` / `Failed` 区分用户禁用与平台
+/// 拒绝(非 Mac 上多为前者;缺少力度触控的 Mac 上
+/// 多为后者)。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum HapticOutcome {
     Skipped,
@@ -63,18 +63,18 @@ pub enum HapticOutcome {
 fn pattern_for(event: HapticEvent) -> objc2_app_kit::NSHapticFeedbackPattern {
     use objc2_app_kit::NSHapticFeedbackPattern;
     match event {
-        // Generic is the safest choice: alignment / level / generic all
-        // map to the same underlying actuator, but `Generic` is available
-        // on every Mac that supports haptics (10.11+).
+        // Generic 是最稳妥的选择:alignment / level / generic 都
+        // 映射到同一底层马达,而 `Generic` 在
+        // 每台支持触感的 Mac(10.11+)上都可用。
         HapticEvent::TabSwitch => NSHapticFeedbackPattern::Generic,
         HapticEvent::Error => NSHapticFeedbackPattern::Generic,
         HapticEvent::Notification => NSHapticFeedbackPattern::Generic,
     }
 }
 
-/// Perform a haptic event. Safe to call on any thread (the macOS API is
-/// documented as thread-safe). Returns the outcome so callers (and tests)
-/// can distinguish skip vs. fired vs. error.
+/// 执行一次触感事件。可在任意线程调用(macOS API 被
+/// 文档声明为线程安全)。返回结果,供调用方(和测试)
+/// 区分跳过、触发与错误。
 pub fn perform(cfg: &HapticConfig, event: HapticEvent) -> HapticOutcome {
     if !cfg.should_fire(event) {
         return HapticOutcome::Skipped;
@@ -88,10 +88,10 @@ pub fn perform(cfg: &HapticConfig, event: HapticEvent) -> HapticOutcome {
         let performer: &ProtocolObject<dyn objc2_app_kit::NSHapticFeedbackPerformer> = &*performer;
         let pattern = pattern_for(event);
         let time = NSHapticFeedbackPerformanceTime::Default;
-        // performFeedbackPattern:performanceTime: returns void. We call
-        // the trait method directly (objc2 0.6 re-exports it on the
-        // ProtocolObject) under a `catch_unwind` boundary so a misbehaving
-        // performer cannot crash the UI thread.
+        // performFeedbackPattern:performanceTime: 返回 void。我们
+        // 直接调用 trait 方法(objc2 0.6 在
+        // ProtocolObject 上重新导出)并置于 `catch_unwind` 边界内,
+        // 使行为异常的 performer 无法崩溃 UI 线程。
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
             objc2_app_kit::NSHapticFeedbackPerformer::performFeedbackPattern_performanceTime(
                 &*performer, pattern, time,
@@ -109,8 +109,8 @@ pub fn perform(cfg: &HapticConfig, event: HapticEvent) -> HapticOutcome {
     }
 }
 
-/// Convenience: fire-and-forget. Logs the outcome at debug level and
-/// drops the result.
+/// 便捷方法:发射后不管。以 debug 级别记录结果并
+/// 丢弃返回值。
 pub fn perform_logged(cfg: &HapticConfig, event: HapticEvent) {
     let outcome = perform(cfg, event);
     match outcome {
@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn perform_logged_is_safe() {
         let cfg = HapticConfig::default();
-        // Disabled config => Skipped, log path is no-op.
+        // 配置禁用 => Skipped,日志路径为空操作。
         perform_logged(&cfg, HapticEvent::TabSwitch);
     }
 }

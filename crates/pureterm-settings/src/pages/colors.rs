@@ -128,7 +128,7 @@ impl ColorsState {
                 }
             }
             ColorsMsg::OpenColorPicker(_) => {
-                // Handled by app, not directly here
+                // 由 app 处理,不在此直接处理
             }
             ColorsMsg::ColorPickerHexChanged(_) => {
                 // 由 app 层更新 picker_preview_hex（弹窗内 hex 输入），此处无需处理。
@@ -196,7 +196,7 @@ impl ColorsState {
         }
     }
 
-    /// Replay this page's in-memory color state onto `doc`. Used at Save
+    /// 把本页内存颜色状态重放到 `doc` 上。保存时
     /// time via `mutate_config`. 无效 hex 跳过写盘（保留磁盘旧值），与
     /// Terminal 页整数字段的「解析失败即跳过」范式一致。
     pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {

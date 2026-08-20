@@ -34,32 +34,32 @@ use crossbeam_channel::Sender;
 
 pub use context_type::TerminalContext;
 
-/// Terminal event types sent from PTY thread to Iced.
+/// 从 PTY 线程发送到 Iced 的终端事件类型。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TerminalEvent {
     Wakeup,
     Exit,
     CwdChanged(String),
-    /// GAP-1.3: window title set via OSC 0/2, or restored by CSI 23t (pop).
+    /// GAP-1.3:通过 OSC 0/2 设置的窗口标题,或由 CSI 23t(pop)恢复。
     Title(String),
-    /// GAP-1.3: title cleared (OSC reset) — fall back to the derived tab title.
+    /// GAP-1.3:标题被清除(OSC 重置)—— 回退到派生的标签页标题。
     ResetTitle,
-    /// GAP-15: OSC 133 shell-integration mark (prompt/command/output boundary,
-    /// with exit code + duration on OutputEnd). Surfaced so the GUI can track
-    /// per-pane commands and emit `shell.*` events for the AI context pipeline.
+    /// GAP-15:OSC 133 shell 集成的标记(提示符 / 命令 / 输出边界,
+    /// OutputEnd 携带退出码 + 耗时)。向上暴露,使 GUI 能追踪
+    /// 每个窗格的命令,并为 AI 上下文管线发出 `shell.*` 事件。
     ShellMark(alacritty_terminal::event::ShellMark),
-    /// GAP-09: OSC 9/99/777 desktop notification parsed from the PTY.
+    /// GAP-09:从 PTY 解析出的 OSC 9/99/777 桌面通知。
     Notification(alacritty_terminal::event::Notification),
-    /// GAP-09: terminal bell (0x07) — surfaced as an additional "needs
-    /// attention" signal (was previously dropped by the `_ => return` below).
+    /// GAP-09:终端响铃(0x07)—— 作为额外的「需要
+    /// 注意」信号暴露(此前被下方的 `_ => return` 丢弃)。
     Bell,
-    /// T-core-graphics: a decoded graphics image (Sixel / chunked-graphics
-    /// / inline image). Surfaced so the GUI's `ImageStore` can pick it up and the
-    /// renderer can blit it onto the grid.
+    /// T-core-graphics:一张解码后的图形图像(Sixel / 分块图形
+    /// / 内联图像)。向上暴露,使 GUI 的 `ImageStore` 能接住它,
+    /// 渲染器能把它 blit 到网格上。
     GraphicsImage(alacritty_terminal::event::GraphicsImage),
 }
 
-/// Bridge: implements `EventListener` by sending through a crossbeam channel.
+/// 桥接:通过 crossbeam 通道发送,实现 `EventListener`。
 #[derive(Clone)]
 pub struct ChannelEventListener {
     tx: Sender<TerminalEvent>,
@@ -79,22 +79,22 @@ impl EventListener for ChannelEventListener {
             TEvent::Exit => TerminalEvent::Exit,
             TEvent::ChildExit(_) => TerminalEvent::Exit,
             TEvent::CwdChanged(path) => TerminalEvent::CwdChanged(path),
-            // GAP-1.3: surface the program-set window title (OSC 0/2 + CSI
-            // 22t/23t push/pop, all routed through `Term::set_title` upstream)
-            // so the GUI can show it instead of only the derived tab title.
+            // GAP-1.3:把程序设置的窗口标题(OSC 0/2 + CSI
+            // 22t/23t push/pop,上游全部经 `Term::set_title` 路由)暴露出来,
+            // 使 GUI 能显示它,而不只是派生的标签页标题。
             TEvent::Title(title) => TerminalEvent::Title(title),
             TEvent::ResetTitle => TerminalEvent::ResetTitle,
-            // GAP-15: forward OSC 133 shell-integration marks to the GUI (was
-            // previously dropped by the `_ => return` catch-all below).
+            // GAP-15:把 OSC 133 shell 集成标记转发给 GUI(此前
+            // 被下方 `_ => return` 通配分支丢弃)。
             TEvent::ShellMark(m) => TerminalEvent::ShellMark(m),
-            // GAP-09: forward OSC 9/99/777 notifications and the terminal bell.
-            // Both MUST precede the `_ => return` catch-all below or they are
-            // silently dropped — the same trap that bit ShellMark pre-GAP-15.
+            // GAP-09:转发 OSC 9/99/777 通知与终端响铃。
+            // 两者都必须位于下方 `_ => return` 通配分支之前,
+            // 否则会被静默丢弃 —— 这与 GAP-15 之前坑过 ShellMark 的陷阱相同。
             TEvent::Notification(n) => TerminalEvent::Notification(n),
             TEvent::Bell => TerminalEvent::Bell,
-            // T-core-graphics: forward decoded graphics images to the GUI.
-            // The GUI's `ImageStore` decides whether to blit (it owns the
-            // eviction + scrollback-prune policies).
+            // T-core-graphics:把解码后的图形图像转发给 GUI。
+            // 由 GUI 的 `ImageStore` 决定是否 blit(它负责
+            // 驱逐与回滚裁剪策略)。
             TEvent::GraphicsImage(img) => TerminalEvent::GraphicsImage(img),
             _ => return,
         };

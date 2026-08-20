@@ -1,8 +1,8 @@
-//! T-core-tmux-cc: the `Surface` variant that holds a `tmux -CC` child.
+//! T-core-tmux-cc:持有 `tmux -CC` 子进程的 `Surface` 变体。
 //!
-//! v1: a struct with the metadata the GUI needs to spawn + control a
-//! control-mode tmux child, plus the `SurfaceBackend` enum that lets
-//! [`crate::split_tree::Surface`] express "this is a tmux -CC pane".
+//! v1:一个结构体,保存 GUI 生成与控制 control-mode tmux 子进程所需的
+//! 元数据,外加 `SurfaceBackend` 枚举,让 [`crate::split_tree::Surface`]
+//! 表达「这是一个 tmux -CC 面板」。
 
 use std::sync::Arc;
 
@@ -11,38 +11,35 @@ use parking_lot::Mutex;
 
 use super::envelope::TmuxEnvelope;
 
-/// The running control-mode tmux child. v1 holds:
-/// - the pane id tmux assigned us (so we can route `%output` back to
-///   the right `alacritty_terminal::Term`);
-/// - the session id (`$N`) so the GUI can show it in the tab title;
-/// - the latest window snapshot from `%windows … %end`;
-/// - the kill flag the GUI flips on detach.
+/// 运行中的 control-mode tmux 子进程。v1 保存:
+/// - tmux 分配给我们的 pane id(用于把 `%output` 路由回正确的
+///   `alacritty_terminal::Term`);
+/// - session id(`$N`),GUI 可将其显示在标签页标题中;
+/// - 来自 `%windows … %end` 的最新窗口快照;
+/// - GUI 在分离时置位的 kill 标志。
 ///
-/// The actual spawn / stdio thread / SIGHUP cleanup is in
-/// [`super::pty`] (Unix-only in v1).
+/// 实际的生成 / stdio 线程 / SIGHUP 清理在 [`super::pty`] 中(v1 仅支持 Unix)。
 #[derive(Debug)]
 pub struct TmuxControlPty {
-    /// tmux session id (`$0`, `$1`, …).
+    /// tmux 会话 id(`$0`, `$1`, …)。
     pub session_id: String,
-    /// Initial pane id tmux created for the `-CC` attach. Subsequent
-    /// panes come back via `%window-add` / `%output`.
+    /// tmux 为 `-CC` 附加创建的初始 pane id。后续面板通过 `%window-add` / `%output` 返回。
     pub pane_id: u32,
-    /// Latest window snapshot: `window_id → window_index`.
+    /// 最新窗口快照:`window_id → window_index`。
     pub windows: Mutex<Vec<(String, u32)>>,
-    /// Replay payloads received in the first `%begin … %end` block.
-    /// The renderer uses these to seed the scrollback.
+    /// 第一个 `%begin … %end` 块中收到的回放载荷。
+    /// 渲染器用它们为回滚缓冲区补充内容。
     pub replay: Mutex<Vec<u8>>,
-    /// Process handle (Unix pid, used for SIGHUP on detach).
+    /// 进程句柄(Unix pid,用于分离时发送 SIGHUP)。
     #[cfg(unix)]
     pub pid: u32,
-    /// The latest grid size the GUI asked for. Sent as `resize-pane`
-    /// on every window resize.
+    /// GUI 请求的最新网格尺寸。每次窗口大小变化时作为 `resize-pane` 发送。
     pub last_size: Mutex<WindowSize>,
 }
 
 impl TmuxControlPty {
-    /// Construct a new `TmuxControlPty` from the metadata tmux printed
-    /// during attach. `replay` is the first `%output` payload, if any.
+    /// 根据 tmux 附加期间打印的元数据构造新的 `TmuxControlPty`。
+    /// `replay` 是第一个 `%output` 载荷(若有)。
     #[cfg(unix)]
     pub fn new(session_id: String, pane_id: u32, pid: u32) -> Self {
         Self {
@@ -60,9 +57,7 @@ impl TmuxControlPty {
         }
     }
 
-    /// Non-unix constructor (Windows fallback for v1 — the control-mode
-    /// backend is Unix-only today, but the type exists so `Surface` can
-    /// carry it without an extra `#[cfg]` at every match site).
+    /// 非 Unix 构造函数(v1 的 Windows 回退 —— 目前 control-mode 后端仅支持 Unix,但保留该类型,`Surface` 无需在每处匹配点加 `#[cfg]` 即可携带它)。
     #[cfg(not(unix))]
     pub fn new(session_id: String, pane_id: u32) -> Self {
         Self {
@@ -79,31 +74,27 @@ impl TmuxControlPty {
         }
     }
 
-    /// Apply an incoming envelope to the local state. The renderer
-    /// queries the state after the GUI has run a batch of envelopes.
+    /// 将收到的 envelope 应用到本地状态。渲染器在 GUI 批量处理完 envelope 后查询该状态。
     pub fn apply_envelope(&self, env: &TmuxEnvelope) {
         match env {
             TmuxEnvelope::Output { pane_id, bytes } if *pane_id == self.pane_id => {
                 self.replay.lock().extend_from_slice(bytes);
             },
             TmuxEnvelope::Begin { pane_id, .. } if *pane_id == self.pane_id => {
-                // Begin a new replay block; clear the buffer.
+                // 开始新的回放块;清空缓冲区。
                 self.replay.lock().clear();
             },
             TmuxEnvelope::End => {
-                // Frame closed — the GUI can flush self.replay to the
-                // terminal grid in a single pass.
+                // 帧结束 —— GUI 可以一次性把 self.replay 刷入终端网格。
             },
             TmuxEnvelope::SessionChanged { session_id, .. } => {
-                // Replace the local session id (reattach target moved).
-                // `self.session_id` is a `String` (not a `Mutex<String>`)
-                // because the GUI only writes it once at attach time;
-                // any race here is a known limitation logged in v1.
+                // 替换本地 session id(重新附加的目标已移动)。
+                // `self.session_id` 是 `String`(而非 `Mutex<String>`),
+                // 因为 GUI 只在附加时写入一次;任何竞争都是 v1 中已记录的限制。
                 let mut cur = self.session_id.clone();
                 cur = session_id.clone();
-                // We can't write to `self.session_id` (no `&mut self`),
-                // so this is a no-op in v1; the GUI is expected to spawn
-                // a fresh `TmuxControlPty` on session change.
+                // 无法写入 `self.session_id`(没有 `&mut self`),所以 v1 中这是空操作;
+                // 会话变化时,GUI 应生成新的 `TmuxControlPty`。
                 let _ = cur;
             },
             _ => {},
@@ -111,22 +102,18 @@ impl TmuxControlPty {
     }
 }
 
-/// Backend kind for a `Surface`. The enum is `cfg`-gated so the legacy
-/// `Local` / `Ssh` / `Serial` variants don't pull Unix-only code into
-/// the Windows build; the new `TmuxControl` variant is also Unix-only
-/// because the only backend impl in v1 is the Unix one.
+/// `Surface` 的后端类型。枚举用 `cfg` 门控,使旧的 `Local` / `Ssh` / `Serial` 变体不会把 Unix 专用代码带入 Windows 构建;新增的 `TmuxControl` 变体同样仅限 Unix,因为 v1 唯一的后端实现就是 Unix。
 #[derive(Debug, Clone)]
 pub enum SurfaceBackend {
-    /// Local PTY.
+    /// 本地 PTY。
     Local,
-    /// SSH PTY (Unix only — Windows path lives in
-    /// `pureterm-ssh::windows`).
+    /// SSH PTY(仅 Unix —— Windows 路径位于 `pureterm-ssh::windows`)。
     #[cfg(unix)]
     Ssh,
-    /// Serial / telnet (Unix only).
+    /// 串口 / telnet(仅 Unix)。
     #[cfg(unix)]
     Serial,
-    /// tmux control mode child.
+    /// tmux control mode 子进程。
     #[cfg(unix)]
     TmuxControl(Arc<TmuxControlPty>),
 }

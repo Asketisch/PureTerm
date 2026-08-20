@@ -1,4 +1,4 @@
-//! Grid resize and reflow.
+//! 网格的缩放与回流(reflow)。
 
 use std::cmp::{Ordering, max, min};
 use std::mem;
@@ -10,13 +10,13 @@ use crate::grid::row::Row;
 use crate::grid::{Dimensions, Grid, GridCell};
 
 impl<T: GridCell + Default + PartialEq> Grid<T> {
-    /// Resize the grid's width and/or height.
+    /// 缩放网格的宽度和/或高度。
     pub fn resize<D>(&mut self, reflow: bool, lines: usize, columns: usize)
     where
         T: ResetDiscriminant<D>,
         D: PartialEq,
     {
-        // Use empty template cell for resetting cells due to resize.
+        // 缩放导致的单元格重置用空模板单元格。
         let template = mem::take(&mut self.cursor.template);
 
         match self.lines.cmp(&lines) {
@@ -31,15 +31,15 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
             Ordering::Equal => (),
         }
 
-        // Restore template cell.
+        // 恢复模板单元格。
         self.cursor.template = template;
     }
 
-    /// Add lines to the visible area.
+    /// 向可见区添加行。
     ///
-    /// Alacritty keeps the cursor at the bottom of the terminal as long as there
-    /// is scrollback available. Once scrollback is exhausted, new lines are
-    /// simply added to the bottom of the screen.
+    /// 只要还有回滚可用,Alacritty 就把光标保持在终端
+    /// 底部。回滚耗尽后,新行直接加到屏幕
+    /// 底部。
     fn grow_lines<D>(&mut self, target: usize)
     where
         T: ResetDiscriminant<D>,
@@ -47,20 +47,20 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
     {
         let lines_added = target - self.lines;
 
-        // Need to resize before updating buffer.
+        // 更新缓冲前需要先 resize。
         self.raw.grow_visible_lines(target);
         self.lines = target;
 
         let history_size = self.history_size();
         let from_history = min(history_size, lines_added);
 
-        // Move existing lines up for every line that couldn't be pulled from history.
+        // 每有一行无法从历史拉取,就把既有行上移一行。
         if from_history != lines_added {
             let delta = lines_added - from_history;
             self.scroll_up(&(Line(0)..Line(target as i32)), delta);
         }
 
-        // Move cursor down for every line pulled from history.
+        // 每从历史拉取一行,光标下移一行。
         self.saved_cursor.point.line += from_history;
         self.cursor.point.line += from_history;
 
@@ -68,28 +68,28 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         self.decrease_scroll_limit(lines_added);
     }
 
-    /// Remove lines from the visible area.
+    /// 从可见区移除行。
     ///
-    /// The behavior in Terminal.app and iTerm.app is to keep the cursor at the
-    /// bottom of the screen. This is achieved by pushing history "out the top"
-    /// of the terminal window.
+    /// Terminal.app 与 iTerm.app 的行为是把光标保持在屏幕
+    /// 底部。这通过把历史从终端窗口“顶部推出”
+    /// 实现。
     ///
-    /// Alacritty takes the same approach.
+    /// Alacritty 采用相同做法。
     fn shrink_lines<D>(&mut self, target: usize)
     where
         T: ResetDiscriminant<D>,
         D: PartialEq,
     {
-        // Scroll up to keep content inside the window.
+        // 向上滚动,把内容保持在窗口内。
         let required_scrolling = (self.cursor.point.line.0 as usize + 1).saturating_sub(target);
         if required_scrolling > 0 {
             self.scroll_up(&(Line(0)..Line(self.lines as i32)), required_scrolling);
 
-            // Clamp cursors to the new viewport size.
+            // 把光标钳制到新视口尺寸。
             self.cursor.point.line = min(self.cursor.point.line, Line(target as i32 - 1));
         }
 
-        // Clamp saved cursor, since only primary cursor is scrolled into viewport.
+        // 钳制已保存光标,因为只有主光标会滚进视口。
         self.saved_cursor.point.line = min(self.saved_cursor.point.line, Line(target as i32 - 1));
 
         self.raw.rotate((self.lines - target) as isize);
@@ -97,9 +97,9 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         self.lines = target;
     }
 
-    /// Grow number of columns in each row, reflowing if necessary.
+    /// 增大每行的列数,必要时回流。
     fn grow_columns(&mut self, reflow: bool, columns: usize) {
-        // Check if a row needs to be wrapped.
+        // 检查某行是否需要换行。
         let should_reflow = |row: &Row<T>| -> bool {
             let len = Column(row.len());
             reflow && len.0 > 0 && len < columns && row[len - 1].flags().contains(Flags::WRAPLINE)
@@ -110,7 +110,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         let mut reversed: Vec<Row<T>> = Vec::with_capacity(self.raw.len());
         let mut cursor_line_delta = 0;
 
-        // Remove the linewrap special case, by moving the cursor outside of the grid.
+        // 把光标移出网格,消除换行特例。
         if self.cursor.input_needs_wrap && reflow {
             self.cursor.input_needs_wrap = false;
             self.cursor.point.column += 1;
@@ -119,7 +119,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
         let mut rows = self.raw.take_all();
 
         for (i, mut row) in rows.drain(..).enumerate().rev() {
-            // Check if reflowing should be performed.
+            // 检查是否应执行回流。
             let last_row = match reversed.last_mut() {
                 Some(last_row) if should_reflow(last_row) => last_row,
                 _ => {
@@ -128,12 +128,12 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                 },
             };
 
-            // Remove wrap flag before appending additional cells.
+            // 追加额外单元格前移除换行标志。
             if let Some(cell) = last_row.last_mut() {
                 cell.flags_mut().remove(Flags::WRAPLINE);
             }
 
-            // Remove leading spacers when reflowing wide char to the previous line.
+            // 宽字符回流到上一行时,移除前导占位。
             let mut last_len = last_row.len();
             if last_len >= 1
                 && last_row[Column(last_len - 1)].flags().contains(Flags::LEADING_WIDE_CHAR_SPACER)
@@ -142,11 +142,11 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                 last_len -= 1;
             }
 
-            // Don't try to pull more cells from the next line than available.
+            // 从下一行拉的单元格不要超过可用量。
             let mut num_wrapped = columns - last_len;
             let len = min(row.len(), num_wrapped);
 
-            // Insert leading spacer when there's not enough room for reflowing wide char.
+            // 宽字符没有足够空间回流时,插入前导占位。
             let mut cells = if row[Column(len - 1)].flags().contains(Flags::WIDE_CHAR) {
                 num_wrapped -= 1;
 
@@ -161,24 +161,24 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                 row.front_split_off(len)
             };
 
-            // Add removed cells to previous row and reflow content.
+            // 把移除的单元格加到上一行并回流内容。
             last_row.append(&mut cells);
 
             let cursor_buffer_line = self.lines - self.cursor.point.line.0 as usize - 1;
 
             if i == cursor_buffer_line && reflow {
-                // Resize cursor's line and reflow the cursor if necessary.
+                // 缩放光标所在行,必要时回流光标。
                 let mut target = self.cursor.point.sub(self, Boundary::Cursor, num_wrapped);
 
-                // Clamp to the last column, if no content was reflown with the cursor.
+                // 若没有内容随光标回流,钳制到最后一列。
                 if target.column.0 == 0 && row.is_clear() {
                     self.cursor.input_needs_wrap = true;
                     target = target.sub(self, Boundary::Cursor, 1);
                 }
                 self.cursor.point.column = target.column;
 
-                // Get required cursor line changes. Since `num_wrapped` is smaller than `columns`
-                // this will always be either `0` or `1`.
+                // 取光标行需要的变更。由于 `num_wrapped` 小于 `columns`,
+                // 结果总是 `0` 或 `1`。
                 let line_delta = self.cursor.point.line - target.line;
 
                 if line_delta != 0 && row.is_clear() {
@@ -188,36 +188,36 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                 cursor_line_delta += line_delta.0 as usize;
             } else if row.is_clear() {
                 if i < self.display_offset {
-                    // Since we removed a line, rotate down the viewport.
+                    // 由于删了一行,把视口向下旋转。
                     self.display_offset = self.display_offset.saturating_sub(1);
                 }
 
-                // Rotate cursor down if content below them was pulled from history.
+                // 光标下方内容被拉入历史时,光标向下旋转。
                 if i < cursor_buffer_line {
                     self.cursor.point.line += 1;
                 }
 
-                // Don't push line into the new buffer.
+                // 不要把该行推入新缓冲。
                 continue;
             }
 
             if let Some(cell) = last_row.last_mut() {
-                // Set wrap flag if next line still has cells.
+                // 下一行仍有单元格时设置换行标志。
                 cell.flags_mut().insert(Flags::WRAPLINE);
             }
 
             reversed.push(row);
         }
 
-        // Make sure we have at least the viewport filled.
+        // 确保至少填满视口。
         if reversed.len() < self.lines {
             let delta = (self.lines - reversed.len()) as i32;
             self.cursor.point.line = max(self.cursor.point.line - delta, Line(0));
             reversed.resize_with(self.lines, || Row::new(columns));
         }
 
-        // Pull content down to put cursor in correct position, or move cursor up if there's no
-        // more lines to delete below the cursor.
+        // 下拉内容把光标放到正确位置;若光标下方
+        // 已无行可删,则把光标上移。
         if cursor_line_delta != 0 {
             let cursor_buffer_line = self.lines - self.cursor.point.line.0 as usize - 1;
             let available = min(cursor_buffer_line, reversed.len() - self.lines);
@@ -226,7 +226,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
             self.cursor.point.line = max(self.cursor.point.line - overflow, Line(0));
         }
 
-        // Reverse iterator and fill all rows that are still too short.
+        // 反向迭代,填充仍过短的行。
         let mut new_raw = Vec::with_capacity(reversed.len());
         for mut row in reversed.drain(..).rev() {
             if row.len() < columns {
@@ -237,15 +237,15 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
 
         self.raw.replace_inner(new_raw);
 
-        // Clamp display offset in case lines above it got merged.
+        // 光标上方的行被合并时,钳制显示偏移。
         self.display_offset = min(self.display_offset, self.history_size());
     }
 
-    /// Shrink number of columns in each row, reflowing if necessary.
+    /// 减小每行的列数,必要时回流。
     fn shrink_columns(&mut self, reflow: bool, columns: usize) {
         self.columns = columns;
 
-        // Remove the linewrap special case, by moving the cursor outside of the grid.
+        // 把光标移出网格,消除换行特例。
         if self.cursor.input_needs_wrap && reflow {
             self.cursor.input_needs_wrap = false;
             self.cursor.point.column += 1;
@@ -256,10 +256,10 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
 
         let mut rows = self.raw.take_all();
         for (i, mut row) in rows.drain(..).enumerate().rev() {
-            // Append lines left over from the previous row.
+            // 追加上一行遗留的行。
             if let Some(buffered) = buffered.take() {
-                // Add a column for every cell added before the cursor, if it goes beyond the new
-                // width it is then later reflown.
+                // 为光标前新增的每个单元格加一列;超出新宽度
+                // 的部分稍后回流。
                 let cursor_buffer_line = self.lines - self.cursor.point.line.0 as usize - 1;
                 if i == cursor_buffer_line {
                     self.cursor.point.column += buffered.len();
@@ -269,24 +269,24 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
             }
 
             loop {
-                // Remove all cells which require reflowing.
+                // 移除所有需要回流的单元格。
                 let mut wrapped = match row.shrink(columns) {
                     Some(wrapped) if reflow => wrapped,
                     _ => {
                         let cursor_buffer_line = self.lines - self.cursor.point.line.0 as usize - 1;
                         if reflow && i == cursor_buffer_line && self.cursor.point.column > columns {
-                            // If there are empty cells before the cursor, we assume it is explicit
-                            // whitespace and need to wrap it like normal content.
+                            // 光标前若有空单元格,我们视之为显式
+                            // 空白,像普通内容一样换行。
                             Vec::new()
                         } else {
-                            // Since it fits, just push the existing line without any reflow.
+                            // 放得下就直接推入现有行,不做回流。
                             new_raw.push(row);
                             break;
                         }
                     },
                 };
 
-                // Insert spacer if a wide char would be wrapped into the last column.
+                // 宽字符会被换到最后一列时,插入占位。
                 if row.len() >= columns
                     && row[Column(columns - 1)].flags().contains(Flags::WIDE_CHAR)
                 {
@@ -297,7 +297,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                     wrapped.insert(0, wide_char);
                 }
 
-                // Remove wide char spacer before shrinking.
+                // 缩列前移除宽字符占位。
                 let len = wrapped.len();
                 if len > 0 && wrapped[len - 1].flags().contains(Flags::LEADING_WIDE_CHAR_SPACER) {
                     if len == 1 {
@@ -305,7 +305,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                         new_raw.push(row);
                         break;
                     } else {
-                        // Remove the leading spacer from the end of the wrapped row.
+                        // 移除换行行尾的前导占位。
                         wrapped[len - 2].flags_mut().insert(Flags::WRAPLINE);
                         wrapped.truncate(len - 1);
                     }
@@ -313,7 +313,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
 
                 new_raw.push(row);
 
-                // Set line as wrapped if cells got removed.
+                // 有单元格被移除时,把该行标记为已换行。
                 if let Some(cell) = new_raw.last_mut().and_then(|r| r.last_mut()) {
                     cell.flags_mut().insert(Flags::WRAPLINE);
                 }
@@ -324,16 +324,16 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                     .unwrap_or(false)
                     && wrapped.len() < columns
                 {
-                    // Make sure previous wrap flag doesn't linger around.
+                    // 确保先前的换行标志不会残留。
                     if let Some(cell) = wrapped.last_mut() {
                         cell.flags_mut().remove(Flags::WRAPLINE);
                     }
 
-                    // Add removed cells to start of next row.
+                    // 把移除的单元格加到下一行开头。
                     buffered = Some(wrapped);
                     break;
                 } else {
-                    // Reflow cursor if a line below it is deleted.
+                    // 光标下方有行被删时,回流光标。
                     let cursor_buffer_line = self.lines - self.cursor.point.line.0 as usize - 1;
                     if (i == cursor_buffer_line && self.cursor.point.column < columns)
                         || i < cursor_buffer_line
@@ -341,14 +341,14 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                         self.cursor.point.line = max(self.cursor.point.line - 1, Line(0));
                     }
 
-                    // Reflow the cursor if it is on this line beyond the width.
+                    // 光标在本行且超出新宽度时,回流光标。
                     if i == cursor_buffer_line && self.cursor.point.column >= columns {
-                        // Since only a single new line is created, we subtract only `columns`
-                        // from the cursor instead of reflowing it completely.
+                        // 由于只新建了一行,只从光标减去 `columns`,
+                        // 而非完整回流。
                         self.cursor.point.column -= columns;
                     }
 
-                    // Make sure new row is at least as long as new width.
+                    // 确保新行至少与新宽度等长。
                     let occ = wrapped.len();
                     if occ < columns {
                         wrapped.resize_with(columns, T::default);
@@ -356,22 +356,22 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
                     row = Row::from_vec(wrapped, occ);
 
                     if i < self.display_offset {
-                        // Since we added a new line, rotate up the viewport.
+                        // 由于新增了一行,把视口向上旋转。
                         self.display_offset += 1;
                     }
                 }
             }
         }
 
-        // Reverse iterator and use it as the new grid storage.
+        // 反向迭代,用作新网格存储。
         let mut reversed: Vec<Row<T>> = new_raw.drain(..).rev().collect();
         reversed.truncate(self.max_scroll_limit + self.lines);
         self.raw.replace_inner(reversed);
 
-        // Clamp display offset in case some lines went off.
+        // 部分行消失时,钳制显示偏移。
         self.display_offset = min(self.display_offset, self.history_size());
 
-        // Reflow the primary cursor, or clamp it if reflow is disabled.
+        // 回流主光标;禁用回流时钳制它。
         if !reflow {
             self.cursor.point.column = min(self.cursor.point.column, Column(columns - 1));
         } else if self.cursor.point.column == columns
@@ -383,7 +383,7 @@ impl<T: GridCell + Default + PartialEq> Grid<T> {
             self.cursor.point = self.cursor.point.grid_clamp(self, Boundary::Cursor);
         }
 
-        // Clamp the saved cursor to the grid.
+        // 把已保存光标钳制到网格。
         self.saved_cursor.point.column = min(self.saved_cursor.point.column, Column(columns - 1));
     }
 }

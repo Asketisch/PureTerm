@@ -1,19 +1,19 @@
-//! Test fixture: a minimal LSP server over stdio.
+//! 测试夹具:一个基于 stdio 的极简 LSP 服务器。
 //!
-//! Used by `client.rs` regression tests for the initialize handshake (BUG-2),
-//! graceful shutdown (BUG-4) and crash/reader-exit lifecycle (BUG-3). It is a
-//! separate binary so tests can spawn it via `CARGO_BIN_EXE_mock_lsp_server`.
+//! 供 `client.rs` 的回归测试使用:初始化握手(BUG-2)、
+//! 优雅关停(BUG-4)与崩溃/读线程退出生命周期(BUG-3)。它是
+//! 独立的二进制,测试可经 `CARGO_BIN_EXE_mock_lsp_server` 拉起。
 //!
-//! Args:
-//! - argv[1] = scenario
-//! - argv[2] = marker path (optional); written when a `shutdown` request arrives.
+//! 参数:
+//! - argv[1] = 场景
+//! - argv[2] = 标记文件路径(可选);收到 `shutdown` 请求时写入。
 //!
-//! Scenarios:
-//! - _unset_/"ok"             : full `initialize`→`initialized`→`shutdown`→`exit` dance.
-//! - "fail-init"              : reply to `initialize` with a JSON-RPC error.
-//! - "publish"                : like "ok" but emit one diagnostic after `didOpen`.
-//! - "crash-after-publish"    : emit one diagnostic after `didOpen`, then close stdout
-//!                              (simulates a server crash → reader EOF).
+//! 场景:
+//! - 未设置/"ok"            :完整的 `initialize`→`initialized`→`shutdown`→`exit` 流程。
+//! - "fail-init"            :以 JSON-RPC 错误回复 `initialize`。
+//! - "publish"              :同 "ok",但在 `didOpen` 后发布一条诊断。
+//! - "crash-after-publish"  :在 `didOpen` 后发布一条诊断,然后关闭 stdout
+//!                             (模拟服务器崩溃 → 读线程 EOF)。
 
 use std::fs;
 use std::io::{BufRead, Write};
@@ -50,8 +50,8 @@ fn main() {
                 let _ = write_msg(&mut out, &resp);
             }
             "shutdown" => {
-                // Write the marker BEFORE replying, so a client that unblocks on
-                // the response and then SIGKILLs us still observes the marker.
+                // 先写标记再回复,使在响应上解锁后
+                // 即刻 SIGKILL 我们的客户端仍能观察到标记。
                 if let Some(p) = &marker {
                     let _ = fs::write(p, "shutdown\n");
                 }
@@ -78,7 +78,7 @@ fn main() {
                 }));
                 let _ = out.flush();
                 if scenario == "crash-after-publish" {
-                    // Simulate a crash: stop reading and close stdout.
+                    // 模拟崩溃:停止读取并关闭 stdout。
                     return;
                 }
             }
@@ -87,7 +87,7 @@ fn main() {
     }
 }
 
-/// Read one Content-Length-framed JSON message. `None` on EOF.
+/// 读取一条 Content-Length 分帧的 JSON 消息。EOF 时返回 `None`。
 fn read_message<R: BufRead>(r: &mut R) -> Option<Value> {
     let mut content_length = None;
     loop {

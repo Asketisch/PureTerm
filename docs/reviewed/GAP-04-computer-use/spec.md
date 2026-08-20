@@ -1,7 +1,7 @@
 ---
 gap: GAP-04
-title: Computer Use
-category: AI Agent
+title: 计算机操作
+category: AI 智能体
 plan_type: feature
 priority: P2
 effort: XL
@@ -48,7 +48,7 @@ Computer Use 是 AI agent 能力的终极扩展，业界将其作为核心能力
 5. AI agent 通过截图理解屏幕内容，决定下一步操作
 6. 安全：敏感操作需用户确认（类似 Feed Approval）
 
-## Review（2026-07-01）✅
+## 评审（2026-07-01）✅
 
 按本仓 review 范式审计 GAP-04 实现（macOS 截图 + 输入 stub + 4 个 MCP 工具）。核心实现干净（输入注入按设计返回 Err、仅 macOS 截图），修 1 条 spec 明确要求的安全缺口 + 3 个真实小 bug，Review flip ✅。
 

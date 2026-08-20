@@ -42,7 +42,7 @@
 
 ---
 
-## B. UI/UX
+## B. UI/UX 界面
 
 ### GAP-3.3 命令面板 ⌘⇧P(2026-06-08)
 - nucleo-matcher 模糊搜索,Actions / Profiles 双模式
@@ -53,7 +53,7 @@
 - 2026-06-22 GAP-7.6 加 agent 指示:`⚡ kind` / `❄ kind` / `⏳ N`
 - 留后续迭代:顶部 title bar shortcut hint pills / 菜单栏 extra badge(CPU/内存已于 GAP-24 完成)
 
-### GAP-24 Enhanced Status Bar(2026-06-26)
+### GAP-24 增强状态栏(2026-06-26)
 - 把原 monolithic `view_bottom_bar`(6 段 inline `text`)重构为 `StatusBarComponent` trait + `Vec<Box<dyn StatusBarComponent>>` 注册表;每段自渲染 `iced::Element<'static>`,`view_bottom_bar` 只组装 `BarData` 快照(SSH/Vi/agent 的 cfg-gated 格式化留在 in-module)
 - 新增段:**CPU / Memory / Network(带 sparkline)+ Clock + Battery**;原有 Cwd/Git/Ssh/ViMode/Process/Agent/Cursor 全部移植上 trait
 - **Sparkline**:`iced::widget::canvas` 自定义 `SparklineProgram`,移植业界 sparkline bezier 曲线数学(右锚定 / 自动缩放 ceiling floor 1.0 防 /0 / 60 点窗口;`path::Builder` 非 Clone 故 stroke/fill 两 builder 共享点集)
@@ -79,21 +79,21 @@
 - 实现:`crates/pureterm/src/sidebar/`(mod/left/right) + `iced_app.rs` + `keymap.rs` + `app_config.rs`
 - 单测:`sidebar::tests` 4 绿 + `app_config::load_sidebar` 2 绿;全量 772 绿 0 回归
 
-### GAP-11 Instant Replay MVP（2026-06-29）
+### GAP-11 即时回放 MVP（2026-06-29）
 - **数据源**:从 `events.jsonl` 加载 shell/surface/session 时间线(非 DVR delta 压缩)
-- **CLI**:`pureterm replay list` / `pureterm replay export --output replay.jsonl`
+- **命令行**:`pureterm replay list` / `pureterm replay export --output replay.jsonl`
 - **GUI**:⌘⇧R 打开底部回放条,◀/▶  scrub,按当前 session 过滤
 - 实现:`crates/pureterm/src/instant_replay.rs` + `iced_app.rs` + `cli.rs`
 - **未做**:grid 快照回放 / run-length 压缩 / 独立回放窗口
 
-### GAP-12 Annotations & Marks MVP（2026-06-29）
+### GAP-12 注释与标记 MVP（2026-06-29）
 - **Marks**:OSC 133 shell marks → `PaneMarks` 网格行标记(Prompt/Command/Output/Error)
 - **导航**:⌘⇧↑/↓ 跳上/下一个 mark,自动 scroll 到目标行
 - **Annotations**:行级 `LineAnnotation` 存储(MVP 通过 API/OSC hex 扩展预留)
 - 实现:`crates/pureterm/src/annotations.rs` + `iced_app.rs`(ShellMark 接线)
 - **未做**:行内图标 UI / 右键添加注释 / Marks 侧栏列表
 
-### GAP-25 Multi-Window MVP（2026-06-29）
+### GAP-25 多窗口 MVP（2026-06-29）
 - **新窗口**:⌘⇧N → `Window::new_secondary`(tab bar + workspace,区别于 detached 单 pane)
 - **IPC**:`window.create` → `NewWindow`;`workspace.switch` 支持 `all_windows:true` 全进程 + 跨实例 fan-out
 - **注册表**:`~/.local/share/pureterm/window-sockets.txt` 记录各实例 GUI socket
@@ -111,7 +111,7 @@
 - Pane 的第二种内容载体:自实现 wry 嵌入(macOS WKWebView 作 content NSView 子视图 `build_as_child`);几何真值=split_tree layout,reposition pass 按 `mark_layout_dirty` + tab 切换 + 拖拽 burst 触发;快照 `PaneSnapshot.kind="web"` + `#[serde(default)] url` 前向兼容
 - **快捷键**:`⌘⇧L` 分出新 Web pane 并聚焦地址栏;`⌘L` 地址栏 overlay(导航活跃 Web pane,无则新建)+ `normalize_url_input`(裸域名→`https://` / scheme 原样 / 含空格→Google 搜索)
 - Phase C per-view SOCKS5 proxy 绑定(wry `mac-proxy`,绑定 GAP-5.2 隧道);GAP-7.8 `browser.*` ops + MCP + screenshot 复用此 pane
-- CLI:`pureterm pane split-web --url <url>`;IPC `pane.split_web`
+- 命令行:`pureterm pane split-web --url <url>`;IPC `pane.split_web`
 - 自动 E2E harness 全绿:`browser_address_bar_e2e`(spawn 序列 Arc 身份 + load_url 未 realize 即更新)+ `normalize_url_input` + keymap `⌘L`/`⌘⇧L`(双形),共 442 单测
 - Linux 走 open-in-browser 兜底(webkit2gtk 原生嵌入未做);后退/前进导航 defer(`⌘[`/`⌘]` 与 pane 焦点冲突)
 - 实现:`crates/pureterm/src/browser/` + `iced_app.rs`(`spawn_web_pane` / 地址栏 overlay);pixel smoke 见 `docs/reviewed/GAP-3.5-browser-panel/test-plan.md`
@@ -131,7 +131,7 @@
 - 实现:搜索浮层 UI + flag(case/regex/whole-word)
 - 196 测试绿 + dist .app 重打包;待手动 GUI E2E
 
-### GAP-3.9 Settings UI(2026-06-08)
+### GAP-3.9 设置界面(2026-06-08)
 - 基于 Iced 0.14 的图形化设置界面,作为独立进程运行
 - **快捷键**:`Cmd+,`(macOS)打开设置窗口
 - **架构**:独立进程 `pureterm-settings`,通过配置文件通信(写文件 → ConfigMonitor 自动热重载)
@@ -140,7 +140,7 @@
 - **配置 I/O**:使用 `toml_edit::DocumentMut` 格式保留读写,`NamedTempFile::persist()` 原子写入
 - 实现:`crates/pureterm-settings/`(独立 crate)
 
-### GAP-32 Git Integration(2026-06-27)
+### GAP-32 Git 集成(2026-06-27)
 - 在 GAP-24 Enhanced Status Bar 的 porcelain 管线上增量扩展,零新依赖:`git status --porcelain=v2 --branch` 一条子进程出 branch + dirty 分计数(staged/unstaged/untracked/unmerged/renamed)+ ahead/behind + HEAD oid + upstream;PR 走 `gh pr view --json` shell-out(复用用户 `gh auth`,不做内置 OAuth),挂 `GitStatus.pr` 单一源(状态栏 pill + 面板共用);`git` 缺失/非 repo 回退纯 FS `read_git_branch`(行为不回退)
 - **状态栏 git 段**:`git_bar_label` 出 ` main ↑2↓1 ●2 ~1 +3`(零计数段省略)+ amber in-progress op 后缀 + 状态色 PR pill `⧉#N STATE (✓s · …p · ✗f)`
 - **⌘⇧B Git 面板**(避让 ⌘⇧G=SearchPrev):只读 repo 视图(分支/upstream/ahead-behind/HEAD/分计数/recent commits/in-progress op/PR+checks)+ 快捷操作按钮 Stage all / Commit / Push / Pull / **Create PR** / Lazygit,命令写进活跃 pane PTY(`run_git_quick_action` → `write_to_pty`);Create-PR=`gh pr create`(in-pane 编辑器写 title/body),gh 缺失 toast;lazygit 本地起 TUI、SSH pane/未装 toast 降级;Toast 层(3.5s 自动消失 + 4s StatusBarTick 安全网)
@@ -163,7 +163,7 @@
 - 实现:`crates/pureterm/src/vi_mode_handler.rs`(ViSubMode 状态机 + 18 ViMotion + visual 选区 + yank + 搜索) + `terminal_shader.rs`(vi cursor 渲染 + 搜索高亮) + `iced_app.rs`(键盘拦截 + 搜索栏 UI + 状态栏指示)
 - 单测:`vi_mode_handler::tests` 3 + Alacritty vi_mode 19
 
-### GAP-4.2 Smart Selection Hover Preview(2026-06-29)
+### GAP-4.2 智能选择悬停预览(2026-06-29)
 - 鼠标悬停 URL/SSH URL/文件路径(智能选择规则)200ms 后显示 pinned tooltip:URL 异步抓取 `<title>` + favicon;路径 `std::fs::metadata` + `ignore` gitignore 标记
 - 右键语义菜单:打开 / 复制 / 在编辑器中打开(路径 + `path:line`);⌘⇧O 打开悬停或选区 URL/路径
 - **GAP-36 Semantic History**:⌘-click `file.rs:42` / rustc `src/main.rs:42:5` → 编辑器(`$EDITOR` > `[semantic_history].editor` > `code`);`OpenSemanticTarget` 动作
@@ -190,7 +190,7 @@
 - 实现:`terminal_context.rs::ChannelEventListener` 转发 `Event::Title`/`ResetTitle`(此前 `_ => return` 丢弃)+ `iced_app.rs` `pane_osc_title` side-map(仿 `pane_cwds`,不改 `Pane` 结构体)+ 事件循环两 arm + `resolve_display_title` 纯函数 + `tab_display_title` 接线(窗口标题 / Tab 栏 / Tab 切换器 / AppSnapshot)
 - 单测:桥接转发 3 + `resolve_display_title` 3;全 461 绿
 
-### GAP-15 Shell Integration（OSC 133 A/B/C/D）(2026-06-28)
+### GAP-15 Shell 集成（OSC 133 A/B/C/D）(2026-06-28)
 - zsh + bash 自动注入 OSC 133 prompt/command/output 边界标记 + 复用既有 OSC 7 cwd;命令文本由 shell 经 B mark 的 `cmd=<hex>` 发送(非 grid 读取),GUI hex 解码进 `ShellMark.command`
 - **注入**:`pureterm-daemon/src/shell_integration.rs` `prepare_shell_env(tag, opts)` — zsh `.zshenv` bootstrap(precmd/preexec/chpwd) + bash `PROMPT_COMMAND`(DEBUG trap);`PURETERM_SI_PID` 哨兵防同进程重复注入
 - **解析**:`alacritty_terminal/event_loop.rs` `scan_osc133()` + `Event::ShellMark`;`terminal_context.rs` 桥接 `TerminalEvent::ShellMark`(此前 `_ => return` 丢弃)
@@ -201,24 +201,24 @@
 - **DoD 待人工**:GUI 真机 E2E(zsh/bash `events tail --type shell` + MCP `get_shell_context`);**未做(独立后续)**:视觉 grid marks、fish/nu、click-to-SCP
 - **Review ✅（2026-06-29）**:审计正确(scanner/事件桥/状态机/IPC/MCP 全对;IPC 每请求重建 live snapshot 无陈旧 bug)。修 4 处:① **[MED]** 两处 pane 关闭点漏清 `pane_shell_state`(GAP-15)+`pane_block_stores`(GAP-51) → pane id 单调不复用致无界内存泄漏,两处补齐(沿用既有 disjoint-field 借用,`tab` 借 `self.windows` 期间不能用 `&mut self` 方法);② **[LOW]** temp ZDOTDIR 默认 0755/0644 含真实 `$HOME` → dir `0700`/file `0600`(`DirBuilderExt`/`OpenOptionsExt`,0700 顺带堵 /tmp 可猜路径预填竞态;生命周期清理留后续);③ **[LOW/doc]** zsh 注释误称 `EPOCHREALTIME` 小数是纳秒(实为微秒 6 位),代码本对,订正注释;④ **[LOW/limit]** bash 集成覆写用户 `PROMPT_COMMAND`(OSC 7 旧实现会保留)→ 记为已知局限不改。+ 新增 `temp_zdotdir_is_owner_only` 单测;745 pureterm + daemon `shell_integration` 6 绿(排 instance_lock + 真机 PTY 环境性失败)。
 
-### GAP-35 LSP Client（2026-06-29）
-- **Crate**:`pureterm-lsp` JSON-RPC stdio;`hover` + `completion` + `publishDiagnostics`
+### GAP-35 LSP 客户端（2026-06-29）
+- **Crate**:`pureterm-lsp` JSON-RPC stdio;`hover` + `completion` + `publishDiagnostics` 方法
 - **配置**:`[lsp] enabled` + `[lsp.servers]` rust/go/python/typescript/cpp 默认命令
 - **集成**:状态栏 `lsp` 段 + AI Chat 诊断上下文 + semantic open `didOpen`
 - 单测:`pureterm-lsp` 2 + `lsp` 2 + `app_config` lsp 2
 
-### GAP-51 Block-based Output（2026-06-29）
+### GAP-51 基于块的输出（2026-06-29）
 - **配置**:`[block_output] enabled`(默认 `false`)
 - **数据模型**:`BlockSumTree` + `output_text` grid 切片;每 pane 256 条
 - **GUI**:右侧边栏 **Blocks** 标签 — 过滤/搜索/跳转
 - 单测:`output_blocks` 3
 
-### GAP-43 Remote file browse（2026-06-29）
-- **RPC**:`remote.listdir` / `read` / **`write`** / **`find`**
+### GAP-43 远程文件浏览（2026-06-29）
+- **RPC 方法**:`remote.listdir` / `read` / **`write`** / **`find`**
 - **GUI**:Files 侧栏 — 浏览/搜索/预览/保存
 - 单测:daemon `remote_fs` 6 + `control` remote.* 6 + `remote_files` 7
 
-### GAP-09 Notification System（OSC 9/99/777 + Bell）(2026-06-28)
+### GAP-09 通知系统（OSC 9/99/777 + Bell）(2026-06-28)
 - 解析 OSC 9/99/777 + Bell(0x07) →  per-pane 关注信号:amber attention ring + 状态栏 🔔 未读计数 + ⌘⇧M 通知历史面板 + macOS Dock 未读角标 + EventBus `notification.*`
 - **解析**:`alacritty_terminal/event_loop.rs` `scan_osc_notify()` + `event.rs` `Notification`/`NotifySource`/`NotifyOccasion`;`terminal_context.rs` 桥接 `TerminalEvent::Notification`/`Bell`
 - **Store**:`notification_store.rs` 内存真源(历史环/unread/attention/bell 节流);EventBus `events.jsonl` 仅审计(`notification.posted` / `panel_opened` / `panel_closed` / `all_dismissed`)
@@ -226,7 +226,7 @@
 - **配置**:`[notification]`(`enabled`/`desktop_notifications`/`dock_badge`/`ring`/`bell_passthrough`/`bell_throttle_ms`);`default-config.toml` 示例块
 - **macOS**:`macos_dock_badge.rs` `NSDockTile.setBadgeLabel`;`macos_notifications.rs` UNUserNotificationCenter shim(request `.alert|.sound|.badge` + `post()` 调 `UNNotificationRequest`);启动 + 热重载时 `request_authorization()`
 
-### GAP-21 Dock Badge wrap-up（macOS）(2026-06-28)
+### GAP-21 Dock 角标收尾（macOS）(2026-06-28)
 - Dock 角标 = 通知 unread + Feed 待审批(`feed_panel.pending_count()`);`dock_badge_total()` + `refresh_dock_badge_from_state()`;Feed resolve/timeout/inbound 后同步刷新
 - **Dock 菜单**:`macos_dock_menu.rs` `applicationDockMenu:` 显示 MRU 最近 10 个 workspace;选择 → `ActivateWorkspaceById`;`recent_workspace_ids` 在 workspace 切换/创建时更新
 - 单测:`dock_badge_total` 3 + `touch_recent_workspace_mru_order` 1
@@ -248,7 +248,7 @@
 
 ---
 
-## D. SSH
+## D. SSH 远程
 
 ### GAP-5.1 持久 PTY 守护进程(2026-06-17)
 - 全里程碑 M1-M5 闭环:本地 + SSH PTY 均由独立 `puretermd` 守护进程拥有
@@ -297,7 +297,7 @@
 - 实现:`crates/pureterm/src/ssh/reconnect.rs` + `session_restore.rs` + `terminal_context.rs` + `iced_app.rs`
 - **Review ✅（2026-06-30）**:状态机本身正确(六态转移 + `on_first_remote_byte` 纯函数决策 + flap 检测器逐行核实无误;既 flag 的「per-spawn backoff 不升级 → hammer host」已在 5d319b4 用窗口式 flap 检测器修掉)。审计出 **3 个重连 worker 生命周期 bug**(都是「worker 该停没停/停晚了」):① **[MED-HIGH]** `Fx::SshDisconnect` 不 cancel 在飞 worker → 重连中用户断开会被 worker 成功后 reattach「复活」,或 worker 跑完发 `Failed` 覆盖 `Disconnected`(语义错);worker 只认 `cancel`、不读 `user_initiated_close`/状态 → 补 `reconnect_hub.cancel(pid)`。② **[MED]** `close_active_pane`(⌘W 非末 pane)缺 `mark_user_initiated_close`+`cancel` → 关掉重连中的 pane 后 worker 残留最长 ~225s 反复 spawn/abort ssh + 泄漏 slot/flap_history;补齐(对齐 `PtyExitedPane` 8104-8117 路径)。`detach_active_pane` 经核实是 **move** 非 destroy(pane 续活新 tab/window,doc 明示不 release pool)→ 正确地不 cancel。③ **[MED-LOW]** worker 末次失败仍睡满 60s 才报 `Failed`,且 `Progress` 谎报「将在 60s 后重试」→ 抽 `final_attempt()` 纯缝 + `Err` 分支末次 `break`(跳过 sleep + 误导性 Progress)。+ 新增 `final_attempt_is_last_backoff_index_and_gives_up_immediately` 单测(TDD red→green);746 pureterm 单测全绿 0 回归,release 编译过。**更广 follow-up(未改)**:`CloseOtherTabs`/`CloseTabsToLeft` 整段绕过 SSH 清理(无 cancel/release/kill),建议后续抽 `teardown_tab_ssh_panes(tab_id)` helper 统一所有销毁路径。
 
-### GAP-5.4 SSH Agent Forwarding(2026-06-25)
+### GAP-5.4 SSH Agent 转发(2026-06-25)
 - `ssh-add` 后远程免密:`SshProfile.forward_agent = true` / CLI `-A` → daemon `ssh -tt … -o ForwardAgent=yes` 子进程 + 显式注入 `SSH_AUTH_SOCK`
 - **agent 套接字解析器**(`pureterm-ssh::agent_sock`,两轨共用):优先级 配置覆盖 > 继承 `$SSH_AUTH_SOCK` > macOS `launchctl getenv` 回退(GUI 启动常缺 shell env);`resolve_pure` 纯函数 7 单测
 - **双轨**:Track A(PTY `ssh`,闭 DoD)+ Track B(daemon russh 隧道:`Channel::agent_forward` + 重写 `server_channel_open_agent_forward` 做 Unix socket 字节泵 + `authenticate_publickey_with` agent 免密认证)
@@ -313,7 +313,7 @@
 - **Daemon**: `session.create` 透传 forward 字段 → `create_ssh` → 共享 `SshCommandBuilder`
 - MVP 范围:无独立「转发管理面板」/运行时 `-O cancel` UI;SOCKS 仍 GAP-5.2
 
-### GAP-5.3 smallest-screen-wins PTY resize(2026-06-29)
+### GAP-5.3 最小屏幕优先 PTY 尺寸调整(2026-06-29)
 - 多 pane 共享同一 daemon session 时,PTY `TIOCSWINSZ` = **min(cols)×min(rows)** across 全部 subscriber(GUI attach)
 - **`[ssh] smallest_screen_wins = true`**(默认开);GUI resize 路径同步按 session_id 聚合 min 再 `TerminalContext::resize`
 - 实现:`pureterm-daemon/src/session.rs` pump 跟踪 per-subscriber 尺寸;`iced_app.rs` `compute_session_min_sizes` + `resize_workspace_panes`
@@ -405,7 +405,7 @@ action = { Ssh = "ListProfiles" }
 
 ---
 
-## F. AI Agent
+## F. AI Agent 智能体
 
 ### GAP-01 AI Chat Panel（内置聊天面板）(2026-06-28)
 - **⌘⇧L** 右侧面板（`⌘L` 保留 Browser 地址栏）→ 消息列表 + 输入框 + Send；流式 assistant 回复；Stop 取消 in-flight HTTP
@@ -420,7 +420,7 @@ action = { Ssh = "ListProfiles" }
 - **核心**:`error_recovery.rs`(`FailureContext`/`ErrorRecoveryState`/`build_prompt`/`extract_fix_command`/`should_auto_analyze`);`surface_snapshot.rs` `capture_visible_tail`/`capture_row_range`
 - **GUI**:`iced_app.rs` ShellMark OutputEnd 门控 + `spawn_error_recovery_stream` + `view_error_recovery_card`;`⌘⇧E` 手动重分析最近失败命令;Dismiss/Stop 取消 in-flight 请求
 - **配置**:`[error_recovery]`(`enabled`/`auto_analyze`/`provider`/`model`/`max_output_lines`/`max_tokens`/`api_key_env`/`openai_base_url`);API key 仅 env（`ANTHROPIC_API_KEY`/`OPENAI_API_KEY`）
-- **EventBus**:`Category::ErrorRecovery` — `error_recovery.triggered` / `suggested` / `applied`
+- **EventBus**:`Category::ErrorRecovery` — 事件 `error_recovery.triggered` / `suggested` / `applied`
 - 单测:error_recovery 7 + app_config 2 + events filter 1;637 pureterm 绿（`triggers::scan_multi_trigger_independent` 预存失败 unrelated）
 - pixel smoke:`docs/reviewed/GAP-02-error-recovery/test-plan.md`（非 CI gate,需真实 API key）
 - **DoD 待人工**:GUI E2E + Apply 验证;**未做(独立后续)**:Settings UI、SSH pane 自动分析
@@ -462,11 +462,11 @@ action = { Ssh = "ListProfiles" }
 - 实现:`agent_adapters.rs` + `cli.rs`(`Command::Agents` / `AgentsSub`) + `main.rs`
 - 单测:181 全绿
 
-### GAP-7.3 Agent Hibernation(2026-06-23)
+### GAP-7.3 Agent 休眠(2026-06-23)
 - daemon idle 采集:PTY 无输出 + CPU 近零 → 双条件判定
 - hibernate:SIGSTOP 挂起;resume:SIGCONT 恢复
 - GUI 决策面板:HibernationScanTick 双条件 + max_live_terminals 阈值 + 60s 确认倒计时 + pinned overlay
-- CLI: `pureterm agent hibernate/resume/list`
+- 命令行:`pureterm agent hibernate/resume/list`
 - 状态栏指示:`❄ kind`(hibernated) / `⚡ kind`(active) / `⏳ N`(feed pending)
 - 实现:`idle_probe.rs`(CPU 采样) + `session.rs`(hibernate/resume) + `hibernate_panel.rs` + `iced_app.rs` + `cli.rs`
 - 自动 E2E harness 全绿
@@ -480,14 +480,14 @@ action = { Ssh = "ListProfiles" }
 - 实现:`feed_client.rs`(std-only) + `feed_panel.rs` + `agent_hooks.rs`(ask_pattern) + `ipc/methods.rs` + `iced_app.rs`
 - 自动 E2E harness 全绿:220 单测
 
-### GAP-7.5 Agent Session Restore(2026-06-23)
+### GAP-7.5 Agent 会话恢复(2026-06-23)
 - session id 持久化:SessionStart hook → `AgentSessionStore`(FIFO 16 条) → `data_dir()/agents/<kind>-sessions.json`
 - 冷恢复:GUI 重启 → `restore()` → daemon session 死 + pane 有 agent_session_id → 查 `[[vault.agents]]` resume_command → `claude --resume <id>` via `create_local(argv)`
 - PaneSnapshot 加 `agent_session_id` / `agent_kind`
 - 实现:`agent_sessions.rs` + `feed_client.rs::notify_session_started` + `session_restore.rs::cold_resume_agent` + `session.rs::create_local`
 - 自动 E2E harness 全绿
 
-### GAP-7.6 Vault agent registry(2026-06-23)
+### GAP-7.6 Vault agent 注册表(2026-06-23)
 - `[[vault.agents]]` 声明式注册:`kind` / `name` / `detect`(子串) / `resume_command` / `never_hibernate`
 - 进程扫描:`agent_detect.rs`(macOS `ps` / Linux `/proc`,detect 子串匹配,排除 grep/rg/ps/shell)
 - CLI:`pureterm agents detect`(扫描打表) / `pureterm agents registry`(打印解析结果)
@@ -497,8 +497,8 @@ action = { Ssh = "ListProfiles" }
 - 实现:`agent_detect.rs` + `feed_log.rs` + `agent_adapters.rs` + `iced_app.rs` + `cli.rs`
 - 自动 E2E harness 全绿:305 单测
 
-### GAP-7.7 Custom resume bindings(2026-06-23)
-- `[[resume.bindings]]` CRUD:`pureterm surface resume set/list/remove`
+### GAP-7.7 自定义恢复绑定(2026-06-23)
+- `[[resume.bindings]]` 增删改查:`pureterm surface resume set/list/remove`
 - 轻量占位符插值:`{session_id}` / `{checkpoint}` / `{kind}` / `{cwd}`
 - HMAC-SHA256 持久令牌:secret `<data_dir>/resume.key`(0600) + 摘要 `resume-tokens.json`;绑定精确 shell
 - 冷恢复不弹面板:auto 绑定 + 有效令牌 → 静默 spawn;无令牌 → 跳过回落 `claude --resume`
@@ -510,7 +510,7 @@ action = { Ssh = "ListProfiles" }
 - 补齐 Socket API 两个承重空壳,让任何 agent / 脚本能「读屏 + 注命令」(免 shell-out、免 JSON 解析)
 - `surface.send_text`(`ipc/methods.rs`):`text` 必填 + `pane_id` 可选 → `IpcSideEffect::SendText`(unix);`iced_app::execute_ipc_side_effect` 镜像 `SshDisconnect` 解析 pane → `write_to_pty`(fire-and-forget)
 - `surface.snapshot`:**deferred reply**(仿 `browser.*`,全 scrollback 序列化持 `FairMutex<Term>` 锁跨千行 off-main 避免掉帧);`Message::Ipc` 拦截 → clone `Arc<FairMutex<Term>>` → `Task::perform` 内 `spawn_blocking` 复用 `Term::bounds_to_string`(**不重写 cell 迭代**)+ tail 截尾 + `tokio::time::timeout`;oneshot first-wins
-- CLI:`pureterm surface send-text --pane-id N --text 'echo hi\r'` / `snapshot --visible-only --lines N`
+- 命令行:`pureterm surface send-text --pane-id N --text 'echo hi\r'` / `snapshot --visible-only --lines N`
 - 独立可用:CLI / 脚本 / MCP 都消费它;零依赖
 - 实现:`surface_snapshot.rs` + `ipc/methods.rs` + `iced_app.rs` + `cli.rs`
 - 378 单测绿
@@ -524,7 +524,7 @@ action = { Ssh = "ListProfiles" }
 - 实现:`mcp/{mod,server,adapter}.rs` + `app_config.rs` + `cli.rs` + `Cargo.toml`(feature `mcp-server`)
 - E2E:stdio handshake / `tools/list` schema 生成 / 无 GUI 时 `tools/call` 优雅 `isError` 均验证;378 单测绿
 
-### GAP-03 Codebase Indexing MVP(2026-06-29)
+### GAP-03 代码库索引 MVP(2026-06-29)
 - 新 crate **`pureterm-codeindex`**:Tree-sitter 语义 chunk(Rust/Python/JS 函数·类·模块级) + SQLite 持久化 + **FTS5 关键词搜索**;按内容 hash 跳过未变文件
 - **MCP 工具**(`mcp/server.rs`,本地索引,不经 GUI socket):`search_code(query)` / `get_file_context(path)` / `find_symbol(name)`;工作区根=`PURETERM_CODEINDEX_ROOT` 或进程 cwd;索引库缓存于 `~/Library/Caches/pureterm/codeindex/`(或 `$XDG_CACHE_HOME`)
 - **状态栏 stub**:`[statusbar].components` 可选 `"codeindex"` 段,索引进行时显示 `idx N%`(GUI 与 MCP 分进程时通常隐藏)
@@ -532,7 +532,7 @@ action = { Ssh = "ListProfiles" }
 - 实现:`crates/pureterm-codeindex/` + `pureterm/src/codeindex.rs` + `mcp/{mod,server}.rs` + `status_bar/components.rs`
 - 单测:`cargo test -p pureterm-codeindex` 5/5 绿
 
-### GAP-35 LSP Client MVP(2026-06-29)
+### GAP-35 LSP 客户端 MVP(2026-06-29)
 - 新 crate **`pureterm-lsp`**:JSON-RPC stdio 客户端;MVP 仅 **rust-analyzer**(`initialize`/`initialized`/`textDocument/didOpen`/`textDocument/publishDiagnostics`)
 - **触发路径**:Hover Preview 右键「在编辑器中打开」→ `didOpen` 读盘并推送文档;诊断汇总进 **AI Chat 上下文** + 可选状态栏 **`lsp`** 段(`NE NW`)
 - **配置**:`[lsp] enabled` + `[lsp.servers] rust = "rust-analyzer"`(默认 `enabled = false`,缺省不阻塞启动)
@@ -550,11 +550,11 @@ action = { Ssh = "ListProfiles" }
 - 实现：`automation.rs` + `script_cli.rs` + `cli.rs` + `mcp/server.rs`
 - 676 单测绿
 
-### GAP-48 `pureterm://` URL Scheme（2026-06-29）
+### GAP-48 `pureterm://` URL 方案（2026-06-29）
 - **注册**：`Info.plist` `CFBundleURLTypes` + `pureterm url register`（`LSSetDefaultHandlerForURLScheme`）
 - **macOS 处理**：`application:openURLs:` → 队列 → iced `TerminalWakeup` 执行
 - **URL 动作**：`tab/new` · `tab/switch/N` · `workspace/switch/Name` · `ssh/user@host:port` · `send?text=` · `open?cwd=`
-- **Socket API**：`workspace.list` / `workspace.switch` + `ssh.open`（adhoc SSH tab）
+- **Socket API**：`workspace.list` / `workspace.switch` + `ssh.open`（临时 SSH 标签页）
 - **配置**：`[url_scheme] enabled` / `register_on_launch`
 - 实现：`macos_url_scheme.rs` + `automation.rs` + `ipc/methods.rs` + `iced_app.rs`
 - 676 单测绿
@@ -564,127 +564,127 @@ action = { Ssh = "ListProfiles" }
 
 ---
 
-## P3 GAP MVPs（2026-06-29）
+## P3 GAP MVP 清单（2026-06-29）
 
-### GAP-06 Ambient Agents MVP
+### GAP-06 环境感知 Agent MVP
 - 本地任务队列 + `[ambient_agents]` 配置门控；云端 SSE/webhook 延后
 - 实现：`ambient_agents.rs`
 
-### GAP-13 Broadcast Input
+### GAP-13 广播输入
 - ⌘⌃B 切换广播；当前 tab 内 sibling pane 同步 PTY 输入
 - 实现：`broadcast_input.rs` + `iced_app` PTY 扇出
 
-### GAP-14 Enhanced Vim Mode MVP
+### GAP-14 增强 Vim 模式 MVP
 - operators `d`/`c`、`p` 粘贴、寄存器骨架；`dd`/`dw` 最小路径
 - 实现：`vi_mode_handler.rs` 扩展
 
-### GAP-18 BiDi Support MVP
+### GAP-18 双向文本支持 MVP
 - `[terminal].bidi_mode` + `unicode-bidi` 行重排 helper
 - 实现：`bidi.rs`
 
-### GAP-26 Workspace Groups MVP
+### GAP-26 工作区分组 MVP
 - `[[workspace_groups]]` 配置 + 分组数据模型
 - 实现：`workspace_groups.rs`
 
-### GAP-30 Toolbelt MVP
+### GAP-30 工具带 MVP
 - 右侧栏 **Tools** 标签
 - 实现：`toolbelt.rs` + `sidebar/right.rs`
 
-### GAP-31 Quake Dock MVP
+### GAP-31 Quake 停靠 MVP
 - `[quake].enabled` + F12 顶部停靠切换
 - 实现：`quake_dock.rs`
 
-### GAP-37 Password Manager MVP
+### GAP-37 密码管理器 MVP
 - `op` / `lpass` / `security` CLI + SSH 密码链
 - 实现：`password_manager.rs`
 
-### GAP-39 Serial & Telnet MVP
+### GAP-39 串口与 Telnet MVP
 - Profile `session_type` + 外部 CLI argv（daemon 路由延后）
 - 实现：`serial_telnet.rs`
 
-### GAP-41 Jump Host MVP
-- `jump_hosts` → `ssh -J`
+### GAP-41 跳板机 MVP
+- `jump_hosts` → `ssh -J` 参数
 - 实现：`pureterm-ssh` `with_jump_hosts`
 
-### GAP-42 Login Scripts MVP
+### GAP-42 登录脚本 MVP
 - `login_commands` 首条 PTY 写入
 - 实现：`login_scripts.rs`
 
-### GAP-46 i18n MVP
+### GAP-46 国际化 MVP
 - 主应用 + Settings `I18n` en/zh；`[pureterm].locale`
 - 实现：既有 `pureterm-settings::i18n`
 
-### GAP-1.2 DECSCL MVP
-- `CSI Ps " p` → `Term.conformance_level`
+### GAP-1.2 DECSCL 一致性级别 MVP
+- `CSI Ps " p` 转义序列 → `Term.conformance_level` 字段
 - 实现：`alacritty_terminal/src/decscl.rs`
 
 ---
 
-## P4 GAP MVPs（2026-06-29）
+## P4 GAP MVP 清单（2026-06-29）
 
 > 配置见 `default-config.toml` P4 段；运行时 bundle：`p4_runtime.rs`；CLI：`p4_cli.rs`。
 
-### GAP-05 Voice Input MVP
-- `[voice_input].enabled` + `api_url` + push-to-talk state
+### GAP-05 语音输入 MVP
+- `[voice_input].enabled` + `api_url` + 按键说话状态
 - 实现：`voice_input.rs`（Whisper/cpal 未接）
 
-### GAP-17 Sixel / Chunked Graphics MVP
+### GAP-17 Sixel / 分块图形 MVP
 - `[terminal_graphics]` + 协议检测 + LRU cache scaffold
 - 实现：`terminal_graphics.rs`
 
-### GAP-20 Glass Effect MVP
+### GAP-20 玻璃效果 MVP
 - `[window.glass]` + 启动/重载 apply hook
 - 实现：`macos_glass_effect.rs`
 
-### GAP-22 Touch Bar MVP
-- `[touch_bar]` + refresh stub
+### GAP-22 触控栏 MVP
+- `[touch_bar]` + 刷新桩
 - 实现：`macos_touch_bar.rs`
 
-### GAP-23 Visual Tab Bar MVP
-- `[tab_bar].position` / `should_show()`
+### GAP-23 可视标签栏 MVP
+- `[tab_bar].position` / `should_show()` 显示判定
 - 实现：`visual_tab_bar.rs`
 
-### GAP-28 Window Border MVP
-- `[window.border]` active/inactive colors
+### GAP-28 窗口边框 MVP
+- `[window.border]` 激活/非激活颜色
 - 实现：`window_border.rs`
 
-### GAP-29 Badge Overlay MVP
-- `[badge]` text/color/position + per-profile override
+### GAP-29 角标覆盖层 MVP
+- `[badge]` 文本/颜色/位置 + 按配置覆盖
 - 实现：`badge_overlay.rs`
 
-### GAP-34 File Preview MVP
-- `[file_preview]` + `open`/`xdg-open` by extension
+### GAP-34 文件预览 MVP
+- `[file_preview]` + 按扩展名 `open`/`xdg-open`
 - 实现：`file_preview.rs`
 
-### GAP-38 File Transfer MVP
-- `[file_transfer]` + `scp` shell-out (Unix)
+### GAP-38 文件传输 MVP
+- `[file_transfer]` + `scp` 外部调用(Unix)
 - 实现：`file_transfer.rs`
 
-### GAP-44 Shared Sessions **stub**
-- `[shared_session]` + `pureterm share invite|serve`
+### GAP-44 共享会话 **桩**
+- `[shared_session]` 配置 + `pureterm share invite|serve` 命令
 - 实现：`shared_sessions.rs`（WebSocket/WebRTC 未接）
 
-### GAP-45 Auto-Update
+### GAP-45 自动更新
 - `[update]` 配置（`enabled` / `auto_check` / `channel` / `feed_url`）
 - 同步 fast-path：`pureterm update check` — 比对 `CARGO_PKG_VERSION` 与 `PURETERM_LATEST_VERSION` env var，自带 semver 比较
 - 异步 remote check：`pureterm update check --remote` — reqwest 拉取 GitHub Releases API（默认 `https://api.github.com/repos/CNB/PureTerm/releases/latest`），`stable` channel 跳过 prerelease，UA 标 `pureterm/<ver>`
 - 实现：`crates/pureterm/src/auto_update.rs`（6 单测：disabled / semver 基础 / `v` 前缀 / 不齐段 / 默认 feed / 空版本）
 - macOS Sparkle 仍延后（`feed_url` 字段已就位可指向 AppCast）
 
-### GAP-49 Plugin System
+### GAP-49 插件系统
 - `[plugins]` 配置 + 默认目录 `~/.config/pureterm/plugins/<name>/`
 - `plugin.toml` 清单解析：`name` / `version` / `description` / `author`，folder name 必须与 `name` 一致
 - CLI：`pureterm plugin list|install <name>|uninstall <name>` — `list` 报告 manifest 错误而不是静默跳过；`uninstall` 拒绝非 plugin 文件夹（防御性）
 - 实现：`crates/pureterm/src/plugin_system.rs`（9 单测：disabled / 缺目录 / install 创建 / 拒绝空名 / disabled install / 混合目录下的错误报告 / name mismatch / uninstall 成功 / 拒绝非 plugin 文件夹）
 - WASM / dylib 运行时延后到 Phase D
 
-### GAP-50 Cloud Sync
+### GAP-50 云同步
 - `[cloud_sync]` 配置（`enabled` / `gist_id` / `token_env`，默认 `PURETERM_GIST_TOKEN`）
 - 本地：`pureterm sync push|pull` → `~/.config/pureterm/sync/latest.json`（带 `schema = 1` 版本字段，schema 不匹配时 pull 拒绝）
 - 远程：`pureterm sync push|pull --remote` — reqwest 调用 GitHub Gist API（`POST` 创建新 Gist 或 `PATCH` 更新现有 Gist），token 走 `token_env` 读取
 - 实现：`crates/pureterm/src/cloud_sync.rs`（8 单测：disabled / local round trip / token 拒绝 disabled / token 拒绝缺 env / token 拒绝空 / schema mismatch / schema match / disabled 无 IO）
 
-### GAP-52 Workflows
+### GAP-52 工作流
 - `[[workflows]]` 段：每个 entry 含 `name` / `description` / `steps` / `params` / `category`（palette 分组）/ `alias`（短命令）
 - `{{key}}` 占位符展开；`missing_params` 检查（声明顺序）
 - `find` 解析时 name 优先于 alias（避免 name=`d` 被 `alias: d` 的 workflow 误吞）
@@ -692,7 +692,7 @@ action = { Ssh = "ListProfiles" }
 - CLI：`pureterm workflow list`（按 category 分组打印，显示 alias） / `pureterm workflow run <name|alias> --param k=v`（缺参则报错退出）
 - 实现：`crates/pureterm/src/workflows.rs`（7 单测：参数展开 / 缺失参数 / name+alias 匹配 / name 优先 / category 分组 / 畸形 TOML 跳过 / alias 双向 round trip）
 
-### GAP-53 Notebooks
+### GAP-53 笔记本
 - `[notebooks]` 配置 + `.pureterm` JSON 格式
 - 三种 cell：`markdown` / `code`（`language` + `source`）/ `output`（执行后追加）
 - Cell 执行引擎：`Notebook::execute_cell(idx)` 调起 `$SHELL -c <source>`（缺省 `/bin/sh`），捕获 stdout + stderr（`-- stderr --` 分隔），写入 `output` cell
@@ -700,40 +700,40 @@ action = { Ssh = "ListProfiles" }
 - 实现：`crates/pureterm/src/notebooks.rs`（9 单测：round trip / cell kind / append 索引 / 执行 echo / 捕获 stderr / 拒绝非 code / 越界拒绝 / 畸形 JSON 拒绝 / 磁盘 round trip）
 - Markdown 渲染、cell 编辑器、AI 集成留待后续
 
-### GAP-54 Background Image MVP
-- `[background].image/mode/opacity` + path resolve
+### GAP-54 背景图 MVP
+- `[background].image/mode/opacity` + 路径解析
 - 实现：`background_image.rs`（GPU 纹理未接）
 
-### GAP-55 Transparency/Blur MVP
-- `[window.effects]` opacity + blur apply hook
+### GAP-55 透明/模糊 MVP
+- `[window.effects]` 不透明度 + 模糊应用钩子
 - 实现：`window_effects.rs`
 
-### GAP-56 Focus-Follows-Mouse MVP
-- `[focus_follows_mouse]` + hover delay state machine
+### GAP-56 焦点跟随鼠标 MVP
+- `[focus_follows_mouse]` + 悬停延迟状态机
 - 实现：`focus_follows_mouse.rs`
 
-### GAP-57 Haptic Feedback MVP
-- `[haptic]` + event gating stub
+### GAP-57 触感反馈 MVP
+- `[haptic]` + 事件门控桩
 - 实现：`macos_haptic.rs`
 
-### GAP-58 Custom Theme MVP
-- `[theme]` sidebar/tab_bar/status_bar overrides
+### GAP-58 自定义主题 MVP
+- `[theme]` 侧栏/标签栏/状态栏覆盖
 - 实现：`custom_theme.rs`
 
-### GAP-59 Emoji Rendering MVP
-- `[emoji].dedicated_atlas` + ZWJ heuristic
+### GAP-59 Emoji 渲染 MVP
+- `[emoji].dedicated_atlas` + ZWJ 启发式
 - 实现：`emoji_rendering.rs`
 
-### GAP-60 Pane Capture MVP
-- `[pane_capture]` + text export + `pureterm capture export`
+### GAP-60 分屏捕获 MVP
+- `[pane_capture]` + 文本导出 + `pureterm capture export` 命令
 - 实现：`pane_capture.rs`（PNG GPU 未接）
 
-### GAP-61 Print Support MVP
-- `[print]` + `lpr` + header/footer formatter
+### GAP-61 打印支持 MVP
+- `[print]` + `lpr` + 页眉/页脚格式化器
 - 实现：`print_support.rs`
 
-### GAP-4.6 Accessibility MVP
-- `[accessibility]` + announce state + tab labels
+### GAP-4.6 无障碍 MVP
+- `[accessibility]` + 播报状态 + 标签页名称
 - 实现：`accessibility.rs`
 
 ---
@@ -743,11 +743,11 @@ action = { Ssh = "ListProfiles" }
 | 类别 | 已实现数 |
 |---|---|
 | A. 核心架构 | 5 |
-| B. UI/UX | 8 |
+| B. UI/UX 界面 | 8 |
 | C. 终端交互 | 4 |
-| D. SSH | 6 |
+| D. SSH 远程 | 6 |
 | E. 集成与可编程 | 5 |
-| F. AI Agent | 9 |
+| F. AI Agent 智能体 | 9 |
 | G. 平台 | 5 |
 | **总计** | **63** |
 

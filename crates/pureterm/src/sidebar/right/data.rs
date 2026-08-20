@@ -1,4 +1,4 @@
-//! GAP-19: Right sidebar — Find / Feed / Git mode tabs.
+//! GAP-19:右侧边栏——Find / Feed / Git 模式标签页。
 
 use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
@@ -8,7 +8,7 @@ use crate::iced_app::Message;
 use crate::sidebar::RightMode;
 use crate::status_bar::GitOp;
 
-/// Git panel data for the Git tab (mirrors overlay fields).
+/// Git 标签页的面板数据(镜像覆盖层字段)。
 pub struct GitTabData<'a> {
     pub status: Option<&'a crate::status_bar::git::GitStatus>,
     pub pr: Option<&'a crate::gh_pr::PrInfo>,
@@ -19,7 +19,7 @@ pub struct GitTabData<'a> {
     pub show_pr: bool,
 }
 
-/// Surface search fields for the Find tab.
+/// Find 标签页的表面搜索字段。
 pub struct SurfaceFindData<'a> {
     pub query: &'a str,
     pub case_sensitive: bool,
@@ -28,7 +28,7 @@ pub struct SurfaceFindData<'a> {
     pub follow_tail: bool,
 }
 
-/// Directory search fields for the Find tab.
+/// Find 标签页的目录搜索字段。
 pub struct DirFindData<'a> {
     pub query: &'a str,
     pub running: bool,
@@ -36,7 +36,7 @@ pub struct DirFindData<'a> {
     pub results: &'a [crate::search::RgMatch],
 }
 
-/// Toolbelt tab data (GAP-30).
+/// 工具腰带标签页数据(GAP-30)。
 pub struct ToolbeltTabData<'a> {
     pub history: &'a [String],
     pub bookmarks: &'a [crate::toolbelt::ToolbeltBookmark],
@@ -44,13 +44,13 @@ pub struct ToolbeltTabData<'a> {
     pub paste_history: &'a [String],
 }
 
-/// Port scanner rows for the Ports tab (GAP-33).
+/// Ports 标签页的端口扫描行(GAP-33)。
 pub struct PortScannerTabData<'a> {
     pub entries: &'a [crate::port_scanner::ListeningPort],
     pub scanning: bool,
 }
 
-/// Remote directory listing for the Files tab (GAP-43).
+/// Files 标签页的远程目录列表(GAP-43)。
 pub struct RemoteFilesTabData<'a> {
     pub path: &'a str,
     pub entries: &'a [crate::daemon_client::RemoteFileEntry],
@@ -68,12 +68,12 @@ pub struct RemoteFilesTabData<'a> {
     pub find_error: Option<&'a str>,
 }
 
-/// Block list for the Blocks tab (GAP-51).
+/// Blocks 标签页的块列表(GAP-51)。
 ///
-/// Filtering is done inline in the view — `exit_filter` + `search` are the
-/// parameters. The view calls `PaneBlockStore::filtered` to get the final
-/// result (single source of truth), paginates newest-first, and renders the
-/// page. This struct only carries configuration/state.
+/// 过滤在视图中内联完成——`exit_filter` + `search` 是
+/// 参数。视图调用 `PaneBlockStore::filtered` 取得最终
+/// 结果(单一事实来源),按最新优先分页并渲染
+/// 页面。本结构体只承载配置/状态。
 pub struct BlocksTabData<'a> {
     pub store: &'a crate::output_blocks::PaneBlockStore,
     pub exit_filter: crate::output_blocks::BlockExitFilter,

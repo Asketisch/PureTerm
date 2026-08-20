@@ -1,6 +1,6 @@
 ---
 gap: GAP-20
-title: Glass Effect
+title: 玻璃效果
 category: UI/外壳
 plan_type: platform
 priority: P4

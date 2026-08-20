@@ -1,4 +1,4 @@
-//! SQLite schema + CRUD for indexed chunks.
+//! 已索引块的 SQLite schema 与增删改查。
 
 use rusqlite::{params, Connection};
 

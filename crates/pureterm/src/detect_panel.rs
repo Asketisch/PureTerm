@@ -1,33 +1,33 @@
 //! GAP-7.6: detect-resume 提示面板 —— GUI 侧状态机。
 //!
-//! When `DetectScanTick` (iced_app) runs `agent_detect::scan` and finds running
-//! agent processes whose kind has a persisted `session_id`, the results are
-//! pushed here. The right-side pinned overlay shows them; the user resumes one
-//! or all (→ `create_resume_tab` spawns `claude --resume <id>` in a new pane)
-//! or dismisses. Already-dismissed / already-resumed session_ids are suppressed
-//! for the process lifetime (detection is a *hint*, not a critical path, so
-//! re-prompting once after a restart is acceptable).
+//! 当 `DetectScanTick`(iced_app)运行 `agent_detect::scan` 发现运行中的
+//! agent 进程、其 kind 带有已持久化的 `session_id` 时,结果会
+//! 推送到这里。右侧固定的浮层展示它们;用户可恢复其中一个
+//! 或全部(→ `create_resume_tab` 在新窗格中拉起 `claude --resume <id>`)
+//! 或全部忽略。已忽略/已恢复的 session_id 会在进程存活期内被抑制
+//! (检测只是*提示*,不是关键路径,因此
+//! 重启后再次提示一次是可接受的)。
 //!
-//! Mirrors `hibernate_panel::HibernationPanelState`'s shape, but holds a batch
-//! (`Vec`) rather than a single confirmation, and tracks dismissed/resumed ids.
+//! 形状上镜像 `hibernate_panel::HibernationPanelState`,但持有批
+//! (`Vec`)而非单条确认,并跟踪已忽略/已恢复的 id。
 
 use std::collections::HashSet;
 
 use crate::agent_detect::DetectedAgent;
 
-/// One resumable detected agent (None session_id already filtered out, deduped).
+/// 一个可恢复的已检测 agent(无 session_id 的已被滤除、已去重)。
 #[derive(Debug, Clone)]
 pub struct DetectedResumeEntry {
-    /// Matching `[[vault.agents]]` kind (e.g. "claude-code").
+    /// 匹配的 `[[vault.agents]]` kind(如 "claude-code")。
     pub kind: String,
-    /// Persisted agent session id to pass to the resume command.
+    /// 传给恢复命令的已持久化 agent 会话 id。
     pub session_id: String,
-    /// Host pid of the matched process (display only).
+    /// 匹配进程的主机 pid(仅展示)。
     pub pid: u32,
 }
 
-/// Detect-resume panel state. Always present on the app; visibility =
-/// `!entries.is_empty()`.
+/// 检测-恢复面板状态。始终存在于应用;可见性 =
+/// `!entries.is_empty()`。
 pub struct DetectPanelState {
     pub entries: Vec<DetectedResumeEntry>,
     dismissed: HashSet<String>,
@@ -49,18 +49,18 @@ impl DetectPanelState {
         Self::default()
     }
 
-    /// Whether the overlay panel should render.
+    /// 浮层面板是否应该渲染。
     pub fn is_visible(&self) -> bool {
         !self.entries.is_empty()
     }
 
-    /// Refresh from a scan result (`agent_detect::with_sessions` output): drop
-    /// entries with no session_id, skip already dismissed/resumed, dedup by
-    /// session_id. `entries` always reflects the *latest* scan (the truth is
-    /// "currently-running, non-dismissed/resumed agents with a session_id"), so
-    /// a process that exits drops out and a newly-spawned one appears. Scan is
-    /// deterministic and runs every ~30s, so flapping risk is negligible, and
-    /// resume/dismiss filtering takes effect on the next tick.
+    /// 从一次扫描结果(`agent_detect::with_sessions` 输出)刷新:丢弃
+    /// 无 session_id 的条目,跳过已忽略/已恢复的,按 session_id 去重。
+    /// `entries` 始终反映*最新*一次扫描(真相是
+    /// "当前运行中、未忽略/未恢复且带 session_id 的 agent"),因而
+    /// 退出的进程会消失、新启动的会出现。扫描是
+    /// 确定性的,约每 30s 运行一次,抖动风险可忽略,
+    /// 恢复/忽略过滤在下一个 tick 生效。
     pub fn refresh(&mut self, detected: Vec<(DetectedAgent, Option<String>)>) {
         let mut seen: HashSet<String> = HashSet::new();
         let mut new_entries = Vec::new();
@@ -81,8 +81,8 @@ impl DetectPanelState {
         self.entries = new_entries;
     }
 
-    /// User picked one entry → returns `(kind, session_id)`, records it resumed,
-    /// removes it from the batch.
+    /// 用户选择某一条目 → 返回 `(kind, session_id)`,记录为已恢复,
+    /// 并将其从批中移除。
     pub fn resume_one(&mut self, session_id: &str) -> Option<(String, String)> {
         let pos = self
             .entries
@@ -93,8 +93,8 @@ impl DetectPanelState {
         Some((e.kind, e.session_id))
     }
 
-    /// User picked "resume all" → returns every `(kind, session_id)`, records
-    /// all resumed, clears the batch.
+    /// 用户选择"全部恢复" → 返回所有 `(kind, session_id)`,记录
+    /// 全部为已恢复,并清空批。
     pub fn resume_all(&mut self) -> Vec<(String, String)> {
         let out: Vec<(String, String)> = self
             .entries
@@ -108,8 +108,8 @@ impl DetectPanelState {
         out
     }
 
-    /// User dismissed the batch ("稍后" / ×) → records all current session_ids
-    /// as dismissed, clears the batch.
+    /// 用户忽略了整批("稍后" / ×) → 记录当前所有 session_id
+    /// 为已忽略,并清空批。
     pub fn dismiss_all(&mut self) {
         for e in &self.entries {
             self.dismissed.insert(e.session_id.clone());
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn refresh_dedups_same_session_id() {
-        // Two host pids cross-referenced to the same kind's latest session_id.
+        // 两个主机 pid 引用到同一 kind 的最新 session_id。
         let mut st = DetectPanelState::new();
         st.refresh(vec![
             with_sid("claude-code", 1, Some("sid-x")),
@@ -172,7 +172,7 @@ mod tests {
         st.refresh(vec![with_sid("claude-code", 1, Some("sid-d"))]);
         st.dismiss_all();
         assert!(!st.is_visible());
-        // Re-scan: sid-d was dismissed → skipped; sid-e still surfaces.
+        // 重新扫描:sid-d 已被忽略 → 跳过;sid-e 仍会浮现。
         st.refresh(vec![
             with_sid("claude-code", 1, Some("sid-d")),
             with_sid("claude-code", 2, Some("sid-e")),
@@ -186,7 +186,7 @@ mod tests {
         let mut st = DetectPanelState::new();
         st.refresh(vec![with_sid("claude-code", 1, Some("sid-a"))]);
         st.resume_one("sid-a");
-        // Re-scan: sid-a was resumed → skipped.
+        // 重新扫描:sid-a 已恢复 → 跳过。
         st.refresh(vec![with_sid("claude-code", 1, Some("sid-a"))]);
         assert!(!st.is_visible());
     }
@@ -196,8 +196,8 @@ mod tests {
         let mut st = DetectPanelState::new();
         st.refresh(vec![with_sid("claude-code", 1, Some("sid-a"))]);
         assert!(st.is_visible());
-        // A later scan no longer returns sid-a's process (it exited) but finds
-        // sid-b. The batch must reflect the latest scan, not a stale snapshot.
+        // 后续扫描不再返回 sid-a 的进程(已退出)而是找到 sid-b。
+        // 批必须反映最新扫描,而非陈旧的快照。
         st.refresh(vec![with_sid("claude-code", 2, Some("sid-b"))]);
         assert_eq!(st.entries.len(), 1);
         assert_eq!(st.entries[0].session_id, "sid-b");
@@ -214,7 +214,7 @@ mod tests {
         assert_eq!(r, Some(("claude-code".to_string(), "sid-a".to_string())));
         assert_eq!(st.entries.len(), 1);
         assert_eq!(st.entries[0].session_id, "sid-b");
-        // sid-a now resumed → won't re-surface.
+        // sid-a 现已恢复 → 不会再浮现。
         st.refresh(vec![with_sid("claude-code", 1, Some("sid-a"))]);
         assert!(!st.is_visible());
     }
@@ -237,7 +237,7 @@ mod tests {
         let all = st.resume_all();
         assert_eq!(all.len(), 2);
         assert!(!st.is_visible());
-        // Both now resumed → won't re-surface.
+        // 两者均已恢复 → 不会再浮现。
         st.refresh(vec![
             with_sid("claude-code", 1, Some("sid-a")),
             with_sid("claude-code", 2, Some("sid-b")),

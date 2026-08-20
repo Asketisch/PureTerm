@@ -1,16 +1,16 @@
-//! Example PureTerm plugin: CPU status bar component.
+//! PureTerm 插件示例:CPU 状态栏组件。
 //!
-//! This is a reference implementation of the `StatusBarComponent`
-//! Provides capability. It reads `/proc/stat` (Linux) or
-//! `host_processor_info` (macOS, via the host's `sysinfo` callback)
-//! every refresh tick and emits a JSON widget description.
+//! 这是 `StatusBarComponent`
+//! Provides 能力的参考实现。每个刷新周期读取 `/proc/stat`(Linux)或
+//! `host_processor_info`(macOS,经宿主的 `sysinfo` 回调),
+//! 然后输出一个 JSON 控件描述。
 //!
-//! Build:
-//!   cargo build --release --target wasm32-wasip1
+//! 构建:
+//!   构建命令:cargo build --release --target wasm32-wasip1
 //!
-//! The resulting `cpu_status.wasm` is loaded by PureTerm's
-//! `WasmPluginLoader` when the user runs:
-//!   pureterm plugin install ./cpu_status.wasm
+//! 产出的 `cpu_status.wasm` 会在用户执行以下命令时
+//! 被 PureTerm 的 `WasmPluginLoader` 加载:
+//!   安装命令:pureterm plugin install ./cpu_status.wasm
 
 #![no_std]
 
@@ -20,11 +20,11 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// The host calls this export every refresh tick (interval configurable
-/// via `refresh_interval_ms` in `plugin.toml`). Returns a JSON string
-/// describing the widget to render.
+/// 宿主每个刷新周期调用此导出函数(间隔由
+/// `plugin.toml` 中的 `refresh_interval_ms` 配置)。返回
+/// 描述待渲染控件的 JSON 字符串。
 ///
-/// Widget schema (host translates to iced):
+/// 控件 schema(由宿主转成 iced):
 ///   {
 ///     "type": "text",
 ///     "content": "CPU 42%",
@@ -40,20 +40,20 @@ pub extern "C" fn render() -> *const u8 {
     leak_string(json)
 }
 
-/// Read the current CPU usage percentage (0–100). On wasm32 we can't
-/// touch `/proc/stat` directly — the host injects the value via the
-/// `HostFn::StatusBar` callback before calling `render`. For
-/// non-wasm builds (e.g. a static plugin linked into the binary) we
-/// fall back to reading `/proc/stat`.
+/// 读取当前 CPU 使用率(0–100)。wasm32 上无法
+/// 直接访问 `/proc/stat`——宿主在调用 `render` 前
+/// 通过 `HostFn::StatusBar` 回调注入该值。
+/// 非 wasm 构建(如链接进二进制的静态插件)则
+/// 回退为直接读取 `/proc/stat`。
 fn read_cpu_percent() -> u32 {
-    // The wasm runtime exposes a host import `__host_cpu_percent()`.
-    // For this example we just return a placeholder; the real impl
-    // would call the host function via wasmtime's linker.
+    // wasm 运行时暴露宿主导入 `__host_cpu_percent()`。
+    // 本示例直接返回占位值;真实实现
+    // 会经宿主侧的 wasm 链接器调用该宿主函数。
     42
 }
 
-/// Leak a `String` into a raw pointer the host can read. The host is
-/// responsible for freeing the allocation via `__free_string(ptr, len)`.
+/// 把 `String` 泄漏为宿主可读的裸指针。宿主
+/// 负责通过 `__free_string(ptr, len)` 释放该分配。
 fn leak_string(s: String) -> *const u8 {
     let len = s.len();
     let mut leaked = Vec::with_capacity(len + 4);

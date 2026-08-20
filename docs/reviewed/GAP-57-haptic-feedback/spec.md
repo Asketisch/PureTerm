@@ -1,6 +1,6 @@
 ---
 gap: GAP-57
-title: Haptic Feedback
+title: 触觉反馈
 category: 视觉
 plan_type: platform
 priority: P4

@@ -1,44 +1,44 @@
-//! GAP-01: Built-in AI Chat Panel.
+//! GAP-01:内置 AI 聊天面板。
 //!
-//! PureTerm's first "active" AI surface — a dockable panel where the user chats
-//! with an LLM (Anthropic Claude or any OpenAI-compatible endpoint), with the
-//! active pane's recent output auto-injected as context and the assistant reply
-//! streamed in as Markdown.
+//! PureTerm 第一个'主动式' AI 界面——一个可停靠面板,用户在其中与
+//! LLM(Anthropic Claude 或任意 OpenAI 兼容端点)对话,自动注入
+//! 活动面板的近期输出作为上下文,并将助手回复以 Markdown 流式渲染。
+//! 流式渲染为 Markdown。
 //!
-//! This is the **first** HTTP/SSE/LLM/Markdown code in the repo; everything else
-//! (panel state machine, streaming-into-GUI, config, persistence, CLI, Settings)
-//! reuses established patterns. The provider/SSE layer here is greenfield.
+//! 这是仓库中**第一处** HTTP/SSE/LLM/Markdown 代码;其余部分(面板状态机、
+//! 流式写入 GUI、配置、持久化、CLI、设置)复用既有模式。此处的
+//! provider/SSE 层是从零开始的全新实现。
 //!
-//! ## Layout
-//! - [`sse`] — HTTP-agnostic incremental SSE byte decoder (pure, fully tested).
-//! - [`types`] — `ChatRole`/`ChatMessage`/`ChatRequest`/`ChatEvent`.
-//! - [`provider`] — `ChatProvider` trait + shared `run_sse` read loop + `SseMapping`.
-//! - [`anthropic`] / [`openai`] — concrete providers + their SSE→`ChatEvent` mappers.
-//! - [`markdown`] — `pulldown-cmark` → iced text spans.
-//! - [`panel`] — `ChatPanelState` (open/messages/input/in-flight cancel).
-//! - [`session`] — conversation persistence (`<data_dir>/chat/<id>.json`).
-//! - [`context`] — pane context injection + provider wiring for the GUI panel.
+//! ## 布局
+//! - [`sse`] — 与 HTTP 无关的增量 SSE 字节解码器(纯函数,已充分测试)。
+//! - [`types`] — `ChatRole`/`ChatMessage`/`ChatRequest`/`ChatEvent`。
+//! - [`provider`] — `ChatProvider` trait + 共享的 `run_sse` 读取循环 + `SseMapping`。
+//! - [`anthropic`] / [`openai`] — 具体 provider 及其 SSE→`ChatEvent` 映射器。
+//! - [`markdown`] — `pulldown-cmark` → iced 文本片段。
+//! - [`panel`] — `ChatPanelState`(打开/消息/输入/飞行中取消)。
+//! - [`session`] — 会话持久化(`<data_dir>/chat/<id>.json`)。
+//! - [`context`] — 面板上下文注入 + GUI 面板的 provider 接线。
 //!
-//! Phased: Phase 1 ships `sse`/`types`/`provider`/`anthropic`/`openai` headless;
-//! Phase 2 adds the panel + markdown + context injection; Phase 3 wires config /
-//! persistence / CLI / Settings; Phase 4 (deferred) adds MCP function calling.
+//! 分阶段:Phase 1 提供 `sse`/`types`/`provider`/`anthropic`/`openai` 无头部分;
+//! Phase 2 增加面板 + markdown + 上下文注入;Phase 3 接线配置 /
+//! 持久化 / CLI / 设置;Phase 4(延后)增加 MCP 函数调用。
 
-/// Incremental SSE byte decoder (HTTP-agnostic, pure std).
+/// 增量 SSE 字节解码器(与 HTTP 无关,纯 std)。
 pub mod sse;
-/// Core chat types: `ChatRole` / `ChatMessage` / `ChatRequest` / `ChatEvent`.
+/// 核心聊天类型:`ChatRole` / `ChatMessage` / `ChatRequest` / `ChatEvent`。
 pub mod types;
-/// `SseMapping` trait (provider SSE→`ChatEvent` translation). `ChatProvider` +
-/// the shared `run_sse` read loop land here next (need stream glue).
+/// `SseMapping` trait(provider SSE→`ChatEvent` 转换)。`ChatProvider` +
+/// 共享的 `run_sse` 读取循环随后在此落地(需要流胶水)。
 pub mod provider;
-/// Anthropic (Claude) SSE→`ChatEvent` mapper (`AnthropicMap`).
+/// Anthropic(Claude)SSE→`ChatEvent` 映射器(`AnthropicMap`)。
 pub mod anthropic;
-/// OpenAI-compatible SSE→`ChatEvent` mapper (`OpenAiMap`).
+/// OpenAI 兼容 SSE→`ChatEvent` 映射器(`OpenAiMap`)。
 pub mod openai;
-/// Markdown → structured blocks (`pulldown-cmark` → `Block`/`MarkdownSpan`).
+/// Markdown → 结构化块(`pulldown-cmark` → `Block`/`MarkdownSpan`)。
 pub mod markdown;
-/// `ChatPanelState` — pure panel state machine (messages / gen / input).
+/// `ChatPanelState` — 纯面板状态机(消息 / gen / 输入)。
 pub mod panel;
-/// Conversation persistence (`<data_dir>/chat/<id>.json`, atomic write).
+/// 会话持久化(`<data_dir>/chat/<id>.json`,原子写入)。
 pub mod session;
-/// Pane context injection + `ChatRequest` / provider wiring.
+/// 面板上下文注入 + `ChatRequest` / provider 接线。
 pub mod context;

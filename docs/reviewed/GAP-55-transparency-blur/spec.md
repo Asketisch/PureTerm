@@ -1,6 +1,6 @@
 ---
 gap: GAP-55
-title: Transparency & Blur
+title: 透明与模糊
 category: 视觉
 plan_type: feature
 priority: P4
@@ -43,6 +43,6 @@ macOS：`NSVisualEffectView` 模糊。跨平台：GPU shader 模糊。
 
 1. 配置：`window.opacity = 0.9`, `window.blur = true`
 2. macOS：`NSVisualEffectView`（`.behindWindow` blending mode）
-3. Linux：Compiz/KWin blur hint
+3. Linux：Compiz/KWin 模糊提示(hint)
 4. Windows：`DwmEnableBlurBehindWindow`
 5. GPU 模糊：在 `terminal_shader.rs` 中添加 Gaussian blur pass

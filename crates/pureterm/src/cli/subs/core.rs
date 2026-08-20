@@ -6,17 +6,17 @@
 use clap::Subcommand;
 use serde_json::{json, Value};
 
-// ── Group subcommands ────────────────────────────────────────────────────
+// ── 子命令分组 ────────────────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
 pub enum SystemSub {
-    /// Health check
+    /// 健康检查
     Ping,
-    /// Show version
+    /// 显示版本
     Version,
-    /// OS / version / tab & pane counts
+    /// OS / 版本 / 标签页与窗格计数
     Info,
-    /// List all available socket methods
+    /// 列出所有可用的 socket 方法
     Methods,
 }
 
@@ -33,13 +33,13 @@ impl SystemSub {
 
 #[derive(Subcommand)]
 pub enum WindowSub {
-    /// List open windows
+    /// 列出打开的窗口
     List,
-    /// Create (single-window mode: creates a new tab)
+    /// 创建窗口(单窗口模式:实际创建新的标签页)
     Create,
-    /// Close the active window
+    /// 关闭当前活动窗口
     Close,
-    /// Focus the window
+    /// 聚焦该窗口
     Focus,
 }
 
@@ -56,16 +56,16 @@ impl WindowSub {
 
 #[derive(Subcommand)]
 pub enum TabSub {
-    /// List tabs with index / id / title / panes
+    /// 按 index / id / title / panes 列出标签页
     List,
-    /// Create a new tab
+    /// 创建新标签页
     New,
-    /// Close a tab (omit --index to close tab 0)
+    /// 关闭标签页(省略 --index 则关闭第 0 个)
     Close {
         #[arg(long)]
         index: Option<usize>,
     },
-    /// Switch to a tab by index
+    /// 按 index 切换到标签页
     Switch {
         #[arg(long)]
         index: usize,
@@ -85,34 +85,34 @@ impl TabSub {
 
 #[derive(Subcommand)]
 pub enum PaneSub {
-    /// List all panes
+    /// 列出所有窗格
     List,
-    /// Split the active pane
+    /// 分割当前活动窗格
     Split {
-        /// Direction: "v" (vertical) or "h" (horizontal)
+        /// 方向:"v"(垂直)或 "h"(水平)
         #[arg(long, default_value = "v")]
         direction: String,
     },
-    /// GAP-3.5: split the active pane and open the new pane as a web pane
-    /// (WebView) loading `url`.
+    /// GAP-3.5:分割当前活动窗格,并让新窗格以 web 窗格
+    /// (WebView)加载 `url`。
     SplitWeb {
-        /// URL to load in the new web pane.
+        /// 要在新 web 窗格中加载的 URL。
         #[arg(long, default_value = "https://example.com")]
         url: String,
-        /// Direction: "v" (vertical) or "h" (horizontal)
+        /// 方向:"v"(垂直)或 "h"(水平)
         #[arg(long, default_value = "v")]
         direction: String,
     },
-    /// Close the active pane
+    /// 关闭当前活动窗格
     Close,
-    /// Focus the next/previous pane
+    /// 聚焦下一个 / 上一个窗格
     Focus {
         #[arg(long, default_value = "next")]
         direction: String,
     },
-    /// Swap the active pane with its sibling
+    /// 与兄弟窗格交换活动窗格
     Swap,
-    /// Toggle pane zoom
+    /// 切换窗格缩放
     Zoom,
 }
 
@@ -150,31 +150,31 @@ impl PaneSub {
 
 #[derive(Subcommand)]
 pub enum SurfaceSub {
-    /// List surfaces (PTY instances)
+    /// 列出 surface(PTY 实例)
     List,
-    /// Send text to a pane's PTY (default: active pane).
+    /// 向窗格的 PTY 发送文本(默认:活动窗格)。
     SendText {
         #[arg(long)]
         text: String,
-        /// Target pane id (default: active pane).
+        /// 目标窗格 id(默认:活动窗格)。
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Resize (note: use pane split/close to trigger resize)
+    /// 调整大小(注:请用 pane split/close 触发 resize)
     Resize,
-    /// Capture a pane's terminal buffer to text (default: active pane).
+    /// 把窗格的终端缓冲捕获为文本(默认:活动窗格)。
     Snapshot {
-        /// Target pane id (default: active pane).
+        /// 目标窗格 id(默认:活动窗格)。
         #[arg(long)]
         pane_id: Option<u64>,
-        /// Capture only the visible viewport (default: full scrollback).
+        /// 仅捕获可见视口(默认:完整回滚区)。
         #[arg(long)]
         visible_only: bool,
-        /// Keep only the last N lines of the capture.
+        /// 只保留捕获的最后 N 行。
         #[arg(long)]
         lines: Option<usize>,
     },
-    /// GAP-7.7: manage custom resume bindings (local config CRUD; no IPC).
+    /// GAP-7.7:管理自定义 resume 绑定(本地配置 CRUD;无 IPC)。
     #[cfg(unix)]
     Resume {
         #[command(subcommand)]
@@ -200,8 +200,8 @@ impl SurfaceSub {
                 visible_only,
                 lines,
             } => {
-                // Only send params that were explicitly set so the server-side
-                // defaults (full scrollback, active pane) apply when omitted.
+                // 只发送显式设置的参数,这样服务端默认值
+                // (完整回滚区、活动窗格)在省略时得以生效。
                 let mut obj = serde_json::Map::new();
                 let mut any = false;
                 if let Some(id) = pane_id {
@@ -218,8 +218,8 @@ impl SurfaceSub {
                 }
                 ("surface.snapshot", if any { Some(Value::Object(obj)) } else { None })
             }
-            // Unreachable: SurfaceSub::Resume is intercepted by the hybrid
-            // dispatch in `run()` (cli.rs) and never reaches the IPC bridge.
+            // 不可达:SurfaceSub::Resume 由 `run()` (cli.rs) 中的混合
+            // 分发截获,永远不会到达 IPC 桥。
             #[cfg(unix)]
             SurfaceSub::Resume { .. } => ("surface.resume", None),
         }
@@ -228,16 +228,16 @@ impl SurfaceSub {
 
 #[derive(Subcommand)]
 pub enum ConfigSub {
-    /// Get config keys (omit --key to list known keys)
+    /// 获取配置键(省略 --key 则列出已知键)
     Get {
         #[arg(long)]
         key: Option<String>,
     },
-    /// List known config keys
+    /// 列出已知配置键
     List,
-    /// Reload config from disk
+    /// 从磁盘重新加载配置
     Reload,
-    /// Set a config key (use the settings UI instead)
+    /// 设置配置键(请改用设置界面)
     Set,
 }
 
@@ -254,9 +254,9 @@ impl ConfigSub {
 
 #[derive(Subcommand)]
 pub enum DebugSub {
-    /// Debug health check
+    /// 调试健康检查
     Ping,
-    /// Dump app state summary
+    /// 转储应用状态摘要
     DumpState,
 }
 
@@ -271,10 +271,10 @@ impl DebugSub {
 
 #[derive(Subcommand)]
 pub enum ShortcutsSub {
-    /// List current key bindings
+    /// 列出当前按键绑定
     List,
-    /// Apply a preset (default|vim|tmux|macos|vscode|agent-triage)
+    /// 应用预设(default|vim|tmux|macos|vscode|agent-triage)
     Preset { name: String },
-    /// Reset to factory defaults
+    /// 重置为出厂默认值
     Reset,
 }

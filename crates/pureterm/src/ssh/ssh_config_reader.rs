@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// Parsed entry from ~/.ssh/config
+/// 从 ~/.ssh/config 解析出的条目
 #[derive(Debug, Clone)]
 pub struct SshConfigHost {
     pub host_name: String,
@@ -10,7 +10,7 @@ pub struct SshConfigHost {
     pub identity_file: Option<PathBuf>,
 }
 
-/// Parse ~/.ssh/config and return map of Host alias -> SshConfigHost
+/// 解析 ~/.ssh/config 并返回 Host 别名 → SshConfigHost 的映射
 pub fn parse_ssh_config() -> std::io::Result<HashMap<String, SshConfigHost>> {
     let config_path = match std::env::var("HOME") {
         Ok(h) => std::path::PathBuf::from(h).join(".ssh/config"),
@@ -74,7 +74,7 @@ pub fn parse_ssh_config() -> std::io::Result<HashMap<String, SshConfigHost>> {
 mod tests {
     use super::*;
 
-    // Use unique base directories for tests to avoid collisions when running in parallel
+    // 测试使用唯一的基目录,避免并行运行时相互冲突
     fn setup_test_home(content: &str, suffix: &str) -> std::path::PathBuf {
         let base = std::path::PathBuf::from(format!("/tmp/pureterm_ssh_test_{}", suffix));
         let _ = std::fs::remove_dir_all(&base);
@@ -97,14 +97,14 @@ mod tests {
     fn test_parse_empty_ssh_config() {
         let test_home = setup_test_home("", "empty");
         let original_home = std::env::var("HOME").ok();
-        // SAFETY: Test code only - HOME must point to the directory with our config
+        // SAFETY:仅测试代码——HOME 必须指向我们写入配置的目录
         unsafe { std::env::set_var("HOME", test_home.to_string_lossy().as_ref()) };
 
         let result = parse_ssh_config();
-        // SAFETY: Test code only - restore HOME
+        // SAFETY:仅测试代码——恢复 HOME
         unsafe { std::env::remove_var("HOME") };
         if let Some(home) = original_home {
-            // SAFETY: Test code only
+            // SAFETY:仅测试代码
             unsafe { std::env::set_var("HOME", &home) };
         }
 
@@ -135,14 +135,14 @@ Host *
             "hosts",
         );
         let original_home = std::env::var("HOME").ok();
-        // SAFETY: Test code only - HOME must point to test_home where we wrote the config
+        // SAFETY:仅测试代码——HOME 必须指向写入配置的 test_home
         unsafe { std::env::set_var("HOME", test_home.to_string_lossy().as_ref()) };
 
         let result = parse_ssh_config();
-        // SAFETY: Test code only - restore HOME
+        // SAFETY:仅测试代码——恢复 HOME
         unsafe { std::env::remove_var("HOME") };
         if let Some(home) = original_home {
-            // SAFETY: Test code only
+            // SAFETY:仅测试代码
             unsafe { std::env::set_var("HOME", &home) };
         }
 
@@ -150,7 +150,7 @@ Host *
 
         assert!(result.is_ok());
         let hosts = result.unwrap();
-        // Note: Host * is also parsed as a host entry, so we get 3 total
+        // 注意:Host * 也会被解析为主机条目,因此共得到 3 个
         assert_eq!(hosts.len(), 3);
 
         let web = hosts.get("webserver").expect("webserver not found");

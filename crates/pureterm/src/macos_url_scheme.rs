@@ -1,5 +1,5 @@
-//! GAP-48: macOS `pureterm://` URL handler — hooks `application:openURLs:` on
-//! winit's delegate and queues URLs for the iced `TerminalWakeup` tick.
+//! GAP-48:macOS `pureterm://` URL 处理——在 winit 委托上
+//! 钩住 `application:openURLs:` 并把 URL 排队给 iced 的 `TerminalWakeup` tick。
 
 #[cfg(target_os = "macos")]
 use std::mem::transmute;
@@ -18,7 +18,7 @@ use objc2_foundation::{NSArray, NSURL};
 #[cfg(target_os = "macos")]
 static PENDING_URLS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
-/// Take the next queued `pureterm://` URL, if any.
+/// 取出下一个排队的 `pureterm://` URL(若有)。
 #[cfg(target_os = "macos")]
 pub fn consume_pending_url() -> Option<String> {
     let mut guard = PENDING_URLS.lock().unwrap();
@@ -52,7 +52,7 @@ unsafe extern "C" fn handle_open_urls(
     let _ = mtm;
 }
 
-/// Add `application:openURLs:` to winit's delegate class.
+/// 给 winit 的委托类添加 `application:openURLs:`。
 #[cfg(target_os = "macos")]
 pub fn add_open_urls_method() {
     let Some(_mtm) = MainThreadMarker::new() else {
@@ -76,8 +76,8 @@ pub fn add_open_urls_method() {
     }
 }
 
-/// GAP-48: register PureTerm as the default handler for `pureterm://`.
-/// Requires a bundled `.app` with `CFBundleURLTypes` in Info.plist.
+/// GAP-48:把 PureTerm 注册为 `pureterm://` 的默认处理器。
+/// 需要 Info.plist 中带 `CFBundleURLTypes` 的捆绑 `.app`。
 #[cfg(target_os = "macos")]
 pub fn register_default_handler() -> Result<(), String> {
     #[link(name = "CoreServices", kind = "framework")]

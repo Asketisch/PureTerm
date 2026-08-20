@@ -1,6 +1,6 @@
 ---
 gap: GAP-5.6
-title: SSH Reconnect
+title: SSH 重连
 category: SSH/网络
 plan_type: integration
 priority: P0

@@ -1,71 +1,68 @@
-//! GAP-10: pattern-match triggers.
+//! GAP-10：模式匹配触发器。
 //!
-//! A `[[triggers]]` rule matches a regex against terminal *output* text and, on
-//! a match, fires one action (highlight / notify / send_text / exec / …). This
-//! module holds the pure, unit-testable core — config types, the line scanner,
-//! template expansion, the per-pane scan-window state machine, and highlight/
-//! fold region lifecycle — deliberately decoupled from the alacritty `Term`.
+//! 一条 `[[triggers]]` 规则用正则匹配终端的*输出*文本，匹配后触发一个动作
+//!（高亮 / 通知 / 发送文本 / 执行命令等）。本模块包含纯逻辑、可单元测试的核心——
+//! 配置类型、行扫描器、模板展开、每 pane 扫描窗口状态机、高亮/折叠区域的
+//! 生命周期——刻意与终端 `Term` 解耦。
 
 use std::collections::HashMap;
 
 use regex::Regex;
 
-/// Cap matches recorded per line per scan, to bound pathological regexes.
+/// 每次扫描每行记录匹配数的上限，用于约束病态正则。
 pub const MAX_MATCHES_PER_LINE: usize = 8;
-/// Cap lines scanned in a single Wakeup; the rest are caught up over subsequent
-/// Wakeups (alacritty keeps emitting Wakeups while input is pending).
+/// 单次 Wakeup 中扫描行数的上限；剩余部分在后续 Wakeup 中补齐
+///（输入未处理完时，终端会持续发出 Wakeup）。
 pub const MAX_LINES_PER_WAKE: usize = 200;
-/// Cap retained highlight regions per pane (newest kept; oldest drained).
+/// 每个 pane 保留高亮区域的上限（保留最新，淘汰最旧）。
 pub const MAX_HIGHLIGHTS: usize = 256;
-/// Cap retained fold regions per pane.
+/// 每个 pane 保留折叠区域的上限。
 pub const MAX_FOLDS: usize = 64;
-/// Truncate matched text carried in events / MCP to keep payloads bounded.
+/// 截断事件 / MCP 中携带的匹配文本，保持负载有界。
 pub const MATCHED_TEXT_MAX: usize = 200;
 
-/// Default highlight overlay color (translucent green), distinct from the
-/// GAP-4.1 search-match amber (`[0.85, 0.65, 0.15, 0.35]`) and selection blue.
+/// 默认高亮浮层颜色（半透明绿色），与 GAP-4.1 搜索匹配的琥珀色
+///（`[0.85, 0.65, 0.15, 0.35]`）以及选区蓝色相区分。
 pub const DEFAULT_HIGHLIGHT_COLOR: [f32; 4] = [0.45, 0.80, 0.45, 0.32];
 
-/// Hard cap on an `exec` trigger's subprocess wall-clock time. A hung command
-/// (e.g. `curl` against a dead host) would otherwise leak the process forever
-/// and its `Task` would never complete. On elapse the child is killed
-/// (see `kill_on_drop` in [`spawn_trigger_exec`]) and a toast is surfaced.
+/// `exec` 触发器子进程的墙钟时间硬上限。否则一条挂死的命令（例如对死主机
+/// 执行 `curl`）会永久泄漏进程，其 `Task` 永远无法完成。超时后子进程被杀死
+///（见 [`spawn_trigger_exec`] 中的 `kill_on_drop`）并弹出通知。
 pub const EXEC_TIMEOUT_SECS: u64 = 60;
 
-/// One configured trigger rule (post-load; regex compiled separately in
-/// [`CompiledTrigger`]).
+/// 一条已配置的触发器规则（加载完成后；正则单独在 [`CompiledTrigger`] 中编译）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriggerConfig {
     pub name: String,
-    /// Raw pattern source, retained for events / MCP `trigger.list`.
+    /// 原始模式文本，保留用于事件 / MCP 的 `trigger.list`。
     pub pattern: String,
     pub action: TriggerAction,
 }
 
-/// The action a trigger fires on match.
+/// 触发器匹配时执行的动作。
 #[derive(Clone, Debug, PartialEq)]
 pub enum TriggerAction {
-    /// Overlay the matched span with `color` (default green if `None`).
+    /// 用 `color` 覆盖匹配区间（`None` 时默认绿色）。
     Highlight { color: Option<[f32; 4]> },
-    /// Show a toast (and emit a `trigger.matched` event regardless).
+    /// 弹出通知（并且无论何种情形都发出 `trigger.matched` 事件）。
     Notify { title: Option<String> },
-    /// Send `text` to a pane. `pane_id = None` means the pane that produced the
-    /// match (output-driven, e.g. a sudo-password reply); an explicit id targets
-    /// another pane. `text` may contain capture-group / variable templates.
+    /// 向某个 pane 发送 `text`。`pane_id = None` 表示产生匹配的那个 pane
+    ///（输出驱动，例如 sudo 密码回复）；显式 id 则指向其他 pane。
+    /// `text` 可以包含捕获组 / 变量模板。
     SendText { text: String, pane_id: Option<u64> },
-    /// Spawn `command` with `args` (argv, never a shell — see security note on
-    /// [`spawn_trigger_exec`]). Output routed per `route`.
+    /// 以 `args` 参数启动 `command`（argv 直接启动，绝不经过 shell——安全说明见
+    /// [`spawn_trigger_exec`]）。输出按 `route` 分发。
     Exec {
         command: String,
         args: Vec<String>,
         route: ExecRoute,
     },
-    /// Assign an expanded `value` to a per-pane user variable (for `${var:}`).
+    /// 将展开后的 `value` 赋给某个 pane 的用户变量（供 `${var:}` 使用）。
     SetVariable { name: String, value: String },
-    /// Record the match line as a named mark (for subsequent `fold`).
+    /// 将匹配行记录为命名标记（供后续 `fold` 使用）。
     SetMark { mark: String },
-    /// Collapse output lines from a named mark (or `lines_back`) through the
-    /// match line. Whole-line conceal in the renderer when `collapsed`.
+    /// 折叠从命名标记（或 `lines_back` 行）到匹配行的输出行。`collapsed` 时在
+    /// 渲染器中整行隐藏。
     Fold {
         mark: Option<String>,
         lines_back: Option<u32>,
@@ -73,8 +70,8 @@ pub enum TriggerAction {
 }
 
 impl TriggerAction {
-    /// Lowercase discriminant for events / MCP `trigger.list` (carries no
-    /// secrets — `text`/`args`/`value` are intentionally omitted).
+    /// 供事件 / MCP `trigger.list` 使用的小写判别值（不含任何秘密——
+    /// `text`/`args`/`value` 有意省略）。
     pub fn discriminant(&self) -> &'static str {
         match self {
             TriggerAction::Highlight { .. } => "highlight",
@@ -88,21 +85,18 @@ impl TriggerAction {
     }
 }
 
-/// GAP-10 security: should a match fired from a remote (SSH) pane have its
-/// action blocked?
+/// GAP-10 安全：从远程（SSH）pane 触发的匹配，其动作是否应被拦截？
 ///
-/// Remote output is attacker-influenced: a capture group (`$1`) can carry
-/// arbitrary text into a local command's argv (`exec`) or into another pane's
-/// PTY (cross-pane `send_text`), which is a local code-execution / keystroke-
-/// injection vector. argv-no-shell only defeats shell metacharacters, not this.
-/// Both are blocked by default unless the user opts in via the top-level config
-/// flag `allow_exec_on_remote = true`.
+/// 远程输出可能受攻击者影响：捕获组（`$1`）可能把任意文本带进本地命令的
+/// argv（`exec`）或另一个 pane 的 PTY（跨 pane `send_text`），构成本地代码
+/// 执行 / 按键注入的向量。argv 不经过 shell 只能防住 shell 元字符，防不住
+/// 这种注入。默认两种情况都被拦截，除非用户通过顶层配置
+/// `allow_exec_on_remote = true` 显式开启。
 ///
-/// Same-pane `send_text` (`pane_id = None`) is intentionally NOT blocked: it is
-/// the spec's `reply-sudo` use case (auto-replying to the user's own remote
-/// session with the user's own configured text). `highlight` / `notify` /
-/// `set_variable` / `set_mark` / `fold` are side-effect-free w.r.t. the local
-/// machine and never blocked.
+/// 同 pane 的 `send_text`（`pane_id = None`）有意不拦截：它对应规范中的
+/// `reply-sudo` 场景（用用户自己配置的文本自动回复用户自己的远程会话）。
+/// `highlight` / `notify` / `set_variable` / `set_mark` / `fold` 对本地机器
+/// 无副作用，从不拦截。
 pub fn should_block_remote_action(
     action: &TriggerAction,
     is_ssh: bool,
@@ -117,12 +111,12 @@ pub fn should_block_remote_action(
     )
 }
 
-/// Where an `exec` trigger's stdout goes.
+/// `exec` 触发器的 stdout 去向。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExecRoute {
-    /// Surface stdout (first line) as a toast.
+    /// 将 stdout（首行）以通知形式展示。
     Toast,
-    /// Write stdout to the active pane's PTY.
+    /// 将 stdout 写入当前活动 pane 的 PTY。
     Pane,
 }
 
@@ -132,39 +126,39 @@ impl Default for ExecRoute {
     }
 }
 
-/// A trigger with its regex compiled once at config load.
+/// 一条触发器，其正则已在配置加载时一次性编译完成。
 #[derive(Clone, Debug)]
 pub struct CompiledTrigger {
     pub cfg: TriggerConfig,
     pub re: Regex,
 }
 
-/// One match found by [`scan_lines`]. `line` is the raw grid `Line(i32)`; the
-/// column span is in *characters* (see [`scan_lines`] caveat on wide chars).
+/// [`scan_lines`] 找到的一个匹配。`line` 是原始的网格 `Line(i32)`；列跨度以
+/// *字符*计（宽字符的注意事项见 [`scan_lines`]）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct TriggerMatch {
     pub trigger_idx: usize,
     pub line: i32,
     pub col_start: usize,
-    /// Exclusive end column.
+    /// 结束列（不含）。
     pub col_end: usize,
     pub matched_text: String,
-    /// Regex capture groups 1..n (group 0 = full match = `matched_text`).
+    /// 正则捕获组 1..n（组 0 = 完整匹配 = `matched_text`）。
     pub captures: Vec<String>,
 }
 
-/// A highlighted cell span, stored on the pane and rendered as an overlay.
+/// 一段高亮单元格区间，存储于 pane 上并以浮层渲染。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HighlightRegion {
-    /// Raw grid `Line(i32)`; tracks content as it scrolls.
+    /// 原始网格 `Line(i32)`；随滚动跟踪内容。
     pub line: i32,
     pub col_start: usize,
     pub col_end: usize,
-    /// Pre-resolved RGBA (the trigger's color or [`DEFAULT_HIGHLIGHT_COLOR`]).
+    /// 预先解析好的 RGBA（触发器的颜色或 [`DEFAULT_HIGHLIGHT_COLOR`]）。
     pub color: [f32; 4],
 }
 
-/// A folded line range — interior rows are concealed in the renderer.
+/// 一段折叠的行范围——内部行在渲染器中被隐藏。
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FoldRegion {
     pub top_line: i32,
@@ -172,20 +166,20 @@ pub struct FoldRegion {
     pub collapsed: bool,
 }
 
-/// Inputs for [`expand_trigger_template`].
+/// [`expand_trigger_template`] 的输入。
 pub struct TemplateContext<'a> {
     pub matched_text: &'a str,
     pub captures: &'a [String],
     pub variables: &'a HashMap<String, String>,
 }
 
-/// Expand mainstream-terminal-style trigger parameter templates.
+/// 展开主流终端风格的触发器参数模板。
 ///
-/// Supported substitutions:
-/// - `{match}`, `$0`, `\0` — full match
-/// - `$1`..`$9`, `{1}`..`{9}` — capture groups (missing → empty)
-/// - `${var:NAME}`, `{var:NAME}` — per-pane user variables
-/// - `\n`, `\r`, `\t`, `\xNN` — literal control / hex bytes
+/// 支持的替换：
+/// - `{match}`、`$0`、`\0`——完整匹配
+/// - `$1`..`$9`、`{1}`..`{9}`——捕获组（缺失 → 空串）
+/// - `${var:NAME}`、`{var:NAME}`——每 pane 用户变量
+/// - `\n`、`\r`、`\t`、`\xNN`——字面控制 / 十六进制字节
 pub fn expand_trigger_template(template: &str, ctx: &TemplateContext<'_>) -> String {
     let mut out = String::new();
     let bytes = template.as_bytes();
@@ -299,8 +293,7 @@ fn hex_digit(b: u8) -> Option<u8> {
     }
 }
 
-/// Per-pane trigger state, keyed by `PaneId` on the app (mirrors
-/// `pane_shell_state`).
+/// 每 pane 的触发器状态，在应用中以 `PaneId` 为键（与 `pane_shell_state` 对应）。
 #[derive(Clone, Debug, Default)]
 pub struct TriggerPaneState {
     pub last_scanned_line: Option<i32>,
@@ -334,7 +327,7 @@ impl TriggerPaneState {
     }
 }
 
-/// Compute inclusive `[top_line, bottom_line]` for a `fold` action.
+/// 为 `fold` 动作计算包含边界的 `[top_line, bottom_line]`。
 pub fn fold_window(
     match_line: i32,
     mark_name: Option<&str>,
@@ -428,12 +421,12 @@ fn truncate_chars(s: &str, max_chars: usize) -> String {
     s.chars().take(max_chars).collect()
 }
 
-/// Spawn an `exec` trigger's command off the GUI thread. `pane_id` is the pane
-/// whose output matched (so `ExecRoute::Pane` can route stdout back to it, not
-/// to whatever pane happens to be focused when the subprocess finishes).
+/// 在 GUI 线程之外启动 `exec` 触发器的命令。`pane_id` 是输出被匹配的那个
+/// pane（这样 `ExecRoute::Pane` 能把 stdout 送回该 pane，而不是送回子进程结束
+/// 时恰好获得焦点的 pane）。
 ///
-/// The subprocess is bounded by [`EXEC_TIMEOUT_SECS`]; on elapse the future is
-/// dropped and `kill_on_drop` SIGKILLs the child so it can't leak.
+/// 子进程受 [`EXEC_TIMEOUT_SECS`] 限时；超时后 future 被丢弃，`kill_on_drop`
+/// 会 SIGKILL 子进程，防止泄漏。
 pub fn spawn_trigger_exec(
     command: String,
     args: Vec<String>,
@@ -666,21 +659,21 @@ mod tests {
         let send_same = TriggerAction::SendText { text: "p\n".into(), pane_id: None };
         let send_cross = TriggerAction::SendText { text: "p\n".into(), pane_id: Some(7) };
 
-        // Remote (SSH) + not opted in → block exec + cross-pane send_text.
+        // 远程（SSH）+ 未显式开启 → 拦截 exec 与跨 pane send_text。
         assert!(should_block_remote_action(&exec, true, false));
         assert!(should_block_remote_action(&send_cross, true, false));
-        // Same-pane send_text is the reply-sudo use case → never blocked.
+        // 同 pane 的 send_text 属于 reply-sudo 场景 → 从不拦截。
         assert!(!should_block_remote_action(&send_same, true, false));
 
-        // Opted in → never blocked.
+        // 已显式开启 → 从不拦截。
         assert!(!should_block_remote_action(&exec, true, true));
         assert!(!should_block_remote_action(&send_cross, true, true));
 
-        // Local pane → never blocked.
+        // 本地 pane → 从不拦截。
         assert!(!should_block_remote_action(&exec, false, false));
         assert!(!should_block_remote_action(&send_cross, false, false));
 
-        // Side-effect-free actions → never blocked, even remote + not opted in.
+        // 无副作用的动作 → 从不拦截，即使是远程 + 未显式开启。
         assert!(!should_block_remote_action(
             &TriggerAction::Highlight { color: None },
             true,

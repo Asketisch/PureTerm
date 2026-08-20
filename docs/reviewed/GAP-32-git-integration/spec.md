@@ -1,6 +1,6 @@
 ---
 gap: GAP-32
-title: Git Integration
+title: Git 集成
 category: 开发者工具
 plan_type: integration
 priority: P2

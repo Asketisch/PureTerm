@@ -1,23 +1,23 @@
-//! GAP-5.2: trust-on-first-use (TOFU) host-key store for the SOCKS5 tunnel.
+//! GAP-5.2:SOCKS5 隧道的首用即信(TOFU)主机密钥存储。
 //!
-//! The tunnel's `russh` client verifies the server's host key against this file.
-//! On first connect the key is recorded (TOFU); on subsequent connects a
-//! matching key is accepted silently and a *different* key is rejected (strict —
-//! the daemon has no interactive prompt path, so a mismatch surfaces via the
-//! tunnel's `Failed` status).
+//! 隧道的 `russh` 客户端用此文件校验服务器主机密钥。
+//! 首次连接时记录密钥(TOFU);后续连接中
+//! 匹配的密钥静默接受,不同的密钥被拒绝(严格模式——
+//! 守护进程没有交互式提示路径,因此失配经由
+//! 隧道的 `Failed` 状态浮出)。
 //!
-//! Scope (MVP): a single isolated file under the daemon data dir (NOT the user's
-//! `~/.ssh/known_hosts` — PureTerm must not mutate it). Lines use the OpenSSH
-//! one-host format for human-readability and future migration:
+//! 范围(MVP):守护进程数据目录下的单一隔离文件(不是用户的
+//! `~/.ssh/known_hosts`——PureTerm 绝不能改动它)。行采用 OpenSSH
+//! 单主机格式,便于人读与未来迁移:
 //!
 //! ```text
 //! <host-pattern>  <algorithm>  <base64-blob>
 //! ```
 //!
-//! `<host-pattern>` is a literal hostname, bracketed `[host]:port` when the port
-//! is not 22 (OpenSSH convention). Wildcard / hashed-host (`|1|...`) patterns
-//! are *not* written or matched here — only exact literal comparison. That is a
-//! documented limitation.
+//! `<host-pattern>` 是字面主机名;端口非 22 时使用带方括号的
+//! `[host]:port`(OpenSSH 约定)。通配 / 哈希主机(`|1|...`)模式
+//! 在此既不写入也不匹配——只做精确字面比较。这是已记录的
+//! 限制。
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -26,35 +26,35 @@ use std::sync::Mutex;
 use russh::keys::ssh_key::{HashAlg, PublicKey};
 use russh::keys::PublicKeyBase64;
 
-/// Result of checking a server host key against the store.
+/// 用存储校验服务器主机密钥的结果。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyCheck {
-    /// Known host whose recorded key matches → accept.
+    /// 已知主机且记录密钥匹配 → 接受。
     Match,
-    /// Known host whose recorded key differs → reject. Carries the stored
-    /// fingerprint for the failure message.
+    /// 已知主机但密钥不同 → 拒绝。携带已存
+    /// 指纹供失败消息使用。
     Mismatch(String),
-    /// Never seen before → TOFU: the key was just recorded, accept this once.
+    /// 从未见过 → TOFU:刚记录该密钥,本次接受。
     Unknown,
 }
 
-/// One recorded (host, key) pair.
+/// 一条已记录的 (host, key) 对。
 #[derive(Debug, Clone)]
 struct KnownEntry {
     host: String,
     blob_b64: String,
 }
 
-/// TOFU host-key store. The file is loaded into memory on `open`; appends on
-/// `Unknown` are written through. Interior-locked so the `&mut self`
-/// `check_server_key` callback can share one `Arc<KnownHosts>` across tunnels.
+/// TOFU 主机密钥存储。`open` 时把文件载入内存;`Unknown` 时的
+/// 追加直写磁盘。内部加锁,使 `&mut self` 的
+/// `check_server_key` 回调能在多条隧道间共享一个 `Arc<KnownHosts>`。
 pub struct KnownHosts {
     path: PathBuf,
     entries: Mutex<Vec<KnownEntry>>,
 }
 
 impl KnownHosts {
-    /// Load the store from `path`. A missing file opens empty (first run).
+    /// 从 `path` 加载存储。文件缺失则打开为空(首次运行)。
     pub fn open(path: PathBuf) -> io::Result<Self> {
         let entries = match std::fs::read_to_string(&path) {
             Ok(s) => parse_lines(&s),
@@ -67,10 +67,10 @@ impl KnownHosts {
         })
     }
 
-    /// Check `key` for `host_pattern` and, on first sight, record it (TOFU).
-    /// - `Match`   → known host, key matches → accept (no write).
-    /// - `Mismatch`→ known host, key differs → reject (no write).
-    /// - `Unknown` → first sight → append the key, accept this once.
+    /// 校验 `host_pattern` 的 `key`;首次见到时记录之(TOFU)。
+    /// - `Match`   → 已知主机且密钥匹配 → 接受(不写)。
+    /// - `Mismatch`→ 已知主机但密钥不同 → 拒绝(不写)。
+    /// - `Unknown` → 首见 → 追加密钥,本次接受。
     pub fn check_and_record(&self, host_pattern: &str, key: &PublicKey) -> KeyCheck {
         let blob = key.public_key_base64();
         let mut entries = self.entries.lock().unwrap();
@@ -80,10 +80,10 @@ impl KnownHosts {
             }
             return KeyCheck::Mismatch(fingerprint_of(&entry.blob_b64));
         }
-        // Unknown: TOFU record (best-effort), then accept. Append under the
-        // in-process lock so two concurrent first-connects can't interleave
-        // half-lines. A failed write logs and still returns Unknown (accept) —
-        // failing the connection over a known_hosts I/O glitch would be worse.
+        // Unknown:TOFU 记录(尽力而为),随后接受。在
+        // 进程内锁下追加,使两个并发的首次连接不会交错出
+        // 半行。写入失败仅记录日志并仍返回 Unknown(接受)——
+        // 因 known_hosts 的 I/O 小毛病而断开连接更糟。
         let algo = key.algorithm();
         if let Err(e) = append_line(&self.path, host_pattern, algo.as_str(), &blob) {
             log::warn!("known_hosts: failed to record {host_pattern}: {e}");
@@ -95,15 +95,15 @@ impl KnownHosts {
         KeyCheck::Unknown
     }
 
-    /// Path of the backing file (test/debug).
+    /// 后备文件路径(测试/调试)。
     pub fn path(&self) -> &Path {
         &self.path
     }
 }
 
-/// Render the host pattern for a (host, port) pair: bare `host` for the default
-/// SSH port 22, otherwise `[host]:port` (OpenSSH convention for non-default
-/// ports).
+/// 渲染 (host, port) 对的主机模式:默认 SSH 端口 22 用裸 `host`,
+/// 否则用 `[host]:port`(OpenSSH 对非默认
+/// 端口的约定)。
 pub(crate) fn format_host_pattern(host: &str, port: u16) -> String {
     if port == 22 {
         host.to_string()
@@ -112,9 +112,9 @@ pub(crate) fn format_host_pattern(host: &str, port: u16) -> String {
     }
 }
 
-/// Parse known_hosts text into entries. Malformed lines (missing fields) are
-/// skipped rather than fatal — the daemon must not refuse to start over a
-/// hand-edited bad line.
+/// 把 known_hosts 文本解析为条目。畸形行(缺字段)被
+/// 跳过而非致命——守护进程不能因一条手改的坏行
+/// 拒绝启动。
 fn parse_lines(s: &str) -> Vec<KnownEntry> {
     let mut out = Vec::new();
     for line in s.lines() {
@@ -134,7 +134,7 @@ fn parse_lines(s: &str) -> Vec<KnownEntry> {
     out
 }
 
-/// Append one `<host> <algo> <blob>` line and fsync.
+/// 追加一行 `<host> <algo> <blob>` 并 fsync。
 fn append_line(path: &Path, host: &str, algo: &str, blob: &str) -> io::Result<()> {
     use std::io::Write;
     if let Some(dir) = path.parent() {
@@ -149,8 +149,8 @@ fn append_line(path: &Path, host: &str, algo: &str, blob: &str) -> io::Result<()
     Ok(())
 }
 
-/// SHA256 fingerprint of a recorded key, for the mismatch message. Falls back to
-/// the raw blob if the stored line is unparseable (corruption).
+/// 已记录密钥的 SHA256 指纹,用于失配消息。已存行无法解析时
+/// 回退为原始 blob(损坏情形)。
 fn fingerprint_of(blob_b64: &str) -> String {
     russh::keys::parse_public_key_base64(blob_b64)
         .ok()
@@ -162,7 +162,7 @@ fn fingerprint_of(blob_b64: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Two distinct, valid ed25519 public-key blobs (deterministic — no RNG).
+    /// 两个不同且合法的 ed25519 公钥 blob(确定性——无 RNG)。
     const KEY_A_B64: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f";
     const KEY_B_B64: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIAMKERgfJi00O0JJUFdeZWxzeoGIj5adpKuyucDHztXc";
 
@@ -187,7 +187,7 @@ mod tests {
     fn missing_file_opens_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let kh = KnownHosts::open(tmp.path().join("nope")).unwrap();
-        // No file → first check is Unknown (not an error).
+        // 无文件 → 首次校验为 Unknown(不是错误)。
         assert_eq!(kh.check_and_record("gw", &key_a()), KeyCheck::Unknown);
     }
 
@@ -197,12 +197,12 @@ mod tests {
         let path = tmp.path().join("kh");
         let kh = KnownHosts::open(path.clone()).unwrap();
 
-        // First sight → Unknown, and the key is recorded.
+        // 首见 → Unknown,且密钥被记录。
         assert_eq!(kh.check_and_record("gw.example", &key_a()), KeyCheck::Unknown);
-        // A fresh load of the same file must now Match the recorded key.
+        // 重新加载同一文件必须 Match 已记录的密钥。
         let kh2 = KnownHosts::open(path).unwrap();
         assert_eq!(kh2.check_and_record("gw.example", &key_a()), KeyCheck::Match);
-        // Exactly one entry line for this host.
+        // 该主机恰好一行条目。
         let written = std::fs::read_to_string(tmp.path().join("kh")).unwrap();
         let lines: Vec<&str> = written.lines().filter(|l| !l.trim().is_empty()).collect();
         assert_eq!(lines.len(), 1, "no duplicate lines: {written}");
@@ -212,17 +212,17 @@ mod tests {
     fn mismatch_rejects_and_leaves_file_unchanged() {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("kh");
-        // Seed: host known with key A.
+        // 种子:主机已知,持有密钥 A。
         let kh = KnownHosts::open(path.clone()).unwrap();
         assert_eq!(kh.check_and_record("gw.example", &key_a()), KeyCheck::Unknown);
 
         let kh2 = KnownHosts::open(path.clone()).unwrap();
-        // Present key B → Mismatch (not Unknown: the host IS known).
+        // 呈现密钥 B → Mismatch(不是 Unknown:主机确实已知)。
         match kh2.check_and_record("gw.example", &key_b()) {
             KeyCheck::Mismatch(_) => {}
             other => panic!("expected Mismatch, got {other:?}"),
         }
-        // File must not be mutated by a mismatch.
+        // 失配不得改动文件。
         let before = std::fs::read_to_string(&path).unwrap();
         let _ = kh2.check_and_record("gw.example", &key_b());
         let after = std::fs::read_to_string(&path).unwrap();
@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(kh.check_and_record("gw.example", &key_a()), KeyCheck::Unknown);
 
         let mtime0 = std::fs::metadata(&path).unwrap().modified().unwrap();
-        // Spin so a subsequent write would observable change mtime.
+        // 自旋等待,使后续写入的 mtime 变化可观察。
         std::thread::sleep(std::time::Duration::from_millis(20));
         let kh2 = KnownHosts::open(path).unwrap();
         assert_eq!(kh2.check_and_record("gw.example", &key_a()), KeyCheck::Match);
@@ -250,10 +250,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("kh");
         let kh = KnownHosts::open(path.clone()).unwrap();
-        // Same host, different ports → distinct entries.
+        // 同主机不同端口 → 不同条目。
         assert_eq!(kh.check_and_record("[gw]:22", &key_a()), KeyCheck::Unknown);
         assert_eq!(kh.check_and_record("[gw]:2222", &key_a()), KeyCheck::Unknown);
-        // Different host, same key → still Unknown (independent host slot).
+        // 不同主机同一密钥 → 仍为 Unknown(主机槽位独立)。
         assert_eq!(kh.check_and_record("other.example", &key_a()), KeyCheck::Unknown);
 
         let kh2 = KnownHosts::open(path).unwrap();

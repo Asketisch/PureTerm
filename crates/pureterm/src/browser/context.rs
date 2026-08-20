@@ -209,7 +209,7 @@ impl BrowserContext {
         use wry::WebViewExtMacOS;
         let guard = self.webview.lock();
         let Some(wv) = guard.as_ref() else { return None };
-        let wk = wv.webview(); // Retained<WryWebView>
+        let wk = wv.webview(); // 返回类型为 Retained<WryWebView>
         Some(f(&wk))
     }
 

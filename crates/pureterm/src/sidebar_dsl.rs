@@ -1,8 +1,8 @@
-//! GAP-3.2: Programmable Sidebar DSL — minimal TOML interpreter + EventBus hook.
+//! GAP-3.2:可编程侧边栏 DSL——极简 TOML 解释器 + EventBus 钩子。
 //!
-//! Sidebar scripts live in `~/.config/pureterm/sidebars/*.toml`. Each file
-//! declares event triggers and renders `SidebarItem` rows when matching events
-//! arrive on the in-process EventBus.
+//! 侧边栏脚本放在 `~/.config/pureterm/sidebars/*.toml`。每个文件
+//! 声明事件触发器;当匹配事件抵达进程内 EventBus 时,
+//! 渲染出 `SidebarItem` 行。
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use crate::events::{AppEvent, Category};
 
-/// One rendered row in the programmable sidebar panel.
+/// 可编程侧边栏面板中的一行已渲染行。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SidebarItem {
     pub icon: String,
@@ -18,7 +18,7 @@ pub struct SidebarItem {
     pub action: Option<String>,
 }
 
-/// Parsed sidebar script (minimal DSL — no Rhai yet).
+/// 已解析的侧边栏脚本(极简 DSL——尚未用 Rhai)。
 #[derive(Debug, Clone)]
 pub struct SidebarScript {
     pub name: String,
@@ -28,7 +28,7 @@ pub struct SidebarScript {
     pub action: Option<String>,
 }
 
-/// Runtime state: aggregated items keyed by script name.
+/// 运行时状态:按脚本名聚合的条目。
 #[derive(Debug, Clone, Default)]
 pub struct SidebarDslState {
     pub items: Vec<SidebarItem>,
@@ -58,7 +58,7 @@ impl SidebarDslState {
         }
     }
 
-    /// Handle one EventBus event — update matching script rows.
+    /// 处理一个 EventBus 事件——更新匹配的脚本行。
     pub fn on_event(&mut self, event: &AppEvent) {
         self.items.clear();
         for script in &self.scripts {
@@ -119,7 +119,7 @@ fn render_template(tmpl: &str, event: &AppEvent) -> String {
     out
 }
 
-/// Parse one sidebar TOML file.
+/// 解析一个侧边栏 TOML 文件。
 pub fn parse_sidebar_script(text: &str, path: &Path) -> Result<SidebarScript, String> {
     let table: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
     let name = table

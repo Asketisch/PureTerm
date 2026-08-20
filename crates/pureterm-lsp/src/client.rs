@@ -1,4 +1,4 @@
-//! rust-analyzer stdio client: initialize, didOpen, publishDiagnostics, hover, completion.
+//! rust-analyzer stdio 客户端:initialize、didOpen、publishDiagnostics、hover、completion。
 
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -22,7 +22,7 @@ use crate::transport::{read_message, write_message};
 #[derive(Clone, Debug)]
 pub struct LspClientConfig {
     pub command: String,
-    /// Extra argv for the language server (e.g. `["--stdio"]` for pyright/ts-ls).
+    /// 传给语言服务器的额外 argv(如 pyright/ts-ls 的 `"--stdio"`)。
     pub args: Vec<String>,
     pub workspace_root: PathBuf,
 }
@@ -50,13 +50,13 @@ pub struct LspClient {
     pending: Arc<Mutex<std::collections::HashMap<u64, mpsc::Sender<Value>>>>,
     next_id: AtomicU64,
     open_versions: Arc<Mutex<std::collections::HashMap<String, i32>>>,
-    /// Flipped to `false` by the reader thread when the server's stdout closes,
-    /// so callers can stop trusting cached diagnostics (BUG-3).
+    /// 由读线程在服务器 stdout 关闭时翻转为 `false`,
+    /// 使调用方不再信任缓存的诊断(BUG-3)。
     alive: Arc<AtomicBool>,
 }
 
 impl LspClient {
-    /// Spawn language server and complete the initialize handshake.
+    /// 拉起语言服务器并完成 initialize 握手。
     pub fn spawn(cfg: LspClientConfig) -> Result<Self, LspError> {
         let mut child = Command::new(&cfg.command)
             .args(&cfg.args)
@@ -102,7 +102,7 @@ impl LspClient {
         Arc::clone(&self.store)
     }
 
-    /// Whether the reader thread is still draining the server's stdout.
+    /// 读线程是否仍在排空服务器 stdout。
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }
@@ -167,10 +167,10 @@ impl LspClient {
 
     fn initialize(&self, root: &Path) -> Result<(), LspError> {
         let root_uri = path_to_uri(root);
-        // Send the `initialize` request and WAIT for the response before
-        // announcing `initialized` (LSP handshake order, BUG-2). Reading the
-        // response also surfaces a server-side rejection / capability error
-        // instead of silently dropping it.
+        // 发送 `initialize` 请求并等待响应,再
+        // 宣告 `initialized`(LSP 握手顺序,BUG-2)。读取
+        // 响应也能让服务器侧的拒绝 / 能力错误浮出水面,
+        // 而不是被静默丢弃。
         let result = self.request(
             "initialize",
             json!({
@@ -181,8 +181,8 @@ impl LspClient {
             }),
             Duration::from_secs(3),
         )?;
-        // `result` holds InitializeResult (server capabilities); kept for future
-        // per-feature gating (hover/completion providers). Unused for the MVP.
+        // `result` 持有 InitializeResult(服务器能力);留作未来
+        // 按特性门控(hover/completion 提供方)之用。MVP 未使用。
         let _ = result;
         self.notify("initialized", json!({}))?;
         Ok(())
@@ -230,8 +230,8 @@ impl LspClient {
 
 impl Drop for LspClient {
     fn drop(&mut self) {
-        // Ask the server to shut down gracefully before killing it (BUG-4).
-        // Best-effort: ignore timeouts/errors and fall back to SIGKILL.
+        // 杀掉服务器前先请求其优雅关停(BUG-4)。
+        // 尽力而为:忽略超时/错误,回退到 SIGKILL。
         let _ = self.request("shutdown", Value::Null, Duration::from_millis(500));
         let _ = self.notify("exit", Value::Null);
         let _ = self.writer.lock().take();
@@ -272,8 +272,8 @@ fn reader_loop(
             }
         }
     }
-    // Server stdout closed / errored: mark the client dead and drop stale
-    // diagnostics so the status bar / AI chat don't keep showing them (BUG-3).
+    // 服务器 stdout 关闭/出错:把客户端标记为已死并丢弃过期
+    // 诊断,使状态栏 / AI 聊天不再显示它们(BUG-3)。
     alive.store(false, Ordering::SeqCst);
     store.lock().clear();
 }

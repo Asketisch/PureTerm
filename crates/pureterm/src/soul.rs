@@ -1,5 +1,5 @@
-//! GAP-07: Soul System — load SOUL.md / STYLE.md / SKILL.md / MEMORY.md and
-//! inject into AI Chat system prompts.
+//! GAP-07:Soul 系统——加载 SOUL.md / STYLE.md / SKILL.md / MEMORY.md,
+//! 注入 AI 聊天系统提示词。
 
 use std::path::{Path, PathBuf};
 
@@ -12,12 +12,12 @@ const FILES: [(&str, &str); 4] = [
     ("Memory", "MEMORY.md"),
 ];
 
-/// Cap each soul file's contribution so a multi-MB file (e.g. an unbounded
-/// MEMORY.md) isn't shipped on every chat turn. ~32 KiB is ample for
-/// personality/style/skill/memory notes.
+/// 限制每个 soul 文件的注入量,使数 MB 的大文件(如无上限的
+/// MEMORY.md)不会在每次聊天轮次全量携带。约 32 KiB 对
+/// 人格/风格/技能/记忆笔记已足够。
 const MAX_SOUL_FILE_BYTES: usize = 32_768;
 
-/// Default directory: `~/.config/pureterm/ai/`.
+/// 默认目录:`~/.config/pureterm/ai/`。
 pub fn default_directory() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -25,14 +25,14 @@ pub fn default_directory() -> PathBuf {
         .join("ai")
 }
 
-/// Resolve the soul file directory from config.
+/// 从配置解析 soul 文件目录。
 pub fn resolve_directory(cfg: &SoulConfig) -> PathBuf {
     cfg.directory
         .clone()
         .unwrap_or_else(default_directory)
 }
 
-/// Load and concatenate soul markdown files into a system-prompt extension.
+/// 加载并拼接各 soul markdown 文件,作为系统提示词的扩展。
 pub fn load_system_prompt_extension(cfg: &SoulConfig) -> String {
     if !cfg.enabled {
         return String::new();
@@ -40,16 +40,16 @@ pub fn load_system_prompt_extension(cfg: &SoulConfig) -> String {
     load_from_directory(&resolve_directory(cfg))
 }
 
-/// Load soul files from an explicit directory (for tests).
+/// 从显式目录加载 soul 文件(供测试使用)。
 pub fn load_from_directory(dir: &Path) -> String {
     let mut parts = Vec::new();
     for (label, file) in FILES {
         let path = dir.join(file);
         if let Ok(mut content) = std::fs::read_to_string(&path) {
             if content.len() > MAX_SOUL_FILE_BYTES {
-                // Truncate to the byte cap, then snap back to a UTF-8 char
-                // boundary (`truncate` may split a multi-byte sequence) and note
-                // the cut so the model knows the file was elided.
+                // 先截断到字节上限,再回退到 UTF-8 字符边界
+                // (`truncate` 可能切开多字节序列),并附上
+                // 截断标记,让模型知道文件被省略了。
                 content.truncate(MAX_SOUL_FILE_BYTES);
                 while !content.is_char_boundary(content.len()) {
                     content.pop();
@@ -97,12 +97,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pureterm-soul-cap-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        // A file well over the cap.
+        // 一个远超上限的文件。
         fs::write(dir.join("MEMORY.md"), "X".repeat(MAX_SOUL_FILE_BYTES + 5000)).unwrap();
         let out = load_from_directory(&dir);
-        // The cap marker is present…
+        // 截断标记确实存在…
         assert!(out.contains("[truncated]"));
-        // …and the loaded content kept at most MAX_SOUL_FILE_BYTES payload bytes.
+        // …且加载的内容最多保留 MAX_SOUL_FILE_BYTES 字节负载。
         assert!(out.matches('X').count() <= MAX_SOUL_FILE_BYTES);
         let _ = fs::remove_dir_all(&dir);
     }

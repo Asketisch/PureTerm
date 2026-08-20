@@ -1,8 +1,8 @@
-//! GAP-30: Toolbelt — right-sidebar tools panel (history / bookmarks / snippets).
+//! GAP-30:工具带——右侧边栏工具面板(历史 / 书签 / 片段)。
 
 use serde::{Deserialize, Serialize};
 
-/// `[toolbelt]` config.
+/// `[toolbelt]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ToolbeltConfig {
     pub enabled: bool,
@@ -63,7 +63,7 @@ impl Default for ToolbeltTool {
     }
 }
 
-/// `[[toolbelt.bookmarks]]` / `[[toolbelt.snippets]]` entries.
+/// `[[toolbelt.bookmarks]]` / `[[toolbelt.snippets]]` 条目。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolbeltBookmark {
     pub name: String,

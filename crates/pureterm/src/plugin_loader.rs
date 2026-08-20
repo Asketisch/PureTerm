@@ -1,21 +1,18 @@
-//! T-core-plugin-runtime v2: plugin loader infrastructure.
+//! T-core-plugin-runtime v2：插件加载器基础设施。
 //!
-//! v2 stops short of pulling in `wasmtime` (a 50+ MB dep that adds
-//! minutes to cold builds); instead it provides:
+//! v2 暂不引入 `wasmtime`（一个 50+ MB 的依赖，会让冷构建增加好几分钟）；
+//! 而是提供：
 //!
-//! - The `PluginLoader` trait that the host uses to dispatch plugin
-//!   lifecycle hooks.
-//! - A `StaticPluginLoader` impl backed by a `HashMap<name, Box<dyn Plugin>>`
-//!   — useful for tests + the bundled PureTerm "first-party" plugins
-//!   (`status_bar.cpu`, `ipc.hello`, etc.) that ship inside the binary.
-//! - A `WasmPluginLoader` *sketch* that documents where wasmtime would
-//!   go in v3.
-//! - The 9 host-function signatures that the v3 wasmtime linker will
-//!   expose to plugins (`HostFn::Parser`, `Renderer`, etc.). Each is a
-//!   `Box<dyn Fn>` so a v3 implementation can register real handlers.
+//! - `PluginLoader` trait，宿主用它分发插件的生命周期钩子。
+//! - `StaticPluginLoader` 实现，背后是 `HashMap<name, Box<dyn Plugin>>`，
+//!   供测试 + 随二进制内置的 PureTerm “第一方”插件
+//!   （`status_bar.cpu`、`ipc.hello` 等）使用。
+//! - `WasmPluginLoader` *草图*，记录 wasmtime 在 v3 应放在哪里。
+//! - v3 wasmtime 链接器将暴露给插件的 9 个宿主函数签名
+//!   （`HostFn::Parser`、`Renderer` 等）。每个都是 `Box<dyn Fn>`，
+//!   以便 v3 实现注册真正的处理器。
 //!
-//! The checklist's `plugin_system/tests/loader.rs` ≥10 tests target this
-//! surface.
+//! 检查表中的 `plugin_system/tests/loader.rs` ≥10 个测试针对该表面。
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -23,44 +20,43 @@ use std::sync::Arc;
 
 use super::plugin_system::{PluginManifest, Provides};
 
-/// Where to load a plugin from.
+/// 从哪里加载插件。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PluginSource {
-    /// Bundled inside the PureTerm binary (a `#[link_section]` payload
-    /// or a `include_bytes!`-style constant). v2: registered via
-    /// `StaticPluginLoader::register`.
+    /// 内置在 PureTerm 二进制中（`#[link_section]` 载荷或
+    /// `include_bytes!` 风格的常量）。v2：通过
+    /// `StaticPluginLoader::register` 注册。
     Bundled,
-    /// Loaded from a `.wasm` file on disk. v3 only — v2 returns
-    /// `Err(Unsupported)` here.
+    /// 从磁盘上的 `.wasm` 文件加载。仅 v3 — v2 在此返回
+    /// `Err(Unsupported)`。
     WasmFile(std::path::PathBuf),
-    /// Loaded from a `.dylib` / `.so` / `.dll` (cdylib-based plugin).
-    /// v3 only — v2 returns `Err(Unsupported)`.
+    /// 从 `.dylib` / `.so` / `.dll` 加载（基于 cdylib 的插件）。
+    /// 仅 v3 — v2 返回 `Err(Unsupported)`。
     DynamicLibrary(std::path::PathBuf),
 }
 
-/// The 9 host functions a plugin can call back into. Each variant
-/// holds a boxed callback the host registers at plugin-load time.
+/// 插件可以回调的 9 个宿主函数。每个变体持有一个盒装回调，
+/// 宿主在插件加载时注册。
 #[derive(Clone)]
 pub enum HostFn {
-    /// Parser hook: pre-process terminal output before it reaches the
-    /// grid. Used by plugins that want to inject OSC 133 marks or
-    /// capture prompts.
+    /// 解析器钩子：在终端输出进入网格前进行预处理。供想要注入
+    /// OSC 133 标记或捕获提示符的插件使用。
     Parser(Arc<dyn Fn(&str) -> String + Send + Sync>),
-    /// Renderer hook: overlay decorations on top of the GPU quad pass.
+    /// 渲染器钩子：在 GPU quad 通道之上叠加装饰。
     Renderer(Arc<dyn Fn() + Send + Sync>),
-    /// Palette hook: customize the 16-color palette.
+    /// 调色板钩子：自定义 16 色调色板。
     Palette(Arc<dyn Fn() + Send + Sync>),
-    /// IPC hook: expose a custom JSON-RPC method.
+    /// IPC 钩子：暴露自定义 JSON-RPC 方法。
     Ipc(Arc<dyn Fn(&str, serde_json::Value) -> serde_json::Value + Send + Sync>),
-    /// Status bar component hook: register a custom widget.
+    /// 状态栏组件钩子：注册自定义控件。
     StatusBar(Arc<dyn Fn() + Send + Sync>),
-    /// Sidebar tab hook: register a custom sidebar tab.
+    /// 侧边栏标签页钩子：注册自定义侧边栏标签页。
     Sidebar(Arc<dyn Fn() + Send + Sync>),
-    /// Profile provider hook: supply a startup profile.
+    /// 配置档提供者钩子：提供启动配置档。
     Profile(Arc<dyn Fn() -> serde_json::Value + Send + Sync>),
-    /// Tab context menu hook: add an entry to the right-click menu.
+    /// 标签右键菜单钩子：向右键菜单添加条目。
     TabMenu(Arc<dyn Fn() + Send + Sync>),
-    /// Config provider hook: contribute to the merged config.
+    /// 配置提供者钩子：贡献到合并后的配置。
     Config(Arc<dyn Fn() -> serde_json::Value + Send + Sync>),
 }
 
@@ -80,36 +76,33 @@ impl std::fmt::Debug for HostFn {
     }
 }
 
-/// Outcome of loading a plugin.
+/// 加载插件的结果。
 #[derive(Debug)]
 pub struct LoadedPlugin {
     pub manifest: PluginManifest,
     pub source: PluginSource,
-    /// The `Provides` capabilities this plugin registered (mirrors
-    /// `manifest.provides`, exposed separately so the GUI doesn't have
-    /// to reach through the manifest to wire hooks). Strings match
-    /// `Provides::as_str()`.
+    /// 该插件注册的 `Provides` 能力（镜像 `manifest.provides`，
+    /// 单独暴露，使 GUI 不必穿透清单去接钩子）。字符串与
+    /// `Provides::as_str()` 一致。
     pub provides: Vec<String>,
 }
 
-/// The plugin loader trait. v2 has two impls: `StaticPluginLoader`
-/// (always available) and `WasmPluginLoader` (sketch only).
+/// 插件加载器 trait。v2 有两个实现：`StaticPluginLoader`
+/// （始终可用）与 `WasmPluginLoader`（仅草图）。
 pub trait PluginLoader: Send + Sync {
-    /// Load a single plugin from `source`. Returns the parsed
-    /// manifest + a list of `Provides` capabilities the loader
-    /// extracted from the plugin's exports.
+    /// 从 `source` 加载单个插件。返回解析后的清单 +
+    /// 加载器从插件导出中提取的 `Provides` 能力列表。
     fn load(&self, source: PluginSource, manifest: PluginManifest) -> Result<LoadedPlugin, String>;
 
-    /// Unload a plugin (release the wasm instance, deregister hooks).
+    /// 卸载插件（释放 wasm 实例，注销钩子）。
     fn unload(&self, name: &str) -> Result<(), String>;
 
-    /// List currently loaded plugin names.
+    /// 列出当前已加载的插件名。
     fn loaded(&self) -> Vec<String>;
 }
 
-/// A bundled plugin: a (manifest, provides) pair registered with the
-/// `StaticPluginLoader`. v2 stores the manifest only (no code); v3
-/// will add an `Arc<dyn Plugin>` once the trait lands.
+/// 内置插件：注册到 `StaticPluginLoader` 的（清单, provides）二元组。
+/// v2 只存清单（无代码）；v3 在 trait 落地后加上 `Arc<dyn Plugin>`。
 #[derive(Clone, Debug)]
 pub struct BundledPlugin {
     pub manifest: PluginManifest,
@@ -121,8 +114,8 @@ impl BundledPlugin {
     }
 }
 
-/// Bundled-plugin loader: looks up plugins by name in an in-process
-/// `HashMap`. Tests + first-party plugins use this.
+/// 内置插件加载器：在进程内 `HashMap` 中按名称查找插件。
+/// 测试 + 第一方插件使用它。
 #[derive(Default)]
 pub struct StaticPluginLoader {
     plugins: HashMap<String, BundledPlugin>,
@@ -133,15 +126,14 @@ impl StaticPluginLoader {
         Self::default()
     }
 
-    /// Register a bundled plugin under its manifest name. Subsequent
-    /// `load(PluginSource::Bundled, manifest)` calls succeed for that
-    /// name.
+    /// 以其清单名注册内置插件。之后对该名称的
+    /// `load(PluginSource::Bundled, manifest)` 调用会成功。
     pub fn register(&mut self, plugin: BundledPlugin) {
         let name = plugin.manifest.name.clone();
         self.plugins.insert(name, plugin);
     }
 
-    /// Returns true if the named plugin is registered.
+    /// 若指定名称的插件已注册则返回 true。
     pub fn has(&self, name: &str) -> bool {
         self.plugins.contains_key(name)
     }
@@ -167,9 +159,8 @@ impl PluginLoader for StaticPluginLoader {
     }
 
     fn unload(&self, _name: &str) -> Result<(), String> {
-        // Bundled plugins are owned by the loader; unload is a no-op
-        // for v2. (v3 may decrement refcounts once we move to
-        // Arc-based unloading.)
+        // 内置插件归加载器所有；v2 的 unload 是空操作。
+        // （v3 采用基于 Arc 的卸载后，可能会减少引用计数。）
         Ok(())
     }
 
@@ -178,21 +169,18 @@ impl PluginLoader for StaticPluginLoader {
     }
 }
 
-/// WasmPluginLoader: v3 implementation. The behavior depends on the
-/// `wasm-runtime` cargo feature:
+/// WasmPluginLoader：v3 实现。行为取决于 `wasm-runtime` cargo 特性：
 ///
-/// - **feature on**: links wasmtime, instantiates `.wasm` modules, and
-///   registers host functions. The loader owns the wasmtime `Engine` +
-///   `Linker` + a `HashMap<name, Instance>` of live plugins.
-/// - **feature off**: every `load(WasmFile|DynamicLibrary)` returns
-///   `Err("wasmtime …")` so the GUI can degrade gracefully (the same
-///   contract v2 used). The unit test
-///   `wasm_loader_returns_unsupported_for_wasm_file` depends on this
-///   error message format.
+/// - **特性开启**：链接 wasmtime，实例化 `.wasm` 模块并注册宿主函数。
+///   加载器拥有 wasmtime 的 `Engine` + `Linker` + 存活插件的
+///   `HashMap<name, Instance>`。
+/// - **特性关闭**：每次 `load(WasmFile|DynamicLibrary)` 都返回
+///   `Err("wasmtime …")`，使 GUI 可以优雅降级（与 v2 相同的契约）。
+///   单元测试 `wasm_loader_returns_unsupported_for_wasm_file`
+///   依赖该错误消息的格式。
 ///
-/// The static `host_fns()` helper documents the 9 host functions the
-/// v3 linker wires up; when the feature is off it returns `Vec::new()`
-/// (no callbacks to register).
+/// 静态 `host_fns()` 辅助函数记录了 v3 链接器接线的 9 个宿主函数；
+/// 特性关闭时它返回 `Vec::new()`（没有需要注册的回调）。
 #[derive(Default)]
 pub struct WasmPluginLoader {
     #[cfg(feature = "wasm-runtime")]
@@ -201,14 +189,14 @@ pub struct WasmPluginLoader {
     instances: std::sync::Mutex<HashMap<String, WasmInstance>>,
 }
 
-/// A live wasmtime instance + its manifest. Held under the loader's
-/// `Mutex` so plugin lifecycle (load/unload) is thread-safe.
+/// 一个存活的 wasmtime 实例 + 其清单。放在加载器的 `Mutex` 下，
+/// 使插件生命周期（加载/卸载）线程安全。
 #[cfg(feature = "wasm-runtime")]
 struct WasmInstance {
-    /// The compiled module — kept around so the linker can re-instantiate
-    /// on demand (e.g. after a hot reload).
+    /// 编译后的模块——保留起来，以便链接器按需重新实例化
+    /// （例如热重载之后）。
     module: wasmtime::Module,
-    /// The plugin's declared capabilities (mirrors `manifest.provides`).
+    /// 插件声明的能力（镜像 `manifest.provides`）。
     provides: Vec<String>,
 }
 
@@ -217,34 +205,31 @@ impl WasmPluginLoader {
         Self::default()
     }
 
-    /// Returns the 9 host-function descriptors this loader would register
-    /// with a wasmtime `Linker<HostState>`. When the `wasm-runtime` feature
-    /// is off, returns an empty `Vec` (there's no linker to populate).
+    /// 返回该加载器会注册到 wasmtime `Linker<HostState>` 的 9 个
+    /// 宿主函数描述符。`wasm-runtime` 特性关闭时返回空 `Vec`
+    /// （没有链接器可填充）。
     ///
-    /// v3+1 will populate this with real callbacks bound to the active
-    /// `TerminalContext` / `iced_app` state. For now it's the contract
-    /// surface; the `WasmPluginLoader::load` path doesn't depend on it
-    /// yet (it instantiates the module and reads its exports, but doesn't
-    /// wire the host functions until a plugin actually invokes one).
+    /// v3+1 将用绑定到活动 `TerminalContext` / `iced_app` 状态的
+    /// 真实回调填充它。目前它只是契约表面；`WasmPluginLoader::load`
+    /// 路径还不依赖它（实例化模块并读取导出，但在插件真正调用某个
+    /// 宿主函数之前不接线）。
     pub fn host_fns() -> Vec<HostFn> {
         Vec::new()
     }
 
-    /// v3+1: real wasmtime linker wiring. Until the host-function side
-    /// channels (`Parser` callback receiving live PTY bytes, `Ipc`
-    /// callback dispatching to the active JSON-RPC router) are plumbed
-    /// through `iced_app.rs`, the loader instantiates modules but does
-    /// not call into host functions. This method is the documented
-    /// integration seam — the next PR fills it.
+    /// v3+1：真正的 wasmtime 链接器接线。在宿主函数侧通道
+    /// （`Parser` 回调接收实时 PTY 字节、`Ipc` 回调分发到活动的
+    /// JSON-RPC 路由器）经 `iced_app.rs` 打通之前，加载器只实例化
+    /// 模块而不调用宿主函数。本方法是文档化的集成接缝——由下一个
+    /// PR 填充。
     #[cfg(feature = "wasm-runtime")]
     fn build_linker(
         &self,
     ) -> Result<wasmtime::Linker<wasmtime::WasmBacktrace>, String> {
-        // Placeholder: a real v3+1 implementation calls
-        // `linker.func_wrap(...)` for each of the 9 HostFn variants,
-        // binding them to host state. For now we return an empty linker
-        // so module instantiation succeeds for plugins that don't
-        // import host functions (e.g. a pure compute plugin).
+        // 占位：真正的 v3+1 实现会对 9 个 HostFn 变体逐一调用
+        // `linker.func_wrap(...)`，把它们绑定到宿主状态。目前我们
+        // 返回空的链接器，使不导入宿主函数的插件（例如纯计算插件）
+        // 也能成功实例化模块。
         let linker = wasmtime::Linker::new(&self.engine);
         Ok(linker)
     }
@@ -320,15 +305,13 @@ impl WasmPluginLoader {
         let module = wasmtime::Module::new(&self.engine, &wasm_bytes)
             .map_err(|e| format!("compile {}: {e}", path.display()))?;
 
-        // Extract the plugin's declared capabilities from the manifest
-        // (the wasm module's exports list is inspected separately by
-        // host-function wiring in v3+1).
+        // 从清单中提取插件声明的能力（wasm 模块的导出列表由 v3+1
+        // 的宿主函数接线单独检查）。
         let provides = manifest.provides.clone();
 
-        // Store the compiled module so future host-function invocations
-        // can reach it. We don't instantiate yet — instantiation needs
-        // the host-state `Store` that v3+1 will thread through from
-        // `iced_app`.
+        // 保存编译后的模块，使未来的宿主函数调用能够访问它。
+        // 我们暂不实例化——实例化需要 v3+1 从 `iced_app` 传下来的
+        // 宿主状态 `Store`。
         let mut instances = self.instances.lock().unwrap();
         instances.insert(
             manifest.name.clone(),
@@ -346,9 +329,8 @@ impl WasmPluginLoader {
     }
 }
 
-/// Read a manifest from a `.toml` file. Used by the CLI `pureterm
-/// plugin install` flow to verify a downloaded plugin before linking
-/// it.
+/// 从 `.toml` 文件读取清单。供 CLI `pureterm plugin install` 流程
+/// 在链接前校验下载的插件。
 pub fn load_manifest(path: &Path) -> Result<PluginManifest, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("read {}: {e}", path.display()))?;
     text.parse::<toml::Table>()

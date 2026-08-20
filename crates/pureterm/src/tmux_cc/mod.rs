@@ -1,25 +1,25 @@
-//! T-core-tmux-cc: tmux control mode (-CC) backend.
+//! T-core-tmux-cc:tmux 控制模式(-CC)后端。
 //!
-//! This module is the v1 scaffolding for "real" tmux: instead of the
-//! existing cold-CLI `tmux_cli` (which forks per command), `tmux_cc`
-//! holds a long-running `tmux -CC` child and parses its line-oriented
-//! envelope stream into a live terminal surface.
+//! 本模块是接入“真实”tmux 的 v1 脚手架:不再像
+//! 现有冷 CLI `tmux_cli`(每条命令 fork 一次)那样,`tmux_cc`
+//! 而是持有一个常驻的 `tmux -CC` 子进程,解析其逐行
+//! 信封流,映射为实时的终端表面。
 //!
-//! v1 components:
+//! v1 组件:
 //!
-//! - [`envelope`] — the line-by-line protocol parser; the only piece
-//!   that's fully exercised by tests in v1.
-//! - [`pty`] — the child-process skeleton (a trait + a Unix impl that
-//!   uses `alacritty_terminal::tty::new`). Tests stub it with a
-//!   `MockPty` to feed canned tmux output.
-//! - [`backend`] — the `SurfaceBackend` enum + the wiring that
-//!   attaches a `TmuxControlPty` to a pane in `split_tree`.
-//! - [`mirror`] — the per-event handler that translates `%windows`,
+//! - [`envelope`] —— 逐行协议解析器;v1 中唯一
+//!   被测试完整覆盖的部件。
+//! - [`pty`] —— 子进程骨架(一个 trait + 使用
+//!   `alacritty_terminal::tty::new` 的 Unix 实现)。测试用
+//!   `MockPty` 桩代替,灌入预设的 tmux 输出。
+//! - [`backend`] —— `SurfaceBackend` 枚举 + 在 `split_tree` 中
+//!   把 `TmuxControlPty` 挂到窗格上的接线。
+//! - [`mirror`] —— 逐事件处理器,把 `%windows`、
 //!   `%window-add`, `%window-close`, `%window-renamed`,
-//!   `%layout-change` into `split_tree` mutations.
+//!   `%layout-change` 等转换为 `split_tree` 的变更。
 //!
-//! The actual spawn / kill lifecycle is owned by the GUI; v1 surfaces
-//! the API and the protocol.
+//! 实际的启停生命周期由 GUI 负责;v1 只暴露
+//! API 与协议。
 
 pub mod envelope;
 

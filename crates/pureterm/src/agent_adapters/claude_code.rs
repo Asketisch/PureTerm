@@ -14,7 +14,7 @@ use serde_json::{json, Map, Value};
 use super::{AdapterError, AgentAdapter, HookRegistration, InstallReport};
 use crate::cli::AgentsSub;
 
-// ── Claude Code adapter ───────────────────────────────────────────────────
+// ── Claude Code 适配器 ───────────────────────────────────────────────────────
 
 pub struct ClaudeCodeAdapter {
     /// 测试注入:覆盖默认 settings 路径。生产(`registry()` / CLI)用 None

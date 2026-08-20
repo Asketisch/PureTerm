@@ -1,14 +1,14 @@
-//! Session lifecycle operations: create, attach, list, kill, hibernate, resume.
+//! 会话生命周期操作:创建、附加、列出、杀掉、休眠、恢复。
 
 use std::io;
 use std::path::{Path, PathBuf};
 
 use super::rpc;
 
-/// Create a new local session via the daemon and return `(session_id, data_path)`.
+/// 通过守护进程创建新的本地会话,返回 `(session_id, data_path)`。
 ///
-/// `cwd`, when `Some`, is forwarded to the daemon as the shell's startup
-/// directory (so new tabs/panes inherit the current working directory).
+/// `cwd` 为 `Some` 时作为 shell 的启动
+/// 目录转发给守护进程(新标签页 / 窗格因此继承当前工作目录)。
 pub fn create_local(
     socket: &Path,
     cols: u16,
@@ -26,8 +26,8 @@ pub fn create_local(
     if let Some(c) = cwd {
         params["working_directory"] = serde_json::Value::String(c.to_string());
     }
-    // GAP-7.5: optional explicit argv (cold resume of an agent, e.g.
-    // `claude --resume <id>`) + agent_kind tag for hibernation eligibility.
+    // GAP-7.5:可选的显式 argv(agent 的冷恢复,例如
+    // `claude --resume <id>`)+ 用于休眠资格判定的 agent_kind 标签。
     if let Some(argv) = argv {
         params["argv"] = serde_json::Value::Array(
             argv.iter().map(|s| serde_json::Value::String(s.clone())).collect(),
@@ -46,17 +46,17 @@ pub fn create_local(
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing session_id"))?
         .to_string();
 
-    // Attach to get the data path.
+    // 附加(attach)以获取数据路径。
     let data_path = attach_existing(socket, &sid)?;
 
     Ok((sid, data_path))
 }
 
-/// Create a new SSH session via the daemon (GAP-5.1 M3) and return
-/// `(session_id, data_path)`. The daemon owns the `ssh -tt` child so the
-/// remote shell survives GUI restart. `password` (already resolved + unlocked
-/// by the GUI) is forwarded over the local control socket to drive
-/// `SSH_ASKPASS`; `None` means key/agent auth.
+/// 通过守护进程创建新 SSH 会话(GAP-5.1 M3),返回
+/// `(session_id, data_path)`。守护进程持有 `ssh -tt` 子进程,
+/// 使远端 shell 在 GUI 重启后依然存活。`password`(已由 GUI 解析并解锁)
+/// 经本地控制 socket 转发,
+/// 用于驱动 `SSH_ASKPASS`;`None` 表示密钥 / agent 认证。
 pub fn create_ssh(
     socket: &Path,
     host: &str,
@@ -90,7 +90,7 @@ pub fn create_ssh(
     if let Some(pw) = password {
         params["password"] = serde_json::Value::String(pw.to_string());
     }
-    // GAP-5.4: ssh-agent forwarding toggle (+ optional explicit agent socket).
+    // GAP-5.4:ssh-agent 转发开关(+ 可选的显式 agent socket)。
     if forward_agent {
         params["forward_agent"] = serde_json::Value::Bool(true);
     }
@@ -125,14 +125,14 @@ pub fn create_ssh(
     Ok((sid, data_path))
 }
 
-/// Attach to an *existing* daemon session and return its data-socket path.
+/// 附加到*已存在*的守护进程会话,返回其数据 socket 路径。
 ///
-/// Shared by the create flow (which attaches right after `session.create`)
-/// and by GAP-5.6 cross-restart recovery, which attaches to a session that
-/// was created in a previous GUI run and is still alive in the daemon. The
-/// daemon replays the session's scrollback as `SCROLLBACK` frames to the new
-/// subscriber, so the caller's `Term` + `vte::ansi::Processor` rebuilds the
-/// grid naturally.
+/// 创建流程(`session.create` 之后立即附加)以及
+/// GAP-5.6 跨重启恢复共用该函数:后者附加到
+/// 上次 GUI 运行中创建、且仍在守护进程里存活的会话。
+/// 守护进程以 `SCROLLBACK` 帧向新订阅者重放会话回滚,
+/// 调用方的 `Term` 与 `vte::ansi::Processor` 得以重建
+/// 网格。
 pub fn attach_existing(socket: &Path, session_id: &str) -> io::Result<PathBuf> {
     let attach_resp = rpc(
         socket,
@@ -151,8 +151,8 @@ pub fn attach_existing(socket: &Path, session_id: &str) -> io::Result<PathBuf> {
     Ok(PathBuf::from(data_path))
 }
 
-/// List all live sessions in the daemon (GAP-5.6 recovery discovery). Each
-/// element is the raw JSON `{ id, kind, child_pid, data_path }` object from
+/// 列出守护进程中的所有存活会话(GAP-5.6 恢复发现),每个
+/// 元素都是 `{ id, kind, child_pid, data_path }` 原始 JSON 对象,来自
 /// `session.list`.
 pub fn list_sessions(socket: &Path) -> io::Result<Vec<serde_json::Value>> {
     let resp = rpc(socket, "session.list", None)?;
@@ -169,10 +169,10 @@ pub fn list_sessions(socket: &Path) -> io::Result<Vec<serde_json::Value>> {
     Ok(sessions.clone())
 }
 
-/// Kill a daemon session (SIGHUP child + tear down). GAP-5.6: a user-initiated
-/// tab/pane close ends the underlying session so it is NOT restored on the next
-/// launch — only an app quit / process kill preserves sessions. Returns the
-/// daemon's `killed` flag (`false` if the session was already gone).
+/// 杀掉守护进程会话(SIGHUP 子进程并拆除)。GAP-5.6:用户主动
+/// 关闭标签页 / 窗格会终结底层会话,因此在下次
+/// 启动时不会被恢复 —— 只有退出应用 / 杀进程才会保留会话。返回
+/// 守护进程的 `killed` 标志(会话已不存在时为 `false`)。
 pub fn kill_session(socket: &Path, session_id: &str) -> io::Result<bool> {
     let resp = rpc(
         socket,
@@ -188,9 +188,9 @@ pub fn kill_session(socket: &Path, session_id: &str) -> io::Result<bool> {
         .unwrap_or(false))
 }
 
-/// GAP-7.3: SIGSTOP a daemon session's child (hibernate). The PTY stays open,
-/// so `resume_session` can SIGCONT it back to life. Returns the daemon's
-/// `hibernated` flag (`false` if the session was unknown).
+/// GAP-7.3:对守护进程会话的子进程发送 SIGSTOP(休眠)。PTY 保持打开,
+/// 因此 `resume_session` 可用 SIGCONT 令其复活。返回守护进程的
+/// `hibernated` 标志(会话未知时为 `false`)。
 pub fn hibernate_session(socket: &Path, session_id: &str) -> io::Result<bool> {
     let resp = rpc(
         socket,
@@ -206,8 +206,8 @@ pub fn hibernate_session(socket: &Path, session_id: &str) -> io::Result<bool> {
         .unwrap_or(false))
 }
 
-/// GAP-7.3: SIGCONT a hibernated daemon session's child (resume). Returns the
-/// daemon's `resumed` flag (`false` if the session was unknown).
+/// GAP-7.3:对已休眠的守护进程会话子进程发送 SIGCONT(恢复)。返回
+/// 守护进程的 `resumed` 标志(会话未知时为 `false`)。
 pub fn resume_session(socket: &Path, session_id: &str) -> io::Result<bool> {
     let resp = rpc(
         socket,

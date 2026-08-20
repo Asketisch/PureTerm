@@ -1,8 +1,8 @@
-//! GAP-4.2: Smart Selection Hover Preview — debounced tooltip + semantic actions.
+//! GAP-4.2:智能选中悬停预览——防抖提示框 + 语义操作。
 //!
-//! Pure logic layer: smart-match detection, URL title fetch, path metadata,
-//! open/copy/editor actions, and overlay state. `iced_app` wires mouse events,
-//! async tasks, and pinned tooltip / context-menu widgets.
+//! 纯逻辑层:智能匹配检测、URL 标题抓取、路径元数据、
+//! 打开/拷贝/编辑器操作以及叠加状态。`iced_app` 负责鼠标事件、
+//! 异步任务与固定提示框 / 上下文菜单组件。
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -14,7 +14,7 @@ use regex::Regex;
 
 pub const DEBOUNCE_MS: u64 = 200;
 
-/// Relative / compiler `path:line[:col]` spans (GAP-36).
+/// 相对路径 / 编译器的 `path:line[:col]` 片段(GAP-36)。
 fn semantic_path_pattern() -> &'static Regex {
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     RE.get_or_init(|| {
@@ -23,12 +23,12 @@ fn semantic_path_pattern() -> &'static Regex {
     })
 }
 
-/// Smart-selection rules that show hover preview + semantic context menu.
+/// 需要显示悬停预览 + 语义上下文菜单的智能选中规则。
 pub fn is_previewable_rule(rule_id: &str) -> bool {
     matches!(rule_id, "url" | "ssh-url" | "file-path")
 }
 
-/// Evaluate smart selection at a grid click, keeping only previewable rules.
+/// 在网格点击处评估智能选中,只保留可预览的规则。
 pub fn smart_match_at_point<T>(term: &Term<T>, point: Point) -> Option<SmartMatch> {
     if !term.smart_selection.is_enabled() {
         return None;
@@ -38,7 +38,7 @@ pub fn smart_match_at_point<T>(term: &Term<T>, point: Point) -> Option<SmartMatc
     is_previewable_rule(&m.rule_id).then_some(m)
 }
 
-/// GAP-36: semantic file location at grid point (smart selection + path:line regex).
+/// GAP-36:网格点处的语义文件位置(智能选中 + path:line 正则)。
 pub fn semantic_target_at_point<T>(
     term: &Term<T>,
     pane_id: u64,
@@ -137,12 +137,12 @@ pub struct HoverPreviewMenuState {
     pub hovered: Option<HoverPreviewMenuItem>,
 }
 
-/// Tooltip + debounce state (testable without iced).
+/// 提示框 + 防抖状态(不依赖 iced,可测试)。
 #[derive(Debug)]
 pub struct HoverPreviewState {
     pub target: Option<HoverTarget>,
     pub content: PreviewContent,
-    /// Window-content coordinates for tooltip placement.
+    /// 提示框定位用的窗口内容坐标。
     pub position: (f32, f32),
     debounce_gen: u64,
     fetch_gen: u64,
@@ -202,8 +202,8 @@ impl HoverPreviewState {
         self.fetch_gen += 1;
     }
 
-    /// Mouse moved over a previewable target (or left it). Returns debounce generation
-    /// when a new debounce timer should start.
+    /// 鼠标移过可预览目标(或离开)。需要启动新的防抖计时器时,
+    /// 返回对应的防抖代数。
     pub fn on_mouse_move(
         &mut self,
         target: Option<HoverTarget>,
@@ -263,7 +263,7 @@ pub fn debounce_duration() -> Duration {
     Duration::from_millis(DEBOUNCE_MS)
 }
 
-/// Split `path:line[:col]` suffixes common in compiler / ripgrep output.
+/// 拆分编译器 / ripgrep 输出中常见的 `path:line[:col]` 后缀。
 pub fn parse_path_line(text: &str) -> (String, Option<u64>, Option<u64>) {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -272,7 +272,7 @@ pub fn parse_path_line(text: &str) -> (String, Option<u64>, Option<u64>) {
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("ssh://") {
         return (trimmed.to_string(), None, None);
     }
-    // `src/main.rs:42:5` — strip trailing `:col` when both are numeric.
+    // `src/main.rs:42:5` —— 两者均为数字时去掉末尾的 `:col`。
     if let Some((path, rest)) = trimmed.rsplit_once(':') {
         if let Some((path2, col_str)) = path.rsplit_once(':') {
             if !path2.is_empty()
@@ -322,7 +322,7 @@ pub fn resolve_path(text: &str, cwd: Option<&Path>) -> PathBuf {
     }
 }
 
-/// Find a semantic file location at `byte_offset` within `line`.
+/// 在 `line` 的 `byte_offset` 处查找语义文件位置。
 pub fn semantic_span_at_offset(line: &str, byte_offset: usize) -> Option<String> {
     for m in semantic_path_pattern().find_iter(line) {
         if byte_offset >= m.start() && byte_offset < m.end() {
@@ -332,7 +332,7 @@ pub fn semantic_span_at_offset(line: &str, byte_offset: usize) -> Option<String>
     None
 }
 
-/// Resolve editor binary: `$EDITOR` > config > `"code"`.
+/// 解析编辑器可执行文件:`$EDITOR` > 配置 > `"code"`。
 pub fn resolve_editor(config_editor: &str) -> String {
     std::env::var("EDITOR")
         .ok()
@@ -556,7 +556,7 @@ pub fn open_in_editor_target(
     open_in_editor(&path, line, config_editor);
 }
 
-/// Resolved filesystem path for a hover / semantic file target (GAP-35 LSP didOpen).
+/// 悬停 / 语义文件目标对应的已解析文件系统路径(GAP-35 LSP didOpen)。
 pub fn resolved_path_for_target(target: &HoverTarget, cwd: Option<&Path>) -> Option<PathBuf> {
     if target.rule_id != "file-path" && target.rule_id != "semantic-path" {
         return None;
@@ -565,7 +565,7 @@ pub fn resolved_path_for_target(target: &HoverTarget, cwd: Option<&Path>) -> Opt
     Some(resolve_path(&path_part, cwd))
 }
 
-/// Cmd-click / semantic-history entry: open file at line in the configured editor.
+/// Cmd-点击 / 语义历史条目:在配置的编辑器中按行号打开文件。
 pub fn open_semantic_text(text: &str, cwd: Option<&Path>, config_editor: &str) {
     let (path_part, line, _) = parse_path_line(text);
     let path = resolve_path(&path_part, cwd);
@@ -614,7 +614,7 @@ fn open_in_editor(path: &Path, line: u64, config_editor: &str) {
         c.arg(format!("+{line}")).arg(path);
         c
     } else {
-        // vim / nvim / $EDITOR with +line convention
+        // vim / nvim / $EDITOR 采用 +行号 约定
         let mut c = std::process::Command::new(base);
         c.arg(format!("+{line}")).arg(path);
         c
@@ -625,7 +625,7 @@ fn open_in_editor(path: &Path, line: u64, config_editor: &str) {
     }
 }
 
-/// Build a hover target from pane-local mouse position (pure helper for tests).
+/// 从窗格局部鼠标位置构建悬停目标(测试用的纯辅助函数)。
 pub fn hover_target_from_grid(pane_id: u64, point: Point, m: SmartMatch) -> HoverTarget {
     HoverTarget::from_match(pane_id, point, &m)
 }

@@ -1,6 +1,6 @@
-//! GAP-23: Visual tab bar widget — position + visibility config.
+//! GAP-23:可视标签栏组件——位置 + 可见性配置。
 
-/// Tab bar placement.
+/// 标签栏摆放位置。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TabBarPosition {
     #[default]
@@ -19,7 +19,7 @@ impl TabBarPosition {
     }
 }
 
-/// `[tab_bar]` config.
+/// `[tab_bar]` 配置。
 #[derive(Clone, Debug, PartialEq)]
 pub struct VisualTabBarConfig {
     pub enabled: bool,

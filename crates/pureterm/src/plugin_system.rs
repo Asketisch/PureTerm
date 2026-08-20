@@ -1,29 +1,28 @@
-//! GAP-49: Plugin system — directory scan + manifest parsing + install.
+//! GAP-49：插件系统——目录扫描 + 清单解析 + 安装。
 //!
-//! ## Model
+//! ## 模型
 //!
-//! A "plugin" is a folder under [`PluginSystemConfig::plugin_dir`]
-//! (default `~/.config/pureterm/plugins/<name>/`) that contains a
-//! `plugin.toml` manifest. The manifest is a tiny TOML file with:
+//! 一个“插件”是 [`PluginSystemConfig::plugin_dir`] 下的一个文件夹
+//!（默认 `~/.config/pureterm/plugins/<名称>/`），其中包含一个 `plugin.toml`
+//! 清单。清单是一个微小的 TOML 文件：
 //!
 //! ```toml
-//! name = "my-plugin"      # required, must match the folder name
-//! version = "0.1.0"       # required, semver-ish
-//! description = ""        # optional
-//! author = ""             # optional
-//! # Future extension points (not yet wired into the runtime):
+//! name = "my-plugin"      # 必填，须与文件夹名一致
+//! version = "0.1.0"       # 必填，类 semver
+//! description = ""        # 可选
+//! author = ""             # 可选
+//! # 未来的扩展点（尚未接入运行时）：
 //! # provides = ["profile_provider", "status_bar_component"]
 //! ```
 //!
-//! The runtime (WASM / dylib) is intentionally deferred. The scaffold
-//! only validates manifests, lists plugins, and installs/updates stubs.
-//! Hooking plugins into the terminal surface is a Phase D concern.
+//! 运行时（WASM / dylib）有意推迟。脚手架只做校验清单、列出插件、
+//! 安装/更新桩三件事。把插件挂进终端表面是 D 阶段的事。
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// `[plugins]` config.
+/// `[plugins]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginSystemConfig {
     pub enabled: bool,
@@ -52,14 +51,13 @@ fn default_plugin_dir() -> PathBuf {
         .join("plugins")
 }
 
-/// On-disk manifest (`<plugin>/plugin.toml`).
+/// 磁盘上的清单（`<插件>/plugin.toml`）。
 ///
-/// t-core-plugin-runtime extends the v0 manifest (GAP-49) with the
-/// `abi_version` / `entry_points` / `provides` / `config_schema`
-/// fields. v0 manifests (without these fields) keep working: every
-/// new field is `#[serde(default)]` and the loader fills in
-/// sensible defaults. The v1 ABI version is `1`; future bumps
-/// require a `[pureterm abi = "N"]` opt-in from the loader.
+/// t-core-plugin-runtime 在 v0 清单（GAP-49）基础上扩展了
+/// `abi_version` / `entry_points` / `provides` / `config_schema` 字段。
+/// 不含这些字段的 v0 清单仍然可用：每个新字段都是 `#[serde(default)]`，
+/// 由加载器填上合理的默认值。v1 的 ABI 版本号为 `1`；未来升级需要
+/// 加载器显式选择 `[pureterm abi = "N"]`。
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PluginManifest {
     pub name: String,
@@ -68,29 +66,24 @@ pub struct PluginManifest {
     pub description: String,
     #[serde(default)]
     pub author: String,
-    /// ABI version this plugin was compiled against. The loader
-    /// refuses to load a plugin whose `abi_version` is greater than
-    /// the running binary's max supported (currently 1).
+    /// 该插件编译时针对的 ABI 版本。加载器拒绝加载 `abi_version` 大于
+    /// 当前二进制支持的上限（目前为 1）的插件。
     #[serde(default = "default_abi_version")]
     pub abi_version: u32,
-    /// Entry points: a name → function-index map inside the WASM
-    /// module. v1 keys are the strings in [`PLUGIN_ENTRY_POINTS`].
-    /// The map is empty for v0 manifests.
+    /// 入口点：WASM 模块内 名称 → 函数索引 的映射。v1 的键是
+    /// [`PLUGIN_ENTRY_POINTS`] 中的字符串。v0 清单的该映射为空。
     #[serde(default)]
     pub entry_points: std::collections::HashMap<String, String>,
-    /// Capability declarations. v1 stores them as strings; the
-    /// loader parses each via [`Provides::from_str`].
+    /// 能力声明。v1 以字符串存储；加载器通过 [`Provides::from_str`] 逐个解析。
     #[serde(default)]
     pub provides: Vec<String>,
-    /// Optional JSON-schema-ish config block. v1: just a free-form
-    /// TOML table the GUI can pass to the plugin's `on_config`
-    /// host call.
+    /// 可选的类 JSON-schema 配置块。v1：只是一张自由格式的 TOML 表，
+    /// GUI 可将其传给插件的 `on_config` 宿主调用。
     #[serde(default)]
     pub config_schema: Option<toml::Value>,
-    /// T-core-plugin-runtime v2: per-plugin enable / disable. Flipped
-    /// by the `pureterm plugin enable|disable <name>` CLI; absent
-    /// defaults to `false` (the plugin loader treats the absence as
-    /// "user hasn't enabled it yet").
+    /// T-core-plugin-runtime v2：按插件启用 / 禁用。由 `pureterm plugin
+    /// enable|disable <名称>` CLI 切换；缺省为 `false`（插件加载器把缺省
+    /// 视为“用户尚未启用”）。
     #[serde(default)]
     pub enabled: bool,
 }
@@ -99,39 +92,37 @@ fn default_abi_version() -> u32 {
     1
 }
 
-/// Recognized `provides = [...]` entries. The strings serialize via
-/// `as_str`; the loader's parser is the inverse.
+/// 可识别的 `provides = [...]` 条目。字符串经 `as_str` 序列化；
+/// 加载器的解析器是其逆操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Provides {
-    /// A profile (SSH / shell profile) provider.
+    /// 配置档（SSH / shell 配置档）提供者。
     ProfileProvider,
-    /// A host-app contribution (menu item, deep link, etc.).
+    /// 宿主应用贡献（菜单项、深链接等）。
     HostApp,
-    /// A toolbar button in the GUI chrome.
+    /// GUI 框架中的工具栏按钮。
     ToolbarButtonProvider,
-    /// A context-menu item in the tab bar.
+    /// 标签栏中的右键菜单项。
     TabContextMenuProvider,
-    /// A config-file provider (e.g. for a remote config backend).
+    /// 配置文件提供者（例如远程配置后端）。
     ConfigProvider,
-    /// A status-bar component (a widget rendered in the status bar).
+    /// 状态栏组件（渲染在状态栏中的控件）。
     StatusBarComponent,
-    /// A sidebar tab (a custom page in the right sidebar).
+    /// 侧边栏标签页（右侧边栏中的自定义页面）。
     SidebarTab,
-    /// A command-palette item (a fuzzy-matchable action).
+    /// 命令面板条目（可模糊匹配的动作）。
     CommandPaletteItem,
-    /// An IPC method (custom JSON-RPC endpoint).
+    /// IPC 方法（自定义 JSON-RPC 端点）。
     IpcMethod,
-    /// A terminal-parser hook (custom OSC/CSI/DCS sequences).
+    /// 终端解析器钩子（自定义 OSC/CSI/DCS 序列）。
     TerminalParserHook,
-    /// A renderer overlay (custom draw call on top of the terminal
-    /// grid).
+    /// 渲染器浮层（在终端网格之上的自定义绘制调用）。
     RendererOverlay,
 }
 
 impl Provides {
-    /// Canonical string form (used in `plugin.toml` and JSON
-    /// serialization).
+    /// 规范字符串形式（用于 `plugin.toml` 与 JSON 序列化）。
     pub fn as_str(&self) -> &'static str {
         match self {
             Provides::ProfileProvider => "profile_provider",
@@ -148,9 +139,8 @@ impl Provides {
         }
     }
 
-    /// Parse from the canonical string. Returns `None` for unknown
-    /// values (forward-compat: a v0 loader skips unknown provides
-    /// with a warning rather than aborting).
+    /// 从规范字符串解析。未知值返回 `None`（向前兼容：v0 加载器跳过
+    /// 未知的 provides 并给出警告，而不是中止）。
     pub fn from_str(s: &str) -> Option<Self> {
         match s {
             "profile_provider" => Some(Provides::ProfileProvider),
@@ -169,10 +159,9 @@ impl Provides {
     }
 }
 
-/// The full set of entry-point names a plugin can declare. v0
-/// plugins (no `entry_points` map) get an empty map and are loaded
-/// as inert stubs (the v0 surface — `install_stub` / `list_plugins`
-/// — only validates the manifest, never invokes the plugin).
+/// 插件可声明的全部入口点名称。v0 插件（无 `entry_points` 映射）得到
+/// 空映射，并以惰性桩加载（v0 表面——`install_stub` / `list_plugins`
+/// 只校验清单，从不调用插件）。
 pub const PLUGIN_ENTRY_POINTS: &[&str] = &[
     "on_load",
     "on_unload",
@@ -203,8 +192,8 @@ impl std::fmt::Display for PluginError {
     }
 }
 
-/// Validate a parsed manifest against its folder name. Centralized so
-/// `load_manifest` and `install_stub` share the same rules.
+/// 对照文件夹名校验解析后的清单。集中实现，使 `load_manifest` 与
+/// `install_stub` 共用同一套规则。
 pub(crate) fn validate_manifest(folder_name: &str, m: &PluginManifest) -> Result<(), String> {
     if m.name != folder_name {
         return Err(format!(
@@ -221,8 +210,8 @@ pub(crate) fn validate_manifest(folder_name: &str, m: &PluginManifest) -> Result
     Ok(())
 }
 
-/// Load and validate a manifest from a plugin directory. Returns the
-/// parsed manifest on success, or an error describing what went wrong.
+/// 从插件目录加载并校验清单。成功返回解析后的清单，失败返回
+/// 描述问题的错误。
 pub fn load_manifest(plugin_dir: &Path) -> Result<PluginManifest, String> {
     let folder_name = plugin_dir
         .file_name()
@@ -241,16 +230,15 @@ pub fn load_manifest(plugin_dir: &Path) -> Result<PluginManifest, String> {
     Ok(m)
 }
 
-/// List plugin folders (one subdir per plugin) and parse their manifests.
-/// Manifest errors do not abort the listing — instead the plugin is
-/// returned with `manifest = None` and a [`PluginError`] is collected.
+/// 列出插件文件夹（每个子目录一个插件）并解析其清单。
+/// 清单错误不会中止列出——而是把该插件以 `manifest = None` 返回，
+/// 并收集一个 [`PluginError`]。
 pub fn list_plugins(cfg: &PluginSystemConfig) -> Vec<PluginEntry> {
     list_plugins_with_errors(cfg).0
 }
 
-/// Same as [`list_plugins`] but also returns per-plugin manifest errors.
-/// Useful for the CLI / settings UI which want to surface "bad manifest"
-/// in addition to the valid entries.
+/// 与 [`list_plugins`] 相同，但还返回每个插件的清单错误。
+/// 对 CLI / 设置界面有用——除有效条目外，还能暴露“坏清单”。
 pub fn list_plugins_with_errors(
     cfg: &PluginSystemConfig,
 ) -> (Vec<PluginEntry>, Vec<PluginError>) {
@@ -282,9 +270,8 @@ pub fn list_plugins_with_errors(
     (entries, errors)
 }
 
-/// Install a stub plugin: create the directory and write a minimal
-/// `plugin.toml` manifest. If the manifest already exists and parses
-/// successfully, the call is a no-op (idempotent).
+/// 安装桩插件：创建目录并写入最小化的 `plugin.toml` 清单。
+/// 若清单已存在且解析成功，调用为空操作（幂等）。
 pub fn install_stub(cfg: &PluginSystemConfig, name: &str) -> Result<PathBuf, String> {
     if !cfg.enabled {
         return Err("plugins disabled".into());
@@ -301,16 +288,14 @@ pub fn install_stub(cfg: &PluginSystemConfig, name: &str) -> Result<PathBuf, Str
         );
         std::fs::write(&manifest, body).map_err(|e| e.to_string())?;
     } else {
-        // Verify the existing manifest is still valid (catches "someone
-        // edited plugin.toml and broke the name match").
+        // 校验已有清单仍然有效（防止“有人改了 plugin.toml 导致名称不匹配”）。
         load_manifest(&dir)?;
     }
     Ok(dir)
 }
 
-/// Uninstall a plugin by removing its directory. Refuses to run when
-/// the manifest cannot be located (defensive — we don't want to
-/// `rm -rf` an arbitrary folder).
+/// 通过删除目录来卸载插件。找不到清单时拒绝执行（防御性设计——
+/// 我们不希望 `rm -rf` 任意文件夹）。
 pub fn uninstall(cfg: &PluginSystemConfig, name: &str) -> Result<(), String> {
     if !cfg.enabled {
         return Err("plugins disabled".into());
@@ -319,19 +304,16 @@ pub fn uninstall(cfg: &PluginSystemConfig, name: &str) -> Result<(), String> {
         return Err("invalid plugin name".into());
     }
     let dir = cfg.plugin_dir().join(name);
-    // The directory must look like a plugin dir: contain a parseable
-    // plugin.toml with the matching name. This guards against typos
-    // and shell-glob accidents.
+    // 目录必须看起来像插件目录：包含可解析且名称匹配的 plugin.toml。
+    // 这可以防止拼写错误与 shell 通配符意外。
     load_manifest(&dir)?;
     std::fs::remove_dir_all(&dir).map_err(|e| e.to_string())
 }
 
-/// T-core-plugin-runtime v2: flip the `enabled` flag on a plugin's
-/// manifest in-place. Returns Err if the plugin isn't installed or
-/// plugins are globally disabled.
+/// T-core-plugin-runtime v2：就地翻转插件清单中的 `enabled` 标志。
+/// 插件未安装或插件被全局禁用时返回 Err。
 ///
-/// The flag is read by the GUI on next startup; v3 will live-reload
-/// the manifest without requiring a restart.
+/// GUI 在下次启动时读取该标志；v3 将支持不重启即热重载清单。
 pub fn set_enabled(cfg: &PluginSystemConfig, name: &str, enabled: bool) -> Result<(), String> {
     if !cfg.enabled {
         return Err("plugins disabled".into());
@@ -348,8 +330,8 @@ pub fn set_enabled(cfg: &PluginSystemConfig, name: &str, enabled: bool) -> Resul
     let mut doc = text
         .parse::<toml_edit::DocumentMut>()
         .map_err(|e| format!("parse {}: {e}", manifest_path.display()))?;
-    // Set `enabled = true|false` at the document root. Plugins that
-    // don't have an `[enabled]` flag yet get it created.
+    // 在文档根处设置 `enabled = true|false`。还没有 `[enabled]` 标志的
+    // 插件会被创建该标志。
     doc["enabled"] = toml_edit::value(enabled);
     std::fs::write(&manifest_path, doc.to_string())
         .map_err(|e| format!("write {}: {e}", manifest_path.display()))?;
@@ -400,25 +382,24 @@ mod tests {
         assert!(install_stub(&cfg, "a/b").is_err());
     }
 
-    /// T-core-plugin-runtime v2: `enable` / `disable` flip the
-    /// `enabled` flag on the plugin's `plugin.toml`. After flipping,
-    /// re-reading the manifest reports the new state.
+    /// T-core-plugin-runtime v2：`enable` / `disable` 翻转插件 `plugin.toml`
+    /// 中的 `enabled` 标志。翻转后重新读取清单即可看到新状态。
     #[test]
     fn set_enabled_flips_manifest_flag() {
         let tmp = std::env::temp_dir().join("pureterm_plugins_set_enabled_test");
         let _ = std::fs::remove_dir_all(&tmp);
         let cfg = enabled_cfg(&tmp);
         let dir = install_stub(&cfg, "toggle").unwrap();
-        // Default state: enabled flag absent (defaults to false on read).
+        // 默认状态：无 enabled 标志（读取时默认为 false）。
         let m_before = load_manifest(&dir).unwrap();
         assert_ne!(m_before.enabled, true, "stub installs with no enabled flag");
 
-        // Flip to true.
+        // 翻转为 true。
         set_enabled(&cfg, "toggle", true).expect("enable");
         let m_on = load_manifest(&dir).unwrap();
         assert!(m_on.enabled, "after enable, flag must be true");
 
-        // Flip back to false.
+        // 翻回 false。
         set_enabled(&cfg, "toggle", false).expect("disable");
         let m_off = load_manifest(&dir).unwrap();
         assert!(!m_off.enabled, "after disable, flag must be false");
@@ -426,7 +407,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// Setting enabled on a missing plugin surfaces an Err.
+    /// 对缺失的插件设置 enabled 会得到 Err。
     #[test]
     fn set_enabled_rejects_unknown_plugin() {
         let tmp = std::env::temp_dir().join("pureterm_plugins_set_enabled_unknown");
@@ -436,8 +417,7 @@ mod tests {
         assert!(err.contains("not installed"), "must report not installed: {err}");
     }
 
-    /// `set_enabled` rejects empty / path-traversal names just like
-    /// the rest of the plugin API.
+    /// `set_enabled` 与插件 API 的其他部分一样，拒绝空名称 / 路径穿越名称。
     #[test]
     fn set_enabled_rejects_invalid_names() {
         let tmp = std::env::temp_dir().join("pureterm_plugins_set_enabled_invalid");
@@ -447,7 +427,7 @@ mod tests {
         assert!(set_enabled(&cfg, "..", true).is_err());
     }
 
-    /// Plugins disabled globally block the per-plugin toggle too.
+    /// 全局禁用插件时，每插件的开关同样被阻止。
     #[test]
     fn set_enabled_rejects_when_plugins_globally_disabled() {
         let cfg = PluginSystemConfig::default();
@@ -465,9 +445,9 @@ mod tests {
         let tmp = std::env::temp_dir().join("pureterm_plugins_mixed");
         let _ = std::fs::remove_dir_all(&tmp);
         let cfg = enabled_cfg(&tmp);
-        // Good plugin
+        // 好插件
         install_stub(&cfg, "good").unwrap();
-        // Bad plugin: folder exists, no plugin.toml
+        // 坏插件：文件夹存在，但没有 plugin.toml
         std::fs::create_dir_all(tmp.join("broken")).unwrap();
         let (entries, errors) = list_plugins_with_errors(&cfg);
         assert_eq!(entries.len(), 1);
@@ -484,7 +464,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         let cfg = enabled_cfg(&tmp);
         let dir = install_stub(&cfg, "alpha").unwrap();
-        // Overwrite manifest with a name that doesn't match the folder.
+        // 用与文件夹名不匹配的清单覆盖。
         std::fs::write(
             dir.join("plugin.toml"),
             "name = \"beta\"\nversion = \"0.1.0\"\n",
@@ -513,16 +493,16 @@ mod tests {
         let tmp = std::env::temp_dir().join("pureterm_plugins_uninstall_safe");
         let _ = std::fs::remove_dir_all(&tmp);
         let cfg = enabled_cfg(&tmp);
-        // Folder exists but has no plugin.toml
+        // 文件夹存在但没有 plugin.toml
         std::fs::create_dir_all(tmp.join("not_a_plugin")).unwrap();
         let res = uninstall(&cfg, "not_a_plugin");
         assert!(res.is_err());
-        // Folder should still exist
+        // 文件夹应仍然存在
         assert!(tmp.join("not_a_plugin").exists());
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    // ---- t-core-plugin-runtime: new manifest fields ----
+    // ---- t-core-plugin-runtime：新清单字段 ----
 
     #[test]
     fn v0_manifest_parses_with_default_abi() {
@@ -576,16 +556,14 @@ config_schema = { interval_ms = 1000 }
 
     #[test]
     fn provides_from_str_unknown_is_none() {
-        // Forward-compat: an unknown provides value is a no-op (the
-        // GUI logs a warning and continues loading the plugin).
+        // 向前兼容：未知的 provides 值是空操作（GUI 记录警告并继续加载插件）。
         assert!(Provides::from_str("future_thing").is_none());
         assert!(Provides::from_str("").is_none());
     }
 
     #[test]
     fn plugin_entry_points_contains_v1_set() {
-        // Sanity check the documented entry points; the renderer
-        // and IPC code paths dispatch on these names.
+        // 对文档化的入口点做合理性检查；渲染器与 IPC 代码路径按这些名称分发。
         let v: Vec<&&str> = PLUGIN_ENTRY_POINTS.iter().collect();
         assert!(v.contains(&&"on_load"));
         assert!(v.contains(&&"on_unload"));

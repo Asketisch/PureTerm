@@ -17,18 +17,18 @@ use super::pipeline::{GpuResources, TerminalPipeline};
 use super::primitive::TerminalPrimitive;
 use super::vertices::{ImageQuadVertex, ScreenUniforms};
 
-/// Step A: drain the decode channel. Each `DecodedImage` carries a freshly
-/// decoded RGBA bitmap + the original placement; we push it into
-/// `ImageQuadState.atlas` and rely on its dirty-region tracker to drive the
-/// GPU upload below.
+/// 步骤 A:排空解码通道。每个 `DecodedImage` 携带一份新解码的
+/// RGBA 位图 + 原始位置信息;我们把它推进
+/// `ImageQuadState.atlas`,并依靠其脏区域跟踪器驱动
+/// 后续的 GPU 上传。
 pub(super) fn drain_decode_channel(prim: &TerminalPrimitive) {
     {
         let mut rx = prim.decode_rx.lock().unwrap();
         while let Ok(decoded) = rx.try_recv() {
             let mut state = prim.image_quad_state.lock().unwrap();
-            // `insert` returns `None` when the image exceeds ATLAS_SIZE
-            // or has wrong byte length — silently skip (logged at the
-            // store layer).
+            // 图像超过 ATLAS_SIZE 时 `insert` 返回 `None`,或
+            // 字节长度错误 —— 静默跳过(由
+            // 存储层记录日志)。
             let _ = state.insert(
                 decoded.id as u64,
                 std::sync::Arc::new(decoded.rgba),
@@ -39,9 +39,9 @@ pub(super) fn drain_decode_channel(prim: &TerminalPrimitive) {
     }
 }
 
-/// Step B: upload dirty atlas regions to the GPU texture. Mirrors the
-/// gray/color atlas upload pattern (recreate vs partial upload vs first-frame
-/// placeholder) but for the image atlas (RGBA8, 2048×2048).
+/// 步骤 B:把脏图集区域上传到 GPU 纹理。镜像
+/// 灰阶 / 颜色图集的上传模式(重建 / 局部上传 / 首帧
+/// 占位),但针对图像图集(RGBA8,2048×2048)。
 pub(super) fn prepare_image_atlas_texture(
     prim: &TerminalPrimitive,
     pipeline: &mut TerminalPipeline,
@@ -76,9 +76,9 @@ pub(super) fn prepare_image_atlas_texture(
             );
             image_atlas_views_changed = true;
         } else if let Some(tex) = pipeline.image_atlas_texture.as_ref() {
-            // Steady-state partial upload: one write_texture per dirty rect.
-            // `ATLAS_SIZE = 2048` is a multiple of 256 so bytes_per_row = w*4
-            // is COPY_BYTES_PER_ROW_ALIGNMENT-safe.
+            // 稳态局部上传:每个脏矩形一次 write_texture。
+            // `ATLAS_SIZE = 2048` 是 256 的倍数,因此 bytes_per_row = w*4
+            // 满足 COPY_BYTES_PER_ROW_ALIGNMENT 对齐要求。
             for region in &atlas.regions {
                 let byte_offset = (region.y as usize * w as usize + region.x as usize) * 4;
                 queue.write_texture(
@@ -103,9 +103,9 @@ pub(super) fn prepare_image_atlas_texture(
             }
         }
     } else if pipeline.image_atlas_texture.is_none() {
-        // First frame, no images yet — 1×1 transparent placeholder so the
-        // bind group is valid. Mirrors the gray/color atlas first-frame
-        // pattern (terminal_shader.rs:737-755).
+        // 首帧尚无图像 —— 用 1×1 透明占位,使
+        // 绑定组有效。镜像灰阶 / 颜色图集的首帧
+        // 占位模式(terminal_shader.rs:737-755)。
         let tex = device.create_texture_with_data(queue, &wgpu::TextureDescriptor {
             label: Some("Image Atlas Placeholder"),
             size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
@@ -123,10 +123,10 @@ pub(super) fn prepare_image_atlas_texture(
         );
         image_atlas_views_changed = true;
     }
-    // Else: texture exists and no new data → preserve texture/view.
+    // 否则:纹理已存在且无新数据 → 保留纹理 / 视图。
 
-    // Recreate the atlas bind group only when views changed (texture was
-    // recreated) or the bind group hasn't been built yet.
+    // 仅当视图改变(纹理被
+    // 重建)或绑定组尚未构建时,才重建图集绑定组。
     if image_atlas_views_changed || pipeline.image_atlas_bind_group.is_none() {
         let view = pipeline.image_atlas_view.as_ref().unwrap();
         pipeline.image_atlas_bind_group = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -140,10 +140,10 @@ pub(super) fn prepare_image_atlas_texture(
     }
 }
 
-/// Step C: build per-frame vertex/index buffers from `image_quad_draws`.
-/// Sort by z so newer images overlay older ones (matches `ImageStore::insert`
-/// monotonic z counter). Cell dimensions come from `prim.cell_w/cell_h`
-/// cached at construction time.
+/// 步骤 C:根据 `image_quad_draws` 构建每帧顶点 / 索引缓冲。
+/// 按 z 排序,使较新的图像覆盖较旧的(对应 `ImageStore::insert`
+/// 的单调 z 计数器)。单元格尺寸取自
+/// 构造时缓存的 `prim.cell_w/cell_h`。
 pub(super) fn prepare_image_quad_buffers(
     prim: &TerminalPrimitive,
     pipeline: &TerminalPipeline,
@@ -162,16 +162,16 @@ pub(super) fn prepare_image_quad_buffers(
         let mut verts: Vec<ImageQuadVertex> = Vec::with_capacity(draws_snapshot.len() * 4);
         let mut indices: Vec<u32> = Vec::with_capacity(draws_snapshot.len() * 6);
         let mut valid_draws = 0u32;
-        // Cell dimensions: pull from `glyph_state` (logical px).
-        // The primitive holds `gpu` mutex; cell dims come from a thread-local
-        // we cached at construction time — see construction site below.
+        // 单元格尺寸:取自 `glyph_state`(逻辑像素)。
+        // primitive 持有 `gpu` 互斥锁;单元格尺寸来自
+        // 构造时缓存的线程局部值 —— 见下方构造现场。
         let (cell_w, cell_h) = (prim.cell_w, prim.cell_h);
         {
             let mut state = prim.image_quad_state.lock().unwrap();
             for d in &draws_snapshot {
-                // Look up the atlas UV for this image id. Skips images
-                // that have been evicted from the atlas (LRU) or whose
-                // id no longer exists.
+                // 按图像 id 查找图集 UV。跳过
+                // 已从图集驱逐(LRU)或
+                // id 已不存在的图像。
                 let Some(placement) = state.get(d.image_id as u64) else {
                     continue;
                 };

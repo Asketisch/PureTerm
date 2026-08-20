@@ -33,46 +33,42 @@ pub struct TerminalProgram {
     pub background_color: [f32; 4],
     pub foreground_color: [f32; 4],
     pub opacity: f32,
-    /// Shared atomic for the *actual* viewport scale factor, written by
-    /// `prepare()` each frame. `draw()` reads it and reconfigures the
-    /// glyph atlas when the value changes.
+    /// 共享的原子变量，保存*实际*视口缩放因子，由 `prepare()`
+    /// 每帧写入。`draw()` 读取它，在值变化时重新配置字形图集。
     pub viewport_scale_factor: Arc<AtomicU32>,
-    /// GAP-4.1: Shared vi search pattern for match highlights.
-    /// The app sets this when the user types in the search bar;
-    /// the shader reads it during `draw()` to highlight matches.
+    /// GAP-4.1：共享的 vi 搜索模式，用于匹配高亮。用户在搜索栏输入时
+    /// 应用写它；shader 在 `draw()` 期间读取它以高亮匹配。
     pub vi_search_pattern: Arc<Mutex<Option<String>>>,
-    /// GAP-3.8/4.3: Cached built `RegexSearch` keyed on the pattern string.
-    /// Without this, `draw()` rebuilt 4 lazy DFAs every frame (terminal_shader
-    /// ran `RegexSearch::new` per frame). The app owns the `Arc` and clones it
-    /// into each per-frame `TerminalProgram`; the cache therefore persists
-    /// across frames. Rebuilt only when the pattern string changes.
+    /// GAP-3.8/4.3：以模式字符串为键缓存的 `RegexSearch`。没有它，
+    /// `draw()` 每帧重建 4 个惰性 DFA（terminal_shader 每帧都会跑
+    /// `RegexSearch::new`）。应用持有 `Arc` 并克隆进每个逐帧
+    /// `TerminalProgram`；因此缓存跨帧保留。仅在模式字符串变化时重建。
     pub cached_search:
         Arc<Mutex<Option<(String, alacritty_terminal::term::search::RegexSearch)>>>,
-    /// GAP-10: Trigger highlight regions for the active pane (published each frame
-    /// by the app into this shared `Arc`, mirroring `vi_search_pattern`).
+    /// GAP-10：活动面板的触发器高亮区域（应用每帧发布到这个共享 `Arc`，
+    /// 镜像 `vi_search_pattern`）。
     pub trigger_highlights:
         Arc<Mutex<Vec<crate::triggers::HighlightRegion>>>,
-    /// GAP-10: collapsed fold regions for the active pane.
+    /// GAP-10：活动面板的已折叠折叠区域。
     pub trigger_folds: Arc<Mutex<Vec<crate::triggers::FoldRegion>>>,
 
-    // GAP-54: shared background image (loaded once, cloned into each per-frame
-    // primitive). The signature lets the primitive skip re-uploading the GPU
-    // texture when nothing changed.
+    // GAP-54：共享的背景图片（加载一次，克隆进每个逐帧 primitive）。
+    // 签名让 primitive 在无变化时跳过重新上传 GPU 纹理。
     pub background_image: Arc<Mutex<Option<DecodedBackground>>>,
     pub background_mode: BackgroundMode,
     pub background_opacity: f32,
     pub background_signature: u64,
 
-    // T-core-graphics v3: shared state for the image quad pass. The app
-    // builds these `Arc`s once at construction time and clones the handles
-    // into every per-frame `TerminalPrimitive`. The render thread then:
-    //   1. Drains the decode channel (`decode_rx`) to push freshly decoded
-    //      RGBA pixels into `image_quad_state.atlas`.
-    //   2. Reads `image_quad_draws` to build per-frame vertex/index buffers.
+    // T-core-graphics v3：图像 quad 通道的共享状态。应用在构造时
+    // 构建这些 `Arc` 一次，并把句柄克隆进每个逐帧 `TerminalPrimitive`。
+    // 渲染线程随后：
+    //   1. 排空解码通道（`decode_rx`），把新解码的 RGBA 像素推进
+    //      `image_quad_state.atlas`。
+    //   2. 读取 `image_quad_draws` 构建逐帧顶点/索引缓冲。
     //
-    // All three are wrapped in `Arc<Mutex<_>>` because `iced::shader`
-    // requires `Program: Send + Sync + 'static` and the GPU render thread
-    // borrows them via `&self` inside `Primitive::prepare`.
+    // 三者都包在 `Arc<Mutex<_>>` 里，因为 `iced::shader` 要求
+    // `Program: Send + Sync + 'static`，且 GPU 渲染线程在 `Primitive::prepare`
+    // 中通过 `&self` 借用它们。
     pub image_quad_state: Arc<Mutex<ImageQuadState>>,
     pub image_quad_draws: Arc<Mutex<Vec<ImageQuadDraw>>>,
     pub decode_rx: Arc<Mutex<std::sync::mpsc::Receiver<crate::image_decode_worker::DecodedImage>>>,
@@ -91,21 +87,19 @@ impl<M> shader::Program<M> for TerminalProgram {
         _cursor: iced::mouse::Cursor,
         bounds: Rectangle,
     ) -> Self::Primitive {
-        // Check if the renderer thread has reported a different viewport scale
-        // factor (written by `prepare()` on the previous frame). If so,
-        // reconfigure the glyph atlas to rasterize at the correct resolution.
-        // The atomic is initialized to 1.0 (not 0) so the first frame is valid.
+        // 检查渲染线程是否报告了不同的视口缩放因子（由 `prepare()` 在上一帧
+        // 写入）。若是，重新配置字形图集以按正确分辨率光栅化。原子变量
+        // 初始化为 1.0（而非 0），使第一帧有效。
         let vp_scale = bits_to_f32(self.viewport_scale_factor.load(Ordering::Relaxed));
         if self.glyph_state.borrow_mut().update_scale_factor(vp_scale) {
             log::info!("Retina: reconfigured glyph atlas for scale_factor={}", vp_scale);
         }
 
-        // All vertex positions remain in logical coordinates.
-        // iced_wgpu sets the GPU viewport to bounds × scale_factor, so the
-        // vertex shader maps logical positions through NDC to physical pixels.
+        // 所有顶点位置都保持逻辑坐标。iced_wgpu 把 GPU 视口设为
+        // bounds × scale_factor，因此顶点着色器把逻辑坐标经 NDC 映射到物理像素。
         let screen_w = bounds.width;
         let screen_h = bounds.height;
-        // Apply window opacity to background color alpha channel
+        // 把窗口不透明度应用到背景色 alpha 通道
         let bg_color = [
             self.background_color[0],
             self.background_color[1],
@@ -113,7 +107,7 @@ impl<M> shader::Program<M> for TerminalProgram {
             self.background_color[3] * self.opacity,
         ];
 
-        // Phase 1: Snapshot terminal state under a short lock
+        // 阶段 1：在短锁下快照终端状态
         struct CellSnapshot {
             row: usize,
             col: usize,
@@ -141,7 +135,7 @@ impl<M> shader::Program<M> for TerminalProgram {
             // 选区高亮:把 Selection 解析为 SelectionRange(可能跨多行/可能为 Block)。
             // 渲染时(下方 cell 循环)用 SelectionRange::contains(point) 判定每格是否高亮。
             let selection_range = term.selection.as_ref().and_then(|s| s.to_range(&*term));
-            // GAP-4.1: Vi mode cursor info
+            // GAP-4.1：vi 模式光标信息
             let vi_mode_active = term.mode().contains(TermMode::VI);
             let (vi_cursor_row, vi_cursor_col) = if vi_mode_active {
                 let vc = &term.vi_mode_cursor.point;
@@ -152,11 +146,10 @@ impl<M> shader::Program<M> for TerminalProgram {
                 (0usize, 0usize)
             };
             (cells, display_offset, cursor_row, cursor_col, colors, selection_range, vi_mode_active, vi_cursor_row, vi_cursor_col)
-        }; // Lock released here
+        }; // 锁在这里释放
 
-        // Inject configured foreground color into the colors array so that
-        // color_to_f32() can resolve NamedColor::Foreground from config
-        // instead of falling back to hardcoded defaults.
+        // 把配置的前景色注入 colors 数组，使 color_to_f32() 能按配置
+        // 解析 NamedColor::Foreground，而不是回退到硬编码默认值。
         let mut colors = colors;
         let fg_rgb = Rgb {
             r: (self.foreground_color[0] * 255.0) as u8,
@@ -165,11 +158,11 @@ impl<M> shader::Program<M> for TerminalProgram {
         };
         colors[NamedColor::Foreground as usize] = Some(fg_rgb);
 
-        // Phase 2: Build GPU primitives from snapshot (no lock held)
+        // 阶段 2：从快照构建 GPU primitive（不持锁）
         let mut gs = self.glyph_state.borrow_mut();
-        let cell_w = gs.cell_width;   // logical
-        let cell_h = gs.cell_height;  // logical
-        let font_descent = gs.font_descent; // logical
+        let cell_w = gs.cell_width; // 逻辑像素
+        let cell_h = gs.cell_height; // 逻辑像素
+        let font_descent = gs.font_descent; // 逻辑像素
 
         let computed_cols = (screen_w / cell_w).floor().max(1.0) as usize;
         let computed_rows = (screen_h / cell_h).floor().max(1.0) as usize;
@@ -181,7 +174,7 @@ impl<M> shader::Program<M> for TerminalProgram {
         let mut text_vertices: Vec<TextVertex> = Vec::new();
         let mut text_indices: Vec<u32> = Vec::new();
 
-        // Full-screen background
+        // 全屏背景
         push_bg_quad(&mut bg_vertices, &mut bg_indices, 0.0, 0.0, screen_w, screen_h, bg_color);
 
         // 选区高亮颜色(半透明蓝)。
@@ -189,22 +182,19 @@ impl<M> shader::Program<M> for TerminalProgram {
         // 这里固定一个 macOS 系蓝色,后续可暴露为 config 项。
         let sel_color: [f32; 4] = [0.30, 0.50, 0.90, 0.40];
 
-        // GAP-4.1: Vi search match highlighting.
-        // Compute visible search matches if a pattern is set.
-        let search_match_color: [f32; 4] = [0.85, 0.65, 0.15, 0.35]; // warm amber
+        // GAP-4.1：vi 搜索匹配高亮。若设置了模式，计算可见的搜索匹配。
+        let search_match_color: [f32; 4] = [0.85, 0.65, 0.15, 0.35]; // 暖琥珀色
         let search_matches: Vec<std::ops::RangeInclusive<TermPoint>> = {
             let pattern = self.vi_search_pattern.lock().ok().and_then(|p| p.clone());
             match pattern {
                 Some(pat) if !pat.is_empty() => {
                     let term = self.ctx.terminal().lock();
-                    // Cache the built RegexSearch keyed on the pattern string so
-                    // we don't rebuild 4 lazy DFAs every frame. The guard is held
-                    // for the lifetime of the borrowed regex (RegexIter needs
-                    // `&mut RegexSearch`).
+                    // 以模式字符串为键缓存构建好的 RegexSearch，避免每帧重建
+                    // 4 个惰性 DFA。守卫在借用 regex 的整个生命周期内持有
+                    // （RegexIter 需要 `&mut RegexSearch`）。
                     let mut cache = match self.cached_search.lock() {
                         Ok(g) => g,
-                        // Poisoned mutex — recover the inner guard rather than
-                        // dropping matches entirely.
+                        // 中毒的互斥锁——恢复内部守卫，而不是丢掉全部匹配。
                         Err(e) => e.into_inner(),
                     };
                     let stale = cache.as_ref().map_or(true, |(p, _)| *p != pat);
@@ -237,12 +227,12 @@ impl<M> shader::Program<M> for TerminalProgram {
                 _ => Vec::new(),
             }
         };
-        // Helper: check if a grid point falls inside any search match
+        // 辅助：判断网格点是否落在任一搜索匹配内
         let is_search_match = |p: TermPoint| -> bool {
             search_matches.iter().any(|m| m.contains(&p))
         };
 
-        // GAP-10: trigger highlight regions (pre-filtered to the visible viewport).
+        // GAP-10：触发器高亮区域（预过滤到可见视口）。
         let trigger_regions: Vec<crate::triggers::HighlightRegion> = {
             let guard = match self.trigger_highlights.lock() {
                 Ok(g) => g,
@@ -273,12 +263,12 @@ impl<M> shader::Program<M> for TerminalProgram {
 
         let fold_conceal_color: [f32; 4] = [0.15, 0.15, 0.18, 0.85];
 
-        // Iterate cell snapshots: backgrounds + text glyphs
+        // 遍历 cell 快照：背景 + 文本字形
         for cell in &cells {
             let x = pad_x + cell.col as f32 * cell_w;
             let y = pad_y + cell.row as f32 * cell_h;
 
-            // Cell background
+            // cell 背景
             if cell.bg != Color::Named(NamedColor::Background) {
                 let color = color_to_f32(cell.bg, &colors);
                 push_bg_quad(&mut bg_vertices, &mut bg_indices, x, y, cell_w, cell_h, color);
@@ -300,7 +290,7 @@ impl<M> shader::Program<M> for TerminalProgram {
                 }
             }
 
-            // GAP-4.1: Search match highlighting (amber overlay)
+            // GAP-4.1：搜索匹配高亮（琥珀色叠加）
             if !search_matches.is_empty() {
                 let grid_line = Line(cell.row as i32 - display_offset as i32);
                 let p = TermPoint::new(grid_line, Column(cell.col));
@@ -314,7 +304,7 @@ impl<M> shader::Program<M> for TerminalProgram {
                 }
             }
 
-            // GAP-10: Trigger match highlighting (per-rule color overlay).
+            // GAP-10：触发器匹配高亮（按规则着色的叠加层）。
             if !trigger_regions.is_empty() {
                 let grid_line = Line(cell.row as i32 - display_offset as i32);
                 for region in &trigger_regions {
@@ -346,7 +336,7 @@ impl<M> shader::Program<M> for TerminalProgram {
                 );
             }
 
-            // Text glyph — skip concealed fold interior rows.
+            // 文本字形——跳过被折叠隐藏的内部行。
             if fold_concealed {
                 continue;
             }
@@ -364,7 +354,7 @@ impl<M> shader::Program<M> for TerminalProgram {
                     fg
                 };
 
-                // Glyph offsets are already in logical coordinates
+                // 字形偏移已是逻辑坐标
                 let gx = x + glyph.x_offset;
                 let gy = y + (cell_h + font_descent - glyph.y_offset);
                 let gw = glyph.width;
@@ -381,34 +371,34 @@ impl<M> shader::Program<M> for TerminalProgram {
             }
         }
 
-        // Cursor
+        // 光标
         let cursor_color = [0.6, 0.6, 0.6, 0.8];
         let cx = pad_x + cursor_col as f32 * cell_w;
         let cy = pad_y + cursor_row as f32 * cell_h;
         push_bg_quad(&mut bg_vertices, &mut bg_indices, cx, cy, cell_w, cell_h, cursor_color);
 
-        // GAP-4.1: Vi mode cursor — teal/cyan to visually distinguish from normal cursor.
-        // In vi mode the primary cursor is dimmed and the vi cursor is prominent.
+        // GAP-4.1：vi 模式光标——用青/青色与普通光标视觉区分。
+        // vi 模式下主光标变暗，vi 光标突出。
         if vi_mode_active {
-            // Dim the primary cursor
+            // 调暗主光标
             let dim_color = [0.4, 0.4, 0.4, 0.3];
             push_bg_quad(&mut bg_vertices, &mut bg_indices, cx, cy, cell_w, cell_h, dim_color);
-            // Render vi cursor in teal
+            // 用青色渲染 vi 光标
             let vi_color = [0.2, 0.8, 0.7, 0.85];
             let vx = pad_x + vi_cursor_col as f32 * cell_w;
             let vy = pad_y + vi_cursor_row as f32 * cell_h;
             push_bg_quad(&mut bg_vertices, &mut bg_indices, vx, vy, cell_w, cell_h, vi_color);
         }
 
-        // Take dirty atlas data (Fix 2: use per-region upload instead of full
-        // Vec clone). Returns Arc<Vec<u8>> + dirty rects; the GPU side loops
-        // regions and issues one `queue.write_texture` per rect.
+        // 取出图集脏数据（修复 2：用按区域上传而非整份 Vec 克隆）。
+        // 返回 Arc<Vec<u8>> + 脏矩形；GPU 侧遍历区域，为每个矩形发出
+        // 一次 `queue.write_texture`。
         let grayscale_atlas = gs.atlas.take_dirty_regions();
         let color_atlas = gs.atlas.take_color_dirty_regions();
 
-        // T-core-graphics v3: cache cell dimensions for the image quad pass.
-        // The render thread can't borrow `glyph_state` (it's a `RefCell`
-        // borrowed earlier); capture before `drop(gs)` below.
+        // T-core-graphics v3：为图像 quad 通道缓存 cell 尺寸。渲染线程
+        // 无法借用 `glyph_state`（它是早先借用的 `RefCell`）；在下方
+        // `drop(gs)` 之前先捕获。
         let (cell_w, cell_h) = (gs.cell_width, gs.cell_height);
 
         drop(gs);

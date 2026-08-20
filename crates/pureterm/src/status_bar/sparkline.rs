@@ -1,21 +1,21 @@
-//! GAP-24: sparkline mini-graph drawn via `iced::widget::canvas`.
+//! GAP-24:经 `iced::widget::canvas` 绘制的迷你走势图。
 //!
-//! Ports a right-anchored sparkline bezier math: right-anchored polyline
-//! (newest sample at the right edge), auto-scaling ceiling (floored at 1.0
-//! so an all-zero series still renders without divide-by-zero). Fixed
-//! 60-slot window; fewer samples occupy the right portion.
+//! 移植了右锚定的迷你走势图曲线算法:右锚定折线
+//! (最新样本位于右缘),天花板自动缩放(下限 1.0,
+//! 使全零序列仍可渲染而不会除零)。固定
+//! 60 槽窗口;样本较少时占据右侧部分。
 
 use iced::mouse;
 use iced::widget::canvas::{self, Geometry};
 use iced::{Color, Point, Rectangle};
 
-/// Visible sample window (matches the mainstream terminal sparkline window size).
+/// 可见样本窗口(与主流终端迷你走势图的窗口大小一致)。
 pub const WINDOW: usize = 60;
 
-/// A self-contained canvas program rendering one time-series sparkline.
+/// 渲染单个时间序列迷你走势图的自包含 canvas 程序。
 #[derive(Clone)]
 pub struct SparklineProgram {
-    /// Most-recent-last samples. Empty/fewer-than-2 ⇒ nothing drawn.
+    /// 最近的样本在后。为空或少于 2 个 ⇒ 不绘制任何内容。
     pub samples: Vec<f32>,
     pub color: Color,
     pub fill_color: Color,
@@ -38,17 +38,17 @@ impl canvas::Program<crate::iced_app::Message> for SparklineProgram {
             let w = frame.width();
             let h = frame.height();
             let bar_w = w / ((WINDOW - 1).max(1) as f32);
-            // Auto-scaling ceiling: largest sample, never below 1.0.
+            // 自动缩放天花板:取最大样本,但绝不低于 1.0。
             let ceiling = self.samples.iter().copied().fold(0.0f32, f32::max).max(1.0);
 
-            // Right-anchored: last sample sits at the right edge.
+            // 右锚定:最后一个样本位于右缘。
             let x_for = |i: usize| w - (n - 1 - i) as f32 * bar_w;
-            // y grows downward; value 0 → bottom, value=ceiling → top.
+            // y 轴向下增长;值 0 → 底部,值=ceiling → 顶部。
             let y_for = |v: f32| (h - (v / ceiling) * h).clamp(0.0, h);
 
-            // Collect the polyline points once; `canvas::path::Builder` isn't
-            // `Clone`, so the stroke (open polyline) and fill (closed polygon)
-            // are built from two separate builders sharing these points.
+            // 折线点只收集一次;`canvas::path::Builder` 不是
+            // `Clone`,因此描边(开放折线)与填充(闭合多边形)
+            // 由共享这些点的两个独立 builder 分别构建。
             let pts: Vec<Point> = (0..n)
                 .map(|i| Point::new(x_for(i), y_for(self.samples[i])))
                 .collect();
@@ -60,7 +60,7 @@ impl canvas::Program<crate::iced_app::Message> for SparklineProgram {
             }
             let stroke = bs.build();
 
-            // Close the polygon down to the baseline for a translucent fill.
+            // 把多边形闭合到基线,形成半透明填充。
             let mut bf = canvas::path::Builder::new();
             bf.move_to(pts[0]);
             for p in pts.iter().skip(1) {

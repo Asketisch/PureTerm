@@ -15,7 +15,7 @@ use serde_json::Value;
 
 use crate::ipc::client::send_rpc;
 
-/// One row of `pane.list`, flattened across all tabs (DFS order).
+/// `pane.list` 的一行,摊平所有 tab(DFS 顺序)。
 ///
 /// 字段以 `pub(crate)` 暴露:handlers / format / tests 都需要直接读 pane_id /
 /// active / tab / cwd 等;保持在 crate 内可见即可,不对外稳定。
@@ -29,8 +29,8 @@ pub(crate) struct PaneInfo {
     pub(crate) cwd: Option<String>,
 }
 
-/// Call a Socket API method and unwrap the result value (error on transport /
-/// JSON-RPC error or missing result field).
+/// 调用一个 Socket API 方法并展开结果值(传输错误 /
+/// JSON-RPC 错误或缺 result 字段时报错)。
 pub(super) fn rpc(socket: &Option<PathBuf>, method: &str, params: Option<Value>) -> Result<Value, String> {
     send_rpc(method, params, socket.clone())?.ok_or_else(|| format!("{method}: empty result"))
 }
@@ -51,8 +51,8 @@ pub(super) fn resolve_panes(socket: &Option<PathBuf>) -> Result<Vec<PaneInfo>, S
         .collect())
 }
 
-/// Resolve a tmux `-t` target to a pane id. See the module docs for the
-/// supported grammar.
+/// 把 tmux 的 `-t` target 解析成 pane id。支持的
+/// 文法见模块文档。
 pub(super) fn parse_target(target: &Option<String>, panes: &[PaneInfo]) -> Result<u64, String> {
     if panes.is_empty() {
         return Err("no panes".into());
@@ -76,8 +76,8 @@ pub(super) fn parse_target(target: &Option<String>, panes: &[PaneInfo]) -> Resul
         }
         _ if t.starts_with('%') => {
             let n: u64 = t[1..].parse().map_err(|_| format!("bad pane id {t:?}"))?;
-            // Exact pane-id match wins; otherwise fall back to DFS index so
-            // `%0` always resolves to the first pane (PureTerm ids start at 1).
+            // 精确匹配 pane-id 优先;否则回退到 DFS 索引,
+            // 使 `%0` 总是解析到第一个窗格(PureTerm 的 id 从 1 起)。
             if let Some(p) = panes.iter().find(|p| p.pane_id == n) {
                 Ok(p.pane_id)
             } else if (n as usize) < panes.len() {
@@ -92,7 +92,7 @@ pub(super) fn parse_target(target: &Option<String>, panes: &[PaneInfo]) -> Resul
     }
 }
 
-/// Resolve an optional `-t`/`-s` target to a pane id (None ⇒ active / unset).
+/// 把可选的 `-t`/`-s` target 解析成 pane id(None ⇒ 活动窗格/未设置)。
 pub(super) fn resolve_optional_target(
     socket: &Option<PathBuf>,
     target: &Option<String>,

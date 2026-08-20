@@ -7,14 +7,14 @@ use alacritty_terminal::vte::ansi::{Color, NamedColor, Rgb};
 
 use super::vertices::BgVertex;
 
-/// Shared scale factor written by `prepare()` (renderer threads) and read by
-/// `draw()` (UI thread). Stored as `f32` bits in an `AtomicU32`.
+/// 共享缩放因子:由 `prepare()`(渲染线程)写入、
+/// `draw()`(UI 线程)读取。以 `AtomicU32` 中的 `f32` 位存储。
 pub(super) fn f32_to_bits(f: f32) -> u32 { f.to_bits() }
 pub(super) fn bits_to_f32(u: u32) -> f32 { f32::from_bits(u) }
 
-/// Append a screen-space bg quad (4 vertices + 6 indices) to the given
-/// vertex/index slices. Used by `TerminalProgram::draw()` to fill cell
-/// backgrounds, selection/cursor overlays, etc.
+/// 把一块屏幕空间背景四边形(4 个顶点 + 6 个索引)追加到给定的
+/// 顶点/索引切片。`TerminalProgram::draw()` 用它填充单元格
+/// 背景、选区/光标覆盖层等。
 pub(in crate::terminal_shader) fn push_bg_quad(
     v: &mut Vec<BgVertex>,
     i: &mut Vec<u32>,
@@ -34,9 +34,9 @@ pub(in crate::terminal_shader) fn push_bg_quad(
     i.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
 }
 
-/// Resolve an alacritty `Color` (Named/Spec/Indexed) into a normalized
-/// `[f32; 4]` RGBA in `0.0..=1.0`, looking up the active `Colors` array
-/// for Named/Indexed entries.
+/// 把 alacritty 的 `Color`(Named/Spec/Indexed)解析为归一化的
+/// `[f32; 4]` RGBA(范围 `0.0..=1.0`),Named/Indexed 条目
+/// 从活动 `Colors` 数组查表。
 pub(in crate::terminal_shader) fn color_to_f32(
     color: Color,
     colors: &alacritty_terminal::term::color::Colors,
@@ -54,9 +54,9 @@ pub(in crate::terminal_shader) fn color_to_f32(
     }
 }
 
-/// Hard-coded fallback RGB for `NamedColor` variants when the active
-/// `Colors` array has no slot filled (e.g. cursor / background not set
-/// via config).
+/// 当活动 `Colors` 数组没有填充对应槽位时(如光标/背景
+/// 未在配置里设置),`NamedColor` 变体使用的
+/// 硬编码回退 RGB。
 pub(in crate::terminal_shader) fn named_color_default(named: NamedColor) -> Rgb {
     match named {
         NamedColor::Black => Rgb { r: 0, g: 0, b: 0 },

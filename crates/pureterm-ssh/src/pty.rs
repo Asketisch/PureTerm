@@ -1,35 +1,35 @@
-//! SSH PTY adapter - EventedPty implementation for SSH connections.
+//! SSH PTY 适配器——SSH 连接的 EventedPty 实现。
 //!
-//! Uses `openpty()` to create a real kernel PTY for the ssh child process.
-//! This allows OpenSSH to detect a TTY and prompt for passwords interactively
-//! via `readpassphrase()`. SSH manages terminal modes (raw mode, echo on/off)
-//! automatically — no double-echo occurs because SSH sets the local PTY to
-//! raw mode during the session.
+//! 用 `openpty()` 为 ssh 子进程创建真实的内核 PTY。
+//! 这使 OpenSSH 能检测到 TTY,并经 `readpassphrase()`
+//! 交互式提示输入密码。SSH 自动管理终端模式(raw 模式、回显开关)
+//! ——不会出现双重回显,因为 SSH 在会话期间把本地 PTY 设为
+//! raw 模式。
 //!
-//! ## Architecture
+//! ## 架构
 //!
 //! ```text
 //! PureTerm ←master fd→ PTY slave ← ssh child → remote host
 //! ```
 //!
-//! - `openpty()` creates a master/slave PTY pair
-//! - ssh's stdin/stdout connect to the slave end
-//! - `pre_exec` calls `setsid()` + `TIOCSCTTY` so `/dev/tty` → slave
-//! - Resize uses `ioctl(TIOCSWINSZ)` on the master fd (reliable, kernel-level)
-//! - stderr stays as a pipe for error detection (connection refused, etc.)
+//! - `openpty()` 创建 master/slave PTY 对
+//! - ssh 的 stdin/stdout 连到 slave 端
+//! - `pre_exec` 调用 `setsid()` + `TIOCSCTTY`,使 `/dev/tty` → slave
+//! - 调整大小用 master fd 上的 `ioctl(TIOCSWINSZ)`(可靠的内核级操作)
+//! - stderr 保持为管道,用于错误检测(连接被拒等)
 //!
-//! ## Bug fixes preserved from P1 (GAP-5.7/5.8/5.9 plan)
+//! ## 从 P1 保留下来的缺陷修复(GAP-5.7/5.8/5.9 计划)
 //!
-//! - **#2 SIGWINCH** — resize now uses ioctl instead of escape sequences
-//! - **#5 unregister_signal error** — `Drop` logs and continues
-//! - **#9 graceful_close** — writes `exit\r`, waits, then SIGHUP
+//! - **#2 SIGWINCH** —— 调整大小改用 ioctl 而非转义序列
+//! - **#5 unregister_signal 错误** —— `Drop` 记录日志并继续
+//! - **#9 graceful_close** —— 写入 `exit\r`,等待,然后 SIGHUP
 //!
-//! ## New in this version
+//! ## 本版本新增
 //!
-//! - Real local PTY (openpty) instead of Stdio::piped() — enables interactive
-//!   password authentication and proper terminal mode management by SSH
-//! - `ioctl(TIOCSWINSZ)` resize instead of escape sequences
-//! - `SSH_ASKPASS` support for saved password auto-fill
+//! - 用真实本地 PTY(openpty)替代 Stdio::piped()——支持交互式
+//!   密码认证,由 SSH 正确管理终端模式
+//! - 用 `ioctl(TIOCSWINSZ)` 调整大小,替代转义序列
+//! - 支持 `SSH_ASKPASS`,自动填充已保存的密码
 
 use std::fs::{self, File, Permissions};
 use std::io::{self, Read, Write};
@@ -49,29 +49,29 @@ use rustix_openpty::rustix::termios::Winsize;
 use signal_hook::low_level::{pipe as signal_pipe, unregister as unregister_signal};
 use signal_hook::{SigId, consts as sigconsts};
 
-/// SSH PTY adapter implementing EventedPty.
+/// 实现 EventedPty 的 SSH PTY 适配器。
 ///
-/// Wraps an `ssh -tt` child process with a real kernel PTY (via `openpty()`).
-/// The master fd is used bidirectionally for reading remote output and writing
-/// user input. SSH manages terminal modes (raw mode, echo) on the PTY
-/// automatically.
+/// 包装一个带真实内核 PTY(经 `openpty()`)的 `ssh -tt` 子进程。
+/// master fd 双向使用:读远端输出、写
+/// 用户输入。SSH 自动管理 PTY 上的终端模式
+/// (raw 模式、回显)。
 pub struct SshPty {
     child: Child,
-    /// PTY master fd — bidirectional (read remote output, write user input)
+    /// PTY master fd——双向(读远端输出,写用户输入)
     master: File,
     signals: File,
     sig_id: SigId,
-    /// Temporary directory for SSH_ASKPASS script (cleaned up on Drop)
+    /// SSH_ASKPASS 脚本的临时目录(Drop 时清理)
     askpass_tempdir: Option<tempfile::TempDir>,
 }
 
-/// Interest in PTY read/write events.
+/// PTY 读/写事件的兴趣注册。
 const PTY_READ_WRITE_TOKEN: usize = 0;
 
-/// Interest in child exit events.
+/// 子进程退出事件的兴趣注册。
 const PTY_CHILD_EVENT_TOKEN: usize = 1;
 
-/// Set the controlling terminal via `TIOCSCTTY` ioctl.
+/// 经 `TIOCSCTTY` ioctl 设置控制终端。
 fn set_controlling_terminal(fd: libc::c_int) -> io::Result<()> {
     let res = unsafe {
         #[allow(clippy::cast_lossless)]
@@ -84,7 +84,7 @@ fn set_controlling_terminal(fd: libc::c_int) -> io::Result<()> {
     }
 }
 
-/// Set a file descriptor to non-blocking mode.
+/// 把文件描述符设为非阻塞模式。
 unsafe fn set_nonblocking(fd: libc::c_int) {
     let res = unsafe {
         libc::fcntl(fd, libc::F_SETFL, libc::fcntl(fd, libc::F_GETFL, 0) | libc::O_NONBLOCK)
@@ -93,48 +93,48 @@ unsafe fn set_nonblocking(fd: libc::c_int) {
 }
 
 impl SshPty {
-    /// The PTY master `File` (bidirectional). The daemon uses this to poll,
-    /// read remote output, and `ioctl(TIOCSWINSZ)` for resize — it does not
-    /// need the `EventedPty` trait impls, only the raw master fd.
+    /// PTY master `File`(双向)。守护进程用它轮询、
+    /// 读远端输出,并用 `ioctl(TIOCSWINSZ)` 调整大小——它不需要
+    /// `EventedPty` trait 实现,只需要裸 master fd。
     pub fn master_file(&self) -> &File {
         &self.master
     }
 
-    /// The ssh child's pid.
+    /// ssh 子进程的 pid。
     pub fn child_pid(&self) -> u32 {
         self.child.id()
     }
 
-    /// The value for OpenSSH's `SSH_ASKPASS_REQUIRE`.
+    /// OpenSSH `SSH_ASKPASS_REQUIRE` 的取值。
     ///
-    /// Must be `force`, **not** `prefer`. We give the ssh child a controlling
-    /// terminal (`pre_exec` → `set_controlling_terminal`), and OpenSSH's
-    /// `=prefer` mode only consults `SSH_ASKPASS` when there is **no** tty.
-    /// With a tty present, `=prefer` prompts on the terminal and the saved
-    /// password is never supplied — so password-auth hosts connect, emit the
-    /// prompt as their first byte (→ spurious `Connected`), then get closed by
-    /// the server and fail with `failure_kind: unknown`. `=force` always uses
-    /// the askpass helper regardless of tty, so the saved password is supplied.
+    /// 必须是 `force`,**不能**是 `prefer`。我们给 ssh 子进程设置了控制
+    /// 终端(`pre_exec` → `set_controlling_terminal`),而 OpenSSH 的
+    /// `=prefer` 模式只在**没有** tty 时才使用 `SSH_ASKPASS`。
+    /// 有 tty 时,`=prefer` 在终端上提示,已保存的
+    /// 密码永远不会被提供——于是密码认证的主机能连上,把
+    /// 提示符作为第一个字节发出(→ 误报 `Connected`),随后被
+    /// 服务器关闭并以 `failure_kind: unknown` 失败。`=force` 无论有无 tty
+    /// 都使用 askpass 助手,因此已保存的密码总能被提供。
     fn askpass_require_mode() -> &'static str {
         "force"
     }
 
-    /// Spawn a new SSH session with a real kernel PTY.
+    /// 用真实内核 PTY 拉起新的 SSH 会话。
     ///
-    /// Uses `openpty()` to create a PTY master/slave pair. The ssh child
-    /// process gets the slave end as stdin/stdout. `pre_exec` calls
-    /// `setsid()` + `TIOCSCTTY` so SSH sees a proper controlling terminal
-    /// and can prompt for passwords interactively.
+    /// 用 `openpty()` 创建 PTY master/slave 对。ssh 子
+    /// 进程以 slave 端作为 stdin/stdout。`pre_exec` 调用
+    /// `setsid()` + `TIOCSCTTY`,使 SSH 看到正规的控制终端,
+    /// 并能交互式提示输入密码。
     ///
-    /// If `password` is provided, sets up `SSH_ASKPASS` to auto-fill it.
-    /// If `password` is `None`, SSH uses the PTY for interactive prompting.
+    /// 若提供了 `password`,则配置 `SSH_ASKPASS` 自动填充。
+    /// `password` 为 `None` 时,SSH 用 PTY 做交互式提示。
     pub fn spawn(
         cmd: &[String],
         window_size: Option<(u16, u16)>,
         password: Option<&str>,
         agent_sock: Option<&Path>,
     ) -> io::Result<(Self, Option<File>)> {
-        // Build initial winsize for openpty.
+        // 为 openpty 构建初始 winsize。
         let winsize = window_size.map(|(cols, rows)| Winsize {
             ws_row: rows as libc::c_ushort,
             ws_col: cols as libc::c_ushort,
@@ -142,7 +142,7 @@ impl SshPty {
             ws_ypixel: 0,
         });
 
-        // Create PTY master/slave pair.
+        // 创建 PTY master/slave 对。
         let pty = rustix_openpty::openpty(None, winsize.as_ref())?;
         let master_fd: OwnedFd = pty.controller;
         let slave_fd: OwnedFd = pty.user;
@@ -150,35 +150,35 @@ impl SshPty {
         let master_raw = master_fd.as_raw_fd();
         let slave_raw = slave_fd.as_raw_fd();
 
-        // Build the ssh command with slave PTY as stdin/stdout.
+        // 以 slave PTY 作为 stdin/stdout 构建 ssh 命令。
         let mut builder = Command::new(&cmd[0]);
         builder.args(&cmd[1..]);
 
-        // Set stdin/stdout to the PTY slave (duplicated for each).
+        // 把 stdin/stdout 设为 PTY slave(各自复制一份)。
         builder.stdin(slave_fd.try_clone()?);
         builder.stdout(slave_fd);
-        // Keep stderr as a pipe for error detection.
+        // stderr 保持为管道,用于错误检测。
         builder.stderr(Stdio::piped());
 
-        // GAP-5.4: explicitly set SSH_AUTH_SOCK on the child when agent
-        // forwarding is requested. `Command` inherits our env already, but the
-        // resolved socket (config override / macOS `launchctl getenv` fallback)
-        // may differ from what we inherited, so set it explicitly.
+        // GAP-5.4:请求 agent 转发时显式为子进程设置 SSH_AUTH_SOCK。
+        // `Command` 已继承我们的环境,但解析出的
+        // socket(配置覆盖 / macOS `launchctl getenv` 回退)
+        // 可能与继承到的不同,因此显式设置。
         if let Some(p) = agent_sock {
             builder.env("SSH_AUTH_SOCK", p);
         }
 
-        // SSH_ASKPASS setup for saved password auto-fill.
+        // 为已保存密码的自动填充配置 SSH_ASKPASS。
         let askpass_tempdir = if let Some(pw) = password {
             let dir = tempfile::TempDir::new()?;
             fs::set_permissions(dir.path(), Permissions::from_mode(0o700))?;
 
-            // Write password to a temp file (mode 0600).
+            // 把密码写入临时文件(权限 0600)。
             let pw_file_path = dir.path().join("pw");
             fs::write(&pw_file_path, pw.as_bytes())?;
             fs::set_permissions(&pw_file_path, Permissions::from_mode(0o600))?;
 
-            // Create askpass script that outputs the password.
+            // 创建输出该密码的 askpass 脚本。
             let script_path = dir.path().join("askpass.sh");
             let script_content = format!(
                 "#!/bin/sh\ncat \"{}\"",
@@ -189,7 +189,7 @@ impl SshPty {
 
             builder.env("SSH_ASKPASS", script_path);
             builder.env("SSH_ASKPASS_REQUIRE", Self::askpass_require_mode());
-            // DISPLAY is required by SSH even on macOS for SSH_ASKPASS.
+            // 即使在 macOS 上,SSH_ASKPASS 也要求 DISPLAY 存在。
             if std::env::var("DISPLAY").is_err() {
                 builder.env("DISPLAY", ":0");
             }
@@ -199,22 +199,22 @@ impl SshPty {
             None
         };
 
-        // pre_exec: create new session and set controlling terminal.
-        // This mirrors the local PTY setup in alacritty_terminal/src/tty/unix.rs.
+        // pre_exec:创建新会话并设置控制终端。
+        // 这镜像了 alacritty_terminal/src/tty/unix.rs 的本地 PTY 设置。
         unsafe {
             builder.pre_exec(move || {
-                // Create a new session (detach from PureTerm's controlling terminal).
+                // 创建新会话(脱离 PureTerm 的控制终端)。
                 if libc::setsid() == -1 {
                     return Err(io::Error::last_os_error());
                 }
 
-                // Set the PTY slave as the controlling terminal.
-                // This makes /dev/tty point to our PTY slave, so SSH's
-                // readpassphrase() can prompt for passwords.
+                // 把 PTY slave 设为控制终端。
+                // 这使 /dev/tty 指向我们的 PTY slave,使 SSH 的
+                // readpassphrase() 能提示输入密码。
                 set_controlling_terminal(slave_raw)?;
 
-                // Close both PTY fds in the child — no longer needed
-                // after setting controlling terminal.
+                // 关闭子进程中的两个 PTY fd——设置控制终端
+                // 之后不再需要。
                 libc::close(slave_raw);
                 libc::close(master_raw);
 
@@ -222,7 +222,7 @@ impl SshPty {
             });
         }
 
-        // Prepare SIGCHLD signal handling before spawning.
+        // 拉起前准备 SIGCHLD 信号处理。
         let (signals, sig_id) = {
             let (sender, recv) = UnixStream::pair()?;
             sender.set_nonblocking(false)?;
@@ -234,14 +234,14 @@ impl SshPty {
 
         let mut child = builder.spawn()?;
 
-        // Set master fd to non-blocking for the event loop poller.
+        // 把 master fd 设为非阻塞,供事件循环 poller 使用。
         unsafe {
             set_nonblocking(master_raw);
         }
 
         let master = File::from(master_fd);
 
-        // Capture stderr as a non-blocking File for error detection.
+        // 把 stderr 捕获为非阻塞 File,用于错误检测。
         let stderr = child.stderr.take().map(|pipe| {
             let raw_fd = pipe.into_raw_fd();
             let file = unsafe { File::from_raw_fd(raw_fd) };
@@ -266,11 +266,11 @@ impl SshPty {
         ))
     }
 
-    /// Resize the PTY via `ioctl(TIOCSWINSZ)`.
+    /// 经 `ioctl(TIOCSWINSZ)` 调整 PTY 大小。
     ///
-    /// This is more reliable than escape sequences because it's handled
-    /// at the kernel level and propagates through SSH's PTY size
-    /// negotiation automatically.
+    /// 比转义序列更可靠:由内核层处理,
+    /// 并自动经 SSH 的 PTY 尺寸
+    /// 协商传播。
     pub fn resize(&mut self, cols: u16, rows: u16) -> io::Result<()> {
         let win = Winsize {
             ws_row: rows as libc::c_ushort,
@@ -287,19 +287,19 @@ impl SshPty {
         }
     }
 
-    /// Ask the remote shell to exit cleanly, then wait up to `timeout`.
+    /// 请求远端 shell 干净退出,然后最多等待 `timeout`。
     ///
-    /// 1. Write `exit\r` to the PTY master so the remote shell receives it.
-    /// 2. Poll `try_wait` for up to `timeout`.
-    /// 3. If the child is still running, send `SIGHUP` and return TimedOut.
+    /// 1. 向 PTY master 写 `exit\r`,让远端 shell 收到。
+    /// 2. 轮询 `try_wait`,至多 `timeout`。
+    /// 3. 子进程仍在运行时,发送 `SIGHUP` 并返回 TimedOut。
     pub fn graceful_close(&mut self, timeout: Duration) -> io::Result<()> {
-        // Step 1: ask the remote shell to exit.
+        // 步骤 1:请求远端 shell 退出。
         if let Err(e) = self.master.write_all(b"exit\r") {
             log::debug!("SshPty::graceful_close: write 'exit\\r' failed: {}", e);
         }
         let _ = self.master.flush();
 
-        // Step 2: poll for the child to exit.
+        // 步骤 2:轮询子进程退出。
         let deadline = Instant::now() + timeout;
         loop {
             match self.child.try_wait() {
@@ -317,7 +317,7 @@ impl SshPty {
             }
         }
 
-        // Step 3: deadline expired; escalate to SIGHUP.
+        // 步骤 3:期限已过;升级到 SIGHUP。
         log::warn!(
             "SshPty::graceful_close: ssh child did not exit within {:?}; sending SIGHUP",
             timeout
@@ -342,12 +342,12 @@ impl OnResize for SshPty {
 
 impl Drop for SshPty {
     fn drop(&mut self) {
-        // Bug #5 fix: log on unregister failure instead of panicking.
+        // Bug #5 修复:注销失败时记录日志而非 panic。
         if !unregister_signal(self.sig_id) {
             log::warn!("SshPty::Drop: unregister_signal returned false (id={:?})", self.sig_id);
         }
 
-        // Best-effort collect the child.
+        // 尽力收殓子进程。
         if let Ok(None) = self.child.try_wait() {
             unsafe {
                 libc::kill(self.child.id() as i32, libc::SIGHUP);
@@ -355,7 +355,7 @@ impl Drop for SshPty {
         }
         let _ = self.child.wait();
 
-        // SSH_ASKPASS temp files are cleaned up automatically by TempDir drop.
+        // SSH_ASKPASS 临时文件由 TempDir drop 自动清理。
     }
 }
 
@@ -442,7 +442,7 @@ impl EventedPty for SshPty {
 mod tests {
     use super::*;
 
-    /// Verify resize works after spawn (ioctl-based, not escape sequences).
+    /// 验证拉起后调整大小可用(基于 ioctl,而非转义序列)。
     #[test]
     fn test_resize_succeeds_after_spawn() {
         let cmd = vec!["cat".to_string()];
@@ -451,8 +451,8 @@ mod tests {
         pty.resize(132, 50).expect("resize must not error");
     }
 
-    /// graceful_close must not panic. We use `cat` which won't exit on
-    /// `exit\r`, so we expect TimedOut or Ok (if the child happened to exit).
+    /// graceful_close 不得 panic。我们用不会响应
+    /// `exit\r` 退出的 `cat`,因此预期 TimedOut 或 Ok(若子进程恰好退出)。
     #[test]
     fn test_graceful_close_does_not_panic() {
         let cmd = vec!["cat".to_string()];
@@ -461,7 +461,7 @@ mod tests {
         let _ = result;
     }
 
-    /// Verify that reader and writer now return the same fd (master fd).
+    /// 验证 reader 与 writer 现在返回同一个 fd(master fd)。
     #[test]
     fn test_reader_writer_are_same_fd() {
         let cmd = vec!["cat".to_string()];
@@ -474,7 +474,7 @@ mod tests {
         );
     }
 
-    /// Verify SSH_ASKPASS temp directory is created when password is provided.
+    /// 验证提供密码时会创建 SSH_ASKPASS 临时目录。
     #[test]
     fn test_askpass_tempdir_created_with_password() {
         let cmd = vec!["cat".to_string()];
@@ -486,7 +486,7 @@ mod tests {
         assert!(dir.path().join("pw").exists());
     }
 
-    /// Verify no askpass temp directory when password is None.
+    /// 验证密码为 None 时不创建 askpass 临时目录。
     #[test]
     fn test_no_askpass_without_password() {
         let cmd = vec!["cat".to_string()];
@@ -494,12 +494,12 @@ mod tests {
         assert!(pty.askpass_tempdir.is_none());
     }
 
-    /// Regression guard: `SSH_ASKPASS_REQUIRE` must be `force`. With the
-    /// controlling terminal PureTerm gives ssh, `=prefer` never invokes the
-    /// askpass helper, so saved passwords are silently ignored and
-    /// password-auth hosts fail to connect (connect-then-die,
-    /// `failure_kind: unknown`). Manually verified: the same host authenticates
-    /// fine under `=force`. Guard against reverting to `prefer`.
+    /// 回归守护:`SSH_ASKPASS_REQUIRE` 必须是 `force`。在
+    /// PureTerm 给 ssh 的控制终端下,`=prefer` 永不调用
+    /// askpass 助手,已保存的密码被静默忽略,
+    /// 密码认证的主机无法连接(连上即死,
+    /// `failure_kind: unknown`)。人工验证:同一主机在
+    /// `=force` 下认证正常。此测试防止退回 `prefer`。
     #[test]
     fn askpass_require_is_force_not_prefer() {
         assert_eq!(SshPty::askpass_require_mode(), "force");

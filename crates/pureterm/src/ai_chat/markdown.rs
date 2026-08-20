@@ -1,16 +1,16 @@
-//! Markdown → structured blocks for panel rendering.
+//! Markdown → 用于面板渲染的结构化块。
 //!
-//! pulldown-cmark parses CommonMark; we project its event stream into a flat
-//! block list ([`Block::Paragraph`] of inline [`MarkdownSpan`]s, or
-//! [`Block::CodeBlock`]) that the panel renders without re-parsing. Code blocks
-//! stay as raw monospace text (syntax highlighting via `syntect` is deferred to
-//! a later GAP).
+//! 由 pulldown-cmark 解析 CommonMark;我们把事件流投影为扁平的
+//! 块列表(内联 [`MarkdownSpan`] 组成的 [`Block::Paragraph`],或
+//! [`Block::CodeBlock`]),面板直接渲染而无需重新解析。代码块
+//! 保持为原始等宽文本(经 `syntect` 的语法高亮延后到
+//! 后续 GAP 实现)。
 //!
-//! **UI-agnostic**: produces plain structs; the panel maps them onto iced rich
-//! text. This keeps the parsing logic fully unit-testable with no iced types.
+//! **与 UI 无关**:只产出普通结构体,由面板映射为 iced 富
+//! 文本。这样解析逻辑完全不依赖 iced 类型,可完整单元测试。
 
-/// Inline text style. `Code` is inline `` `code` ``; code-*block* content is
-/// carried in [`Block::CodeBlock`], not as a span.
+/// 内联文本样式。`Code` 表示行内 `` `code` ``;代码块内容
+/// 由 [`Block::CodeBlock`] 承载,不作为 span 出现。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpanStyle {
     #[default]
@@ -21,22 +21,22 @@ pub enum SpanStyle {
     Code,
 }
 
-/// One styled text run within a paragraph.
+/// 段落内的一段带样式的文本。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkdownSpan {
     pub text: String,
     pub style: SpanStyle,
 }
 
-/// A top-level block. The panel renders paragraphs as styled text and code
-/// blocks as a monospace box.
+/// 顶层块。面板将段落渲染为带样式文本,代码块
+/// 渲染为等宽盒子。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Block {
     Paragraph(Vec<MarkdownSpan>),
     CodeBlock { lang: Option<String>, code: String },
 }
 
-/// Parse CommonMark `md` into renderable blocks. Empty input → no blocks.
+/// 将 CommonMark `md` 解析为可渲染的块。空输入 → 无块。
 pub fn parse(md: &str) -> Vec<Block> {
     use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
@@ -51,21 +51,21 @@ pub fn parse(md: &str) -> Vec<Block> {
     for event in Parser::new(md) {
         match event {
             Event::Start(Tag::Paragraph) => {
-                // Fresh paragraph — discard any stray inline content from an
-                // unhandled block (heading/list) so it can't bleed in.
+                // 新段落——丢弃来自未处理块(标题/列表)的残留
+                // 行内内容,避免其渗入。
                 para.clear();
             }
             Event::End(TagEnd::Paragraph) => flush_into(&mut para, &mut blocks),
 
             Event::Start(Tag::CodeBlock(kind)) => {
-                // A code block closes any in-flight paragraph first.
+                // 代码块会先结束进行中的段落。
                 flush_into(&mut para, &mut blocks);
                 in_code_block = true;
                 code_buf.clear();
                 code_lang = match kind {
                     CodeBlockKind::Fenced(info) => {
-                        // Info string is `lang` optionally followed by more; take
-                        // the first whitespace-delimited token as the language.
+                        // 信息字符串是 `lang` 可选地后跟更多内容;取
+                        // 第一个以空白分隔的 token 作为语言。
                         let lang = info.as_ref().split_whitespace().next();
                         lang.map(|s| s.to_string())
                     }
@@ -112,9 +112,9 @@ pub fn parse(md: &str) -> Vec<Block> {
                 })
             }
 
-            // Headings, lists, blockquotes, tables, links, etc. — best-effort in
-            // v1: their inline text is gathered into `para` and flushed at the
-            // next paragraph boundary (or end of input).
+            // 标题、列表、引用、表格、链接等——v1 尽力而为:
+            // 其行内文本统一收集进 `para`,并在下一个段落边界
+            // (或输入结束)时输出。
             _ => {}
         }
     }
@@ -122,7 +122,7 @@ pub fn parse(md: &str) -> Vec<Block> {
     blocks
 }
 
-/// Move accumulated inline spans into a `Paragraph` block (no-op if empty).
+/// 将累积的行内 span 移入 `Paragraph` 块(为空时无操作)。
 fn flush_into(para: &mut Vec<MarkdownSpan>, blocks: &mut Vec<Block>) {
     if !para.is_empty() {
         blocks.push(Block::Paragraph(std::mem::take(para)));

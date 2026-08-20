@@ -1,12 +1,12 @@
-//! GAP-08: Natural language commands — `# description` → LLM shell command card.
+//! GAP-08:自然语言命令——`# 描述` → LLM shell 命令卡片。
 //!
-//! Reuses the GAP-02 error-recovery streaming pattern and `extract_fix_command`.
+//! 复用 GAP-02 错误恢复的流式模式与 `extract_fix_command`。
 
 use crate::ai_chat::types::{ChatEvent, ChatMessage, ChatRequest, ChatRole};
 use crate::app_config::{AiChatConfig, NaturalLanguageConfig};
 use crate::error_recovery::extract_fix_command;
 
-/// One natural-language command request.
+/// 一条自然语言命令请求。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NlContext {
     pub pane_id: u64,
@@ -14,7 +14,7 @@ pub struct NlContext {
     pub cwd: Option<String>,
 }
 
-/// Inline natural-language command card state (testable without iced).
+/// 内联自然语言命令卡片状态(无需 iced 即可测试)。
 #[derive(Debug)]
 pub struct NaturalLanguageState {
     pub open: bool,
@@ -103,7 +103,7 @@ const SYSTEM_PROMPT: &str = "You translate natural language descriptions into sh
 Respond with exactly one command in a single markdown fenced code block tagged bash, sh, or shell. \
 Keep explanations minimal; prefer safe, common flags. Do not suggest destructive commands unless clearly required.";
 
-/// Parse `# description` from the current input line.
+/// 从当前输入行解析 `# description`。
 pub fn parse_description(line: &str) -> Option<String> {
     let trimmed = line.trim();
     if !trimmed.starts_with('#') {
@@ -116,7 +116,7 @@ pub fn parse_description(line: &str) -> Option<String> {
     Some(rest.to_string())
 }
 
-/// Build a one-shot LLM request from natural-language context.
+/// 从自然语言上下文构建一次性 LLM 请求。
 pub fn build_prompt(ctx: &NlContext, ai_cfg: &AiChatConfig, nl_cfg: &NaturalLanguageConfig) -> ChatRequest {
     let cwd = ctx
         .cwd
@@ -140,9 +140,9 @@ pub fn build_prompt(ctx: &NlContext, ai_cfg: &AiChatConfig, nl_cfg: &NaturalLang
     }
 }
 
-/// Resolve LLM provider from AI chat config (shared provider). Reuses the
-/// caller-supplied `reqwest::Client` so connection pool / TLS sessions persist
-/// across turns.
+/// 从 AI 聊天配置解析 LLM 提供方(共享提供方)。复用调用方
+/// 提供的 `reqwest::Client`,使连接池 / TLS 会话
+/// 跨轮次保持。
 pub fn make_provider(
     cfg: &AiChatConfig,
     client: reqwest::Client,
@@ -150,7 +150,7 @@ pub fn make_provider(
     crate::ai_chat::context::make_provider_with_client(cfg, client)
 }
 
-/// Bytes to clear the current shell line (readline: home + kill to end).
+/// 清空当前 shell 行的字节序列(readline:home + 删除至行尾)。
 pub const CLEAR_INPUT_LINE: &[u8] = b"\x01\x0b";
 
 #[cfg(test)]

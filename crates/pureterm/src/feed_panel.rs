@@ -40,13 +40,13 @@ pub struct FeedRequestPayload {
     pub reason: String,
     pub cwd: Option<String>,
     pub created_at: Instant,
-    /// GAP-7.7: present when this is a resume-binding approval (not a tool hook).
-    /// On Always, the GUI mints+persists an HMAC token.
+    /// GAP-7.7:当这是 resume 绑定审批(而非工具 hook)时存在。
+    /// 选择 Always 时,GUI 铸造并持久化一个 HMAC token。
     pub resume: Option<ResumePayload>,
 }
 
-/// GAP-7.7: resume-binding approval payload. On Always, `resolve()` mints an
-/// HMAC token over `(kind, checkpoint, shell)` via `resume_bindings::approve_token`.
+/// GAP-7.7:resume 绑定审批负载。选择 Always 时,`resolve()` 经
+/// `resume_bindings::approve_token` 铸造 `(kind, checkpoint, shell)` 的 HMAC token。
 #[derive(Debug, Clone)]
 pub struct ResumePayload {
     pub kind: String,
@@ -117,8 +117,8 @@ pub struct FeedPanelState {
     /// 当前面板聚焦展示的请求 ipc_id(最近一条)。
     pub focused: Option<u64>,
     /// 作用域记忆(会话级,进程退出即清)。
-    always_remember: HashMap<(String, String), FeedChoice>, // (session_id, tool_name)
-    all_remember: HashMap<String, FeedChoice>, // session_id
+    always_remember: HashMap<(String, String), FeedChoice>, // 键为 (session_id、tool_name)
+    all_remember: HashMap<String, FeedChoice>, // 键为 session_id
     bypass_until: HashMap<String, Instant>,    // session_id → 过期时刻
     /// 最近已决(展示用,有界 100)。
     pub history: Vec<(u64, FeedChoice, ResolveSource)>,
@@ -187,7 +187,7 @@ impl FeedPanelState {
         let s = params.as_object()?;
         let session_id = s.get("session_id").and_then(|v| v.as_str())?.to_string();
         let event = s.get("event").and_then(|v| v.as_str())?.to_string();
-        // GAP-7.7: a resume-binding approval carries kind+checkpoint+shell.
+        // GAP-7.7:resume 绑定审批携带 kind+checkpoint+shell。
         let resume = (|| {
             let kind = s.get("kind")?.as_str()?.to_string();
             let checkpoint = s.get("checkpoint")?.as_str()?.to_string();
@@ -316,10 +316,10 @@ impl FeedPanelState {
         }
         if matches!(source, ResolveSource::User) {
             if let Some(resume) = &p.req.resume {
-                // GAP-7.7: resume approval — on Always, mint+persist the HMAC
-                // token (the persistent memory). Resume approvals deliberately
-                // bypass the in-memory always_remember map: its (session_id,
-                // tool_name) key would collide on ("", "").
+                // GAP-7.7:resume 审批——选择 Always 时,铸造并持久化 HMAC
+                // token(即持久化记忆)。resume 审批有意
+                // 绕过内存中的 always_remember 映射:它的 (session_id,
+                // tool_name) 键会在 ("", "") 处冲突。
                 if matches!(choice, FeedChoice::Always) {
                     crate::resume_bindings::approve_token(
                         &resume.kind,
@@ -402,7 +402,7 @@ impl FeedPanelState {
 // ── 审计日志 ──────────────────────────────────────────────────────────────
 
 /// `data_local_dir()/pureterm/feed.jsonl`
-/// (Linux `~/.local/share/pureterm/feed.jsonl`,macOS `~/Library/Application Support/...`)。
+/// (Linux 为 `~/.local/share/pureterm/feed.jsonl`,macOS 为 `~/Library/Application Support/...`)。
 ///
 /// `PURETERM_FEED_LOG` 覆盖(GAP-7.4 E2E harness 用):设了就用该路径,方便测试在
 /// temp dir 断言审计行而不污染用户真实 feed.jsonl。与 `feed_log::audit_path` 同语义。
@@ -451,9 +451,9 @@ fn now_iso() -> String {
     format!("T{secs}")
 }
 
-// `PURETERM_FEED_LOG` is a single process-global env key. Serialize every test
-// that mutates it (feed_panel, feed_log, agent_e2e) through this one lock so
-// they can't race. Referenced as `crate::feed_panel::FEED_AUDIT_ENV_LOCK`.
+// `PURETERM_FEED_LOG` 是唯一的进程全局环境变量键。把每个修改它的
+// 测试(feed_panel、feed_log、agent_e2e)经这一把锁串行化,
+// 避免竞争。以 `crate::feed_panel::FEED_AUDIT_ENV_LOCK` 引用。
 #[cfg(test)]
 pub(crate) static FEED_AUDIT_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -467,14 +467,14 @@ mod tests {
         let _guard = super::FEED_AUDIT_ENV_LOCK.lock().unwrap();
         let override_path = std::env::temp_dir().join("pureterm_test_feed_audit_override.jsonl");
         std::env::set_var("PURETERM_FEED_LOG", &override_path);
-        // GAP-7.4 E2E harness: audit_path() must honor PURETERM_FEED_LOG so the
-        // round-trip test can assert audit rows in a temp dir without polluting
-        // the user's real feed.jsonl.
+        // GAP-7.4 E2E 测试装置:audit_path() 必须遵循 PURETERM_FEED_LOG,
+        // 使往返测试能在临时目录断言审计行,而不污染
+        // 用户的真实 feed.jsonl。
         assert_eq!(audit_path(), override_path);
         std::env::remove_var("PURETERM_FEED_LOG");
     }
 
-    // ── accept_inbound (GAP-7.4 extracted pure core of handle_feed_request_approval) ──
+    // ── accept_inbound(从 handle_feed_request_approval 提取的 GAP-7.4 纯核) ─────────────────────
     fn reply_handle() -> (ReplyHandle, oneshot::Receiver<JsonRpcResponse>) {
         let (tx, rx) = oneshot::channel();
         (Arc::new(Mutex::new(Some(tx))), rx)
@@ -530,7 +530,7 @@ mod tests {
         let mut st = FeedPanelState::default();
         let (reply, rx) = reply_handle();
         let p = resume_params("s1", "tmux", "work", &["tmux", "attach", "-t", "work"]);
-        // closure = "token pre-approved" → memory hit → resolve Always + carry resume.
+        // closure = "token 已预授权" → 记忆命中 → 解析为 Always + 携带 resume。
         let d = st.accept_inbound(1, Some(&p), reply, |_| true);
         match d.outcome {
             InboundOutcome::Resolved { choice, resume } => {
@@ -550,7 +550,7 @@ mod tests {
         let mut st = FeedPanelState::default();
         let (reply, _rx) = reply_handle();
         let p = resume_params("s1", "tmux", "work", &["tmux", "attach"]);
-        // closure = "no token" → not pre-approved → focus panel, no reply yet.
+        // closure = "无 token" → 未预授权 → 聚焦面板,暂不回复。
         let d = st.accept_inbound(1, Some(&p), reply, |_| false);
         assert!(matches!(d.outcome, InboundOutcome::Focused));
         assert_eq!(st.focused, Some(1));
@@ -658,7 +658,7 @@ mod tests {
         let mut old = payload(1, "s", "Bash");
         old.created_at = Instant::now() - Duration::from_secs(200);
         st.pending.insert(1, pending(old));
-        st.pending.insert(2, pending(payload(2, "s", "Bash"))); // fresh
+        st.pending.insert(2, pending(payload(2, "s", "Bash"))); // 新插入
         let expired = st.expire_timeouts();
         assert_eq!(expired, vec![1]);
     }

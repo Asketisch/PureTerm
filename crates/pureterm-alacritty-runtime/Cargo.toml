@@ -9,16 +9,16 @@ description = "PureTerm - GPU glyph atlas runtime"
 crossfont = "0.8.1"
 indexmap = { version = "2", features = ["std"] }
 
-# t-core-shaper: Harfbuzz via rustybuzz (UAX #29 + complex script shaping)
+# t-core-shaper:Harfbuzz 经 rustybuzz(UAX #29 + 复杂文字整形)
 rustybuzz = "0.20"
 unicode-bidi = "0.3"
 unicode-script = "0.5"
 
-# PureTerm v0.2: `build.rs` only references `embed_resource` inside a
-# `#[cfg(windows)]` block gated on a missing `.rc` file, so it never
-# actually fires today. Declaring the dep here (gated to Windows) keeps
-# the build green the moment a real `.rc` is dropped in — otherwise the
-# unconditional reference would fail to resolve and break `cargo build`
-# for the workspace.
+# PureTerm v0.2:`build.rs` 仅在
+# `#[cfg(windows)]` 块内引用 `embed_resource`,且以缺失 `.rc` 文件为条件,
+# 故今天根本不会触发。在此声明该依赖(限定 Windows)可使
+# 一旦放入真实 `.rc` 构建即保持绿色 — 否则
+# 无条件引用将无法解析,破坏工作区的
+# 工作区的 `cargo build` 才能通过。
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"

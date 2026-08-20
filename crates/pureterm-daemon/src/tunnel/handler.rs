@@ -22,16 +22,16 @@ use crate::known_hosts::{format_host_pattern, KeyCheck, KnownHosts};
 
 use super::{TunnelEntry, TunnelLive, SOCKS5};
 
-/// The russh client handler. `check_server_key` is overridden (the default
-/// rejects every host key); `server_channel_open_agent_forward` is overridden
-/// for GAP-5.4 to bridge the server-opened `auth-agent@openssh.com` channel to
-/// the local ssh-agent socket.
+/// russh 客户端处理器。覆写了 `check_server_key`(默认
+/// 实现会拒绝所有主机密钥);为 GAP-5.4 覆写
+/// `server_channel_open_agent_forward`,把服务器打开的 `auth-agent@openssh.com` 通道桥接到
+/// 本地 ssh-agent socket。
 struct ClientHandler {
-    /// Resolved `$SSH_AUTH_SOCK` path; present only when agent forwarding is
-    /// requested for this tunnel. The callback clones it to spawn the bridge.
+    /// 已解析的 `$SSH_AUTH_SOCK` 路径;仅当该隧道请求了
+    /// agent 转发时存在。回调克隆它以拉起桥接。
     agent_sock: Option<PathBuf>,
-    /// GAP-5.2 TOFU host-key store. `None` (unit tests / unconfigured) keeps the
-    /// legacy accept-all behavior; otherwise `check_server_key` consults it.
+    /// GAP-5.2 TOFU 主机密钥存储。`None`(单元测试/未配置)保持
+    /// 遗留的接受一切行为;否则 `check_server_key` 查询它。
     known_hosts: Option<Arc<KnownHosts>>,
     host: String,
     port: u16,
@@ -40,10 +40,10 @@ struct ClientHandler {
 impl Handler for ClientHandler {
     type Error = russh::Error;
 
-    /// GAP-5.2 TOFU: accept the server key on first sight (recording it) or on a
-    /// matching repeat; reject on a mismatch (strict — the daemon has no prompt
-    /// path, so the rejection surfaces via the tunnel's `Failed` status). With
-    /// no store configured, falls back to accept-all (tests/unconfigured).
+    /// GAP-5.2 TOFU:首见时接受服务器密钥(并记录),或重复
+    /// 出现且匹配时接受;失配则拒绝(严格——守护进程没有提示
+    /// 路径,拒绝经由隧道的 `Failed` 状态浮出)。未配置
+    /// 存储时回退为接受一切(测试/未配置)。
     async fn check_server_key(
         &mut self,
         server_public_key: &russh::keys::ssh_key::PublicKey,
@@ -56,11 +56,11 @@ impl Handler for ClientHandler {
         ))
     }
 
-    /// GAP-5.4: the server opened an `auth-agent@openssh.com` channel back to
-    /// us (i.e. the remote wants to use our agent). Splice it to the local
-    /// ssh-agent Unix socket with a bidirectional copy, mirroring `serve_socks5`.
-    /// If no agent socket was resolved (forwarding not requested), drop the
-    /// channel — russh's default is a no-op, so this is best-effort.
+    /// GAP-5.4:服务器向我们打开了 `auth-agent@openssh.com` 通道
+    ///(即远端想用我们的 agent)。用双向拷贝把它接到本地
+    /// ssh-agent Unix socket,镜像 `serve_socks5`。
+    /// 未解析到 agent socket(未请求转发)时丢弃该
+    /// 通道——russh 默认是空操作,因此这是尽力而为。
     async fn server_channel_open_agent_forward(
         &mut self,
         channel: Channel<Msg>,
@@ -76,7 +76,7 @@ impl Handler for ClientHandler {
                 return Ok(());
             }
         };
-        // Bidirectional copy: SSH channel stream ↔ agent Unix socket.
+        // 双向拷贝:SSH channel 流 ↔ agent Unix socket。
         let stream = channel.into_stream();
         let (mut ar, mut aw) = tokio::io::split(agent);
         let (mut sr, mut sw) = tokio::io::split(stream);
@@ -89,11 +89,11 @@ impl Handler for ClientHandler {
     }
 }
 
-/// Pure host-key decision (unit-testable). Returns whether the connection should
-/// proceed: accept on no-store (legacy/tests/unconfigured), `Match`, or
-/// `Unknown` (TOFU record + accept); reject strictly on `Mismatch` (the daemon
-/// has no interactive prompt path, so a mismatch surfaces via the tunnel's
-/// `Failed` status).
+/// 纯主机密钥决策(可单测)。返回连接是否应
+/// 继续:无存储(遗留/测试/未配置)、`Match` 或
+/// `Unknown`(TOFU 记录 + 接受)时接受;`Mismatch` 时严格拒绝(守护进程
+/// 没有交互提示路径,失配经由隧道的
+/// `Failed` 状态浮出)。
 pub(super) fn decide_host_key(
     kh: Option<&KnownHosts>,
     host_pattern: &str,
@@ -114,15 +114,15 @@ pub(super) fn decide_host_key(
 
 fn set_status(entry: &Mutex<TunnelEntry>, status: TunnelLive) {
     let mut e = entry.lock().unwrap();
-    // Clear any parked auth sender when leaving the NeedAuth state.
+    // 离开 NeedAuth 状态时清除驻留的认证 sender。
     if !matches!(status, TunnelLive::NeedAuth) {
         e.auth_tx = None;
     }
     e.status = status;
 }
 
-/// Drive one tunnel: TCP+SSH connect → authenticate → SOCKS5 accept loop.
-/// Runs as a runtime task; updates `entry.status` at each transition.
+/// 驱动一条隧道:TCP+SSH 连接 → 认证 → SOCKS5 accept 循环。
+/// 作为 runtime 任务运行;在每次状态转换时更新 `entry.status`。
 pub(super) async fn run_tunnel(
     entry: Arc<Mutex<TunnelEntry>>,
     std_listener: StdTcpListener,
@@ -143,17 +143,17 @@ pub(super) async fn run_tunnel(
         }
     };
 
-    // SSH connect + auth.
+    // SSH 连接 + 认证。
     let mut config = client::Config::default();
-    // R6: keepalives surface a dead gateway (server stops replying → russh
-    // closes after keepalive_max misses) instead of hanging the tunnel silently.
+    // R6:keepalive 使死网关浮出水面(服务器停止应答 → russh
+    // 在连续错过 keepalive_max 次后关闭),而非让隧道无声挂死。
     config.keepalive_interval = Some(std::time::Duration::from_secs(30));
     let config = Arc::new(config);
 
     let addr = format_connect_addr(&host, port);
-    // GAP-5.4: resolve the local agent socket up front (config override →
-    // inherited $SSH_AUTH_SOCK → macOS launchctl) so the handler can bridge
-    // server-opened agent channels, and so agent-key auth (below) can reach it.
+    // GAP-5.4:预先解析本地 agent socket(配置覆盖 →
+    // 继承的 $SSH_AUTH_SOCK → macOS launchctl),使处理器能桥接
+    // 服务器打开的 agent 通道,也使 agent 密钥认证(下文)能到达它。
     let agent_sock = if forward_agent {
         agent_sock::resolve_agent_sock(None)
     } else {
@@ -191,15 +191,15 @@ pub(super) async fn run_tunnel(
     set_status(&entry, TunnelLive::Connected);
     log::info!("puretermd tunnel connected: {user}@{host} ({addr})");
 
-    // `Handle` is Send but not Sync (its reply receiver isn't Sync), so wrap in
-    // a tokio Mutex to share across per-connection tasks. The guard is held only
-    // for the brief `channel_open_direct_tcpip` call, never during the copy.
+    // `Handle` 是 Send 但非 Sync(其应答接收端不是 Sync),因此包进
+    // tokio Mutex 以跨每连接任务共享。守卫只在短暂的
+    // `channel_open_direct_tcpip` 调用期间持有,拷贝期间绝不持有。
     let session: Arc<AsyncMutex<Handle<ClientHandler>>> = Arc::new(AsyncMutex::new(handle));
 
-    // GAP-5.4 B3: request agent forwarding on a session channel so the server
-    // can open `auth-agent@openssh.com` channels back to us (bridged in
-    // `ClientHandler::server_channel_open_agent_forward`). Hold the channel for
-    // the tunnel's lifetime so the request stays in force.
+    // GAP-5.4 B3:在会话通道上请求 agent 转发,使服务器
+    // 能向我们打开 `auth-agent@openssh.com` 通道(在
+    // `ClientHandler::server_channel_open_agent_forward` 中桥接)。为隧道
+    // 生命周期持有该通道,使请求持续有效。
     let _agent_channel = if forward_agent {
         let ch = {
             let g = session.lock().await;
@@ -244,8 +244,8 @@ pub(super) async fn run_tunnel(
     set_status(&entry, TunnelLive::Failed("listener closed".into()));
 }
 
-/// Authenticate using whichever credential we have. Returns `None` if the task
-/// should stop (status already set), `Some(bool)` for the auth outcome.
+/// 用手头的任一凭据认证。任务应停止(状态已设置)时返回 `None`,
+/// 认证结果返回 `Some(bool)`。
 async fn authenticate(
     handle: &mut Handle<ClientHandler>,
     user: &str,
@@ -254,7 +254,7 @@ async fn authenticate(
     entry: &Mutex<TunnelEntry>,
 ) -> Option<bool> {
     if let Some(idf) = identity_file.as_ref() {
-        // Publickey auth. `password` doubles as the key passphrase when given.
+        // 公钥认证。给出 `password` 时兼作密钥口令。
         match load_secret_key(idf, password.as_deref()) {
             Ok(key) => match handle
                 .authenticate_publickey(user.to_string(), PrivateKeyWithHashAlg::new(Arc::new(key), None))
@@ -272,9 +272,9 @@ async fn authenticate(
             }
         }
     } else {
-        // GAP-5.4 B2: try a local ssh-agent key (passwordless) before falling
-        // back to password / NeedAuth. Falls through if the agent is
-        // unavailable, has no identities, or none of its keys are authorized.
+        // GAP-5.4 B2:先尝试本地 ssh-agent 的密钥(免密),失败再回退
+        // 到密码 / NeedAuth。agent 不可用、无身份或
+        // 无任何密钥获授权时向下贯穿。
         if let Some(true) = try_agent_auth(handle, user).await {
             return Some(true);
         }
@@ -287,7 +287,7 @@ async fn authenticate(
                 }
             }
         } else {
-            // No credential supplied → park in NeedAuth until `provide_auth`.
+            // 未提供凭据 → 驻留在 NeedAuth 直到 `provide_auth`。
             set_status(entry, TunnelLive::NeedAuth);
             let (tx, rx) = oneshot::channel();
             entry.lock().unwrap().auth_tx = Some(tx);
@@ -309,11 +309,11 @@ async fn authenticate(
     }
 }
 
-/// GAP-5.4 B2: authenticate using a key held by the local ssh-agent
-/// (`authenticate_publickey_with` with the agent as the `Signer`). Returns
-/// `Some(true)` on success; `None` if the agent is unavailable, holds no
-/// identities, or none of its keys are accepted — so the caller falls through
-/// to password / NeedAuth.
+/// GAP-5.4 B2:用本地 ssh-agent 持有的密钥认证
+///(`authenticate_publickey_with`,agent 作为 `Signer`)。
+/// 成功返回 `Some(true)`;agent 不可用、没有身份或
+/// 无密钥被接受时返回 `None`——调用方因此向下贯穿到
+/// 密码 / NeedAuth。
 async fn try_agent_auth(handle: &mut Handle<ClientHandler>, user: &str) -> Option<bool> {
     let sock = agent_sock::resolve_agent_sock(None)?;
     let mut agent = AgentClient::connect_uds(&sock).await.ok()?;
@@ -335,15 +335,15 @@ async fn try_agent_auth(handle: &mut Handle<ClientHandler>, user: &str) -> Optio
     None
 }
 
-/// Serve one SOCKS5 client: negotiate no-auth, parse CONNECT, open the SSH
-/// direct-tcpip channel, then pump bytes both ways until either side closes.
+/// 服务一个 SOCKS5 客户端:协商免认证、解析 CONNECT、打开 SSH
+/// direct-tcpip 通道,然后双向泵送字节直到任一侧关闭。
 async fn serve_socks5(
     session: Arc<AsyncMutex<Handle<ClientHandler>>>,
     mut tcp: tokio::net::TcpStream,
     peer: std::net::SocketAddr,
     remote_dns: bool,
 ) -> std::io::Result<()> {
-    // ── Method negotiation: VER, NMETHODS, METHODS… ────────────────────────
+    // ── 方法协商:VER、NMETHODS、METHODS… ─────────────────────────────────────────────
     let mut hdr = [0u8; 2];
     tcp.read_exact(&mut hdr).await?;
     if hdr[0] != SOCKS5 {
@@ -352,27 +352,27 @@ async fn serve_socks5(
     let mut methods = vec![0u8; hdr[1] as usize];
     tcp.read_exact(&mut methods).await?;
     if !methods.contains(&0x00) {
-        // Client offered no "no auth" method → 0xFF = no acceptable methods.
+        // 客户端未提供“免认证”方法 → 0xFF = 无可接受方法。
         let _ = tcp.write_all(&[SOCKS5, 0xFF]).await;
         return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "client requires auth"));
     }
     tcp.write_all(&[SOCKS5, 0x00]).await?; // select no-auth
 
-    // ── Request: VER, CMD, RSV, ATYP, DST.ADDR, DST.PORT ───────────────────
+    // ── 请求:VER、CMD、RSV、ATYP、DST.ADDR、DST.PORT ──────────────────────────────────
     let mut req = [0u8; 4];
     tcp.read_exact(&mut req).await?;
     if req[0] != SOCKS5 {
         return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "bad request version"));
     }
     if req[1] != 0x01 {
-        // Only CONNECT is supported (no BIND/UDP ASSOCIATE) → 0x07.
+        // 仅支持 CONNECT(无 BIND/UDP ASSOCIATE)→ 0x07。
         let _ = tcp.write_all(&[SOCKS5, 0x07, 0, 0x01, 0, 0, 0, 0, 0, 0]).await;
         return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "only CONNECT"));
     }
     let host = match read_dst_addr(&mut tcp, req[3]).await? {
         Some(h) => h,
         None => {
-            // Unsupported ATYP → 0x08.
+            // 不支持的 ATYP → 0x08。
             let _ = tcp.write_all(&[SOCKS5, 0x08, 0, 0x01, 0, 0, 0, 0, 0, 0]).await;
             return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "bad ATYP"));
         }
@@ -381,17 +381,17 @@ async fn serve_socks5(
     tcp.read_exact(&mut port_buf).await?;
     let port = u16::from_be_bytes(port_buf);
 
-    // `--no-remote-dns`: resolve the destination locally (so the queried domain
-    // does not leak to the gateway) and hand the gateway a literal IP. With the
-    // default (remote_dns=true) the domain is forwarded verbatim for remote
-    // resolution (socks5h / `--socks5-hostname`). IP literals never need DNS.
+    // `--no-remote-dns`:在本地解析目标(使被查询的域名
+    // 不泄漏给网关),把字面 IP 交给网关。默认
+    //(remote_dns=true)时域名按原样转发做远端
+    // 解析(socks5h / `--socks5-hostname`)。IP 字面量永不需要 DNS。
     let connect_host = if forward_verbatim(remote_dns, &host) {
         host.clone()
     } else {
         match resolve_host_to_ip(&host, port).await {
             Some(ip) => ip,
             None => {
-                // Host unreachable → 0x04.
+                // 主机不可达 → 0x04。
                 let _ = tcp.write_all(&[SOCKS5, 0x04, 0, 0x01, 0, 0, 0, 0, 0, 0]).await;
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::AddrNotAvailable,
@@ -401,7 +401,7 @@ async fn serve_socks5(
         }
     };
 
-    // ── Open the SSH direct-tcpip channel.
+    // ── 打开 SSH direct-tcpip 通道 ───────────────
     let channel = {
         let g = session.lock().await;
         g.channel_open_direct_tcpip(connect_host.clone(), port as u32, peer.ip().to_string(), peer.port() as u32)
@@ -410,7 +410,7 @@ async fn serve_socks5(
     let channel = match channel {
         Ok(c) => c,
         Err(e) => {
-            // General SOCKS server failure → 0x01.
+            // 通用 SOCKS 服务器失败 → 0x01。
             let _ = tcp.write_all(&[SOCKS5, 0x01, 0, 0x01, 0, 0, 0, 0, 0, 0]).await;
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -419,10 +419,10 @@ async fn serve_socks5(
         }
     };
 
-    // Success reply: bound addr/port zeros (clients ignore for CONNECT).
+    // 成功应答:绑定的地址/端口为零(客户端对 CONNECT 会忽略)。
     tcp.write_all(&[SOCKS5, 0x00, 0, 0x01, 0, 0, 0, 0, 0, 0]).await?;
 
-    // ── Bidirectional copy: TCP ↔ SSH channel stream. ──────────────────────
+    // ── 双向拷贝:TCP ↔ SSH channel 流 ───────────────────────────────────────────────
     let stream = channel.into_stream();
     let (mut tcp_rd, mut tcp_wr) = tokio::io::split(tcp);
     let (mut ssh_rd, mut ssh_wr) = tokio::io::split(stream);
@@ -432,9 +432,9 @@ async fn serve_socks5(
     Ok(())
 }
 
-/// Read the SOCKS5 DST.ADDR field for a given ATYP. Returns the host string
-/// (literal domain for ATYP=3, so the SSH server resolves it remotely) or None
-/// for an unsupported/malformed ATYP.
+/// 读取给定 ATYP 的 SOCKS5 DST.ADDR 字段。返回主机字符串
+///(ATYP=3 时为字面域名,由 SSH 服务器在远端解析);不支持/
+/// 畸形的 ATYP 返回 None。
 async fn read_dst_addr(
     tcp: &mut tokio::net::TcpStream,
     atyp: u8,
@@ -464,17 +464,17 @@ async fn read_dst_addr(
     }
 }
 
-/// Whether `host` should be forwarded verbatim to the gateway (which then
-/// resolves it remotely — the socks5h / `--socks5-hostname` default) or
-/// resolved locally before the channel is opened (`--no-remote-dns`, so the
-/// queried domain does not leak to the gateway). IP literals never need DNS.
+/// 判断 `host` 应按原样转发给网关(由其远端解析——socks5h /
+/// `--socks5-hostname` 的默认),还是在打开通道前
+/// 本地解析(`--no-remote-dns`,使被查询的域名
+/// 不泄漏给网关)。IP 字面量永不需要 DNS。
 pub(super) fn forward_verbatim(remote_dns: bool, host: &str) -> bool {
     remote_dns || host.parse::<std::net::IpAddr>().is_ok()
 }
 
-/// Resolve a hostname to its first A/AAAA address locally (for `--no-remote-dns`).
-/// Returns `None` on resolution failure. Callers gate on [`forward_verbatim`] and
-/// only reach this for real domains; IP literals would parse without a lookup.
+/// 在本地把主机名解析为第一个 A/AAAA 地址(供 `--no-remote-dns`)。
+/// 解析失败返回 `None`。调用方以 [`forward_verbatim`] 门控,
+/// 只有真实域名会走到这里;IP 字面量无需查找即可解析。
 async fn resolve_host_to_ip(host: &str, port: u16) -> Option<String> {
     tokio::net::lookup_host((host, port))
         .await
@@ -483,9 +483,9 @@ async fn resolve_host_to_ip(host: &str, port: u16) -> Option<String> {
         .map(|sa| sa.ip().to_string())
 }
 
-/// Format a `host:port` connect address for russh's `client::connect`. An IPv6
-/// literal (which contains ':') must be bracketed — `[2001:db8::1]:22` — or the
-/// string is ambiguous and won't parse as a socket address (connect fails).
+/// 为 russh 的 `client::connect` 格式化 `host:port` 连接地址。IPv6
+/// 字面量(含 ':')必须加方括号——`[2001:db8::1]:22`——否则
+/// 字符串有歧义、无法解析为 socket 地址(连接失败)。
 pub(super) fn format_connect_addr(host: &str, port: u16) -> String {
     if host.contains(':') {
         format!("[{host}]:{port}")

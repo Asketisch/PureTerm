@@ -1,18 +1,18 @@
-//! GAP-7.3: child-process CPU sampling for hibernation idle detection.
+//! GAP-7.3:供休眠空闲检测用的子进程 CPU 采样。
 //!
-//! `sample_cpu_times(pid)` returns the cumulative (utime + stime) CPU time of a
-//! child. `SessionManager::sample_cpu_pass` compares consecutive samples: if the
-//! cumulative time stops advancing across the sample interval, the child is
-//! CPU-idle. Combined with PTY-output idle (see `session::run_pump`), this is
-//! the dual idle condition for hibernation.
+//! `sample_cpu_times(pid)` 返回子进程的累计(utime + stime)CPU
+//! 时间。`SessionManager::sample_cpu_pass` 比较相邻两次采样:若
+//! 累计时间在采样间隔内不再前进,子进程即为
+//! CPU 空闲。结合 PTY 输出空闲(见 `session::run_pump`),构成
+//! 休眠的双重空闲条件。
 //!
-//! macOS reads `ps -o time= -p <pid>`; Linux reads `/proc/<pid>/stat` fields
-//! 14/15. Non-Unix returns `None` (hibernation is unix-only). Only the *delta*
-//! between samples is meaningful, so the unit (clock ticks vs centiseconds)
-//! does not matter as long as it's consistent within a process lifetime.
+//! macOS 读 `ps -o time= -p <pid>`;Linux 读 `/proc/<pid>/stat` 的
+//! 第 14/15 字段。非 Unix 返回 `None`(休眠仅限 unix)。只有采样间的
+//! *增量*有意义,因此单位(clock tick 还是厘秒)
+//! 无关紧要,只要进程生命周期内保持一致。
 
-/// Sampled cumulative CPU time of a child (user + system). Unit is
-/// platform-specific (Linux jiffies / macOS centiseconds); only deltas matter.
+/// 子进程累计 CPU 时间(用户 + 系统)的采样值。单位
+/// 因平台而异(Linux jiffies / macOS 厘秒);只有增量有意义。
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SampledCpuTimes {
     pub utime: u64,
@@ -20,19 +20,19 @@ pub struct SampledCpuTimes {
 }
 
 impl SampledCpuTimes {
-    /// Total cumulative CPU (utime + stime).
+    /// 累计 CPU 总量(utime + stime)。
     pub fn total(self) -> u64 {
         self.utime.saturating_add(self.stime)
     }
 }
 
-/// Sample the child's cumulative CPU time. `None` if the process is gone or
-/// unreadable (a dead process won't advance CPU time, so the caller treats
-/// `None` as "not newly active" — i.e. it does NOT reset the idle clock).
+/// 采样子进程的累计 CPU 时间。进程已消失或不可读时返回
+/// `None`(死进程的 CPU 时间不会前进,因此调用方把
+/// `None` 视作“没有新活动”——即不重置空闲时钟)。
 #[cfg(target_os = "macos")]
 pub fn sample_cpu_times(pid: u32) -> Option<SampledCpuTimes> {
-    // `ps -o time= -p <pid>` → "[[dd-]hh:]mm:ss[.cc]". Sum the parts into a
-    // single total; unit is irrelevant since only deltas are compared.
+    // `ps -o time= -p <pid>` → "[[dd-]hh:]mm:ss[.cc]"。把各部分加总成
+    // 单一总量;单位无关紧要,因为只比较增量。
     let out = std::process::Command::new("ps")
         .args(["-p", &pid.to_string(), "-o", "time="])
         .output()
@@ -42,17 +42,17 @@ pub fn sample_cpu_times(pid: u32) -> Option<SampledCpuTimes> {
     }
     let s = String::from_utf8_lossy(&out.stdout);
     let secs = parse_macos_time(s.trim());
-    // macOS `ps -o time=` folds user+sys into one cumulative figure.
+    // macOS 的 `ps -o time=` 把 user+sys 折算成一个累计值。
     Some(SampledCpuTimes { utime: secs, stime: 0 })
 }
 
-/// Sample the child's cumulative CPU time from `/proc/<pid>/stat`.
+/// 从 `/proc/<pid>/stat` 采样子进程的累计 CPU 时间。
 #[cfg(target_os = "linux")]
 pub fn sample_cpu_times(pid: u32) -> Option<SampledCpuTimes> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // comm (field 2) is in parens and may contain spaces; take everything after
-    // the last ')'. The remaining fields are 1-indexed from field 3 (state),
-    // so fields[k] corresponds to field (k+3). utime is field 14 → fields[11].
+    // comm(第 2 字段)在括号内且可能含空格;取最后一个 ')'
+    // 之后的所有内容。其余字段从第 3 字段(state)起 1 基编号,
+    // 因此 fields[k] 对应字段 (k+3)。utime 是第 14 字段 → fields[11]。
     let after_comm = stat.rsplit_once(')').map(|(_, rest)| rest)?;
     let fields: Vec<&str> = after_comm.split_whitespace().collect();
     let utime = fields.get(11).and_then(|f| f.parse::<u64>().ok())?;
@@ -60,20 +60,20 @@ pub fn sample_cpu_times(pid: u32) -> Option<SampledCpuTimes> {
     Some(SampledCpuTimes { utime, stime })
 }
 
-/// Non-Unix: hibernation is unsupported; no CPU sampling.
+/// 非 Unix:不支持休眠;不做 CPU 采样。
 #[cfg(not(unix))]
 pub fn sample_cpu_times(_pid: u32) -> Option<SampledCpuTimes> {
     None
 }
 
-/// Parse macOS `ps -o time=` output (`mm:ss.cc` / `hh:mm:ss` / `dd-hh:mm:ss`)
-/// into a single cumulative integer (unit arbitrary; deltas only).
+/// 把 macOS `ps -o time=` 的输出(`mm:ss.cc` / `hh:mm:ss` / `dd-hh:mm:ss`)
+/// 解析成单一累计整数(单位任意;只用增量)。
 #[cfg(any(target_os = "macos", test))]
 fn parse_macos_time(s: &str) -> u64 {
     let mut total = 0u64;
     for part in s.split(':') {
-        // Drop any fractional centiseconds ("ss.cc" → "ss"); also handle the
-        // `dd-hh` form by taking the part after '-'.
+        // 丢弃小数厘秒("ss.cc" → "ss");同时处理
+        // `dd-hh` 形式,取 '-' 之后的部分。
         let core = part.rsplit('-').next().unwrap_or("");
         let int_part = core.split('.').next().unwrap_or("");
         let n: u64 = int_part.trim().parse().unwrap_or(0);
@@ -102,8 +102,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sample_cpu_times_for_live_process_succeeds() {
-        // A sleeping child consumes ~0 CPU; sampling should still succeed
-        // (process exists) even though the total is ~0.
+        // 沉睡的子进程几乎不耗 CPU;采样仍应成功
+        //(进程存在),尽管总量约为 0。
         let mut child =
             std::process::Command::new("sleep").arg("30").spawn().expect("spawn sleep");
         let pid = child.id();
@@ -116,8 +116,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn sample_cpu_times_does_not_panic_on_dead_pid() {
-        // Reap a short-lived child, then sample its (now-recycled) pid — must
-        // not panic. The result is best-effort (None or some other process).
+        // 收殓一个短命子进程,再采样其(已回收的)pid——不得
+        // panic。结果是尽力而为(None 或其它进程)。
         let pid = {
             let mut child =
                 std::process::Command::new("true").spawn().expect("spawn true");

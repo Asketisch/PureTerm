@@ -1,32 +1,30 @@
-//! GAP-7.3: hibernation confirmation panel — GUI-side state.
+//! GAP-7.3:休眠确认面板 —— GUI 侧状态。
 //!
-//! When `HibernationScanTick` (iced_app) finds a session satisfying the dual
-//! idle condition (PTY silent AND CPU near-zero for the configured threshold)
-//! AND the live-session count exceeds `max_live_terminals`, it pushes a
-//! `PendingHibernation` here. The right-side pinned overlay shows it with a
-//! countdown; the user confirms (→ `agent.hibernate` SIGSTOP) or cancels.
-//! Auto-confirm on timeout. Only one confirmation is shown at a time — a busy
-//! scan simply re-evaluates on the next tick once the current one resolves.
+//! 当 `HibernationScanTick`(iced_app)发现满足双重空闲条件(PTY 静默
+//! 且 CPU 持续低于阈值,持续达到配置时长)且存活会话数超过
+//! `max_live_terminals` 时,把一个 `PendingHibernation` 推到这里。右侧置顶
+//! 浮层显示它并带倒计时;用户确认(→ `agent.hibernate` SIGSTOP)或取消。
+//! 超时自动确认。同一时间只显示一条确认 —— 若当前正在处理,忙碌的扫描
+//! 在本次结束后于下一 tick 重新评估。
 
 use std::time::Instant;
 
-/// One pending hibernation confirmation.
+/// 一条待处理的休眠确认。
 #[derive(Debug, Clone)]
 pub struct PendingHibernation {
-    /// Daemon session id to SIGSTOP on confirm.
+    /// 确认后要 SIGSTOP 的 daemon session id。
     pub session_id: String,
-    /// PTY/agent kind label for display ("local" / "claude-code" / ...).
+    /// 用于展示的 PTY/agent 类型标签("local" / "claude-code" / …)。
     pub kind: String,
-    /// When the confirmation was raised (drives the countdown).
+    /// 确认发起的时间(驱动倒计时)。
     pub started_at: Instant,
-    /// Auto-confirm after this many seconds (from config, default 60).
+    /// 超过该秒数后自动确认(来自配置,默认 60)。
     pub confirm_secs: u64,
 }
 
-/// Hibernation panel state. Always present on the app; visibility =
-/// `pending.is_some()`. Mirrors `feed_panel::FeedPanelState`'s shape but holds
-/// a single pending confirmation (hibernation is one-at-a-time, unlike Feed's
-/// queue) and no approval memory.
+/// 休眠面板状态。应用始终持有它;可见性 =
+/// `pending.is_some()`。形状与 `feed_panel::FeedPanelState` 一致,但只保存
+/// 一条待确认(休眠一次一条,与 Feed 的队列不同),且无批准记忆。
 pub struct HibernationPanelState {
     pub pending: Option<PendingHibernation>,
 }
@@ -42,31 +40,30 @@ impl HibernationPanelState {
         Self::default()
     }
 
-    /// Whether the overlay panel should render.
+    /// 浮层面板是否应渲染。
     pub fn is_visible(&self) -> bool {
         self.pending.is_some()
     }
 
-    /// Raise a confirmation. Only one at a time; if one is already pending the
-    /// new request is dropped (the scan re-evaluates next tick).
+    /// 发起一条确认。同一时间只允许一条;若已有待处理,新请求被丢弃
+    /// (扫描会在下一 tick 重新评估)。
     pub fn request(&mut self, p: PendingHibernation) {
         if self.pending.is_none() {
             self.pending = Some(p);
         }
     }
 
-    /// User confirmed → take the session id to hibernate (clears the panel).
+    /// 用户确认 → 取出要休眠的 session id(并清空面板)。
     pub fn confirm(&mut self) -> Option<String> {
         self.pending.take().map(|p| p.session_id)
     }
 
-    /// User cancelled → clear without hibernating.
+    /// 用户取消 → 清空且不休眠。
     pub fn cancel(&mut self) {
         self.pending = None;
     }
 
-    /// Auto-confirm if the confirmation window elapsed. Returns the session id
-    /// to hibernate if the timeout fired.
+    /// 若确认窗口已过则自动确认。超时触发时返回要休眠的 session id。
     pub fn expire_timeout(&mut self) -> Option<String> {
         let p = self.pending.as_ref()?;
         if p.started_at.elapsed().as_secs() >= p.confirm_secs {
@@ -76,14 +73,14 @@ impl HibernationPanelState {
         }
     }
 
-    /// Seconds left in the countdown (for display); `None` when no panel.
+    /// 倒计时剩余秒数(用于展示);无面板时为 `None`。
     pub fn remaining_secs(&self) -> Option<u64> {
         self.pending
             .as_ref()
             .map(|p| p.confirm_secs.saturating_sub(p.started_at.elapsed().as_secs()))
     }
 
-    /// The pending session id, if any (for display / status bar).
+    /// 待处理的 session id(若有,用于展示 / 状态栏)。
     pub fn focused_session_id(&self) -> Option<&str> {
         self.pending.as_ref().map(|p| p.session_id.as_str())
     }
@@ -99,7 +96,7 @@ pub(crate) fn vault_kind_never_hibernate(
 }
 
 /// GAP-7.3: `hibernation_scan` 的纯核。给定 daemon session 快照(每条含
-/// `id`/`agent_kind`/`hibernated`/`pty_idle_secs`/`cpu_idle_secs`)+ cfg + vault,
+/// `id`/`agent_kind`/`hibernated`/`pty_idle_secs`/`cpu_idle_secs`)+ cfg + vault 等,
 /// 决定是否提示 hibernation。当 live-agent 数 > `max_live_terminals` 且存在非豁免
 /// idle 候选时,返回该候选(`pty_idle_secs` 最长者);否则 None。IPC 取数 / 缓存 /
 /// 面板 request 留给 iced 调用方。
@@ -199,7 +196,7 @@ mod tests {
         let mut p2 = pending(60);
         p2.session_id = "s2".into();
         st.request(p2);
-        // First pending wins; second is dropped.
+        // 先到的待处理优先;第二条被丢弃。
         assert_eq!(st.focused_session_id(), Some("s1"));
     }
 
@@ -221,7 +218,7 @@ mod tests {
         assert!(st.is_visible());
     }
 
-    // ── classify_candidate / vault_kind_never_hibernate (GAP-7.3 extracted pure core) ──
+    // ── classify_candidate / vault_kind_never_hibernate(GAP-7.3 抽出的纯核) ──
     fn cfg(max_live: u32, idle: u64) -> AgentHibernationConfig {
         AgentHibernationConfig {
             enabled: true,
@@ -242,7 +239,7 @@ mod tests {
 
     #[test]
     fn vault_kind_never_hibernate_flag() {
-        // moved from iced_app: never_hibernate=true → exempt; false/unregistered → not.
+        // 从 iced_app 迁移:never_hibernate=true → 豁免;false/未登记 → 不豁免。
         let agents = vec![ventry("claude-code", false), ventry("codex", true)];
         assert!(!vault_kind_never_hibernate(&agents, "claude-code"));
         assert!(vault_kind_never_hibernate(&agents, "codex"));
@@ -258,11 +255,11 @@ mod tests {
     #[test]
     fn classify_candidate_picks_longest_idle_live_agent() {
         let sessions = vec![
-            live_sess("a", "claude-code", 100, 100), // idle, longest
-            live_sess("b", "claude-code", 1, 1),     // active
-            live_sess("c", "claude-code", 50, 50),   // idle, shorter
+            live_sess("a", "claude-code", 100, 100), // idle,最长
+            live_sess("b", "claude-code", 1, 1),    // 活跃
+            live_sess("c", "claude-code", 50, 50),  // idle,较短
         ];
-        // 3 live agents > max 2 → trigger; among idle (a, c) pick max pty_idle → a.
+        // 3 个存活 agent > max 2 → 触发;在 idle 候选 (a, c) 中选 pty_idle 最大者 → a。
         assert_eq!(
             classify_candidate(&sessions, &cfg(2, 5), &vec![]),
             Some(("a".to_string(), "claude-code".to_string()))
@@ -272,7 +269,7 @@ mod tests {
     #[test]
     fn classify_candidate_none_when_live_count_at_or_below_max() {
         let sessions = vec![live_sess("a", "claude-code", 100, 100)];
-        // 1 live <= max 5 → no prompt.
+        // 1 个存活 <= max 5 → 不提示。
         assert_eq!(classify_candidate(&sessions, &cfg(5, 5), &vec![]), None);
     }
 
@@ -280,11 +277,11 @@ mod tests {
     fn classify_candidate_skips_never_hibernate_idle_candidate() {
         let vault = vec![ventry("precious", true)];
         let sessions = vec![
-            live_sess("live1", "claude-code", 1, 1), // live active (counts toward trigger)
-            live_sess("live2", "claude-code", 1, 1), // live active
-            live_sess("keep", "precious", 999, 999), // idle but never_hibernate → skipped
+            live_sess("live1", "claude-code", 1, 1), // 存活且活跃(计入触发)
+            live_sess("live2", "claude-code", 1, 1), // 存活且活跃
+            live_sess("keep", "precious", 999, 999), // idle 但 never_hibernate → 跳过
         ];
-        // 2 live (claude-code) > max 1 → trigger; idle candidates: "keep" exempt → none.
+        // 2 个存活(claude-code) > max 1 → 触发;idle 候选:"keep" 已豁免 → 无。
         assert_eq!(classify_candidate(&sessions, &cfg(1, 5), &vault), None);
     }
 
@@ -296,8 +293,8 @@ mod tests {
             live_sess("live2", "claude-code", 1, 1),
         ];
         sessions[0]["hibernated"] = json!(true);
-        // 2 live (live1, live2; "h" hibernated → not live & not idle-candidate) > max 1 →
-        // trigger, but no non-exempt idle candidate → None.
+        // 2 个存活(live1, live2;"h" 已休眠 → 不算存活也不算 idle 候选) > max 1 →
+        // 触发,但没有非豁免的 idle 候选 → None。
         assert_eq!(classify_candidate(&sessions, &cfg(1, 5), &vec![]), None);
     }
 }

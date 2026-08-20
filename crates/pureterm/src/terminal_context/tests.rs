@@ -37,8 +37,8 @@ fn reconnect_marker_writes_into_grid() {
 
 #[test]
 fn reconnect_marker_preserves_prior_content() {
-    // GAP-5.6: the marker is injected into the SAME terminal Arc (scrollback
-    // preserved on reattach), so prior output must survive the injection.
+    // GAP-5.6:标记注入到同一个终端 Arc 中(重连时 scrollback
+    // 得以保留),因此注入前已有的输出必须幸存。
     let term = blank_term();
     {
         let mut parser: ansi::Processor = ansi::Processor::new();
@@ -53,9 +53,9 @@ fn reconnect_marker_preserves_prior_content() {
 
 #[test]
 fn gap13_title_event_forwards_through_bridge() {
-    // GAP-1.3: OSC 0/2 set + CSI 23t pop both route through upstream
-    // `Term::set_title` → `Event::Title`; the bridge must forward it
-    // (previously dropped by the `_ => return` catch-all).
+    // GAP-1.3:OSC 0/2 设置与 CSI 23t 弹出都经上游
+    // `Term::set_title` → `Event::Title` 路由;桥必须转发它
+    // (此前被 `_ => return` 的兜底分支丢弃)。
     let (tx, rx) = bounded::<TerminalEvent>(16);
     let listener = ChannelEventListener::new(tx);
     listener.send_event(alacritty_terminal::event::Event::Title("hello".into()));
@@ -72,8 +72,8 @@ fn gap13_reset_title_event_forwards_through_bridge() {
 
 #[test]
 fn gap13_unmapped_events_still_dropped() {
-    // Events we don't map must still be dropped (regression guard for the
-    // catch-all `_ => return`).
+    // 我们未映射的事件仍必须被丢弃(对
+    // `_ => return` 兜底的回归防护)。
     let (tx, rx) = bounded::<TerminalEvent>(16);
     let listener = ChannelEventListener::new(tx);
     listener.send_event(alacritty_terminal::event::Event::MouseCursorDirty);
@@ -82,8 +82,8 @@ fn gap13_unmapped_events_still_dropped() {
 
 #[test]
 fn gap09_notification_event_forwards_through_bridge() {
-    // GAP-09: OSC 9/99/777 notifications must forward through the bridge
-    // (was dropped by the `_ => return` catch-all — same trap as GAP-15).
+    // GAP-09:OSC 9/99/777 通知必须经桥转发
+    // (曾被 `_ => return` 兜底丢弃——与 GAP-15 同样的陷阱)。
     use alacritty_terminal::event::{Notification, NotifyOccasion, NotifySource};
     let (tx, rx) = bounded::<TerminalEvent>(16);
     let listener = ChannelEventListener::new(tx);
@@ -100,8 +100,8 @@ fn gap09_notification_event_forwards_through_bridge() {
 
 #[test]
 fn gap09_bell_event_forwards_through_bridge() {
-    // GAP-09: bell (0x07) is an additional "needs attention" signal and must
-    // forward (was dropped by the `_ => return` catch-all).
+    // GAP-09:响铃(0x07)是额外的“需要关注”信号,必须
+    // 转发(曾被 `_ => return` 兜底丢弃)。
     let (tx, rx) = bounded::<TerminalEvent>(16);
     let listener = ChannelEventListener::new(tx);
     listener.send_event(alacritty_terminal::event::Event::Bell);

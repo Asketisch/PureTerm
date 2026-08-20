@@ -11,7 +11,7 @@ use syn::{GenericParam, Ident, LitStr, Token, TypeParam};
 mod config_deserialize;
 mod serde_replace;
 
-/// Error message when attempting to flatten multiple fields.
+/// 尝试扁平化多个字段时的错误。
 pub(crate) const MULTIPLE_FLATTEN_ERROR: &str =
     "At most one instance of #[config(flatten)] is supported";
 
@@ -25,7 +25,7 @@ pub fn derive_serde_replace(input: TokenStream) -> TokenStream {
     serde_replace::derive(input)
 }
 
-/// Storage for all necessary generics information.
+/// 存储全部必要泛型信息的容器。
 #[derive(Default)]
 struct GenericsStreams {
     unconstrained: TokenStream2,
@@ -33,17 +33,17 @@ struct GenericsStreams {
     phantoms: TokenStream2,
 }
 
-/// Create the necessary generics annotations.
+/// 创建必要的泛型标注。
 ///
-/// This will create three different token streams, which might look like this:
-///  - unconstrained: `T`
-///  - constrained: `T: Default + Deserialize<'de>`
-///  - phantoms: `T: PhantomData<T>,`
+/// 这会创建三个不同的 token 流,大致如下:
+///  - unconstrained(无约束):`T`
+///  - constrained(受约束):`T: Default + Deserialize<'de>`
+///  - phantoms(幻影):`T: PhantomData<T>,`
 pub(crate) fn generics_streams<T>(params: &Punctuated<GenericParam, T>) -> GenericsStreams {
     let mut generics = GenericsStreams::default();
 
     for generic in params {
-        // NOTE: Lifetimes and const params are not supported.
+        // 注意:不支持生命周期与常量参数。
         if let GenericParam::Type(TypeParam { ident, .. }) = generic {
             generics.unconstrained.extend(quote!( #ident , ));
             generics.constrained.extend(quote! {
@@ -58,7 +58,7 @@ pub(crate) fn generics_streams<T>(params: &Punctuated<GenericParam, T>) -> Gener
     generics
 }
 
-/// Field attribute.
+/// 字段属性。
 pub(crate) struct Attr {
     ident: String,
     param: Option<LitStr>,

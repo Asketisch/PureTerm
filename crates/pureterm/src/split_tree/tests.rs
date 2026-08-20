@@ -72,12 +72,12 @@ fn equalize_all_on_leaf_is_noop() {
     assert!(matches!(tree, SplitNode::Leaf(PaneId(42))));
 }
 
-// ── GAP-6.6: swap_by_ids / detach_leaf (swap-pane / join-pane) ────────
+// ── GAP-6.6: swap_by_ids / detach_leaf(按 id 交换 / 摘除叶子;swap-pane / join-pane) ──
 
 #[test]
 fn swap_by_ids_swaps_two_leaves_anywhere() {
-    let (mut tree, ids) = build_nested(); // DFS order [a, b, c, d, e]
-    assert!(tree.swap_by_ids(ids[0], ids[3])); // swap a ↔ d
+    let (mut tree, ids) = build_nested(); // DFS 顺序 [a, b, c, d, e]
+    assert!(tree.swap_by_ids(ids[0], ids[3])); // 交换 a ↔ d
     assert_eq!(tree.pane_ids(), vec![ids[3], ids[1], ids[2], ids[0], ids[4]]);
 }
 
@@ -108,8 +108,8 @@ fn swap_by_ids_same_id_present_is_noop() {
 
 #[test]
 fn detach_leaf_removes_and_keeps_rest() {
-    let (mut tree, ids) = build_nested(); // 5 panes
-    assert!(tree.detach_leaf(ids[1])); // remove b
+    let (mut tree, ids) = build_nested(); // 5 个窗格
+    assert!(tree.detach_leaf(ids[1])); // 移除 b
     assert_eq!(tree.pane_count(), 4);
     assert!(!tree.contains(ids[1]));
     assert!(tree.contains(ids[0]));
@@ -124,8 +124,8 @@ fn detach_only_leaf_fails() {
 
 #[test]
 fn insert_existing_pane_as_sibling_via_split() {
-    // join-pane target side: `split(at_leaf, existing_pane, dir)` inserts an
-    // external pane as the sibling of at_leaf — split already supports this.
+    // join-pane 目标侧:`split(at_leaf, existing_pane, dir)` 把外部窗格
+    // 作为 at_leaf 的兄弟插入——split 本身已支持这一点。
     let (mut tree, ids) = build_nested();
     let external = PaneId(999);
     assert!(tree.split(ids[2], external, SplitDirection::Vertical));
@@ -185,13 +185,13 @@ fn neighbor_in_order_next_wraps_at_boundary() {
     // 然后 inner_h: ids[2], 然后 inner_v2 (ids[3], ids[4])
     let order = tree.pane_ids();
     assert_eq!(order, vec![ids[0], ids[1], ids[2], ids[3], ids[4]]);
-    // next from last wraps to first
+    // 从最后一个向后移动,回绕到第一个
     assert_eq!(tree.neighbor_in_order(ids[4], 1), Some(ids[0]));
-    // prev from first wraps to last
+    // 从第一个向前移动,回绕到最后一个
     assert_eq!(tree.neighbor_in_order(ids[0], -1), Some(ids[4]));
-    // mid +1
+    // 中间 +1
     assert_eq!(tree.neighbor_in_order(ids[2], 1), Some(ids[3]));
-    // mid -1
+    // 中间 -1
     assert_eq!(tree.neighbor_in_order(ids[2], -1), Some(ids[1]));
 }
 
@@ -230,13 +230,13 @@ fn remove_on_root_leaf_returns_none() {
     assert_eq!(tree.remove(p), None);
 }
 
-/// GAP-5.6: remap rewrites leaf ids while preserving tree shape + ratios.
+/// GAP-5.6: remap 重写叶子 id,同时保持树形与比例不变。
 #[test]
 fn remap_pane_ids_rewrites_leaves() {
     let (mut tree, ids) = build_nested();
     let before = tree.pane_ids();
     let mut mapping = std::collections::HashMap::new();
-    // Shift every id by +1000.
+    // 每个 id 都 +1000。
     for id in &before {
         mapping.insert(*id, PaneId(id.0 + 1000));
     }
@@ -246,13 +246,13 @@ fn remap_pane_ids_rewrites_leaves() {
     for (b, a) in before.iter().zip(after.iter()) {
         assert_eq!(a.0, b.0 + 1000);
     }
-    // Original ids must be gone.
+    // 原始 id 必须消失。
     for id in &ids {
         assert!(!after.contains(id));
     }
 }
 
-/// GAP-5.6: regenerate_split_ids must not disturb pane layout.
+/// GAP-5.6: regenerate_split_ids 不得干扰窗格布局。
 #[test]
 fn regenerate_split_ids_preserves_panes() {
     let (mut tree, _ids) = build_nested();
@@ -262,36 +262,36 @@ fn regenerate_split_ids_preserves_panes() {
     assert_eq!(before, after);
 }
 
-/// GAP-5.6: serialize → deserialize must reconstruct the same leaf order
-/// and a representative ratio (the persistence path for cross-restart
-/// recovery).
+/// GAP-5.6:序列化 → 反序列化必须重建相同的叶子顺序
+/// 并保留具有代表性的比例(这是跨重启恢复的
+/// 持久化路径)。
 #[test]
 fn serde_round_trip_preserves_structure() {
     let (tree, _ids) = build_nested();
     let json = serde_json::to_string(&tree).expect("serialize");
     let back: SplitNode = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(back.pane_ids(), tree.pane_ids());
-    // Root ratio (0.2) survives.
+    // 根比例(0.2)得以保留。
     match &back {
         SplitNode::Split { ratio, .. } => assert!((ratio - 0.2).abs() < 1e-6),
         _ => panic!("root must be a Split"),
     }
 }
 
-// ── GAP-6.6: resize_ratio / find_adjacent (resize-pane / select-pane geom) ──
+// ── GAP-6.6: resize_ratio / find_adjacent(resize-pane / select-pane 几何) ──
 //
-// These two ops back `tmux resize-pane` and the (stubbed) geometric
-// `select-pane -L/-R/-U/-D`. `resize_ratio` was previously untested and
-// `find_adjacent` only exercised indirectly via layout; both are load-
-// bearing for the manual pixel-smoke resize/focus steps.
+// 这两个操作支撑 `tmux resize-pane` 与(桩实现的)几何
+// `select-pane -L/-R/-U/-D`。此前 `resize_ratio` 未测试,
+// `find_adjacent` 仅通过 layout 间接覆盖;两者都是
+// 手动像素冒烟 resize/focus 步骤的关键支撑。
 
-/// `resize_ratio` clamps the shallowest ancestor Split's ratio to
-/// [MIN_RATIO, MAX_RATIO] — a huge delta must not panic or overflow.
+/// `resize_ratio` 把最浅祖先 Split 的比例钳制到
+/// [MIN_RATIO, MAX_RATIO] — 巨大增量也不得 panic 或溢出。
 #[test]
 fn resize_ratio_clamps_to_min_and_max() {
     let (mut tree, ids) = build_nested();
-    // ids[0] sits in root.first → resize_ratio moves the ROOT ratio
-    // (the shallowest ancestor Split containing the pane). Root is 0.2.
+    // ids[0] 位于 root.first → resize_ratio 移动 ROOT 的比例
+    // (包含该窗格的最浅祖先 Split)。根为 0.2。
     let mut ratios = Vec::new();
 
     tree.resize_ratio(ids[0], 100.0);
@@ -304,13 +304,13 @@ fn resize_ratio_clamps_to_min_and_max() {
     assert!((ratios[0] - MIN_RATIO).abs() < 1e-6, "delta < MIN clamps: {}", ratios[0]);
 }
 
-/// A small delta only touches the shallowest Split; deeper splits on the
-/// path are left alone (guards against a future "resize everything" bug).
+/// 小增量只影响最浅的 Split;路径上更深的 split
+/// 保持不变(防止将来出现“把一切 resize 掉”的 bug)。
 #[test]
 fn resize_ratio_small_delta_only_touches_shallowest_split() {
     let (mut tree, ids) = build_nested();
-    // [root=0.2, inner_v1=0.3, inner_h=0.7, inner_v2=0.4]
-    tree.resize_ratio(ids[0], 0.1); // root 0.2 → 0.3
+    // 比例:[root=0.2, inner_v1=0.3, inner_h=0.7, inner_v2=0.4]
+    tree.resize_ratio(ids[0], 0.1); // 根 0.2 → 0.3
     let mut ratios = Vec::new();
     collect_ratios(&tree, &mut ratios);
     assert!((ratios[0] - 0.3).abs() < 1e-6, "root ratio moved: {}", ratios[0]);
@@ -318,11 +318,11 @@ fn resize_ratio_small_delta_only_touches_shallowest_split() {
     assert!((ratios[2] - 0.7).abs() < 1e-6, "unrelated inner_h unchanged: {}", ratios[2]);
 }
 
-/// `find_adjacent` returns the geometric neighbor in the matching split
-/// direction (the op behind `select-pane -L/-R/-U/-D`).
+/// `find_adjacent` 返回匹配分割方向上的几何邻居
+/// (即 `select-pane -L/-R/-U/-D` 背后的操作)。
 #[test]
 fn find_adjacent_returns_neighbor_in_matching_direction() {
-    // build_nested: H[ V[a,b], H[c, V[d,e]] ]
+    // 树形 build_nested: H[ V[a,b], H[c, V[d,e]] ]
     let (tree, ids) = build_nested();
     // a 的水平(右)邻居:跨根 H 分割线 → c (root.second.first_pane)
     assert_eq!(tree.find_adjacent(ids[0], SplitDirection::Horizontal), Some(ids[2]));
@@ -332,8 +332,8 @@ fn find_adjacent_returns_neighbor_in_matching_direction() {
     assert_eq!(tree.find_adjacent(ids[2], SplitDirection::Horizontal), Some(ids[1]));
 }
 
-/// When no Split exists in the requested direction, `find_adjacent`
-/// returns None (the pane is on that edge of the layout).
+/// 当请求方向上不存在 Split 时,`find_adjacent`
+/// 返回 None(该窗格位于布局的边缘)。
 #[test]
 fn find_adjacent_none_when_no_split_in_that_direction() {
     // 纯水平树:无垂直分割,任何 pane 的 Vertical 邻居为 None
@@ -348,10 +348,10 @@ fn find_adjacent_none_when_no_split_in_that_direction() {
     assert_eq!(tree.find_adjacent(PaneId(1), SplitDirection::Horizontal), Some(PaneId(2)));
 }
 
-/// join-pane tree op sequence: detach a leaf from tree A (collapsing its
-/// parent Split) and insert it as a sibling in tree B. Both trees must
-/// remain valid; A keeps ≥1 pane. This is the split-tree half of
-/// `apply_attach_pane` (the Arc-follows half is in `join_pane_e2e`).
+/// join-pane 树操作序列:从树 A 分离叶子(折叠其父
+/// Split)并作为兄弟插入树 B。两棵树都必须保持有效;
+/// 有效;A 至少保留 1 个窗格。这是 `apply_attach_pane` 的
+/// 树一半(`Arc` 跟随的一半在 `join_pane_e2e` 中)。
 #[test]
 fn remove_then_split_into_other_tree_yields_valid_shape() {
     let a = PaneId(10);

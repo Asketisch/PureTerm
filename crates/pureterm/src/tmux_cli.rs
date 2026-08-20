@@ -1,20 +1,20 @@
-//! GAP-6.6: `pureterm tmux <command>` — a tmux-compatible command subset.
+//! GAP-6.6:`pureterm tmux <command>` —— 与 tmux 兼容的命令子集。
 //!
-//! Each command maps onto the existing pane/surface Socket API (and the daemon
-//! for `pipe-pane` / `wait-for`). Target syntax (the `-t` / `-s` flags) is a
-//! deliberately small subset of tmux's:
-//!   - omitted            → active pane
-//!   - `%N`               → pane whose id is `N`; if none has id `N`, falls back
-//!                           to the N-th pane in DFS order (so `%0` always hits
-//!                           the first pane, matching the DoD)
-//!   - `:+` / `:-`        → next / previous pane (DFS order)
-//!   - `session:win.pane` → out of scope (the full tmux grammar is not parsed)
+//! 每条命令映射到现有的 pane/surface Socket API(而 `pipe-pane` /
+//! `wait-for` 则走守护进程)。目标语法(`-t` / `-s` 标志)是有意
+//! 收敛的 tmux 子集:
+//!   - 省略              → 活跃窗格
+//!   - `%N`               → id 为 `N` 的窗格;若不存在,则回退到
+//!                           DFS 序第 N 个窗格(因此 `%0` 总是命中
+//!                           第一个窗格,符合 DoD 验收标准)
+//!   - `:+` / `:-`        → 下一个 / 上一个窗格(DFS 序)
+//!   - `session:win.pane` → 不在范围内(不解析完整 tmux 语法)
 //!
-//! Phase 1 (implemented arms): capture-pane, list-panes, send-keys,
-//! split-window, kill-pane, select-pane (next/prev), display-message.
-//! Phase 2 (resize/swap/break/select-layout), phase 3 (join-pane) and phase 4
-//! (pipe-pane/wait-for, daemon-backed) are wired into the CLI parser but return
-//! a "not yet implemented" error until their phases land.
+//! 阶段 1(已实现分支):capture-pane、list-panes、send-keys、
+//! split-window、kill-pane、select-pane(下一个/上一个)、display-message。
+//! 阶段 2(resize/swap/break/select-layout)、阶段 3(join-pane)与阶段 4
+//! (pipe-pane/wait-for,守护进程支撑)已接入 CLI 解析器,但
+//! 在其对应阶段落地前会返回“尚未实现”的错误。
 //!
 //! ## 模块布局(行数管控:甜点区 200–400 行,警戒线 500 行)
 //!

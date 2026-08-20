@@ -1,31 +1,31 @@
-//! GAP-45: Auto-update — Sparkle / GitHub Releases check.
+//! GAP-45:自动更新——Sparkle / GitHub Releases 检查。
 //!
-//! Provides:
-//! - [`AutoUpdateConfig`] — TOML schema (`[update]`).
-//! - [`check_for_updates`] — synchronous fast-path: compares the current
-//!   build's `CARGO_PKG_VERSION` against the most recently seen
-//!   `PURETERM_LATEST_VERSION` env var (handy for CI smoke tests).
-//! - [`check_remote_async`] — async GitHub Releases fetch via `reqwest`,
-//!   guarded behind a feature check (returns a stub when offline).
-//! - [`semver_less`] — simple semver comparator used to decide which
-//!   release is "newer" without pulling a full semver crate.
+//! 提供:
+//! - [`AutoUpdateConfig`] — TOML 配置(`[update]`)。
+//! - [`check_for_updates`] — 同步快速路径:比较当前
+//!   构建的 `CARGO_PKG_VERSION` 与最近一次看到的
+//!   `PURETERM_LATEST_VERSION` 环境变量(方便 CI 冒烟测试)。
+//! - [`check_remote_async`] — 经 `reqwest` 的异步 GitHub Releases 抓取,
+//!   由特性检查守卫(离线时返回桩)。
+//! - [`semver_less`] — 用于判断哪个发布「更新」的简单 semver 比较器,
+//!   无需引入完整 semver crate。
 //!
-//! Sparkle integration (macOS) is intentionally deferred — the scaffold
-//! documents the seam (`feed_url` / `channel`) but does not link the
-//! framework yet.
+//! Sparkle 集成(macOS)有意推迟——脚手架
+//! 只记录接缝(`feed_url` / `channel`),尚未链接
+//! 该框架。
 
 use serde::{Deserialize, Serialize};
 
-/// `[update]` config.
+/// `[update]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AutoUpdateConfig {
     pub enabled: bool,
     pub auto_check: bool,
     /// `stable` | `beta`
     pub channel: String,
-    /// GitHub Releases endpoint or AppCast feed URL.
-    /// Defaults to `https://api.github.com/repos/CNB/PureTerm/releases/latest`
-    /// when empty.
+    /// GitHub Releases 端点或 AppCast feed URL。
+    /// 默认为 `https://api.github.com/repos/CNB/PureTerm/releases/latest`
+    /// 为空时使用该默认值。
     pub feed_url: String,
 }
 
@@ -44,8 +44,8 @@ pub const DEFAULT_FEED_URL: &str =
     "https://api.github.com/repos/CNB/PureTerm/releases/latest";
 
 impl AutoUpdateConfig {
-    /// Returns the effective feed URL, falling back to the GitHub Releases
-    /// default when [`feed_url`](Self::feed_url) is empty.
+    /// 返回生效的 feed URL,当 [`feed_url`](Self::feed_url) 为空时
+    /// 回退到 GitHub Releases 默认值。
     pub fn effective_feed_url(&self) -> &str {
         if self.feed_url.is_empty() {
             DEFAULT_FEED_URL
@@ -62,9 +62,9 @@ pub struct UpdateCheckResult {
     pub message: String,
 }
 
-/// Compare `a` and `b` as dotted `MAJOR.MINOR.PATCH` semver tuples.
-/// Returns `true` when `a < b`. Pre-release / build metadata suffixes are
-/// ignored — this is intentionally a minimal comparator for the update flow.
+/// 把 `a` 与 `b` 作为点分 `MAJOR.MINOR.PATCH` semver 元组比较。
+/// 当 `a < b` 时返回 `true`。预发布 / 构建元数据后缀被忽略——
+/// 这是为更新流程有意保留的最小比较器。
 pub fn semver_less(a: &str, b: &str) -> bool {
     let parse = |s: &str| -> Vec<u64> {
         s.split('.')
@@ -92,10 +92,10 @@ pub fn semver_less(a: &str, b: &str) -> bool {
     false
 }
 
-/// Synchronous fast-path: inspects the current build's `CARGO_PKG_VERSION`
-/// against the most recently seen `PURETERM_LATEST_VERSION` env var. When
-/// `cfg.feed_url` is set, the message hints that a remote check should be
-/// run via [`check_remote_async`].
+/// 同步快速路径:检查当前构建的 `CARGO_PKG_VERSION`
+/// 与最近一次看到的 `PURETERM_LATEST_VERSION` 环境变量。当
+/// `cfg.feed_url` 已设置时,消息提示应经 [`check_remote_async`]
+/// 运行远程检查。
 pub fn check_for_updates(cfg: &AutoUpdateConfig) -> UpdateCheckResult {
     let current = env!("CARGO_PKG_VERSION").to_string();
     if !cfg.enabled {
@@ -135,8 +135,8 @@ pub fn check_for_updates(cfg: &AutoUpdateConfig) -> UpdateCheckResult {
     }
 }
 
-/// Subset of the GitHub Releases API we care about. Defined locally so
-/// deserialization does not depend on unstable API surface.
+/// 我们关心的 GitHub Releases API 子集。本地定义,使
+/// 反序列化不依赖不稳定的 API 面。
 #[derive(Clone, Debug, Deserialize)]
 struct GitHubRelease {
     tag_name: String,
@@ -146,7 +146,7 @@ struct GitHubRelease {
     prerelease: bool,
 }
 
-/// Result of an async remote check.
+/// 异步远端检查的结果。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RemoteCheckResult {
     pub current_version: String,
@@ -155,10 +155,10 @@ pub struct RemoteCheckResult {
     pub source_url: String,
 }
 
-/// Async GitHub Releases check. Uses `reqwest` (already a workspace
-/// dependency). When the request fails — no network, rate-limited, etc. —
-/// the result's `latest_version` is `None` rather than an error so the
-/// caller can fall back to the synchronous check.
+/// 异步 GitHub Releases 检查。使用 `reqwest`(已是工作区
+/// 依赖)。当请求失败(无网络、限流等)时,
+/// 结果的 `latest_version` 为 `None` 而非报错,以便
+/// 调用方可回退到同步检查。
 pub async fn check_remote_async(cfg: &AutoUpdateConfig) -> RemoteCheckResult {
     let current = env!("CARGO_PKG_VERSION").to_string();
     let url = cfg.effective_feed_url().to_string();
@@ -201,7 +201,7 @@ pub async fn check_remote_async(cfg: &AutoUpdateConfig) -> RemoteCheckResult {
             source_url: url,
         };
     };
-    // Skip drafts and pre-releases on the stable channel.
+    // 在 stable 频道上跳过草稿与预发布。
     let skip = release.draft || (cfg.channel == "stable" && release.prerelease);
     let tag = release.tag_name.trim_start_matches('v').to_string();
     let update_available = !skip && semver_less(&current, &tag);
@@ -235,7 +235,7 @@ mod tests {
     #[test]
     fn semver_less_handles_v_prefix_and_suffix() {
         assert!(semver_less("v0.1.0", "v0.1.1"));
-        assert!(!semver_less("0.1.0-rc1", "0.1.0")); // comparator strips pre-release suffix
+        assert!(!semver_less("0.1.0-rc1", "0.1.0")); // 比较器会剥离预发布后缀
     }
 
     #[test]
@@ -261,8 +261,8 @@ mod tests {
             enabled: true,
             ..AutoUpdateConfig::default()
         };
-        // Without PURETERM_LATEST_VERSION env var, message should not claim
-        // an update is available.
+        // 未设置 PURETERM_LATEST_VERSION 环境变量时,消息不应声称
+        // 有可用更新。
         let r = check_for_updates(&cfg);
         if let Some(latest) = &r.latest_available {
             assert_ne!(latest, &r.current_version);

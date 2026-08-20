@@ -1,20 +1,20 @@
-//! GAP-4.6: VoiceOver / accessibility announcements.
+//! GAP-4.6:VoiceOver / 无障碍播报。
 //!
-//! **macOS** path: real `NSAccessibilityPostNotification` calls that drive
-//! VoiceOver. The standard announcement recipe is to post
-//! `NSAccessibilityAnnouncementRequestedNotification` with a user-info
-//! dictionary whose `NSAccessibilityAnnouncementKey` is the text to speak.
-//! We dispatch to the app via `NSApp` (the main application object) which
-//! is reachable from any thread that has scheduled the run loop.
+//! **macOS** 路径:真正的 `NSAccessibilityPostNotification` 调用,驱动
+//! VoiceOver。标准播报做法是发布
+//! `NSAccessibilityAnnouncementRequestedNotification`,其 user-info
+//! 字典里的 `NSAccessibilityAnnouncementKey` 即待朗读文本。
+//! 我们经由 `NSApp`(主应用对象)派发给应用,它
+//! 从任何已调度 run loop 的线程都可到达。
 //!
-//! **Other platforms**: log-only fallback (Visual / NVDA users typically
-//! pair PureTerm with platform-native screen readers that read from the
-//! terminal anyway, so we do not duplicate that work here).
+//! **其他平台**:仅日志兜底(Visual / NVDA 用户通常
+//! 会把 PureTerm 与平台原生读屏器配对,后者直接从
+//! 终端朗读,因此这里不重复实现)。
 //!
-//! **Widget-level a11y**: iced 0.14 does not yet expose `widget::accessible()`.
-//! The per-widget label sweep is tracked under the same spec and will land
-//! when iced's a11y API stabilises; the structured announcement helpers
-//! below are what actually drive VoiceOver today.
+//! **组件级 a11y**:iced 0.14 尚未暴露 `widget::accessible()`。
+//! 逐个组件的标签清扫在同一 spec 下跟踪,将在
+//! iced 的 a11y API 稳定后落地;下方这些结构化播报辅助函数
+//! 才是当前真正驱动 VoiceOver 的部分。
 
 use std::sync::Mutex;
 
@@ -28,17 +28,17 @@ use objc2_app_kit::{
 #[cfg(target_os = "macos")]
 use objc2_foundation::{NSDictionary, NSString};
 
-/// `[accessibility]` config.
+/// `[accessibility]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AccessibilityConfig {
     pub enabled: bool,
     pub announce_tab_changes: bool,
     pub announce_notifications: bool,
-    /// Announce pane split / resize / focus events.
+    /// 播报窗格的分割 / 调整大小 / 聚焦事件。
     pub announce_pane_changes: bool,
-    /// Announce command palette open / close + result count.
+    /// 播报命令面板的打开 / 关闭以及结果数量。
     pub announce_command_palette: bool,
-    /// Announce status-bar updates (cwd / git branch / process name).
+    /// 播报状态栏更新(cwd / git 分支 / 进程名)。
     pub announce_status_bar: bool,
 }
 
@@ -62,12 +62,12 @@ pub struct AccessibilityState {
 }
 
 impl AccessibilityState {
-    /// Maximum number of historical announcements to retain for tests and
-    /// for the in-app AX log overlay.
+    /// 历史播报的最大保留条数,用于测试和
+    /// 应用内 AX 日志浮层。
     const HISTORY_LIMIT: usize = 32;
 
-    /// Speak / log a generic accessibility message. Respects
-    /// `cfg.enabled`; safe to call from any thread.
+    /// 朗读 / 记录一条通用无障碍消息。遵循
+    /// `cfg.enabled`;可从任意线程安全调用。
     pub fn announce(&mut self, cfg: &AccessibilityConfig, message: &str) {
         if !cfg.enabled || message.is_empty() {
             return;
@@ -79,7 +79,7 @@ impl AccessibilityState {
         log::debug!("accessibility: {message}");
     }
 
-    /// Announce a tab switch. Format: `"Switched to Tab N: <title>"`.
+    /// 播报标签页切换。格式:`"Switched to Tab N: <title>"`。
     pub fn announce_tab_change(&mut self, cfg: &AccessibilityConfig, index: usize, title: &str) {
         if !cfg.announce_tab_changes {
             return;
@@ -88,8 +88,8 @@ impl AccessibilityState {
         self.announce(cfg, &label);
     }
 
-    /// Announce a pane split. `axis` is `"vertically"` or `"horizontally"`,
-    /// `count` is the total number of panes after the split.
+    /// 播报窗格分割。`axis` 为 `"vertically"` 或 `"horizontally"`,
+    /// `count` 是分割后的窗格总数。
     pub fn announce_split(&mut self, cfg: &AccessibilityConfig, axis: &str, count: usize) {
         if !cfg.announce_pane_changes {
             return;
@@ -98,7 +98,7 @@ impl AccessibilityState {
         self.announce(cfg, &msg);
     }
 
-    /// Announce a pane focus change (cursor moved into a different pane).
+    /// 播报窗格焦点变化(光标移入另一窗格)。
     pub fn announce_pane_focus(&mut self, cfg: &AccessibilityConfig, pane_index: usize) {
         if !cfg.announce_pane_changes {
             return;
@@ -107,8 +107,8 @@ impl AccessibilityState {
         self.announce(cfg, &msg);
     }
 
-    /// Announce the command palette opening or its result count.
-    /// `phase` is `"opened"`, `"closed"`, or `"results"`.
+    /// 播报命令面板的打开或结果数量。
+    /// `phase` 为 `"opened"`、`"closed"` 或 `"results"`。
     pub fn announce_command_palette(
         &mut self,
         cfg: &AccessibilityConfig,
@@ -128,8 +128,8 @@ impl AccessibilityState {
         self.announce(cfg, &msg);
     }
 
-    /// Announce a status-bar update. `summary` is a short human-readable
-    /// description, e.g. `"main branch, SSH connected"`.
+    /// 播报状态栏更新。`summary` 是简短的人类可读
+    /// 描述,例如 `"main branch, SSH connected"`。
     pub fn announce_status_bar(&mut self, cfg: &AccessibilityConfig, summary: &str) {
         if !cfg.announce_status_bar {
             return;
@@ -138,8 +138,8 @@ impl AccessibilityState {
         self.announce(cfg, &msg);
     }
 
-    /// Announce a generic notification toast. Skipped when
-    /// `cfg.announce_notifications` is false.
+    /// 播报通用通知弹窗。当
+    /// `cfg.announce_notifications` 为 false 时跳过。
     pub fn announce_notification(&mut self, cfg: &AccessibilityConfig, text: &str) {
         if !cfg.announce_notifications {
             return;
@@ -156,23 +156,23 @@ impl AccessibilityState {
     }
 }
 
-/// Build a tab description following the spec format: `"Tab 1: bash - ~/Projects"`.
+/// 按规范格式构造标签页描述:`"Tab 1: bash - ~/Projects"`。
 pub fn label_for_tab(index: usize, title: &str) -> String {
     format!("Switched to Tab {}: {}", index + 1, title)
 }
 
-// ---------------- macOS-only: real NSAccessibilityPostNotification ----------------
+// ---------------- macOS 专用:真正的 NSAccessibilityPostNotification ----------------
 
 #[cfg(target_os = "macos")]
 static NSAPP_LOCK: Mutex<()> = Mutex::new(());
 
 #[cfg(target_os = "macos")]
 fn post_announcement(message: &str) {
-    // We hold a short-lived mutex to make sure concurrent announce() calls
-    // don't race on the NSString -> NSDictionary build (the Foundation
-    // collections are not Send). The actual AppKit call is thread-safe
-    // per Apple docs as long as it runs on the main thread; we
-    // additionally guard with is_main_thread().
+    // 我们持有一个短命互斥锁,确保并发的 announce() 调用
+    // 不会在 NSString -> NSDictionary 的构建上竞争(Foundation
+    // 集合不是 Send)。实际的 AppKit 调用是线程安全的,
+    // 按 Apple 文档,只要在主线程上运行即可;我们
+    // 还额外用 is_main_thread() 做了守卫。
     let _g = match NSAPP_LOCK.lock() {
         Ok(g) => g,
         Err(p) => p.into_inner(),
@@ -235,8 +235,8 @@ impl RetainedDictionary {
             let alloc: *mut AnyObject = objc2::msg_send![cls, alloc];
             let dict: *mut AnyObject = objc2::msg_send![alloc, init];
             let _: () = objc2::msg_send![&*dict, setObject: &*value, forKey: &*key];
-            // NSDictionary<K, V> defaults V=AnyObject when K is provided,
-            // which is exactly what we want for the user-info dict.
+            // NSDictionary<K, V> 在提供了 K 时默认 V=AnyObject,
+            // 这正是我们想要的 user-info 字典类型。
             let typed: *mut NSDictionary<NSString> = std::mem::transmute(dict);
             RetainedDictionary(objc2::rc::Retained::retain(typed).expect("retain dict"))
         }

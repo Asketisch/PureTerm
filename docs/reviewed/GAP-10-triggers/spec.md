@@ -1,6 +1,6 @@
 ---
 gap: GAP-10
-title: Triggers
+title: 触发器
 category: 终端交互
 plan_type: feature
 priority: P1

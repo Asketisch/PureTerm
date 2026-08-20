@@ -1,6 +1,6 @@
-# PureTerm VS Code terminal-compatible keymap
-# Aligns with VS Code's integrated terminal shortcuts.
-# Usage: pureterm shortcuts preset vscode
+# PureTerm VS Code 终端兼容键位方案
+# 对齐 VS Code 集成终端的快捷键。
+# 用法:pureterm shortcuts preset vscode
 
 [[keyboard.bindings]]
 key = "t"
@@ -22,7 +22,7 @@ key = "{"
 mods = "Command"
 action = "PrevTab"
 
-# VS Code: ⌘\ split terminal
+# VS Code:⌘\ 分屏终端
 [[keyboard.bindings]]
 key = "\\"
 mods = "Command"
@@ -38,8 +38,8 @@ key = "Enter"
 mods = "Command|Shift"
 action = "ToggleZoom"
 
-# VS Code: focus panes with ⌘⌥ arrow
-# (already in defaults via Cmd+Option+Arrow → PaneFocusAdjacent)
+# VS Code:⌘⌥ 方向键聚焦窗格
+# (默认已含,经 Cmd+Option+Arrow → PaneFocusAdjacent)
 
 [[keyboard.bindings]]
 key = "v"

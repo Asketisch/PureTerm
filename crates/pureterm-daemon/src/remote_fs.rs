@@ -1,21 +1,21 @@
-//! GAP-43: directory listing and file read for local and SSH daemon sessions.
+//! GAP-43:本地与 SSH 守护会话的目录列举与文件读取。
 //!
-//! Local sessions use `std::fs::read_dir`. SSH sessions reuse the per-session
-//! OpenSSH ControlMaster socket (`ssh -S … host ls -1p`) — no separate remote
-//! binary or protobuf channel yet.
+//! 本地会话用 `std::fs::read_dir`。SSH 会话复用每会话的
+//! OpenSSH ControlMaster socket(`ssh -S … host ls -1p`)——暂无独立
+//! 远端二进制或 protobuf 通道。
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Default max bytes for `remote.read` previews.
+/// `remote.read` 预览的默认字节上限。
 pub const READ_MAX_BYTES: u64 = 65_536;
-/// Default max bytes for `remote.write`.
+/// `remote.write` 的默认字节上限。
 pub const WRITE_MAX_BYTES: u64 = 65_536;
-/// Max paths returned by `remote.find`.
+/// `remote.find` 返回的路径上限。
 pub const FIND_MAX_RESULTS: usize = 100;
 
-/// Text payload from `remote.read`.
+/// `remote.read` 的文本载荷。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileReadResult {
     pub path: String,
@@ -25,31 +25,31 @@ pub struct FileReadResult {
     pub size: Option<u64>,
 }
 
-/// One directory entry returned by `remote.listdir`.
+/// `remote.listdir` 返回的一个目录条目。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FileEntry {
     pub name: String,
     pub is_dir: bool,
-    /// Byte size when known (files only for the SSH `ls -1p` path).
+    /// 已知时的字节大小(SSH `ls -1p` 路径仅文件有)。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub size: Option<u64>,
 }
 
-/// One path match from `remote.find`.
+/// `remote.find` 的一条路径匹配。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FindMatch {
     pub path: String,
     pub is_dir: bool,
 }
 
-/// SSH connection metadata stored on daemon-owned SSH sessions.
+/// 存在守护进程所属 SSH 会话上的 SSH 连接元数据。
 #[derive(Debug, Clone)]
 pub struct SshSessionMeta {
     pub control_socket: PathBuf,
     pub host: String,
 }
 
-/// Reject paths that would break out of a single shell argument.
+/// 拒绝可能破坏单 shell 参数约束的路径。
 fn validate_remote_path(path: &str) -> io::Result<()> {
     if path.is_empty() {
         return Ok(());
@@ -67,7 +67,7 @@ fn shell_single_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
-/// List a local directory (absolute or relative path).
+/// 列举本地目录(绝对或相对路径)。
 pub fn list_local_dir(path: &Path) -> io::Result<Vec<FileEntry>> {
     let mut entries = Vec::new();
     for ent in std::fs::read_dir(path)? {
@@ -89,7 +89,7 @@ pub fn list_local_dir(path: &Path) -> io::Result<Vec<FileEntry>> {
     Ok(entries)
 }
 
-/// List a remote directory via an existing ControlMaster socket.
+/// 经既有 ControlMaster socket 列举远端目录。
 pub fn list_remote_dir(
     control_socket: &Path,
     host: &str,
@@ -146,7 +146,7 @@ pub fn list_remote_dir(
     Ok(entries)
 }
 
-/// Read a local file as UTF-8 text (lossy), capped at `max_bytes`.
+/// 把本地文件按 UTF-8 文本(有损)读取,上限 `max_bytes`。
 pub fn read_local_file(path: &str, max_bytes: u64) -> io::Result<FileReadResult> {
     validate_remote_path(path)?;
     let p = if path.is_empty() { "." } else { path };
@@ -162,7 +162,7 @@ pub fn read_local_file(path: &str, max_bytes: u64) -> io::Result<FileReadResult>
     })
 }
 
-/// Read a remote file via ControlMaster (`head -c` for size cap).
+/// 经 ControlMaster 读远端文件(`head -c` 限长)。
 pub fn read_remote_file(
     control_socket: &Path,
     host: &str,
@@ -212,7 +212,7 @@ pub fn read_remote_file(
     })
 }
 
-/// Write a local text file (creates or truncates).
+/// 写本地文本文件(创建或截断)。
 pub fn write_local_file(path: &str, content: &str) -> io::Result<()> {
     validate_remote_path(path)?;
     if content.len() as u64 > WRITE_MAX_BYTES {
@@ -225,7 +225,7 @@ pub fn write_local_file(path: &str, content: &str) -> io::Result<()> {
     std::fs::write(p, content.as_bytes())
 }
 
-/// Write a remote text file via `ssh -S … cat > path`.
+/// 经 `ssh -S … cat > path` 写远端文本文件。
 pub fn write_remote_file(
     control_socket: &Path,
     host: &str,
@@ -293,7 +293,7 @@ fn parse_find_lines(base: &str, stdout: &str, max: usize) -> Vec<FindMatch> {
     out
 }
 
-/// Find file/dir names under `base` matching `query` (case-insensitive glob).
+/// 在 `base` 下查找匹配 `query` 的文件/目录名(不区分大小写 glob)。
 pub fn find_local(base: &str, query: &str, max: usize) -> io::Result<Vec<FindMatch>> {
     validate_remote_path(base)?;
     if query.is_empty() {
@@ -332,7 +332,7 @@ pub fn find_local(base: &str, query: &str, max: usize) -> io::Result<Vec<FindMat
     ))
 }
 
-/// Find remote paths via ControlMaster + `find`.
+/// 经 ControlMaster + `find` 查找远端路径。
 pub fn find_remote(
     control_socket: &Path,
     host: &str,

@@ -254,7 +254,7 @@ fn build_layout_snapshot_captures_all_windows_and_workspaces() {
     assert_eq!(captured_det_url, Some("https://detached.example"), "detached pane url 被捕获");
 }
 
-/// GAP-21: Dock menu MRU list keeps most recent workspace first, capped at 10.
+/// GAP-21: Dock 菜单的 MRU 列表把最近使用的工作区放在最前,最多保留 10 个。
 #[test]
 fn touch_recent_workspace_mru_order() {
     use crate::iced_app::{touch_recent_workspace, WorkspaceId};

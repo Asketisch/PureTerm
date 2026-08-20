@@ -1,38 +1,38 @@
-//! OSC 133 shell-integration environment injection (GAP-15, t-core-shell-integ).
+//! OSC 133 shell 集成的环境注入(GAP-15,t-core-shell-integ)。
 //!
-//! Builds on [`crate::osc7`] (OSC 7 cwd reporting): [`prepare_shell_env`] returns
-//! the OSC 7 env *plus* hooks that emit FinalTerm OSC 133 prompt/command/output
-//! marks (A/B/C/D) so the terminal can track commands, exit codes, and
-//! durations — the context the AI panel / MCP `get_shell_context` consumes.
+//! 构建在 [`crate::osc7`](OSC 7 cwd 上报)之上:[`prepare_shell_env`] 返回
+//! OSC 7 环境*外加*发出 FinalTerm OSC 133 提示符/命令/输出
+//! 标记(A/B/C/D)的钩子,使终端能跟踪命令、退出码与
+//! 时长——这正是 AI 面板 / MCP `get_shell_context` 消费的上下文。
 //!
-//! Like `osc7`, injection is via `tty::Options::env` (ZDOTDIR bootstrap for zsh,
-//! `PROMPT_COMMAND` for bash) rather than mutating the spawner's env, to avoid
-//! races across concurrent sessions and leaking the temp ZDOTDIR.
+//! 与 `osc7` 一样,注入经 `tty::Options::env`(zsh 用 ZDOTDIR 引导,bash
+//! 用 `PROMPT_COMMAND`)而非改拉起方的环境,以避免
+//! 并发会话间的竞态与临时 ZDOTDIR 泄漏。
 //!
-//! ## Shells covered (t-core-shell-integ)
+//! ## 覆盖的 shell(t-core-shell-integ)
 //!
-//! - **zsh** — ZDOTDIR bootstrap + `add-zsh-hook` for chpwd / preexec / precmd.
-//! - **bash** — `PROMPT_COMMAND` + a `DEBUG` trap for command-start (B).
-//! - **fish** — universal variable `_pt_osc7` registered on the
-//!   [`fish_prompt`](https://fishshell.com/docs/current/language.html#fish_prompt)
-//!   event, and `fish_preexec` for B. Sourced via the `XDG_CONFIG_HOME/fish/
-//!   conf.d/00_pureterm.fish` shim (the spawner writes the file there).
-//! - **nushell** — an `config.nu` overlay that appends a `let-prompt` hook
-//!   (`_pt_osc7` for CWD, `_pt_prompt_marks` for OSC 133). Written to a temp
-//!   dir; the real config is sourced first via `source ~/.config/nushell/
-//!   config.nu`.
-//! - **elvish** — an `edit:after-command` hook + a `edit:before-readline`
-//!   prompt hook. The overlay is appended to the real `rc.elv` via a
-//!   `source` indirection.
-//! - **PowerShell** — a `prompt` function override written to a temp
-//!   `Microsoft.PowerShell_profile.ps1`; the real `$PROFILE` is dot-sourced
-//!   first. `Set-PSDebug -Trace 1` is used in lieu of bash's DEBUG trap
-//!   for command-start (B).
+//! - **zsh**——ZDOTDIR 引导 + 面向 chpwd / preexec / precmd 的 `add-zsh-hook`。
+//! - **bash**——`PROMPT_COMMAND` + 命令起始(B)的 `DEBUG` trap。
+//! - **fish**——在 [`fish_prompt`](https://fishshell.com/docs/current/language.html#fish_prompt)
+//!   事件上注册全局变量 `_pt_osc7`,B 用 `fish_preexec`。经
+//!   `XDG_CONFIG_HOME/fish/conf.d/00_pureterm.fish` 垫片 source(拉起方把文件写到那里)。
+//!   
+//! - **nushell**——一个 `config.nu` 覆盖层,追加 `let-prompt` 钩子
+//!  (CWD 用 `_pt_osc7`,OSC 133 用 `_pt_prompt_marks`)。写入临时
+//!   目录;真实配置先经 `source ~/.config/nushell/
+//!   config.nu` 加载。
+//! - **elvish**——`edit:after-command` 钩子 + `edit:before-readline`
+//!   提示符钩子。覆盖层经 `source` 间接追加到真实 `rc.elv`。
+//!   
+//! - **PowerShell**——写到临时 `Microsoft.PowerShell_profile.ps1` 的
+//!   `prompt` 函数覆盖;真实 `$PROFILE` 先被 dot-source。
+//!   命令起始(B)用 `Set-PSDebug -Trace 1` 替代 bash 的 DEBUG trap。
+//!   命令起始(B)用它。
 
 use std::collections::{HashMap, HashSet};
 
-/// The shell we inject into. Order is the `clap` value order for any CLI
-/// surface that takes `--shell`; enum-stable across releases (GAP-49).
+/// 我们注入的目标 shell。顺序即任何接受 `--shell` 的 CLI
+/// 表面上 `clap` 的取值顺序;跨版本保持枚举稳定(GAP-49)。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Shell {
@@ -45,8 +45,8 @@ pub enum Shell {
 }
 
 impl Shell {
-    /// Detect from `SHELL` env var, falling back to the basename of the
-    /// argv[0] of the spawner. Returns `None` if no confident match.
+    /// 从 `SHELL` 环境变量检测,回退到拉起方 argv[0] 的
+    /// 基名。没有可信匹配时返回 `None`。
     pub fn detect(shell_arg: Option<&str>) -> Option<Self> {
         let s = shell_arg.unwrap_or("sh").to_ascii_lowercase();
         if s.contains("zsh") {
@@ -82,9 +82,9 @@ impl std::str::FromStr for Shell {
     }
 }
 
-/// Per-shell integration toggles. In v1 we keep this as a flat
-/// `HashSet<Shell>` (every supported shell on by default); the planned
-/// per-shell config block expands it later.
+/// 每 shell 的集成开关。v1 中保持为扁平的
+/// `HashSet<Shell>`(默认开启所有受支持的 shell);规划中的
+/// 每 shell 配置块稍后扩展它。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ShellIntegrationOpts {
     pub shells: HashSet<Shell>,
@@ -101,12 +101,12 @@ impl Default for ShellIntegrationOpts {
 }
 
 impl ShellIntegrationOpts {
-    /// All supported shells on.
+    /// 开启所有受支持的 shell。
     pub fn all_on() -> Self {
         Self::default()
     }
 
-    /// Zsh + Bash only (the v0 surface, kept for backward-compat).
+    /// 仅 Zsh + Bash(v0 表面,为向后兼容保留)。
     pub fn zsh_and_bash() -> Self {
         Self {
             shells: [Shell::Zsh, Shell::Bash].into_iter().collect(),
@@ -118,20 +118,20 @@ impl ShellIntegrationOpts {
     }
 }
 
-/// Combined zsh bootstrap written to the temp `ZDOTDIR/.zshenv`. Restores the
-/// real `ZDOTDIR` (so the user's `.zshrc` etc. load normally), defines the OSC 7
-/// + OSC 133 helpers, and registers `preexec`/`precmd`/`chpwd` hooks.
+/// 写入临时 `ZDOTDIR/.zshenv` 的合并 zsh 引导。恢复真实
+/// `ZDOTDIR`(使用户的 `.zshrc` 等正常加载),定义 OSC 7
+/// + OSC 133 辅助函数,并注册 `preexec`/`precmd`/`chpwd` 钩子。
 ///
-/// A same-process re-source (`$$` unchanged) is a no-op so hooks aren't
-/// doubled; a nested zsh (new `$$`, inherited `ZDOTDIR`) re-runs this and gets
-/// its own hooks. `__REAL_ZDOTDIR__` is spliced in by [`prepare_shell_env`].
+/// 同进程内重复 source(`$$` 不变)是空操作,钩子不会
+/// 翻倍;嵌套 zsh(新 `$$`、继承的 `ZDOTDIR`)会重新执行并获得
+/// 自己的钩子。`__REAL_ZDOTDIR__` 由 [`prepare_shell_env`] 拼入。
 ///
-/// The B mark carries the command line hex-encoded as `cmd=` (hex's `[0-9a-f]`
-/// alphabet contains no `;`, so it can't corrupt the scanner's `;`-delimited
-/// params — the GUI hex-decodes it into `ShellMark.command`). Recovering the
-/// command from the grid instead is unreliable: by the time the B-event is
-/// handled the command's output already fills the grid (same PTY read) and
-/// scrolling drifts the row. A/C/D carry only the letter (+ exit/duration on D).
+/// B 标记携带十六进制编码的命令行 `cmd=`(hex 的 `[0-9a-f]`
+/// 字母表不含 `;`,因此不会破坏扫描器以 `;` 分隔的
+/// 参数——GUI 把它 hex 解码进 `ShellMark.command`)。改从
+/// 网格恢复命令并不可靠:B 事件被处理时命令的
+/// 输出已填满网格(同一次 PTY 读)且滚动会让行号漂移。A/C/D 只携带字母(+ D 上的退出码/时长)。
+/// 输出已填满网格(同一次 PTY 读),且滚动会让行号漂移。
 const ZSH_ZSHENV: &str = r#"# PureTerm zsh bootstrap — OSC 7 cwd + OSC 133 marks (GAP-15).
 # Same-process re-source is a no-op; a nested zsh (new $$) re-integrates.
 if [ "${PURETERM_SI_PID:-}" = "$$" ]; then
@@ -186,16 +186,16 @@ _pt_osc7
 _pt_ms A
 "#;
 
-/// Combined bash `PROMPT_COMMAND` body. bash has no `preexec`, so command-start
-/// (B) uses a `DEBUG` trap with arming: `_pt_prompt` arms at end-of-prompt, the
-/// trap fires B only on the first post-prompt command, then disarms. DEBUG fires
-/// during `_pt_prompt` itself happen while disarmed, so they're skipped. `$?` is
-/// captured as the first statement so the exit code reaches D.
+/// 合并的 bash `PROMPT_COMMAND` 主体。bash 没有 `preexec`,因此命令起始
+/// (此处用带布防的 `DEBUG` trap:`_pt_prompt` 在提示符结束时布防,
+/// trap 只对提示符后的第一条命令发 B,随后解除。解除期间
+/// 发生在 `_pt_prompt` 自身中的 DEBUG 触发被跳过。`$?` 作为
+/// 第一条语句捕获,使退出码能到达 D。
 ///
-/// `$EPOCHREALTIME` (bash 5+) gives microsecond duration; otherwise `date +%s`
-/// degrades to whole-second granularity (exit code — the valuable part — is
-/// unaffected). The B mark carries the command hex-encoded as `cmd=` (see
-/// [`ZSH_ZSHENV`] for why hex + why not grid-recovery).
+/// `$EPOCHREALTIME`(bash 5+)给出微秒时长;否则 `date +%s`
+/// 退化为整秒粒度(退出码——有价值的部分——
+/// 不受影响)。B 标记携带十六进制编码的命令 `cmd=`(原因
+/// 见 [`ZSH_ZSHENV`]:为何 hex、为何不从网格恢复)。
 const BASH_PROMPT_COMMAND: &str = r#"_pt_osc7() { printf '\e]7;file://%s%s\e\\' "$HOSTNAME" "$PWD"; }
 _pt_ms() { printf '\e]133;%s%s\a' "$1" "${2:+;$2}"; }
 _pt_hex() { printf '%s' "$1" | od -An -v -tx1 | tr -d ' \n'; }
@@ -238,12 +238,12 @@ trap _pt_debug DEBUG
 _pt_prompt
 "#;
 
-/// Fish conf.d snippet. Sources the OSC 7 + OSC 133 helpers and registers the
-/// `fish_prompt` / `fish_preexec` events (the fish equivalent of zsh's
-/// `add-zsh-hook`). Loaded automatically by fish from
-/// `$XDG_CONFIG_HOME/fish/conf.d/00_pureterm.fish` (the spawner writes the
-/// file there so a `chmod 600` is enough — the path is below $HOME, not in
-/// the world-readable system tree).
+/// Fish conf.d 片段。source OSC 7 + OSC 133 辅助函数并注册
+/// `fish_prompt` / `fish_preexec` 事件(zsh `add-zsh-hook`
+/// 的 fish 等价物)。fish 自动从
+/// `$XDG_CONFIG_HOME/fish/conf.d/00_pureterm.fish` 加载(拉起方把文件写到那里,
+/// 因此 `chmod 600` 就够了——该路径在 $HOME 之下,不在
+/// 全局可读的系统树中)。
 const FISH_FISH_PREAMBLE: &str = r#"# PureTerm fish conf.d — OSC 7 cwd + OSC 133 marks.
 function _pt_osc7
   printf '\e]7;file://%s%s\e\\' $hostname (pwd)
@@ -273,11 +273,11 @@ function _pt_pwd_changed --on-variable PWD
 end
 "#;
 
-/// Nushell overlay. Sources the user's real `~/.config/nushell/config.nu`
-/// first, then registers an `overlay list` extension and a `let-prompt`
-/// hook. `$env.PURETERM_SI_NU = "1"` is the re-source guard (mirrors zsh's
-/// `PURETERM_SI_PID` — without it, nested nushell would double-register
-/// hooks).
+/// Nushell 覆盖层。先 source 用户真实的 `~/.config/nushell/config.nu`,
+/// 再注册 `overlay list` 扩展与 `let-prompt`
+/// 钩子。`$env.PURETERM_SI_NU = "1"` 是重复 source 守卫(镜像 zsh 的
+/// `PURETERM_SI_PID`——没有它,嵌套 nushell 会重复注册
+/// 钩子)。
 const NUSHELL_INIT: &str = r#"# PureTerm nushell overlay — OSC 7 cwd + OSC 133 marks.
 if "1" == (echo $env.PURETERM_SI_NU? | default "") {
   exit 0
@@ -304,11 +304,11 @@ $env.PURETERM_SI_PREEXEC = {|_cmd| _pt_ms "B" $"cmd=($cmd | _pt_hex)"}
 $env.PURETERM_SI_PROMPT = { _pt_osc7 }
 "#;
 
-/// Elvish `rc.elv` overlay. Elvish has no preexec event in v0.18+; we
-/// approximate it with `edit:after-command` (fires after the command exits)
-/// — the D mark replaces the B mark in the GUI, but `$status` and the
-/// captured `$cmd` from `edit:command-line` give us everything B would have
-/// carried. C/A is emitted from `edit:before-readline` + `edit:after-readline`.
+/// Elvish `rc.elv` 覆盖层。Elvish 0.18+ 没有 preexec 事件;我们用
+/// `edit:after-command`(命令退出后触发)近似它
+///——GUI 中 D 标记取代 B 标记,但 `$status` 与从
+/// `edit:command-line` 捕获的 `$cmd` 给出了 B 本应携带的一切。C/A 由 `edit:before-readline` + `edit:after-readline` 发出。
+/// `edit:command-line` 捕获的 `$cmd` 给出了 B 本应携带的一切。
 const ELVISH_RC_OVERLAY: &str = r#"# PureTerm elvish overlay — OSC 7 cwd + OSC 133 marks (approx).
 if (has-env PURETERM_SI_ELV) {
   exit 0
@@ -331,11 +331,11 @@ set edit:after-command = [{|cmd|
 }]
 "#;
 
-/// PowerShell `Microsoft.PowerShell_profile.ps1` overlay. PS has a
-/// `prompt` function we can override; the original prompt is dot-sourced
-/// from the real `$PROFILE` and called as `Microsoft.PowerShell.OriginalPrompt`
-/// (PS supports function renaming, but we re-call via `$function:OldPrompt`).
-/// B mark uses `Set-PSDebug -Trace 1` (the PS analog of bash's DEBUG trap).
+/// PowerShell `Microsoft.PowerShell_profile.ps1` 覆盖层。PS 有可覆盖的
+/// `prompt` 函数;原提示符从真实 `$PROFILE` dot-source,
+/// 并以 `Microsoft.PowerShell.OriginalPrompt` 名义调用
+/// (PS 支持函数重命名,但我们经 `$function:OldPrompt` 重调)。
+/// B 标记用 `Set-PSDebug -Trace 1`(bash DEBUG trap 的 PS 对应物)。
 const PWSH_PROFILE: &str = r#"# PureTerm PowerShell profile — OSC 7 cwd + OSC 133 marks.
 if ($env:PURETERM_SI_PWSH -eq '1') { return }
 $env:PURETERM_SI_PWSH = '1'
@@ -373,10 +373,10 @@ $global:PURETERM_LAST_PROMPT = $function:prompt
 "`e]133;A`a" | Out-Null
 "#;
 
-/// Path helpers: derive a per-spawn temp directory. T-core-windows-conpty
-/// requires us to NOT hard-code `/tmp` (Windows has no such path), so all
-/// spawn sites use [`temp_zdotdir`] / [`temp_pwsh_dir`] / etc. which funnel
-/// through `std::env::temp_dir().join(".pureterm-…")`.
+/// 路径辅助:派生每次拉起专属的临时目录。t-core-windows-conpty
+/// 要求不得硬编码 `/tmp`(Windows 没有该路径),因此所有
+/// 拉起点都使用 [`temp_zdotdir`] / [`temp_pwsh_dir`] 等,统一
+/// 汇入 `std::env::temp_dir().join(".pureterm-…")`。
 pub(crate) fn temp_zdotdir(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(".pureterm-zdotdir-{tag}"))
 }
@@ -397,16 +397,16 @@ pub(crate) fn temp_pwsh_dir(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(".pureterm-pwsh-{tag}"))
 }
 
-/// Build the env-var set that injects OSC 7 cwd reporting *and* OSC 133
-/// shell-integration marks into a freshly spawned local shell.
+/// 构建把 OSC 7 cwd 上报*与* OSC 133
+/// shell 集成标记注入新拉起本地 shell 的环境变量集。
 ///
-/// Starts from [`crate::osc7::prepare_osc7_env`] (which creates the temp
-/// ZDOTDIR + the OSC-7-only `.zshenv`/`PROMPT_COMMAND`), then — per `opts` —
-/// overwrites the per-shell scripts. A shell whose toggle is off keeps the
-/// OSC-7-only behavior (cwd still reported).
+/// 从 [`crate::osc7::prepare_osc7_env`] 出发(它创建临时
+/// ZDOTDIR 与仅 OSC 7 的 `.zshenv`/`PROMPT_COMMAND`),然后按 `opts`
+/// 覆写每 shell 脚本。开关关闭的 shell 保持
+/// 仅 OSC 7 行为(cwd 仍会上报)。
 ///
-/// `tag` is unique per spawn (daemon session id / GUI pid) so concurrent temp
-/// directories never collide.
+/// `tag` 每次拉起唯一(守护会话 id / GUI pid),并发临时
+/// 目录永不冲突。
 pub fn prepare_shell_env(tag: &str, opts: ShellIntegrationOpts) -> HashMap<String, String> {
     let mut env = crate::osc7::prepare_osc7_env(tag);
 
@@ -415,15 +415,15 @@ pub fn prepare_shell_env(tag: &str, opts: ShellIntegrationOpts) -> HashMap<Strin
     }
 
     if opts.is_on(Shell::Zsh) {
-        // Same path prepare_osc7_env created; rewrite its .zshenv with the
-        // combined OSC 7 + OSC 133 bootstrap.
+        // 复用 prepare_osc7_env 创建的同一路径;用合并的 OSC 7 + OSC 133
+        // 引导重写其 .zshenv。
         let real_zdotdir = std::env::var("ZDOTDIR")
             .unwrap_or_else(|_| std::env::var("HOME").unwrap_or_else(|_| "/".into()));
         let zdot_dir = temp_zdotdir(tag);
         let zdot_str = zdot_dir.to_string_lossy().to_string();
         let escaped = real_zdotdir.replace('"', "\\\"");
         let zshenv = ZSH_ZSHENV.replace("__REAL_ZDOTDIR__", &escaped);
-        // 0o600 via write_private — see osc7::write_private (embeds real ZDOTDIR).
+        // 经 write_private 设 0o600——见 osc7::write_private(内嵌真实 ZDOTDIR)。
         let _ = crate::osc7::write_private(&format!("{zdot_str}/.zshenv"), &zshenv);
     }
 
@@ -435,7 +435,7 @@ pub fn prepare_shell_env(tag: &str, opts: ShellIntegrationOpts) -> HashMap<Strin
             &conf_d.join("00_pureterm.fish").to_string_lossy(),
             FISH_FISH_PREAMBLE,
         );
-        // XDG_CONFIG_HOME/fish/conf.d → fish auto-sources it.
+        // XDG_CONFIG_HOME/fish/conf.d → fish 自动 source 它。
         env.insert(
             "XDG_CONFIG_HOME".to_string(),
             fish_dir.to_string_lossy().to_string(),
@@ -550,16 +550,16 @@ mod tests {
     fn all_on_emits_combined_zsh_and_bash_scripts() {
         fresh("gap15-all");
         let env = prepare_shell_env("gap15-all", ShellIntegrationOpts::all_on());
-        // OSC 7 keys still present.
+        // OSC 7 的键仍在。
         assert!(env["ZDOTDIR"].ends_with("-gap15-all"));
         assert!(env["PROMPT_COMMAND"].contains("_pt_osc7"));
-        // OSC 133 hooks added.
+        // OSC 133 钩子已加入。
         assert!(env["PROMPT_COMMAND"].contains("133"));
         let zshenv = zshenv_for("gap15-all");
         assert!(zshenv.contains("_pt_preexec"), "zsh preexec hook missing");
         assert!(zshenv.contains("_pt_precmd"), "zsh precmd hook missing");
         assert!(zshenv.contains("add-zsh-hook preexec"));
-        // The four new shells each wrote a temp file.
+        // 四个新 shell 各自写出了临时文件。
         assert!(fish_conf_for("gap15-all").contains("fish_prompt"));
         assert!(nu_env_for("gap15-all").contains("PURETERM_SI_NU"));
         assert!(pwsh_profile_for("gap15-all").contains("_pt_ms"));
@@ -670,8 +670,8 @@ mod tests {
 
     #[test]
     fn temp_paths_use_temp_dir_not_tmp() {
-        // t-core-windows-conpty: no /tmp on Windows. The temp helpers must
-        // route through `std::env::temp_dir()`.
+        // t-core-windows-conpty:Windows 没有 /tmp。临时辅助函数必须
+        // 经 `std::env::temp_dir()` 路由。
         let p = temp_zdotdir("test");
         let sys_tmp = std::env::temp_dir();
         assert!(
@@ -680,10 +680,10 @@ mod tests {
             p = p,
             sys_tmp = sys_tmp,
         );
-        // Sanity: the path's component is `.pureterm-zdotdir-test` (not
+        // 健全性:路径的组件是 `.pureterm-zdotdir-test`(而不是
         // `/tmp/.pureterm-zdotdir-test`).
         assert!(p.file_name().unwrap().to_string_lossy().contains("pureterm-zdotdir-test"));
-        // And it's not literally `/tmp/...` even on macOS where /tmp is
+        // 而且即使在 macOS(/tmp 存在)上也不是字面的 `/tmp/...`。
         // `std::env::temp_dir()`.
         let path_str = p.to_string_lossy();
         assert!(!path_str.starts_with("/tmp/"));

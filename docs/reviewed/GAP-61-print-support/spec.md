@@ -1,6 +1,6 @@
 ---
 gap: GAP-61
-title: Print Support
+title: 打印支持
 category: 视觉
 plan_type: feature
 priority: P4

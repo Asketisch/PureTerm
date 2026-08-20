@@ -5,9 +5,9 @@ edition = "2021"
 description = "PureTerm - Alacritty-based terminal emulator"
 
 [features]
-# GAP-7.10: MCP stdio server (`pureterm mcp serve`). Default-on so the shipped
-# binary exposes the terminal surface to AI agents out of the box; build with
-# `--no-default-features` to drop rmcp and the tokio runtime bits.
+# GAP-7.10:MCP stdio 服务器(`pureterm mcp serve`)。默认开启,使发布的
+# 二进制开箱即向 AI 智能体暴露终端能力;用
+# `--no-default-features` 构建可去掉 rmcp 与 tokio 运行时部分。
 default = ["mcp-server"]
 mcp-server = [
     "dep:rmcp",
@@ -16,13 +16,13 @@ mcp-server = [
     "tokio/rt",
     "tokio/rt-multi-thread",
 ]
-# T-core-plugin-runtime v3: real wasmtime linking. Off by default —
-# wasmtime + wasmtime-component-model add 50+ MB to cold builds and
-# are not needed for the common "build & run" loop. Enable with
-# `--features wasm-runtime`. When disabled, `WasmPluginLoader::load`
-# returns `Err("wasm-runtime feature not enabled")` so the GUI can
-# degrade gracefully (matches the checklist's `Err(Unsupported)`
-# fallback contract).
+# T-core-plugin-runtime v3:真实 wasmtime 链接。默认关闭 —
+# wasmtime + wasmtime-component-model 会给冷构建增加 50+ MB,
+# 而常见的"构建 & 运行"循环并不需要。用
+# `--features wasm-runtime` 启用。禁用时 `WasmPluginLoader::load`
+# 返回 `Err("wasm-runtime feature not enabled")`,GUI 可
+# 优雅降级(符合清单中的 `Err(Unsupported)`
+# 回退契约)。
 wasm-runtime = ["dep:wasmtime"]
 
 [dependencies]
@@ -37,7 +37,7 @@ pureterm-computer-use = { workspace = true }
 alacritty_terminal = { path = "../alacritty_terminal" }
 dirs = "6.0.0"
 iced = { version = "0.14", features = ["advanced", "canvas", "tokio"] }
-# GAP-7.1: agent-hook matcher / deny_pattern regex evaluation.
+# GAP-7.1:agent-hook matcher / deny_pattern 正则求值。
 regex = "1"
 iced_wgpu = "0.14"
 wgpu = { version = "27", features = ["webgpu"] }
@@ -45,16 +45,16 @@ bytemuck = { version = "1", features = ["derive"] }
 crossbeam-channel = "0.5"
 crossfont = "0.8.1"
 notify = "8.0.0"
-# GAP-01 AI Chat: LLM HTTP client. rustls-tls avoids pulling OpenSSL on Linux
-# (keeps the wry/rustls TLS stack uniform); `stream` exposes
-# `Response::bytes_stream()` to feed the SSE decoder. default-features=false
-# drops native-tls + the http2/macos bits we don't need.
+# GAP-01 AI 对话:LLM HTTP 客户端。rustls-tls 避免在 Linux 上拉入 OpenSSL
+# (保持 wry/rustls TLS 栈统一);`stream` 暴露
+# `Response::bytes_stream()` 供 SSE 解码器使用。default-features=false
+# 去掉 native-tls 以及不需要的 http2/macos 部分。
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
-# GAP-4.2: Hover Preview — gitignore-aware path metadata checks.
+# GAP-4.2:悬停预览 — 感知 gitignore 的路径元数据检查。
 ignore = "0.4"
 tokio = { version = "1", features = ["sync", "time", "net", "io-util", "process", "macros"] }
-# GAP-24 Enhanced Status Bar: system metrics (CPU/Memory/Network), battery,
-# and local-time clock formatting for the new status-bar segments.
+# GAP-24 增强状态栏:系统指标(CPU/内存/网络)、电池、
+# 以及本地时间时钟格式化,供新的状态栏分段使用。
 sysinfo = "0.32"
 battery = "0.7"
 chrono = "0.4"
@@ -63,56 +63,56 @@ log = "0.4"
 parking_lot = "0.12"
 arboard = "3"
 
-# SSH backend dependencies (Unix-only child side; AES/Argon2/serde cross-platform)
+# SSH 后端依赖(Unix 专属子进程侧;AES/Argon2/serde 跨平台)
 alacritty_config_derive = { path = "../alacritty_config_derive" }
 alacritty_config = { path = "../alacritty_config" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# GAP-6.2: structured CLI command groups (clap derive, mirroring pureterm-settings).
+# GAP-6.2:结构化 CLI 命令分组(clap derive,与 pureterm-settings 对齐)。
 clap = { version = "4", features = ["derive"] }
 toml = "0.9"
-# PureTerm: format-preserving TOML writer; the main process now reuses
-# `pureterm_settings::config_io::mutate_config` to persist SSH profiles
-# through `toml_edit` instead of a string state machine. Direct
-# `toml_edit::{Item, Table, ArrayOfTables}` references in iced_app.rs
-# need this dep listed here, not transitively.
+# PureTerm:保格式 TOML 写器;主进程现复用
+# `pureterm_settings::config_io::mutate_config` 经 `toml_edit` 持久化 SSH 配置档,
+# 取代旧的字符串状态机。iced_app.rs 对
+# `toml_edit::{Item, Table, ArrayOfTables}` 的直接引用
+# 要求在此直接声明该依赖,而非靠传递依赖。
 toml_edit = "0.22"
 unicode-bidi = "0.3"
 nucleo-matcher = "0.3"
-# GAP-54: terminal background image decode (PNG/JPG) -> RGBA bytes for the GPU texture.
-# Only the default features (no webp/heif) — keep the dep surface small.
+# GAP-54:终端背景图解码(PNG/JPG)→ GPU 纹理用的 RGBA 字节。
+# 仅默认 feature(不含 webp/heif)— 保持依赖面小。
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
-# GAP-01 AI Chat: Markdown → text spans for streamed assistant replies. Core
-# parser only (no HTML rendering feature) — the panel maps spans to iced rich
-# text; syntax highlighting (syntect) is deferred.
+# GAP-01 AI 对话:流式助手回复的 Markdown → 文本 span。核心
+# 仅解析器(无 HTML 渲染 feature)— 面板把 span 映射为 iced 富
+# 文本;语法高亮(syntect)延后。
 pulldown-cmark = { version = "0.12", default-features = false }
-# GAP-7.2: agent adapter installer — locked read-modify-write of
-# ~/.claude/settings.json (fs2 advisory lock + atomic NamedTempFile::persist).
+# GAP-7.2:智能体适配器安装器 — 对
+# ~/.claude/settings.json 的加锁读-改-写(fs2 咨询锁 + 原子 NamedTempFile::persist)。
 fs2 = "0.4"
 tempfile = "3"
-# GAP-3.5/5.2/7.8: WebView embed + per-view SOCKS5 proxy. `mac-proxy` enables
-# `WebViewBuilder::with_proxy_config` (Network framework SOCKS5; macOS 14+),
-# the Phase C R8 mechanism that binds a web pane to an SSH tunnel. The feature
-# compiles to nothing on non-macOS, so enabling it unconditionally is safe.
+# GAP-3.5/5.2/7.8:WebView 嵌入 + 每视图 SOCKS5 代理。`mac-proxy` 启用
+# `WebViewBuilder::with_proxy_config`(即 Network framework 的 SOCKS5;macOS 14+),
+# 即把 web 窗格绑定到 SSH 隧道的 Phase C R8 机制。该 feature
+# 在非 macOS 上编译为空,无条件启用是安全的。
 wry = { version = "0.55.1", features = ["mac-proxy"] }
 raw-window-handle = "0.6.2"
-# GAP-7.10: MCP stdio server. Optional + feature-gated (`mcp-server`). `server`
-# pulls the handler + `#[tool]` macros (macros is on by default); `transport-io`
-# brings the stdio transport adapter (`ServiceExt::serve(stdin, stdout)`) and,
-# transitively, schemars for tool-param schemas. Pinned exactly to 1.7.0 — the
-# macro API (`#[tool_router]` / `#[tool_handler]`, `Parameters<T>`) was verified
-# against this release and the plan flags upstream macro drift as a risk.
+# GAP-7.10:MCP stdio 服务器。可选 + feature 门控(`mcp-server`)。`server`
+# 拉入 handler + `#[tool]` 宏(macros 默认开启);`transport-io`
+# 带来 stdio 传输适配器(`ServiceExt::serve(stdin, stdout)`),并
+# 传递引入 schemars 用于工具参数 schema。精确钉在 1.7.0 —
+# 宏 API(`#[tool_router]` / `#[tool_handler]`、`Parameters<T>`)在该
+# 版本上验证过,且计划把上游宏漂移列为风险。
 rmcp = { version = "=1.7.0", optional = true, features = ["server", "transport-io", "schemars"] }
-# Pin the proc-macro crate to the exact matching release: rmcp 1.7.0 only
-# requires `rmcp-macros ^1.7.0`, so the resolver picks the latest (1.8.0) whose
-# `#[tool]` expansion emits symbols (`schema_for_input`) absent from the 1.7.0
-# runtime. Declaring the exact match here steers the whole graph to 1.7.0.
+# 把 proc-macro crate 钉在精确匹配的版本:rmcp 1.7.0 仅
+# 要求 `rmcp-macros ^1.7.0`,于是解析器会选最新的(1.8.0),其
+# `#[tool]` 展开会发出 1.7.0 运行时中
+# 不存在的符号(`schema_for_input`)。在此声明精确匹配可把整张依赖图导向 1.7.0。
 rmcp-macros = { version = "=1.7.0", optional = true }
-# T-core-plugin-runtime v3: wasmtime runtime for `.wasm` plugins.
-# Optional + feature-gated (`wasm-runtime`). Off by default — wasmtime
-# pulls in 50+ MB of native code + cranelift, lengthening cold builds
-# by minutes. The `WasmPluginLoader` impl checks the feature flag at
-# compile time and falls back to `Err(Unsupported)` when off.
+# T-core-plugin-runtime v3:用于 `.wasm` 插件的 wasmtime 运行时。
+# 可选 + feature 门控(`wasm-runtime`)。默认关闭 — wasmtime
+# 拉入 50+ MB 原生代码 + cranelift,使冷构建
+# 延长数分钟。`WasmPluginLoader` 实现编译时检查 feature 标志,
+# 关闭时回退为 `Err(Unsupported)`。
 wasmtime = { version = "30", optional = true, default-features = false, features = [
     "cranelift",
     "runtime",
@@ -128,7 +128,7 @@ argon2 = "0.5"
 zeroize = { version = "1", features = ["zeroize_derive"] }
 rand = "0.8"
 rustix-openpty = "0.2"
-# GAP-7.7: HMAC-SHA256 signed approval tokens for custom resume bindings.
+# GAP-7.7:自定义恢复绑定的 HMAC-SHA256 签名审批令牌。
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
@@ -156,17 +156,17 @@ objc2-app-kit = { version = "0.3.1", default-features = false, features = [
     # GAP-7.8 screenshot: NSImage(TIFFRepresentation) + NSBitmapImageRep(PNG 编码);
     # NSBitmapImageRep 结构体的 re-export 额外要求 NSImageRep feature。
     "NSImage", "NSBitmapImageRep", "NSImageRep",
-    # GAP-09: Dock badge — NSApplication::dockTile() → NSDockTile::setBadgeLabel.
+    # GAP-09:Dock 角标 — NSApplication::dockTile() → NSDockTile::setBadgeLabel。
     "NSDockTile",
-    # GAP-61: print - NSPrintOperation.pdfOperationWithView + runOperation modal
-    # dialog; NSPrintInfo drives the page rect; NSGraphicsContext needed for
-    # view lockFocus(). NSStringDrawing lets us draw monospace lines into the
-    # offscreen view that becomes the print job's contents.
+    # GAP-61:打印 — NSPrintOperation.pdfOperationWithView + runOperation 模态
+    # 对话框;NSPrintInfo 驱动页面矩形;view lockFocus() 需要 NSGraphicsContext。
+    # NSStringDrawing 用于把等宽文本行画进
+    # 将成为打印作业内容的离屏 view。
     "NSPrintOperation", "NSPrintInfo", "NSPrintPanel",
     "NSGraphicsContext", "NSStringDrawing",
-    # GAP-4.6: VoiceOver announcements via NSAccessibilityPostNotification /
-    # NSAccessibilityPostNotificationWithUserInfo (used to send
-    # AnnouncementRequestedNotification with NSAccessibilityAnnouncementKey).
+    # GAP-4.6:VoiceOver 播报,经 NSAccessibilityPostNotification /
+    # NSAccessibilityPostNotificationWithUserInfo(用于发送
+    # 带 NSAccessibilityAnnouncementKey 的 AnnouncementRequestedNotification)。
     "NSAccessibilityConstants",
 ] }
 objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
@@ -181,15 +181,15 @@ objc2-quartz-core = { version = "0.3.1", default-features = false, features = [
 objc2-web-kit = { version = "0.3.2", default-features = false, features = [
     "std", "WKWebView", "WKSnapshotConfiguration", "block2", "objc2-app-kit",
 ] }
-# GAP-09: macOS desktop notifications — UNUserNotificationCenter toasts for
-# OSC 9/99/777 + bell + `pureterm notify`. Pinned to 0.3.x (NOT 0.2.x) because
-# 0.2.x is bound to objc2 0.5 / objc2-foundation 0.2, whose `NSString`/`Retained`
-# are *different types* from this crate's objc2 0.6 / objc2-foundation 0.3 line
-# (wry pulls 0.2.2 transitively; we deliberately add the 0.3 line as a direct
-# dep so the types unify). `block2` unlocks the request/post completion-handler
-# methods; `UNNotificationContent` + `UNNotificationTrigger` are BOTH required
-# by `UNNotificationRequest::requestWithIdentifier_content_trigger` even though
-# we pass `None` for the trigger.
+# GAP-09:macOS 桌面通知 — 为 OSC 9/99/777 + 响铃 + `pureterm notify`
+# 提供 UNUserNotificationCenter 吐司。精确钉在 0.3.x(*不是* 0.2.x),因为
+# 0.2.x 绑定 objc2 0.5 / objc2-foundation 0.2,其 `NSString`/`Retained`
+# 与本 crate 的 objc2 0.6 / objc2-foundation 0.3 系是*不同类型*
+# (wry 传递拉入 0.2.2;我们有意把 0.3 系作为直接
+# 依赖加入以统一类型)。`block2` 解锁 request/post 完成处理器
+# 方法;`UNNotificationContent` + `UNNotificationTrigger` 两者都是
+# `UNNotificationRequest::requestWithIdentifier_content_trigger` 所必需,
+# 即使 trigger 传的是 `None`。
 objc2-user-notifications = { version = "0.3.2", default-features = false, features = [
     "UNUserNotificationCenter",
     "UNNotificationRequest",
@@ -198,7 +198,7 @@ objc2-user-notifications = { version = "0.3.2", default-features = false, featur
     "UNNotificationSound",
     "block2",
 ] }
-# GAP-7.8 screenshot: NSImage PNG → base64 data URL。
+# GAP-7.8 截图:NSImage PNG → base64 data URL。
 base64 = "0.22"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]

@@ -52,7 +52,7 @@ cargo build --release
 - 打开设置:`Cmd+,`(macOS)
 - 命令面板:`⌘⇧P`
 - SSH 连接:`⌘⇧S`
-- Vi Copy Mode:`Ctrl+Shift+Space`
+- Vi 复制模式:`Ctrl+Shift+Space`
 
 **CLI 命令**:
 ```bash
@@ -146,7 +146,7 @@ PureTerm 由 6 个 crate 组成的工作区:
 - 键盘绑定:31+ Action 枚举,TOML 可自定义 + 6 套预设模板 + CLI 管理(`crates/pureterm/src/keymap.rs`)
 - IME 输入法候选
 
-### Socket API v2 (2026-06-13 GAP-6.1)
+### Socket API v2 远程接口(2026-06-13,GAP-6.1)
 - **JSON-RPC 2.0** over Unix domain socket,程序化控制 PureTerm(查询 + 写操作)
 - **31 个 method,8 命名空间**:
   - `system.*`(4):ping / version / info / methods
@@ -399,7 +399,7 @@ action = { Ssh = "ListProfiles" }
 - 输入 `set` → 跳到 Settings UI 打开 action
 - 输入任意 action ID 模糊搜索 → 直接触发
 
-### Settings UI
+### 设置界面
 
 按 `Cmd+,` 启动独立设置进程:
 - 修改任意配置项 → 写入 `alacritty.toml`(原子写入,保留格式)
@@ -436,7 +436,7 @@ action = "ToggleZoom"
 
 保存后自动热重载,无需重启。自定义绑定覆盖同名默认绑定。
 
-### Vi Copy Mode(GAP-4.1)
+### Vi 复制模式(GAP-4.1)
 
 按 `Ctrl+Shift+Space` 进入 Vi Copy Mode(状态栏显示 `-- COPY --`):
 
@@ -458,7 +458,7 @@ action = "ToggleZoom"
 
 GPU 渲染:青色 vi 光标 + 搜索匹配 amber 高亮。
 
-### Socket API(GAP-6.1 + GAP-6.2)
+### Socket API 远程接口(GAP-6.1 + GAP-6.2)
 
 PureTerm 运行时自动创建 Unix domain socket,可通过 CLI 程序化控制(31 个 method,含写操作)。GAP-6.2 提供 8 个结构化命令组(类型化参数,无需手写 JSON);`msg` 是原始 JSON-RPC 逃生舱:
 

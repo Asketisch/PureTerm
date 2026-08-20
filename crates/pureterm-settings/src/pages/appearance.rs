@@ -244,14 +244,14 @@ impl AppearanceState {
         }
     }
 
-    /// Replay this page's in-memory state onto `doc`. Used at Save time
-    /// via `mutate_config` to patch the latest on-disk document.
+    /// 把本页内存状态重放到 `doc` 上。保存时经
+    /// `mutate_config` 用于补丁最新的磁盘文档。
     ///
-    /// For text-input fields whose string fails to parse (e.g. user typed
-    /// non-numeric in font size), we skip writing that one field rather
-    /// than clobbering a valid on-disk value with a parse failure.
+    /// 对解析失败的文本输入字段(如用户在字体大小里
+    /// 输入了非数字),跳过该字段的写入,而不是
+    /// 用解析失败覆盖磁盘上的合法值。
     pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
-        // Font
+        // 字体
         if !self.font_family.is_empty() {
             set_font_family(doc, &self.font_family);
         }
@@ -259,7 +259,7 @@ impl AppearanceState {
             crate::config_io::set_float(doc, &["font"], "size", size);
         }
 
-        // Window opacity / blur
+        // 窗口不透明度 / 模糊
         crate::config_io::set_float(doc, &["window"], "opacity", self.opacity as f64);
         crate::config_io::set_bool(doc, &["window"], "blur", self.blur);
         crate::config_io::set_string(doc, &["window"], "blur_style", &self.blur_style);
@@ -270,7 +270,7 @@ impl AppearanceState {
             self.settings_window_blur,
         );
 
-        // Padding
+        // 内边距
         if let Ok(px) = self.padding_x.parse::<i64>() {
             set_padding(doc, "x", px);
         }
@@ -280,7 +280,7 @@ impl AppearanceState {
 
         crate::config_io::set_string(doc, &["window"], "decorations", &self.decorations);
 
-        // Cursor
+        // 光标
         set_cursor_shape(doc, &self.cursor_shape);
         set_cursor_blinking(doc, self.cursor_blinking);
         crate::config_io::set_float(
@@ -291,7 +291,7 @@ impl AppearanceState {
         );
         crate::config_io::set_bool(doc, &["cursor"], "unfocused_hollow", self.unfocused_hollow);
 
-        // Background image
+        // 背景图
         match &self.background_image {
             Some(p) => {
                 let s = p.to_string_lossy().into_owned();

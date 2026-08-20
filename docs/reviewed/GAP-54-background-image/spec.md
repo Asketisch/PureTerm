@@ -1,6 +1,6 @@
 ---
 gap: GAP-54
-title: Background Image
+title: 背景图
 category: 视觉
 plan_type: feature
 priority: P4

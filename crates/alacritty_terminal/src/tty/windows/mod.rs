@@ -25,8 +25,8 @@ type ReadPipe = UnblockedReader<AnonRead>;
 type WritePipe = UnblockedWriter<AnonWrite>;
 
 pub struct Pty {
-    // XXX: Backend is required to be the first field, to ensure correct drop order. Dropping
-    // `conout` before `backend` will cause a deadlock (with Conpty).
+    // XXX:Backend 必须是第一个字段,保证正确的析构顺序。先于
+    // `backend` 析构 `conout` 会死锁(Conpty 下)。
     backend: Backend,
     conout: ReadPipe,
     conin: WritePipe,
@@ -125,8 +125,8 @@ impl OnResize for Pty {
     }
 }
 
-// Modified per stdlib implementation.
-// https://github.com/rust-lang/rust/blob/6707bf0f59485cf054ac1095725df43220e4be20/library/std/src/sys/args/windows.rs#L174
+// 依据标准库实现修改(rust 仓库 sys/args/windows.rs 第 174 行)。
+// 上方行提到的标准库实现位于 rust 仓库 sys/args/windows.rs。
 fn push_escaped_arg(cmd: &mut String, arg: &str) {
     let arg_bytes = arg.as_bytes();
     let quote = arg_bytes.iter().any(|c| *c == b' ' || *c == b'\t') || arg_bytes.is_empty();
@@ -140,7 +140,7 @@ fn push_escaped_arg(cmd: &mut String, arg: &str) {
             backslashes += 1;
         } else {
             if x == '"' {
-                // Add n+1 backslashes to total 2n+1 before internal '"'.
+                // 在内部 '"' 前加 n+1 个反斜杠,共 2n+1 个。
                 cmd.extend((0..=backslashes).map(|_| '\\'));
             }
             backslashes = 0;
@@ -149,7 +149,7 @@ fn push_escaped_arg(cmd: &mut String, arg: &str) {
     }
 
     if quote {
-        // Add n backslashes to total 2n before ending '"'.
+        // 在结尾 '"' 前加 n 个反斜杠,共 2n 个。
         cmd.extend((0..backslashes).map(|_| '\\'));
         cmd.push('"');
     }
@@ -173,8 +173,8 @@ fn cmdline(config: &Options) -> String {
     cmd
 }
 
-/// Converts the string slice into a Windows-standard representation for "W"-
-/// suffixed function variants, which accept UTF-16 encoded string values.
+/// 把字符串切片转换为 Windows 标准的 "W" 后缀
+/// 函数变体表示(接受 UTF-16 编码字符串)。
 pub fn win32_string<S: AsRef<OsStr> + ?Sized>(value: &S) -> Vec<u16> {
     OsStr::new(value).encode_wide().chain(once(0)).collect()
 }
@@ -187,23 +187,23 @@ mod test {
     #[test]
     fn test_escape() {
         let test_set = vec![
-            // Basic cases - no escaping needed
+            // 基本情况——无需转义
             ("abc", "abc"),
-            // Cases requiring quotes (space/tab)
+            // 需要引号的情况(空格/制表符)
             ("", "\"\""),
             (" ", "\" \""),
             ("ab c", "\"ab c\""),
             ("ab\tc", "\"ab\tc\""),
-            // Cases with backslashes only (no spaces, no quotes) - no quotes added
+            // 只有反斜杠的情况(无空格无引号)——不加引号
             ("ab\\c", "ab\\c"),
-            // Cases with quotes only (no spaces) - quotes escaped but no outer quotes
+            // 只有引号的情况(无空格)——转义引号但不加外层引号
             ("ab\"c", "ab\\\"c"),
             ("\"", "\\\""),
             ("a\"b\"c", "a\\\"b\\\"c"),
-            // Cases requiring both quotes and escaping (contains spaces)
+            // 引号与转义都需要的情况(含空格)
             ("ab \"c", "\"ab \\\"c\""),
             ("a \"b\" c", "\"a \\\"b\\\" c\""),
-            // Complex real-world cases
+            // 复杂的真实案例
             ("C:\\Program Files\\", "\"C:\\Program Files\\\\\""),
             ("C:\\Program Files\\a.txt", "\"C:\\Program Files\\a.txt\""),
             (

@@ -1,7 +1,7 @@
 ---
 gap: GAP-08
-title: Natural Language Commands
-category: AI Agent
+title: 自然语言命令
+category: AI 智能体
 plan_type: feature
 priority: P2
 effort: M

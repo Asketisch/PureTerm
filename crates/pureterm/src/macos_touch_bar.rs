@@ -1,6 +1,6 @@
-//! GAP-22: MacBook Touch Bar — NSTouchBar scaffold.
+//! GAP-22:MacBook Touch Bar—NSTouchBar 脚手架。
 
-/// `[touch_bar]` config.
+/// `[touch_bar]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TouchBarConfig {
     pub enabled: bool,
@@ -20,7 +20,7 @@ impl Default for TouchBarConfig {
     }
 }
 
-/// Install Touch Bar items for the main window. MVP stub.
+/// 为主窗口安装 Touch Bar 项。MVP 占位。
 pub fn refresh_touch_bar(cfg: &TouchBarConfig) {
     if !cfg.enabled {
         return;

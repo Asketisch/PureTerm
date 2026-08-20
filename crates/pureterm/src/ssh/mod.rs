@@ -1,18 +1,18 @@
-//! SSH Session Backend Module
+//! SSH 会话后端模块
 //!
-//! Supports two connection modes:
-//! 1. ~/.ssh/config integration (host alias → system ssh)
-//! 2. PureTerm SSH Profile (encrypted credentials, master password)
+//! 支持两种连接模式:
+//! 1. ~/.ssh/config 集成(主机别名 → 系统 ssh)
+//! 2. PureTerm SSH 配置(加密凭据、主密码)
 //!
-//! ## Platform support
+//! ## 平台支持
 //!
-//! The SSH child-process side (`pty`, `session`, `command`) is **Unix-only** and
-//! now lives in the shared `pureterm-ssh` crate (GAP-5.1 M3) so the `puretermd`
-//! daemon can spawn SSH PTYs too. It is re-exported here so existing
-//! `crate::ssh::{pty,session,command}` paths keep resolving unchanged.
-//! On Windows the SSH UI surface is wired in P3+ but the actual connection
-//! falls back to a stub (P3 work). The cross-platform bits (config,
-//! credential store, ssh config reader) compile on every platform.
+//! SSH 子进程侧(`pty`、`session`、`command`)仅 **Unix** 可用,
+//! 现位于共享的 `pureterm-ssh` crate(GAP-5.1 M3),使 `puretermd`
+//! 守护进程也能生成 SSH PTY。此处再导出,让既有
+//! `crate::ssh::{pty,session,command}` 路径继续按原样解析。
+//! Windows 上 SSH 界面在 P3+ 已接线,但实际连接
+//! 回退为桩(P3 工作)。跨平台部分(配置、
+//! 凭据存储、ssh 配置读取器)在所有平台上编译。
 
 #[cfg(unix)]
 pub use pureterm_ssh::{command, pty, session};

@@ -1,6 +1,6 @@
-//! GAP-52: Workflows — parameterized command sequences with aliases & categories.
+//! GAP-52:工作流 —— 带别名与分类的参数化命令序列。
 //!
-//! Schema (`[[workflows]]` in `alacritty.toml`):
+//! 结构(`[[workflows]]`,位于 `alacritty.toml`):
 //!
 //! ```toml
 //! [[workflows]]
@@ -12,20 +12,17 @@
 //! params = ["host"]
 //! ```
 //!
-//! Resolution rules:
-//! - When a `Workflow` is looked up by name or alias, the **first** match
-//!   wins. Names take priority over aliases (so a workflow literally
-//!   named `d` is preferred when looking up `d`).
-//! - `render_steps` substitutes `{{key}}` placeholders with the values
-//!   passed via `--param key=value`. Missing values are left in place so
-//!   unfinished translations remain readable.
-//! - `missing_params` reports which declared `params` were not given a
-//!   value, so the CLI can prompt the user instead of running broken
-//!   steps.
+//! 解析规则:
+//! - 按名称或别名查找 `Workflow` 时,**第一个**匹配胜出。名称优先于别名
+//!   (因此按 `d` 查找时,字面名为 `d` 的工作流更优先)。
+//! - `render_steps` 用 `--param key=value` 传入的值替换 `{{key}}` 占位符。
+//!   缺失的值保留原位,使未完成的翻译保持可读。
+//! - `missing_params` 报告哪些已声明的 `params` 未给出值,以便 CLI 提示
+//!   用户,而不是运行残缺的步骤。
 
 use serde::{Deserialize, Serialize};
 
-/// `[[workflows]]` entry.
+/// `[[workflows]]` 条目。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Workflow {
     pub name: String,
@@ -34,17 +31,17 @@ pub struct Workflow {
     pub steps: Vec<String>,
     #[serde(default)]
     pub params: Vec<String>,
-    /// Optional palette grouping (e.g. `"ops"`, `"git"`, `"docker"`).
+    /// 可选的分组(例如 `"ops"`、`"git"`、`"docker"`),用于命令面板分组。
     #[serde(default)]
     pub category: String,
-    /// Optional short alias. `pureterm workflow <alias>` resolves here
-    /// when no workflow has the alias as its literal name.
+    /// 可选的短别名。`pureterm workflow <alias>` 会在没有工作流把该别名
+    /// 作为字面名时解析到这里。
     #[serde(default)]
     pub alias: String,
 }
 
 impl Workflow {
-    /// Expand `{{param}}` placeholders in each step.
+    /// 展开每个步骤中的 `{{param}}` 占位符。
     pub fn render_steps(&self, values: &[(String, String)]) -> Vec<String> {
         self.steps
             .iter()
@@ -58,8 +55,8 @@ impl Workflow {
             .collect()
     }
 
-    /// Names of declared `params` that were not supplied in `values`.
-    /// The output preserves declaration order.
+    /// 已声明但因未在 `values` 中提供而缺失的 `params` 名称。
+    /// 输出保持声明顺序。
     pub fn missing_params(&self, values: &[(String, String)]) -> Vec<String> {
         self.params
             .iter()
@@ -68,20 +65,19 @@ impl Workflow {
             .collect()
     }
 
-    /// Does this workflow have a non-empty alias?
+    /// 该工作流是否有非空别名?
     pub fn has_alias(&self) -> bool {
         !self.alias.is_empty()
     }
 
-    /// Does the given `query` match this workflow — by name or alias?
-    /// Names take priority (callers should iterate to find the first
-    /// name match, then fall back to alias).
+    /// 给定 `query` 是否匹配该工作流 —— 按名称或别名?
+    /// 名称优先(调用方应迭代找到第一个名称匹配,再回退到别名)。
     pub fn matches(&self, query: &str) -> bool {
         self.name == query || (self.has_alias() && self.alias == query)
     }
 }
 
-/// `[workflows]` section toggle.
+/// `[workflows]` 分节开关。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkflowsConfig {
     pub enabled: bool,
@@ -93,9 +89,8 @@ impl Default for WorkflowsConfig {
     }
 }
 
-/// Load `[[workflows]]` entries from a raw TOML config string. Bad
-/// workflow entries are skipped silently (the CLI / palette can still
-/// show whatever parsed).
+/// 从原始 TOML 配置字符串加载 `[[workflows]]` 条目。坏的工作流条目被
+/// 静默跳过(CLI / 命令面板仍可展示解析出的内容)。
 pub fn load_workflows_from_toml(raw: &str) -> Vec<Workflow> {
     #[derive(Deserialize)]
     struct Wrap {
@@ -107,18 +102,16 @@ pub fn load_workflows_from_toml(raw: &str) -> Vec<Workflow> {
         .unwrap_or_default()
 }
 
-/// Find a workflow by name or alias. Returns the first match. When two
-/// workflows could match (e.g. one with `name = "d"` and another with
-/// `alias = "d"`), the name match wins.
+/// 按名称或别名查找工作流。返回第一个匹配。当两个工作流都可能匹配时
+/// (例如一个 `name = "d"`、另一个 `alias = "d"`),名称匹配胜出。
 pub fn find<'a>(workflows: &'a [Workflow], query: &str) -> Option<&'a Workflow> {
     workflows.iter().find(|w| w.name == query).or_else(|| {
         workflows.iter().find(|w| w.alias == query)
     })
 }
 
-/// Group workflows by their `category` field. Workflows with an empty
-/// category are placed under the empty string (callers can replace it
-/// with a localized label like "Uncategorized" / "未分类").
+/// 按 `category` 字段对工作流分组。category 为空的工作流归到空字符串下
+/// (调用方可以替换为本地化标签,如 "Uncategorized" / "未分类")。
 pub fn group_by_category(workflows: &[Workflow]) -> std::collections::BTreeMap<String, Vec<&Workflow>> {
     let mut out: std::collections::BTreeMap<String, Vec<&Workflow>> =
         std::collections::BTreeMap::new();
@@ -236,7 +229,7 @@ mod tests {
 
     #[test]
     fn load_skips_malformed_toml_gracefully() {
-        // Malformed: `steps` is a string instead of an array.
+        // 畸形:`steps` 是字符串而非数组。
         let raw = "[[workflows]]\nname = \"x\"\nsteps = \"not an array\"\n";
         let v = load_workflows_from_toml(raw);
         assert!(v.is_empty());

@@ -1,6 +1,6 @@
 ---
 gap: GAP-58
-title: Custom Theme & CSS
+title: 自定义主题与 CSS
 category: 视觉
 plan_type: feature
 priority: P4

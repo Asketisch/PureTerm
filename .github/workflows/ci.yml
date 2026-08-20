@@ -1,23 +1,23 @@
-# PureTerm CI — three-platform build + test matrix.
+# PureTerm CI — 三平台构建 + 测试矩阵。
 #
-# T-core-windows-conpty v3 (checklist E.6): adds the `windows-2022`
-# runner alongside the existing macOS + Linux runners. The matrix
-# covers:
+# T-core-windows-conpty v3(清单 E.6):新增 `windows-2022`
+# runner,与现有 macOS + Linux runner 并列。矩阵
+# 覆盖:
 #   - ubuntu-22.04  (x86_64-unknown-linux-gnu)
 #   - macos-14      (aarch64-apple-darwin, M1)
 #   - windows-2022  (x86_64-pc-windows-msvc)
 #
-# Each runner runs `cargo build` + `cargo test` for the workspace.
-# Windows-specific tests (`conpty_smoke.rs`, `windows.rs`) are gated
-# `#[cfg(windows)]` so they no-op on the other runners.
+# 每个 runner 对全工作区执行 `cargo build` + `cargo test`。
+# Windows 专属测试(`conpty_smoke.rs`、`windows.rs`)经
+# `#[cfg(windows)]` 门控,在其他 runner 上为空操作。
 #
-# The matrix uses `fast` profile by default (no LTO) for feedback;
-# release builds are out of scope here (use a separate workflow).
+# 矩阵默认用 `fast` profile(无 LTO)以加快反馈;
+# release 构建不在本工作流范围(用独立工作流)。
 #
-# Why three runners instead of just one: PureTerm links against
-# platform-specific backends (rustix-openpty on Unix, ConPTY on
-# Windows, objc2 on macOS) — type errors in cfg-gated code don't
-# surface on a single platform.
+# 为什么用三个 runner 而非一个:PureTerm 链接的是
+# 平台专属后端(Unix 上 rustix-openpty、
+# Windows 上 ConPTY、macOS 上 objc2)— cfg 门控代码
+# 中的类型错误在单一平台上不会暴露。
 
 name: CI
 
@@ -30,9 +30,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
-  # Keep SCCACHE warm across runs (reduces build time on cached
-  # dependencies; the Rust toolchain is cached separately via
-  # `actions-rust-lang/setup-rust-toolchain`).
+  # 跨运行保持 sccache 缓存温热(降低已缓存
+  # 依赖的构建时间;Rust 工具链经
+  # `actions-rust-lang/setup-rust-toolchain` 单独缓存)。
   SCCACHE_DIR: ${{ github.workspace }}/.sccache
 
 jobs:
@@ -78,10 +78,10 @@ jobs:
         run: cargo build --workspace --target ${{ matrix.target }}
 
       - name: Test
-        # Run all unit + integration tests. `#[ignore]`d E2E tests
-        # (graphics/tmux-cc/shell-integ/conpty-smoke) stay skipped —
-        # they need external binaries or display surfaces that CI
-        # runners don't provide.
+        # 运行全部单元 + 集成测试。`#[ignore]` 的 E2E 测试
+        # (graphics/tmux-cc/shell-integ/conpty-smoke)保持跳过 —
+        # 它们需要 CI runner 不提供的
+        # 外部二进制或显示面。
         run: cargo test --workspace --target ${{ matrix.target }} --no-fail-fast
 
   clippy:

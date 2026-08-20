@@ -5,40 +5,40 @@ use std::sync::OnceLock;
 use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::Sha256;
-/// HMAC-SHA256 type alias for token computation.
+/// 用于令牌计算的 HMAC-SHA256 类型别名。
 type HmacSha256 = Hmac<Sha256>;
 
-// ── GAP-7.7 M2: HMAC-signed approval tokens ───────────────────────────────
+// ── GAP-7.7 M2:HMAC 签名的审批令牌 ───────────────────────────────────────────────
 //
-// A resume binding runs arbitrary shell, so auto-execution is gated by a
-// persisted HMAC-SHA256 token. The GUI mints a token (over the binding's
-// canonical payload) when the user clicks Always in the Feed panel; the
-// secret lives at `<data_dir>/resume.key` (0600), the approved digests at
-// `<data_dir>/resume-tokens.json`. Threat model: drive-by / accidental config
-// edits, not a determined local attacker (single-user workstation).
+// resume 绑定会运行任意 shell,因此自动执行由
+// 持久化的 HMAC-SHA256 令牌把关。GUI 在用户于信息流面板
+// 点击「始终允许」时,基于绑定的规范负载铸造令牌;
+// 密钥位于 `<data_dir>/resume.key`(0600),已批准摘要位于
+// `<data_dir>/resume-tokens.json`。威胁模型:误入 / 意外修改
+// 配置,而非坚定的本地攻击者(单用户工作站)。
 
-/// Authorization outcome for executing a resume binding.
+/// 执行 resume 绑定的授权结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AuthDecision {
-    /// A valid HMAC token matches → run silently.
+    /// 有效的 HMAC 令牌匹配 → 静默运行。
     Approved,
-    /// No matching token → needs human approval via the Feed panel.
+    /// 无匹配令牌 → 需要经信息流面板人工审批。
     NeedsPrompt,
 }
 
-/// Path of the long-lived HMAC secret: `<data_dir>/resume.key` (0600).
+/// 长期 HMAC 密钥路径:`<data_dir>/resume.key`(0600)。
 pub(crate) fn secret_path() -> PathBuf {
     pureterm_daemon::discovery::data_dir().join("resume.key")
 }
 
-/// Path of the approved-token digest list: `<data_dir>/resume-tokens.json`.
+/// 已批准令牌摘要列表路径:`<data_dir>/resume-tokens.json`。
 pub(crate) fn tokens_path() -> PathBuf {
     pureterm_daemon::discovery::data_dir().join("resume-tokens.json")
 }
 
-/// Canonical, stable byte encoding of a binding for HMAC. Uses `\0` separators
-/// (cannot appear in a TOML string) so `kind`/`checkpoint`/`shell` boundaries
-/// are unambiguous. Stable across runs — do NOT use JSON (key-order unstable).
+/// 绑定用于 HMAC 的规范、稳定的字节编码。用 `\0` 分隔,
+/// 该字符不可能出现在 TOML 字符串中,因此 `kind` / `checkpoint` / `shell` 的边界
+/// 无歧义。跨运行稳定 —— 不要用 JSON(键序不稳定)。
 pub(super) fn canonical_payload(kind: &str, checkpoint: &str, shell: &[String]) -> Vec<u8> {
     let mut v = Vec::new();
     v.extend_from_slice(kind.as_bytes());
@@ -49,14 +49,14 @@ pub(super) fn canonical_payload(kind: &str, checkpoint: &str, shell: &[String]) 
     v
 }
 
-/// Hex-encoded HMAC-SHA256 of the binding's canonical payload under `secret`.
+/// 用 `secret` 对绑定规范负载求得的十六进制 HMAC-SHA256。
 pub(crate) fn compute_token(secret: &[u8], kind: &str, checkpoint: &str, shell: &[String]) -> String {
     let mut mac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
     mac.update(&canonical_payload(kind, checkpoint, shell));
     hex::encode(mac.finalize().into_bytes())
 }
 
-/// Check whether `tokens` contains the digest for this binding.
+/// 检查 `tokens` 是否包含该绑定的摘要。
 pub(crate) fn authorize_with(
     secret: &[u8],
     tokens: &[String],
@@ -72,7 +72,7 @@ pub(crate) fn authorize_with(
     }
 }
 
-/// Read or lazily create the 32-byte secret at `path` (0600 on create).
+/// 读取或惰性创建 `path` 处的 32 字节密钥(创建时 0600)。
 pub(crate) fn ensure_secret_at(path: &Path) -> [u8; 32] {
     use std::io::{Read, Write};
     if let Ok(mut f) = std::fs::File::open(path) {
@@ -106,7 +106,7 @@ pub(crate) fn ensure_secret_at(path: &Path) -> [u8; 32] {
     buf
 }
 
-/// Read the approved-token list; empty on any error.
+/// 读取已批准的令牌列表;任何错误时返回空。
 pub(crate) fn load_tokens_at(path: &Path) -> Vec<String> {
     let Ok(s) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -114,7 +114,7 @@ pub(crate) fn load_tokens_at(path: &Path) -> Vec<String> {
     serde_json::from_str::<Vec<String>>(&s).unwrap_or_default()
 }
 
-/// Atomically persist the approved-token list.
+/// 原子持久化已批准的令牌列表。
 pub(crate) fn save_tokens_at(path: &Path, tokens: &[String]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -126,21 +126,21 @@ pub(crate) fn save_tokens_at(path: &Path, tokens: &[String]) -> std::io::Result<
     Ok(())
 }
 
-/// Cached secret for the process (read/created once on first use).
+/// 进程级缓存的密钥(首次使用时读取 / 创建一次)。
 pub(crate) fn ensure_secret() -> [u8; 32] {
     static SECRET: OnceLock<[u8; 32]> = OnceLock::new();
     *SECRET.get_or_init(|| ensure_secret_at(&secret_path()))
 }
 
-/// Authorize against the on-disk token store + secret.
+/// 依据磁盘上的令牌存储 + 密钥进行授权。
 pub(crate) fn authorize(kind: &str, checkpoint: &str, shell: &[String]) -> AuthDecision {
     let secret = ensure_secret();
     let tokens = load_tokens_at(&tokens_path());
     authorize_with(&secret, &tokens, kind, checkpoint, shell)
 }
 
-/// Mint + persist the token for this binding (idempotent). Called by the GUI
-/// when the user picks Always on a resume-binding approval.
+/// 为绑定铸造并持久化令牌(幂等)。GUI 在用户于
+/// resume 绑定审批中选择「始终允许」时调用。
 pub(crate) fn approve_token(kind: &str, checkpoint: &str, shell: &[String]) {
     let secret = ensure_secret();
     let mut tokens = load_tokens_at(&tokens_path());

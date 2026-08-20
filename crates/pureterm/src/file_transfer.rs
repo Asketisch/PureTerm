@@ -1,8 +1,8 @@
-//! GAP-38: SCP/SFTP file transfer — config + scp upload MVP.
+//! GAP-38:SCP/SFTP 文件传输——配置 + scp 上传 MVP。
 
 use std::path::Path;
 
-/// `[file_transfer]` config.
+/// `[file_transfer]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTransferConfig {
     pub enabled: bool,
@@ -24,7 +24,7 @@ pub struct FileTransferState {
     pub in_progress: bool,
 }
 
-/// Upload a local file via `scp` when enabled. MVP: shell out to system scp.
+/// 启用时经 `scp` 上传本地文件。MVP:调用系统 scp。
 #[cfg(unix)]
 pub fn scp_upload(
     cfg: &FileTransferConfig,
@@ -51,7 +51,7 @@ pub fn scp_upload(
     }
 }
 
-/// Download a remote file via `scp` when enabled. MVP: shell out to system scp.
+/// 启用时经 `scp` 下载远程文件。MVP:调用系统 scp。
 #[cfg(unix)]
 pub fn scp_download(
     cfg: &FileTransferConfig,

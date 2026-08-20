@@ -1,4 +1,4 @@
-//! Defines the Row type which makes up lines in the grid.
+//! 定义组成网格行的 Row 类型。
 
 use std::cmp::{max, min};
 use std::ops::{Index, IndexMut, Range, RangeFrom, RangeFull, RangeTo, RangeToInclusive};
@@ -11,16 +11,16 @@ use crate::grid::GridCell;
 use crate::index::Column;
 use crate::term::cell::ResetDiscriminant;
 
-/// A row in the grid.
+/// 网格中的一行。
 #[derive(Default, Clone, Debug)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Row<T> {
     inner: Vec<T>,
 
-    /// Maximum number of occupied entries.
+    /// 已占用条目的最大数量。
     ///
-    /// This is the upper bound on the number of elements in the row, which have been modified
-    /// since the last reset. All cells after this point are guaranteed to be equal.
+    /// 这是行内自上次重置以来被修改元素数的上界;
+    /// 该点之后的所有单元格保证相等。
     pub(crate) occ: usize,
 }
 
@@ -31,15 +31,15 @@ impl<T: PartialEq> PartialEq for Row<T> {
 }
 
 impl<T: Default> Row<T> {
-    /// Create a new terminal row.
+    /// 创建新的终端行。
     ///
-    /// Ideally the `template` should be `Copy` in all performance sensitive scenarios.
+    /// 性能敏感场景中 `template` 最好是 `Copy` 的。
     pub fn new(columns: usize) -> Row<T> {
         debug_assert!(columns >= 1);
 
         let mut inner: Vec<T> = Vec::with_capacity(columns);
 
-        // This is a slightly optimized version of `std::vec::Vec::resize`.
+        // 这是 `std::vec::Vec::resize` 的微优化版本。
         unsafe {
             let mut ptr = inner.as_mut_ptr();
 
@@ -55,7 +55,7 @@ impl<T: Default> Row<T> {
         Row { inner, occ: 0 }
     }
 
-    /// Increase the number of columns in the row.
+    /// 增加行的列数。
     #[inline]
     pub fn grow(&mut self, columns: usize) {
         if self.inner.len() >= columns {
@@ -65,9 +65,9 @@ impl<T: Default> Row<T> {
         self.inner.resize_with(columns, T::default);
     }
 
-    /// Reduce the number of columns in the row.
+    /// 减少行的列数。
     ///
-    /// This will return all non-empty cells that were removed.
+    /// 这会返回被移除的全部非空单元格。
     pub fn shrink(&mut self, columns: usize) -> Option<Vec<T>>
     where
         T: GridCell,
@@ -76,7 +76,7 @@ impl<T: Default> Row<T> {
             return None;
         }
 
-        // Split off cells for a new row.
+        // 为新行拆分单元格。
         let mut new_row = self.inner.split_off(columns);
         let index = new_row.iter().rposition(|c| !c.is_empty()).map_or(0, |i| i + 1);
         new_row.truncate(index);
@@ -86,7 +86,7 @@ impl<T: Default> Row<T> {
         if new_row.is_empty() { None } else { Some(new_row) }
     }
 
-    /// Reset all cells in the row to the `template` cell.
+    /// 把行内全部单元格重置为 `template`。
     #[inline]
     pub fn reset<D>(&mut self, template: &T)
     where
@@ -95,13 +95,13 @@ impl<T: Default> Row<T> {
     {
         debug_assert!(!self.inner.is_empty());
 
-        // Mark all cells as dirty if template cell changed.
+        // 模板单元格变化时把全部单元格标记为脏。
         let len = self.inner.len();
         if self.inner[len - 1].discriminant() != template.discriminant() {
             self.occ = len;
         }
 
-        // Reset every dirty cell in the row.
+        // 重置行内每个脏单元格。
         for item in &mut self.inner[0..self.occ] {
             item.reset(template);
         }
@@ -150,7 +150,7 @@ impl<T> Row<T> {
         self.inner = vec;
     }
 
-    /// Check if all cells in the row are empty.
+    /// 检查行内单元格是否全空。
     #[inline]
     pub fn is_clear(&self) -> bool
     where

@@ -1,13 +1,13 @@
-//! `pureterm ssh tunnel <user@host>` — GAP-5.2 DoD: open a russh-backed SOCKS5
-//! tunnel through a gateway, owned by the persistent `puretermd`. The tunnel
-//! survives GUI restart and multiplexes many client connections over one SSH
-//! session. This is the daemon-direct counterpart of `ssh_cli::connect`.
+//! `pureterm ssh tunnel <user@host>`——GAP-5.2 DoD:经网关开启一条
+//! russh 支撑的 SOCKS5 隧道,由常驻 `puretermd` 持有。该隧道
+//! 跨 GUI 重启仍存活,并把多个客户端连接复用在一条 SSH
+//! 会话上。这是 `ssh_cli::connect` 的守护进程直连版。
 //!
-//! Connect through it from anywhere:
+//! 从任何地方经它连接:
 //!   `curl --socks5-hostname 127.0.0.1:<port> https://ifconfig.io`
-//! `--socks5-hostname` (not `--socks5`) makes the client send the hostname
-//! verbatim, so the *gateway* resolves DNS — that's how internal.corp hosts only
-//! the gateway can see become reachable.
+//! `--socks5-hostname`(而非 `--socks5`)让客户端原样发送主机名,
+//! 由*网关*解析 DNS——这正是仅有网关可见的 internal.corp 主机
+//! 变为可达的原因。
 
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 use crate::daemon_client;
 use crate::ssh_cli::parse_target;
 
-/// Start a tunnel. Ensures the daemon, calls `tunnel.start`, then polls
-/// `tunnel.list` until the tunnel leaves the `connecting` state (or times out).
+/// 启动一条隧道。确保守护进程就绪,调用 `tunnel.start`,然后轮询
+/// `tunnel.list`,直到隧道离开 `connecting` 状态(或超时)。
 pub fn start(
     target: &str,
     port: Option<u16>,
@@ -44,11 +44,11 @@ fn run_start(
     let (user, host) = parse_target(target)
         .ok_or_else(|| format!("invalid target {target:?}; expected [user@]host"))?;
 
-    // If neither a key nor a password was given, prompt on stdin (echoed — MVP;
-    // supply --password or --identity to avoid the prompt). The CLI always
-    // hands the daemon a credential, so the daemon-side need_auth park is only
-    // reachable via raw JSON-RPC / a future GUI. With `-A` the daemon will try
-    // ssh-agent keys, so skip the prompt.
+    // 若既未给密钥也未给密码,则在 stdin 上提示输入(明文回显——MVP 阶段;
+    // 提供 --password 或 --identity 可避免该提示)。CLI 始终
+    // 向守护进程递交凭据,因此守护进程侧的 need_auth 停驻仅
+    // 能通过原始 JSON-RPC / 未来的 GUI 触达。带 `-A` 时守护进程会尝试
+    // ssh-agent 密钥,故跳过提示。
     if identity.is_none() && password.is_none() && !forward_agent {
         print!("[pureterm tunnel] password for {target}: ");
         io::stdout().flush().ok();
@@ -80,7 +80,7 @@ fn run_start(
         "[pureterm tunnel] starting {target} → SOCKS5 on 127.0.0.1:{local_port} (tunnel {tunnel_id})"
     );
 
-    // Poll for a terminal status (the connect/auth runs async in the daemon).
+    // 轮询终止状态(连接/认证在守护进程中异步进行)。
     let started = Instant::now();
     let deadline = Duration::from_secs(15);
     let mut last = String::new();
@@ -123,13 +123,13 @@ fn run_start(
                     .unwrap_or("unknown");
                 return Err(format!("tunnel {tunnel_id} failed: {reason}"));
             }
-            _ => break, // unknown status → stop polling
+            _ => break, // 未知状态 → 停止轮询
         }
     }
     Err(format!("tunnel {tunnel_id} did not connect (last status: {last})"))
 }
 
-/// Stop a tunnel by id.
+/// 按 id 停止一条隧道。
 pub fn stop(id: &str) {
     let socket = match daemon_client::ensure_daemon() {
         Ok(s) => s,
@@ -151,7 +151,7 @@ pub fn stop(id: &str) {
     }
 }
 
-/// List active tunnels.
+/// 列出所有活跃隧道。
 pub fn list() {
     let socket = match daemon_client::ensure_daemon() {
         Ok(s) => s,

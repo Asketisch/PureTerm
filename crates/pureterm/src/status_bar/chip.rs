@@ -1,13 +1,13 @@
-//! Grouped chip rendering for the status bar.
+//! 状态栏的分组 chip 渲染。
 //!
-//! Status-bar segments are rendered as "chips": rounded translucent containers
-//! with a small inner label. Chips are colored per `BarGroup`, so the bar reads
-//! as a sequence of visually distinct clusters (Context / Runtime / System / Meta)
-//! rather than a single dense line.
+//! 状态栏片段渲染为'chip':带内嵌小标签的圆角半透明容器,
+//! 并按 `BarGroup` 着色,使整条栏呈现为视觉上彼此区分的簇
+//! (Context / Runtime / System / Meta),而不是一条密集的线。
+//! 颜色取自 `Theme::Palette`(目前仅内置 `Theme::Dark`);
 //!
-//! Colors are derived from `Theme::Palette` (today only `Theme::Dark` ships),
-//! so when the app eventually grows a light/System theme, the chips will
-//! automatically follow without per-segment rewrites.
+//! 将来应用加入浅色/System 主题时,chip 会自动跟随,
+//! 无需逐段重写。
+//!
 
 use iced::widget::{container, text};
 use iced::{Background, Border, Color, Element, Theme};
@@ -16,9 +16,9 @@ use crate::iced_app::Message;
 
 use super::component::{BarElement, BarGroup};
 
-/// Build a chip element: an 11-px label inside a rounded translucent container,
-/// tinted by `group`. The label color is taken verbatim from the caller via
-/// [`chip_text`] when the caller wants a state color (e.g. agent red, ssh grey).
+/// 构建一个 chip 元素:圆角半透明容器内的 11px 标签,
+/// 由 `group` 着色。标签颜色通过 [`chip_text`] 原样取自调用方,
+/// 供调用方表达状态色(如 agent 红、ssh 灰)时使用。
 pub fn chip(label: String, group: BarGroup, theme: &Theme) -> BarElement<'static> {
     let fg = chip_text(theme, group);
     let bg = chip_bg(theme, group);
@@ -36,9 +36,9 @@ pub fn chip(label: String, group: BarGroup, theme: &Theme) -> BarElement<'static
         .into()
 }
 
-/// Build a chip with an explicit foreground color (overrides the group's
-/// default text color). Used by segments that carry semantic urgency (red SSH
-/// failure, green GitHub PR, amber SSH authenticating).
+/// 构建带显式前景色的 chip(覆盖分组默认文字颜色)。
+/// 供携带语义紧急度的片段使用:红 SSH 失败、绿 GitHub PR、橙 SSH
+/// 验证中。
 pub fn chip_with_color(
     label: String,
     group: BarGroup,
@@ -60,55 +60,55 @@ pub fn chip_with_color(
         .into()
 }
 
-/// Build an invisible zero-width chip (used to keep the registry's empty-text
-/// segments from collapsing the row's spacing).
+/// 构建不可见的零宽 chip(避免注册表中空文本片段
+/// 压垮整行间距)。
 pub fn empty() -> BarElement<'static> {
     text(String::new()).size(11).into()
 }
 
-/// Group-tinted translucent background, derived from the active `Theme` palette.
+/// 按活动 `Theme` 调色板派生的分组色调半透明背景。
 pub fn chip_bg(theme: &Theme, group: BarGroup) -> Color {
     let p = theme.palette();
     let (dr, dg, db) = match group {
-        BarGroup::Context => (0.10, 0.18, 0.13), // cold green tint
-        BarGroup::Runtime => (0.20, 0.10, 0.18), // warm magenta tint
-        BarGroup::System => (0.10, 0.14, 0.22),  // cool blue tint
-        BarGroup::Meta => (0.16, 0.16, 0.16),    // neutral grey
+        BarGroup::Context => (0.10, 0.18, 0.13), // 冷绿色调
+        BarGroup::Runtime => (0.20, 0.10, 0.18), // 暖品红调
+        BarGroup::System => (0.10, 0.14, 0.22),  // 冷蓝色调
+        BarGroup::Meta => (0.16, 0.16, 0.16),    // 中性灰
     };
-    // Lift toward white by 35 % to keep contrast against the dark bar fill.
+    // 向白色提亮 35%,以保持与深色栏填充的对比度。
     mix(p.background, dr, dg, db, 0.40)
 }
 
-/// Border color tinted slightly darker than the chip background. Stays subtle
-/// so very-low-contrast themes (pure black) don't lose the chip silhouette.
+/// 比 chip 背景略深的边框色。保持微妙
+/// 以免极低对比主题(纯黑)丢失 chip 轮廓。
 pub fn chip_border(theme: &Theme) -> Color {
     let p = theme.palette();
     Color { a: 0.30, ..p.text }
 }
 
-/// Default chip text color (used when a caller doesn't override via
-/// `chip_with_color`). Pulled from the palette's `text` so we follow the theme
-/// automatically.
+/// 默认 chip 文字颜色(调用方不通过 `chip_with_color` 覆盖时使用)。
+/// 取自调色板的 `text`,以便自动跟随主题。
+///
 pub fn chip_text(theme: &Theme, group: BarGroup) -> Color {
-    let _ = group; // tinting reserved for future light theme; today we use palette text.
+    let _ = group; // 着色预留给未来的浅色主题;目前使用调色板文字色。
     theme.palette().text
 }
 
-/// Bar (top or bottom) background color, derived from the active theme. Today
-/// `Theme::Dark.background` → opaque near-black `~rgb(34,34,39)`; tomorrow it
-/// will follow Light automatically.
+/// 栏(顶栏或底栏)背景色,由活动主题派生。目前
+/// `Theme::Dark.background` → 不透明的近黑 `~rgb(34,34,39)`;将来
+/// 会自动跟随 Light 主题。
 pub fn bar_bg(theme: &Theme) -> Color {
     let p = theme.palette();
-    // Slightly darker than `background` for visual layering under the chip row.
+    // 比 `background` 略深,以便在 chip 行下方做视觉分层。
     Color { r: p.background.r * 0.85, g: p.background.g * 0.85, b: p.background.b * 0.85, a: 1.0 }
 }
 
-/// Footer border color (the 0.5-px line above the bar).
+/// 底栏边框色(栏上方 0.5px 线)。
 pub fn bar_border(theme: &Theme) -> Color {
     Color { a: 0.05, ..theme.palette().text }
 }
 
-/// 8-px filler used between consecutive groups for clean cluster separation.
+/// 连续分组之间用于干净分隔的 8px 填充。
 pub fn group_spacer() -> BarElement<'static> {
     use iced::Length;
     Element::<Message, Theme, iced::Renderer>::from(
@@ -116,7 +116,7 @@ pub fn group_spacer() -> BarElement<'static> {
     )
 }
 
-/// Internal: blend `base` (theme background, RGB) toward (dr,dg,db) by `t`.
+/// 内部:将 `base`(主题背景 RGB)按 `t` 向 (dr,dg,db) 混合。
 fn mix(base: Color, dr: f32, dg: f32, db: f32, t: f32) -> Color {
     Color {
         r: base.r * (1.0 - t) + dr * t,
@@ -130,8 +130,8 @@ fn mix(base: Color, dr: f32, dg: f32, db: f32, t: f32) -> Color {
 mod tests {
     use super::*;
 
-    /// Building a chip against the live `Theme::Dark` palette must not panic.
-    /// Iced has no native snapshot matcher, so we only cover construction here.
+    /// 针对真实 `Theme::Dark` 调色板构建 chip 不得 panic。
+    /// Iced 没有原生快照匹配器,因此这里仅覆盖构造部分。
     #[test]
     fn chip_does_not_panic_on_dark_theme() {
         let theme = Theme::Dark;

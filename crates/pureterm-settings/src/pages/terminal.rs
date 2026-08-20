@@ -108,9 +108,9 @@ impl TerminalState {
         }
     }
 
-    /// Replay this page's in-memory state onto `doc`. Used at Save time
-    /// via `mutate_config`. Integer text fields that fail to parse are
-    /// skipped rather than wiped.
+    /// 把本页内存状态重放到 `doc` 上。保存时经
+    /// `mutate_config` 使用。解析失败的整数文本框会被
+    /// 跳过而非清空。
     pub fn apply(&self, doc: &mut toml_edit::DocumentMut) {
         if let Ok(n) = self.history.parse::<i64>() {
             crate::config_io::set_integer(doc, &["scrolling"], "history", n);

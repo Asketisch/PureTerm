@@ -8,15 +8,15 @@ use super::shim::{evaluate_shim, infer_agent_kind};
     use super::*;
     use serde_json::json;
 
-    // PURETERM_AGENT_KIND is process-global env; serialize the infer_agent_kind
-    // tests so they don't race each other.
+    // PURETERM_AGENT_KIND 是进程全局环境变量;把 infer_agent_kind 的
+    // 相关测试串行化,避免彼此竞争。
     static AGENT_KIND_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn infer_agent_kind_env_var_takes_priority() {
         let _g = AGENT_KIND_ENV_LOCK.lock().unwrap();
         std::env::set_var("PURETERM_AGENT_KIND", "codex");
-        // transcript would imply claude-code, but the env var wins.
+        // 转录本会推断为 claude-code,但环境变量优先。
         let input = HookInput {
             transcript_path: "/home/u/.claude/projects/x.jsonl".into(),
             ..Default::default()
@@ -28,7 +28,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
     #[test]
     fn infer_agent_kind_transcript_heuristic_falls_back() {
         let _g = AGENT_KIND_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("PURETERM_AGENT_KIND"); // ensure unset
+        std::env::remove_var("PURETERM_AGENT_KIND"); // 确保该环境变量未被设置
         let claude = HookInput {
             transcript_path: "/home/u/.claude/projects/x.jsonl".into(),
             ..Default::default()
@@ -58,7 +58,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         }
     }
 
-    // ── HookEvent::parse / uses_matcher ────────────────────────────────────
+    // ── HookEvent::parse / uses_matcher(事件解析/匹配) ───────────────────────────────
 
     #[test]
     fn hook_event_parse_known_and_unknown() {
@@ -77,7 +77,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         assert!(!HookEvent::Notification.uses_matcher());
     }
 
-    // ── Decision::merge (Deny > Ask > Allow > Passthrough) ─────────────────
+    // ── Decision::merge(合并优先级:Deny > Ask > Allow > Passthrough) ────────────────
 
     #[test]
     fn decision_merge_precedence() {
@@ -88,11 +88,11 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         assert_eq!(Decision::Passthrough.merge(Decision::Ask(a.clone())), Decision::Ask(a.clone()));
         assert_eq!(Decision::Ask(a.clone()).merge(Decision::Allow), Decision::Ask(a.clone()));
         assert_eq!(Decision::Allow.merge(Decision::Passthrough), Decision::Allow);
-        // An already-deny stays deny.
+        // 已是 Deny 的仍保持 Deny。
         assert_eq!(Decision::Deny(d).merge(Decision::Ask(a)), Decision::Deny("no".into()));
     }
 
-    // ── deny_subject ───────────────────────────────────────────────────────
+    // ── deny_subject(拒绝主体) ─────────────────────────────────────────────────────
 
     #[test]
     fn deny_subject_prefers_command_then_filepath() {
@@ -147,7 +147,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         assert_eq!(evaluate(&input, &[r]), Decision::Deny("secrets blocked".into()));
     }
 
-    // ── evaluate ───────────────────────────────────────────────────────────
+    // ── evaluate(评估) ───────────────────────────────────────────────────────────
 
     #[test]
     fn evaluate_no_rules_passthrough() {
@@ -250,7 +250,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
             deny_pattern: Some(".".into()),
             ..Default::default()
         };
-        // Write tool with a file_path subject.
+        // Write 工具,主体为 file_path。
         let write_input = HookInput {
             hook_event_name: "PreToolUse".into(),
             tool_name: Some("Write".into()),
@@ -260,7 +260,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         assert_eq!(evaluate(&write_input, &[r]), Decision::Deny("denied by PureTerm hook policy".into()));
     }
 
-    // ── ask_pattern (GAP-7.4) ─────────────────────────────────────────────
+    // ── ask_pattern(询问模式,GAP-7.4) ─────────────────────────────────────────────
 
     #[test]
     fn evaluate_ask_pattern_match_asks() {
@@ -372,7 +372,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         assert!(out.stdout.is_none(), "non-PreToolUse ask downgrades to silent allow");
     }
 
-    // ── parse_stdout_decision ──────────────────────────────────────────────
+    // ── parse_stdout_decision(解析) ──────────────────────────────────────────────
 
     #[test]
     fn parse_stdout_empty_and_garbage_is_none() {
@@ -398,7 +398,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         assert_eq!(parse_stdout_decision(approve), Some(Decision::Passthrough));
     }
 
-    // ── run_external_command (real subprocesses) ───────────────────────────
+    // ── run_external_command(真实子进程) ────────────────────────────────────────────
 
     fn cmd_rule(command: &str, timeout: Option<u64>) -> HookRule {
         HookRule {
@@ -411,7 +411,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
 
     #[test]
     fn external_exit_2_denies() {
-        // exit 2 + stderr → Deny(stderr trimmed)。
+        // exit 2 + stderr → Deny(裁剪后的 stderr)。
         let r = cmd_rule("echo blocked >&2; exit 2", None);
         match run_external_command(&r, b"{}") {
             Decision::Deny(reason) => assert!(reason.contains("blocked"), "reason={reason:?}"),
@@ -450,7 +450,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         assert_eq!(d, Decision::Passthrough);
     }
 
-    // ── format_decision_output (stdout JSON / exit code, pure) ─────────────
+    // ── format_decision_output(stdout JSON / 退出码,纯函数) ──────────────────────────
 
     #[test]
     fn format_pretooluse_deny_emits_permission_decision() {
@@ -486,7 +486,7 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         assert!(o.stdout.is_none());
     }
 
-    // ── evaluate_shim (pure core: stdin bytes → DecisionOutput, no I/O) ────
+    // ── evaluate_shim(纯核心:stdin 字节 → DecisionOutput,无 I/O) ─────────────────────
 
     #[test]
     fn shim_deny_rule_produces_deny_output() {

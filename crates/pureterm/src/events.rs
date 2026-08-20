@@ -1,23 +1,23 @@
-//! GAP-6.7: unified event schema.
+//! GAP-6.7:统一的事件 schema。
 //!
-//! Every state transition the GUI cares about is recorded as an [`AppEvent`]:
-//! tab/pane lifecycle, config reload, feed approvals, agent sessions, PTY
-//! spawn/exit, etc. The [`EventBus`](crate::events_bus::EventBus) persists each
-//! event to `events.jsonl` and broadcasts it to in-process subscribers; the CLI
-//! (`pureterm events`) tails the file for real-time consumption.
+//! GUI 关心的每次状态转移都会记录为一条 [`AppEvent`]:
+//! 标签页/窗格生命周期、配置重载、feed 审批、agent 会话、PTY
+//! 生成/退出等。由 [`EventBus`](crate::events_bus::EventBus) 把每条
+//! 事件持久化到 `events.jsonl` 并广播给进程内订阅者;CLI
+//! (`pureterm events`)会 tail 该文件以实时消费。
 //!
-//! This module is the stable public schema only — no I/O, no bus logic.
+//! 本模块只提供稳定的公开 schema——不含 I/O,也不含总线逻辑。
 
 use serde_json::Value;
 
-/// The 16 event categories. Serialized lowercase (`Feed` → `"feed"`).
+/// 16 种事件分类。序列化为小写(`Feed` → `"feed"`)。
 ///
-/// `Session` carries PTY/daemon-session lifecycle (spawned/exited/reattached/
-/// hibernated/resumed) as a first-class concern, rather than folding it under
-/// `Surface` — which GAP-2.1 will redefine, so aliasing now would force a rename.
-/// `Notification`/`Sidebar` are reserved: their producers land with future
-/// GAPs (Notification System / programmable sidebar). `Workspace`/`Browser`
-/// are produced by GAP-2.1 / GAP-3.5; `Git` is produced by GAP-32; `Shell` by GAP-15.
+/// `Session` 承载 PTY/守护进程会话的生命周期(生成/退出/重连/
+/// 休眠/恢复),作为一等关注点,而非折叠进
+/// `Surface` —— GAP-2.1 会重新定义它,现在做别名将来就得改名。
+/// `Notification`/`Sidebar` 保留:它们的生产者随未来
+/// GAP 落地(通知系统 / 可编程侧边栏)。`Workspace`/`Browser`
+/// 由 GAP-2.1 / GAP-3.5 产生;`Git` 由 GAP-32 产生;`Shell` 由 GAP-15 产生。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Category {
@@ -34,19 +34,19 @@ pub enum Category {
     App,
     Config,
     Git,
-    /// GAP-15: shell integration marks (prompt/command/output boundaries, exit
-    /// codes) emitted from OSC 133 sequences parsed off the PTY.
+    /// GAP-15:shell 集成标记(提示符/命令/输出边界、退出码),
+    /// 来自从 PTY 解析出的 OSC 133 序列。
     Shell,
-    /// GAP-02: error recovery — LLM fix suggestions on command failure.
+    /// GAP-02:错误恢复——命令失败时的 LLM 修复建议。
     ErrorRecovery,
-    /// GAP-10: pattern-match triggers — `trigger.matched` emitted on every
-    /// regex hit against terminal output.
+    /// GAP-10:模式匹配触发器——每次匹配到终端输出中的正则时,
+    /// 都会发出 `trigger.matched`。
     Trigger,
 }
 
 impl Category {
-    /// Lowercase wire name (matches the serde representation), used for the
-    /// `--type` category-prefix filter without going through serialize.
+    /// 小写传输名(与 serde 表示一致),用于
+    /// `--type` 分类前缀过滤,而无需经过 serialize。
     pub fn as_str(self) -> &'static str {
         match self {
             Category::Window => "window",
@@ -69,11 +69,11 @@ impl Category {
     }
 }
 
-/// One structured event. Serialized one-per-line into `events.jsonl`.
+/// 一条结构化事件。以每行一条序列化进 `events.jsonl`。
 ///
-/// Field order is fixed for human-readability of the raw log: `seq` (monotonic
-/// id), `ts` (epoch millis), `cat` (category), `kind` (`"<cat>.<verb>"`),
-/// `session_id` (optional), `data` (arbitrary payload).
+/// 字段顺序固定,便于直接阅读原始日志:`seq`(单调
+/// id)、`ts`(epoch 毫秒)、`cat`(分类)、`kind`(`"<cat>.<verb>"`)、
+/// `session_id`(可选)、`data`(任意载荷)。
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct AppEvent {
     pub seq: u64,
@@ -87,8 +87,8 @@ pub struct AppEvent {
 }
 
 impl AppEvent {
-    /// Construct an event with the given kind + payload; `seq`/`ts` are filled
-    /// by [`EventBus::emit`](crate::events_bus::EventBus::emit).
+    /// 用给定的 kind + 载荷构造事件;`seq`/`ts` 由
+    /// [`EventBus::emit`](crate::events_bus::EventBus::emit) 填充。
     pub fn new(cat: Category, kind: impl Into<String>, session_id: Option<String>, data: Value) -> Self {
         Self {
             seq: 0,
@@ -101,8 +101,8 @@ impl AppEvent {
     }
 }
 
-/// A parsed `--type` filter. `--type feed` → category only; `--type feed.resolved`
-/// → category + exact kind. Empty filter (no `--type`) matches everything.
+/// 解析后的 `--type` 过滤器。`--type feed` → 只看分类;`--type feed.resolved`
+/// → 分类 + 精确 kind。空过滤器(无 `--type`)匹配全部。
 #[derive(Debug, Clone, Default)]
 pub struct TypeFilter {
     pub category: Option<String>,
@@ -110,7 +110,7 @@ pub struct TypeFilter {
 }
 
 impl TypeFilter {
-    /// Parse a `--type` argument. `None` or empty → match all.
+    /// 解析 `--type` 参数。`None` 或空 → 匹配全部。
     pub fn parse(raw: Option<&str>) -> Self {
         let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
             return Self::default();
@@ -127,7 +127,7 @@ impl TypeFilter {
         }
     }
 
-    /// Does this event pass the filter?
+    /// 该事件是否通过此过滤器?
     pub fn matches(&self, event: &AppEvent) -> bool {
         if let Some(cat) = &self.category {
             if event.cat.as_str() != cat.as_str() {
@@ -135,10 +135,10 @@ impl TypeFilter {
             }
         }
         if let Some(kind) = &self.kind {
-            // dotted `cat.verb` pins the exact full kind `cat.verb` (category was
-            // verified above). Suffix matching would let `--type feed.resolved`
-            // wrongly match a hypothetical `feed.unresolved`, contradicting the
-            // "exact kind" contract documented on [`TypeFilter`].
+            // 带点的 `cat.verb` 锁定精确的完整 kind `cat.verb`(分类已在
+            // 上面校验过)。若用后缀匹配,`--type feed.resolved` 会
+            // 错误匹配假设中的 `feed.unresolved`,与
+            // [`TypeFilter`] 上记录的「精确 kind」约定相矛盾。
             let expected: String = match &self.category {
                 Some(cat) => format!("{cat}.{kind}"),
                 None => kind.clone(),
@@ -166,7 +166,7 @@ mod tests {
             "\"feed\""
         );
         assert_eq!(Category::Session.as_str(), "session");
-        // GAP-32: the Git category round-trips lowercase on both paths.
+        // GAP-32:Git 分类在两条路径上都以小写往返。
         assert_eq!(serde_json::to_string(&Category::Git).unwrap(), "\"git\"");
         assert_eq!(Category::Git.as_str(), "git");
     }
@@ -212,12 +212,12 @@ mod tests {
 
     #[test]
     fn type_filter_dotted_pins_exact_kind_not_suffix() {
-        // Regression: `--type feed.resolved` must NOT suffix-match `feed.unresolved`.
-        // The dotted filter pins the exact full kind `cat.verb`, not a trailing suffix.
+        // 回归:`--type feed.resolved` 不得后缀匹配 `feed.unresolved`。
+        // 带点的过滤器锁定精确完整 kind `cat.verb`,而非尾部后缀。
         let f = TypeFilter::parse(Some("feed.resolved"));
         assert!(f.matches(&ev(Category::Feed, "feed.resolved")));
         assert!(!f.matches(&ev(Category::Feed, "feed.unresolved")));
-        // Multi-segment kinds also match exactly, not by trailing suffix.
+        // 多段 kind 也精确匹配,而非按尾部后缀。
         let g = TypeFilter::parse(Some("error_recovery.applied"));
         assert!(g.matches(&ev(Category::ErrorRecovery, "error_recovery.applied")));
         assert!(!g.matches(&ev(Category::ErrorRecovery, "error_recovery.not_applied")));
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn type_filter_matches_git_category() {
-        // GAP-32: `--type git` surfaces the git.* event stream.
+        // GAP-32:`--type git` 显示 git.* 事件流。
         let f = TypeFilter::parse(Some("git"));
         assert!(f.matches(&ev(Category::Git, "git.branch_changed")));
         assert!(f.matches(&ev(Category::Git, "git.quick_action")));
@@ -242,7 +242,7 @@ mod tests {
 
     #[test]
     fn type_filter_matches_shell_category() {
-        // GAP-15: `--type shell` surfaces the shell.* event stream.
+        // GAP-15:`--type shell` 显示 shell.* 事件流。
         let f = TypeFilter::parse(Some("shell"));
         assert!(f.matches(&ev(Category::Shell, "shell.command_finished")));
         assert!(f.matches(&ev(Category::Shell, "shell.prompt_started")));
@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn shell_category_round_trips_lowercase() {
-        // GAP-15: the Shell category serializes + as_str() lowercases.
+        // GAP-15:Shell 分类经序列化 + as_str() 后均为小写。
         assert_eq!(serde_json::to_string(&Category::Shell).unwrap(), "\"shell\"");
         assert_eq!(Category::Shell.as_str(), "shell");
         let back: Category = serde_json::from_str("\"shell\"").unwrap();

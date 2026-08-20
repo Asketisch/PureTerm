@@ -1,13 +1,13 @@
-//! GAP-7.3–7.7 E2E harness: cross-module round-trip tests proving the
-//! `pureterm hook` shim → Unix socket → **real** `FeedPanelState` orchestrator
-//! → oneshot reply → real `feed.jsonl` audit path — WITHOUT iced or a display.
+//! GAP-7.3–7.7 E2E 测试装置:跨模块往返测试,验证
+//! `pureterm hook` shim → Unix socket → **真实的** `FeedPanelState` 编排器
+//! → oneshot 回复 → 真实的 `feed.jsonl` 审计路径——全程无 iced、无显示器。
 //!
-//! The fake "GUI" here is a `UnixListener` thread that runs the REAL
-//! `FeedPanelState::accept_inbound` + `resolve` (the exact logic the iced app
-//! delegates to via `handle_feed_request_approval`). So the deferred-reply
-//! mechanism — stashing the reply handle, resolving later, sending the
-//! JSON-RPC response back over the socket — is exercised end to end, including
-//! the `append_audit` write. Compiled only under `cfg(test)` + unix.
+//! 这里的“假 GUI”是一个 `UnixListener` 线程,运行真实的
+//! `FeedPanelState::accept_inbound` + `resolve`(与 iced 应用
+//! 经 `handle_feed_request_approval` 委托的逻辑完全一致)。因此延迟回复
+//! 机制——暂存回复句柄、稍后解析、经 socket 把
+//! JSON-RPC 响应写回——被端到端验证,包括
+//! `append_audit` 写入。仅在 `cfg(test)` + unix 下编译。
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixListener;
@@ -23,7 +23,7 @@ use crate::feed_client::{request_approval, FeedApprovalRequest, FeedChoice, Feed
 use crate::feed_panel::{FeedPanelState, ReplyHandle, ResolveSource};
 use crate::ipc::protocol::JsonRpcResponse;
 
-/// Unique temp socket path (any stale file removed so `bind` can create it).
+/// 唯一的临时 socket 路径(清除残留文件,使 `bind` 可创建)。
 fn unique_socket_path(label: &str) -> PathBuf {
     static COUNTER: OnceLock<AtomicU64> = OnceLock::new();
     let counter = COUNTER.get_or_init(|| AtomicU64::new(0));
@@ -34,11 +34,11 @@ fn unique_socket_path(label: &str) -> PathBuf {
     p
 }
 
-/// Fake GUI running the REAL `FeedPanelState`: bind → accept one connection →
-/// read the JSON-RPC request → `accept_inbound` (stash pending) → `resolve`
-/// with `choice` (simulating a user click, User source → audit + oneshot reply)
-/// → write the deferred JSON-RPC response back over the socket. `ready` signals
-/// bind completion to eliminate the connect-before-bind race.
+/// 运行真实 `FeedPanelState` 的假 GUI:bind → accept 一个连接 →
+/// 读取 JSON-RPC 请求 → `accept_inbound`(暂存 pending)→ `resolve`
+/// 以 `choice` 解析(模拟用户点击,User 来源 → 审计 + oneshot 回复)
+/// → 经 socket 写回延迟的 JSON-RPC 响应。`ready` 信号
+/// 表示 bind 已完成,消除“先连接后绑定”的竞争。
 fn spawn_orchestrator_gui(
     path: PathBuf,
     choice: FeedChoice,
@@ -67,8 +67,8 @@ fn spawn_orchestrator_gui(
         let id = req.get("id").and_then(|v| v.as_u64()).unwrap_or(1);
         let params = req.get("params").cloned();
 
-        // Real deferred-reply: accept_inbound stashes the reply handle; resolve
-        // (User) sends the JsonRpcResponse via the oneshot + writes audit.
+        // 真实的延迟回复:accept_inbound 暂存回复句柄;resolve
+        // (User)经 oneshot 发送 JsonRpcResponse 并写入审计。
         let (tx, rx) = oneshot::channel::<JsonRpcResponse>();
         let reply: ReplyHandle = Arc::new(Mutex::new(Some(tx)));
         let mut st = FeedPanelState::default();
@@ -97,9 +97,9 @@ fn sample_req<'a>(reason: &'a str, tool_input: &'a serde_json::Value) -> FeedApp
     }
 }
 
-/// GAP-7.4 E2E: shim → orchestrator (real FeedPanelState) → Once reply, with a
-/// real `feed.jsonl` audit row (choice=once, source=user). Proves the deferred-
-/// reply round-trip + audit write without iced/display.
+/// GAP-7.4 E2E:shim → 编排器(真实 FeedPanelState)→ Once 回复,带
+/// 真实的 `feed.jsonl` 审计行(choice=once, source=user)。验证延迟
+/// 回复往返 + 审计写入(无 iced/显示器)。
 #[test]
 fn e2e_roundtrip_once_writes_audit() {
     let _g = crate::feed_panel::FEED_AUDIT_ENV_LOCK.lock().unwrap();
@@ -126,7 +126,7 @@ fn e2e_roundtrip_once_writes_audit() {
     let _ = std::fs::remove_file(&audit_path);
 }
 
-/// GAP-7.4 E2E: Deny choice round-trips back to the shim and audits choice=deny.
+/// GAP-7.4 E2E:Deny 决定往返回 shim,并审计 choice=deny。
 #[test]
 fn e2e_roundtrip_deny_blocks() {
     let _g = crate::feed_panel::FEED_AUDIT_ENV_LOCK.lock().unwrap();

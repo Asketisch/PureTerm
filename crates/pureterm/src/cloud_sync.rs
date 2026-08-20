@@ -1,26 +1,26 @@
-//! GAP-50: Settings cloud sync — local file + GitHub Gist backend.
+//! GAP-50:设置云同步——本地文件 + GitHub Gist 后端。
 //!
-//! Two-tier design:
-//! - **Local**: `sync_push` / `sync_pull` write to
-//!   `~/.config/pureterm/sync/latest.json`. This is always available,
-//!   no auth required, and serves as the offline fallback.
-//! - **Remote (Gist)**: `sync_push_remote` / `sync_pull_remote` post
-//!   the bundle to the GitHub Gist API. Token comes from the env var
-//!   named in [`CloudSyncConfig::token_env`] (default
-//!   `PURETERM_GIST_TOKEN`). Gist ID is in
-//!   [`CloudSyncConfig::gist_id`]; when `gist_id` is empty, a new
-//!   private Gist is created and the ID is returned.
+//! 两层设计:
+//! - **本地**:`sync_push` / `sync_pull` 写入
+//!   `~/.config/pureterm/sync/latest.json`。它始终可用、
+//!   无需认证,并作为离线兜底方案。
+//! - **远端(Gist)**:`sync_push_remote` / `sync_pull_remote` 上传
+//!   配置包到 GitHub Gist API。Token 来自环境变量
+//!   [`CloudSyncConfig::token_env`] 指定的变量(默认
+//!   `PURETERM_GIST_TOKEN`)。Gist ID 在
+//!   [`CloudSyncConfig::gist_id`];`gist_id` 为空时,会
+//!   新建一个私有 Gist 并返回其 ID。
 //!
-//! The remote path is gated behind `cfg.enabled` and the Gist
-//! feature flag (`pureterm.sync_remote`), but the local path is
-//! always available — `sync_push` / `sync_pull` work even when
-//! `enabled = false` (they return an explicit error).
+//! 远端路径由 `cfg.enabled` 与 Gist
+//! 特性开关(`pureterm.sync_remote`)门控;但本地路径
+//! 始终可用——`sync_push` / `sync_pull` 即使在
+//! `enabled = false` 时也能工作(它们会返回明确错误)。
 
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// `[cloud_sync]` config.
+/// `[cloud_sync]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CloudSyncConfig {
     pub enabled: bool,
@@ -42,7 +42,7 @@ impl Default for CloudSyncConfig {
 pub struct SyncBundle {
     pub config_toml: String,
     pub exported_at: String,
-    /// Schema version — bumped on breaking changes to the bundle format.
+    /// 包格式的 schema 版本——破坏性变更时递增。
     pub schema: u32,
 }
 
@@ -55,7 +55,7 @@ pub fn sync_dir() -> PathBuf {
         .join("sync")
 }
 
-/// Push: copy config to local sync bundle.
+/// 推送:把配置复制到本地同步包。
 pub fn sync_push(cfg: &CloudSyncConfig, config_path: &Path) -> Result<PathBuf, String> {
     if !cfg.enabled {
         return Err("cloud_sync disabled".into());
@@ -74,7 +74,7 @@ pub fn sync_push(cfg: &CloudSyncConfig, config_path: &Path) -> Result<PathBuf, S
     Ok(out)
 }
 
-/// Pull: restore config from local sync bundle.
+/// 拉取:从本地同步包恢复配置。
 pub fn sync_pull(cfg: &CloudSyncConfig, config_path: &Path) -> Result<(), String> {
     if !cfg.enabled {
         return Err("cloud_sync disabled".into());
@@ -85,9 +85,9 @@ pub fn sync_pull(cfg: &CloudSyncConfig, config_path: &Path) -> Result<(), String
     validate_and_restore(&bundle, config_path)
 }
 
-/// Validate a bundle's schema and write its config to `config_path`.
-/// Pulled out of `sync_pull` / `sync_pull_remote` so the schema check
-/// can be unit-tested without touching the global sync dir.
+/// 校验同步包的 schema,并把配置写入 `config_path`。
+/// 从 `sync_pull` / `sync_pull_remote` 中抽出,使 schema 检查
+/// 可以不经全局同步目录即可单元测试。
 pub(crate) fn validate_and_restore(bundle: &SyncBundle, config_path: &Path) -> Result<(), String> {
     if bundle.schema != SCHEMA_VERSION {
         return Err(format!(
@@ -98,11 +98,11 @@ pub(crate) fn validate_and_restore(bundle: &SyncBundle, config_path: &Path) -> R
     std::fs::write(config_path, &bundle.config_toml).map_err(|e| e.to_string())
 }
 
-// --- Remote (GitHub Gist) backend ---------------------------------------
+// --- 远端(GitHub Gist)后端 --------------------------------------------------
 
 const GIST_API: &str = "https://api.github.com/gists";
 
-/// Return the configured Gist token (read from env), or an error.
+/// 返回配置的 Gist token(从环境变量读取),否则返回错误。
 fn read_token(cfg: &CloudSyncConfig) -> Result<String, String> {
     if !cfg.enabled {
         return Err("cloud_sync disabled".into());
@@ -127,9 +127,9 @@ pub struct RemotePushResult {
     pub bundle_path: PathBuf,
 }
 
-/// Push the local config to GitHub Gist. If `cfg.gist_id` is empty, a new
-/// private Gist is created and the new ID is returned. The local bundle
-/// is always written first so the user has an offline copy.
+/// 把本地配置推送到 GitHub Gist。`cfg.gist_id` 为空时,
+/// 会新建私有 Gist 并返回新 ID。本地包
+/// 总是先写入,以便用户拥有离线副本。
 pub async fn sync_push_remote(cfg: &CloudSyncConfig, config_path: &Path) -> Result<RemotePushResult, String> {
     let local = sync_push(cfg, config_path)?;
     let token = read_token(cfg)?;
@@ -146,7 +146,7 @@ pub async fn sync_push_remote(cfg: &CloudSyncConfig, config_path: &Path) -> Resu
         .build()
         .map_err(|e| e.to_string())?;
     let gist_id = if cfg.gist_id.is_empty() {
-        // Create a new private Gist with a single file.
+        // 用单个文件创建新的私有 Gist。
         #[derive(Serialize)]
         struct CreateReq<'a> {
             description: &'a str,
@@ -186,7 +186,7 @@ pub async fn sync_push_remote(cfg: &CloudSyncConfig, config_path: &Path) -> Resu
             .map_err(|e| e.to_string())?;
         parsed.id
     } else {
-        // Patch the existing Gist: replace the file content.
+        // 更新现有 Gist:替换文件内容。
         #[derive(Serialize)]
         struct PatchReq<'a> {
             files: std::collections::BTreeMap<&'a str, FileBody<'a>>,
@@ -215,8 +215,8 @@ pub async fn sync_push_remote(cfg: &CloudSyncConfig, config_path: &Path) -> Resu
     Ok(RemotePushResult { gist_id, bundle_path: local })
 }
 
-/// Pull: download the Gist's `pureterm-sync.json` and write it to the
-/// local config path. Requires `cfg.gist_id` to be set.
+/// 拉取:下载 Gist 中的 `pureterm-sync.json` 并写入
+/// 本地配置路径。要求已设置 `cfg.gist_id`。
 pub async fn sync_pull_remote(cfg: &CloudSyncConfig, config_path: &Path) -> Result<(), String> {
     let token = read_token(cfg)?;
     if cfg.gist_id.is_empty() {
@@ -277,12 +277,12 @@ mod tests {
         drop(f);
 
         let cfg = CloudSyncConfig { enabled: true, ..CloudSyncConfig::default() };
-        // override sync dir to keep test hermetic
-        // (we re-implement the push/pull against the same dir used by
-        // sync_push, which is in dirs::config_dir(); this test only
-        // exercises the "requires_enabled" branch — the rest of the
-        // local push/pull flow is integration-only and depends on
-        // dirs::config_dir().)
+        // 覆盖同步目录以保持测试隔离
+        // (本测试仅执行 requires_enabled 分支路径;)
+        // 完整的本地 push/pull 流程与 dirs::config_dir() 绑定,
+        // 属于集成测试,这里不重复实现;
+        // 其余流程依赖实际的配置目录。
+        // )
         assert!(sync_push(&cfg, &cfg_path).is_ok());
     }
 
@@ -304,9 +304,9 @@ mod tests {
 
     #[test]
     fn read_token_rejects_empty() {
-        // SAFETY: setting an env var is process-wide; we restore it after.
+        // SAFETY:设置环境变量是进程级操作;测试结束后我们恢复它。
         let key = "PURETERM_GIST_TOKEN_EMPTY_TEST";
-        // SAFETY: env::set_var is documented as unsafe in recent rustc.
+        // SAFETY:env::set_var 在较新的 rustc 中被标为不安全。
         unsafe { std::env::set_var(key, ""); }
         let cfg = CloudSyncConfig {
             enabled: true,
@@ -318,8 +318,8 @@ mod tests {
 
     #[test]
     fn schema_mismatch_rejected() {
-        // Direct check against the schema validator — no global dir
-        // side effects, so this test is hermetic.
+        // 直接对 schema 校验器检查——不触碰全局目录,
+        // 无副作用,因此该测试是隔离的。
         let bundle = SyncBundle {
             config_toml: "x = 1".into(),
             exported_at: "now".into(),
@@ -333,7 +333,7 @@ mod tests {
 
     #[test]
     fn schema_match_restores_config() {
-        // Same helper, valid schema, should write the file.
+        // 同一辅助函数,合法 schema,应写入文件。
         let bundle = SyncBundle {
             config_toml: "shell = /bin/zsh\n".into(),
             exported_at: "now".into(),
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn sync_pull_reports_disabled_without_io() {
-        // Disabled cfg should not even attempt to read the bundle.
+        // 禁用的配置不应尝试读取同步包。
         let cfg = CloudSyncConfig::default();
         let res = sync_pull(&cfg, Path::new("/nope"));
         assert!(res.is_err());

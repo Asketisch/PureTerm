@@ -1,6 +1,6 @@
 ---
 gap: GAP-29
-title: Badge Overlay
+title: 徽章浮层
 category: UI/外壳
 plan_type: feature
 priority: P4

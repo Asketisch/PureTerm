@@ -61,10 +61,10 @@ impl<'de, T: SerdeReplace + Deserialize<'de>> SerdeReplace for Option<T> {
 
 impl<'de, T: Deserialize<'de>> SerdeReplace for HashMap<String, T> {
     fn replace(&mut self, value: Value) -> Result<(), Box<dyn Error>> {
-        // Deserialize replacement as HashMap.
+        // 将替换反序列化为 HashMap。
         let hashmap: HashMap<String, T> = Self::deserialize(value)?;
 
-        // Merge the two HashMaps, replacing existing values.
+        // 合并两个 HashMap,替换既有值。
         for (key, value) in hashmap {
             self.insert(key, value);
         }

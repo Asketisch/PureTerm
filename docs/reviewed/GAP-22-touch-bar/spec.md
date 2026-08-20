@@ -1,6 +1,6 @@
 ---
 gap: GAP-22
-title: Touch Bar
+title: Touch Bar(触控栏)
 category: UI/外壳
 plan_type: platform
 priority: P4

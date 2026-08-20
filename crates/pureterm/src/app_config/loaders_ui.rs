@@ -16,9 +16,9 @@ use super::{
 use super::AppConfig;
 
 impl AppConfig {
-    /// Load the `[statusbar]` table (GAP-24). A missing/malformed table yields
-    /// `Default`. Mirrors `load_mcp`: read_to_string → toml::from_str → walk
-    /// `value.get("statusbar").as_table()`; each key is independently optional.
+    /// 加载 `[statusbar]` 配置表(GAP-24)。缺失/损坏的表返回
+    /// `Default`。与 `load_mcp` 一致:read_to_string → toml::from_str →
+    /// 遍历 `value.get("statusbar").as_table()`;每个键独立可选。
     pub fn load_statusbar(path: &Path) -> StatusBarConfig {
         let mut cfg = StatusBarConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -37,8 +37,8 @@ impl AppConfig {
                 .iter()
                 .filter_map(|v| v.as_str().map(|s| s.to_string()))
                 .collect();
-            // Only override defaults if the list is non-empty — an empty array
-            // would render a blank bar, which is almost certainly a config mistake.
+            // 仅当列表非空时才覆盖默认值——空数组
+            // 会渲染出空栏,这几乎肯定是配置错误。
             if !ids.is_empty() {
                 cfg.components = ids;
             }
@@ -50,7 +50,7 @@ impl AppConfig {
             cfg.show_sparklines = b;
         }
         if let Some(h) = table.get("bar_height").and_then(|v| v.as_integer()) {
-            // Clamp to a sane readable range (18px minimum, 48px maximum).
+            // 钳制到合理的可读范围(最小 18px,最大 48px)。
             cfg.bar_height = h.clamp(18, 48) as u16;
         }
         if let Some(s) = table.get("clock_format").and_then(|v| v.as_str()) {
@@ -62,9 +62,9 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[git]` table (GAP-32). A missing/malformed table yields
-    /// `Default`. Mirrors `load_statusbar`: read_to_string → toml::from_str →
-    /// walk `value.get("git").as_table()`; each key is independently optional.
+    /// 加载 `[git]` 配置表(GAP-32)。缺失/损坏的表返回
+    /// `Default`。与 `load_statusbar` 一致:read_to_string → toml::from_str →
+    /// 遍历 `value.get("git").as_table()`;每个键独立可选。
     pub fn load_git(path: &Path) -> GitConfig {
         let mut cfg = GitConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -85,7 +85,7 @@ impl AppConfig {
             cfg.show_pr = b;
         }
         if let Some(n) = table.get("pr_refresh_ticks").and_then(|v| v.as_integer()) {
-            // Clamp to ≥1 so the modulo throttle never divides by zero.
+            // 钳制到 ≥1,确保取模节流永远不会除以零。
             cfg.pr_refresh_ticks = (n.max(1)) as u64;
         }
         if let Some(s) = table.get("lazygit_cmd").and_then(|v| v.as_str()) {
@@ -100,8 +100,8 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[sidebar]` table (GAP-19). A missing/malformed table yields
-    /// `Default`. Width keys are clamped to 120–480 px.
+    /// 加载 `[sidebar]` 配置表(GAP-19)。缺失/损坏的表返回
+    /// `Default`。宽度键钳制到 120–480 px。
     pub fn load_sidebar(path: &Path) -> SidebarConfig {
         let mut cfg = SidebarConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -131,10 +131,10 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[shell_integration]` table (GAP-15). A missing/malformed table
-    /// yields `Default`. Mirrors `load_git`: read_to_string → toml::from_str →
-    /// walk `value.get("shell_integration").as_table()`; each key is
-    /// independently optional.
+    /// 加载 `[shell_integration]` 配置表(GAP-15)。缺失/损坏的表
+    /// 返回 `Default`。与 `load_git` 一致:read_to_string → toml::from_str →
+    /// 遍历 `value.get("shell_integration").as_table()`;每个键均独立
+    /// 可选。
     pub fn load_shell_integration(path: &Path) -> ShellIntegrationConfig {
         let mut cfg = ShellIntegrationConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -160,10 +160,10 @@ impl AppConfig {
         if let Some(b) = table.get("include_command_text").and_then(|v| v.as_bool()) {
             cfg.include_command_text = b;
         }
-        // t-core-shell-integ: per-shell opt-in map. Keys are
-        // `[shell_integration.per_shell.<shell_name>] = true|false`; the
-        // exact recognized names are the lowercase enum variants
-        // (`zsh`/`bash`/`fish`/`nu`/`elvish`/`pwsh`).
+        // t-core-shell-integ:每 shell 的选择加入映射。键是
+        // 键形如 `[shell_integration.per_shell.<shell_name>] = true|false`;
+        // 具体可识别的名称是枚举的小写变体
+        // 枚举小写变体(`zsh`/`bash`/`fish`/`nu`/`elvish`/`pwsh`)。
         if let Some(per_shell) = table.get("per_shell").and_then(|t| t.as_table()) {
             for (k, v) in per_shell {
                 if let Some(b) = v.as_bool() {
@@ -174,8 +174,8 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[error_recovery]` table (GAP-02). A missing/malformed table
-    /// yields `Default`. Mirrors `load_notification`.
+    /// 加载 `[error_recovery]` 配置表(GAP-02)。缺失/损坏的表
+    /// 返回 `Default`。与 `load_notification` 一致。
     pub fn load_error_recovery(path: &Path) -> ErrorRecoveryConfig {
         let mut cfg = ErrorRecoveryConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -228,8 +228,8 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[ai_chat]` table (GAP-01). A missing/malformed table yields
-    /// `Default`. Mirrors `load_error_recovery`.
+    /// 加载 `[ai_chat]` 配置表(GAP-01)。缺失/损坏的表返回
+    /// `Default`。与 `load_error_recovery` 一致。
     pub fn load_ai_chat(path: &Path) -> AiChatConfig {
         let mut cfg = AiChatConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -273,7 +273,7 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[soul]` table (GAP-07).
+    /// 加载 `[soul]` 配置表(GAP-07)。
     pub fn load_soul(path: &Path) -> SoulConfig {
         let mut cfg = SoulConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -299,7 +299,7 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[natural_language]` table (GAP-08).
+    /// 加载 `[natural_language]` 配置表(GAP-08)。
     pub fn load_natural_language(path: &Path) -> NaturalLanguageConfig {
         let mut cfg = NaturalLanguageConfig::default();
         let contents = match std::fs::read_to_string(path) {
@@ -322,7 +322,7 @@ impl AppConfig {
         cfg
     }
 
-    /// Load the `[port_scanner]` table (GAP-33).
+    /// 加载 `[port_scanner]` 配置表(GAP-33)。
     pub fn load_port_scanner(path: &Path) -> PortScannerConfig {
         let mut cfg = PortScannerConfig::default();
         let contents = match std::fs::read_to_string(path) {

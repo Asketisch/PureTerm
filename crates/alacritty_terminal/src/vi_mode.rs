@@ -9,56 +9,56 @@ use crate::index::{Boundary, Column, Direction, Line, Point, Side};
 use crate::term::Term;
 use crate::term::cell::Flags;
 
-/// Possible vi mode motion movements.
+/// vi 模式可能的移动方式。
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize), serde(rename_all = "lowercase"))]
 pub enum ViMotion {
-    /// Move up.
+    /// 上移。
     Up,
-    /// Move down.
+    /// 下移。
     Down,
-    /// Move left.
+    /// 左移。
     Left,
-    /// Move right.
+    /// 右移。
     Right,
-    /// First column, or beginning of the line when already at the first column.
+    /// 首列;已在首列时则到行首。
     First,
-    /// Last column, or beginning of the line when already at the last column.
+    /// 末列;已在末列时则到行首。
     Last,
-    /// First non-empty cell in this terminal row, or first non-empty cell
-    /// of the line when already at the first cell of the row.
+    /// 本终端行的首个非空单元格;已在行首单元格时
+    /// 则到该行的首个非空单元格。
     FirstOccupied,
-    /// Move to top of screen.
+    /// 移到屏幕顶部。
     High,
-    /// Move to center of screen.
+    /// 移到屏幕中部。
     Middle,
-    /// Move to bottom of screen.
+    /// 移到屏幕底部。
     Low,
-    /// Move to start of semantically separated word.
+    /// 移到语义分隔词的起点。
     SemanticLeft,
-    /// Move to start of next semantically separated word.
+    /// 移到下一个语义分隔词的起点。
     SemanticRight,
-    /// Move to end of previous semantically separated word.
+    /// 移到上一个语义分隔词的末尾。
     SemanticLeftEnd,
-    /// Move to end of semantically separated word.
+    /// 移到语义分隔词的末尾。
     SemanticRightEnd,
-    /// Move to start of whitespace separated word.
+    /// 移到空白分隔词的起点。
     WordLeft,
-    /// Move to start of next whitespace separated word.
+    /// 移到下一个空白分隔词的起点。
     WordRight,
-    /// Move to end of previous whitespace separated word.
+    /// 移到上一个空白分隔词的末尾。
     WordLeftEnd,
-    /// Move to end of whitespace separated word.
+    /// 移到空白分隔词的末尾。
     WordRightEnd,
-    /// Move to opposing bracket.
+    /// 移到配对括号。
     Bracket,
-    /// Move above the current paragraph.
+    /// 移到当前段落之上。
     ParagraphUp,
-    /// Move below the current paragraph.
+    /// 移到当前段落之下。
     ParagraphDown,
 }
 
-/// Cursor tracking vi mode position.
+/// 跟踪 vi 模式位置的光标。
 #[derive(Default, Copy, Clone, PartialEq, Eq)]
 pub struct ViModeCursor {
     pub point: Point,
@@ -69,7 +69,7 @@ impl ViModeCursor {
         Self { point }
     }
 
-    /// Move vi mode cursor.
+    /// 移动 vi 模式光标。
     #[must_use = "this returns the result of the operation, without modifying the original"]
     pub fn motion<T: EventListener>(mut self, term: &mut Term<T>, motion: ViMotion) -> Self {
         match motion {
@@ -158,8 +158,8 @@ impl ViModeCursor {
             },
             ViMotion::Bracket => self.point = term.bracket_search(self.point).unwrap_or(self.point),
             ViMotion::ParagraphUp => {
-                // Skip empty lines until we find the next paragraph,
-                // then skip over the paragraph until we reach the next empty line.
+                // 跳过空行直到找到下一段落,
+                // 再跳过整段直到下一个空行。
                 let topmost_line = term.topmost_line();
                 self.point.line = (*topmost_line..*self.point.line)
                     .rev()
@@ -169,8 +169,8 @@ impl ViModeCursor {
                 self.point.column = Column(0);
             },
             ViMotion::ParagraphDown => {
-                // Skip empty lines until we find the next paragraph,
-                // then skip over the paragraph until we reach the next empty line.
+                // 跳过空行直到找到下一段落,
+                // 再跳过整段直到下一个空行。
                 let bottommost_line = term.bottommost_line();
                 self.point.line = (*self.point.line..*bottommost_line)
                     .skip_while(|line| term.grid()[Line(*line)].is_clear())
@@ -185,62 +185,62 @@ impl ViModeCursor {
         self
     }
 
-    /// Get target cursor point for vim-like page movement.
+    /// 取 vim 式翻页移动的目标光标点。
     #[must_use = "this returns the result of the operation, without modifying the original"]
     pub fn scroll<T: EventListener>(mut self, term: &Term<T>, lines: i32) -> Self {
-        // Clamp movement to within visible region.
+        // 把移动钳制在可见区域内。
         let line = (self.point.line - lines).grid_clamp(term, Boundary::Grid);
 
-        // Find the first occupied cell after scrolling has been performed.
+        // 滚动后找第一个被占用的单元格。
         let column = first_occupied_in_line(term, line).unwrap_or_default().column;
 
-        // Move cursor.
+        // 移动光标。
         self.point = Point::new(line, column);
 
         self
     }
 }
 
-/// Find next end of line to move to.
+/// 找下一个可移动到的行尾。
 fn last<T>(term: &Term<T>, mut point: Point) -> Point {
-    // Expand across wide cells.
+    // 跨宽单元格扩展。
     point = term.expand_wide(point, Direction::Right);
 
-    // Find last non-empty cell in the current line.
+    // 找当前行的最后一个非空单元格。
     let occupied = last_occupied_in_line(term, point.line).unwrap_or_default();
 
     if point.column < occupied.column {
-        // Jump to last occupied cell when not already at or beyond it.
+        // 尚未到达或超出最后占用单元格时跳到它。
         occupied
     } else if is_wrap(term, point) {
-        // Jump to last occupied cell across linewraps.
+        // 跨换行跳到最后占用的单元格。
         while is_wrap(term, point) {
             point.line += 1;
         }
 
         last_occupied_in_line(term, point.line).unwrap_or(point)
     } else {
-        // Jump to last column when beyond the last occupied cell.
+        // 超出最后占用单元格时跳到最后一列。
         Point::new(point.line, term.last_column())
     }
 }
 
-/// Find next non-empty cell to move to.
+/// 找下一个可移动到的非空单元格。
 fn first_occupied<T>(term: &Term<T>, mut point: Point) -> Point {
     let last_column = term.last_column();
 
-    // Expand left across wide chars, since we're searching lines left to right.
+    // 由于是从左到右搜索,向左跨宽字符扩展。
     point = term.expand_wide(point, Direction::Left);
 
-    // Find first non-empty cell in current line.
+    // 找当前行的第一个非空单元格。
     let occupied = first_occupied_in_line(term, point.line)
         .unwrap_or_else(|| Point::new(point.line, last_column));
 
-    // Jump across wrapped lines if we're already at this line's first occupied cell.
+    // 已在本行首个占用单元格时,跨换行跳转。
     if point == occupied {
         let mut occupied = None;
 
-        // Search for non-empty cell in previous lines.
+        // 在前面的行中搜索非空单元格。
         for line in (term.topmost_line().0..point.line.0).rev().map(Line::from) {
             if !is_wrap(term, Point::new(line, last_column)) {
                 break;
@@ -249,7 +249,7 @@ fn first_occupied<T>(term: &Term<T>, mut point: Point) -> Point {
             occupied = first_occupied_in_line(term, line).or(occupied);
         }
 
-        // Fallback to the next non-empty cell.
+        // 回退到下一个非空单元格。
         let mut line = point.line;
         occupied.unwrap_or_else(|| {
             loop {
@@ -270,16 +270,16 @@ fn first_occupied<T>(term: &Term<T>, mut point: Point) -> Point {
     }
 }
 
-/// Move by semantically separated word, like w/b/e/ge in vi.
+/// 按语义分隔词移动,如 vi 中的 w/b/e/ge。
 fn semantic<T: EventListener>(
     term: &Term<T>,
     mut point: Point,
     direction: Direction,
     side: Side,
 ) -> Point {
-    // Expand semantically based on movement direction.
+    // 按移动方向做语义扩展。
     let expand_semantic = |point: Point| {
-        // Do not expand when currently on a semantic escape char.
+        // 当前位于语义转义字符上时不扩展。
         let cell = &term.grid()[point];
         if term.semantic_escape_chars().contains(cell.c)
             && !cell.flags.intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
@@ -292,32 +292,32 @@ fn semantic<T: EventListener>(
         }
     };
 
-    // Move to word boundary.
+    // 移到词边界。
     if direction != side && !is_boundary(term, point, direction) {
         point = expand_semantic(point);
     }
 
-    // Make sure we jump above wide chars.
+    // 确保跳过宽字符上方。
     point = term.expand_wide(point, direction);
 
-    // Skip whitespace.
+    // 跳过空白。
     let mut next_point = advance(term, point, direction);
     while !is_boundary(term, point, direction) && is_space(term, next_point) {
         point = next_point;
         next_point = advance(term, point, direction);
     }
 
-    // Assure minimum movement of one cell.
+    // 保证至少移动一格。
     if !is_boundary(term, point, direction) {
         point = advance(term, point, direction);
 
-        // Skip over wide cell spacers.
+        // 跳过宽单元格占位。
         if direction == Direction::Left {
             point = term.expand_wide(point, direction);
         }
     }
 
-    // Move to word boundary.
+    // 移到词边界。
     if direction == side && !is_boundary(term, point, direction) {
         point = expand_semantic(point);
     }
@@ -325,25 +325,25 @@ fn semantic<T: EventListener>(
     point
 }
 
-/// Move by whitespace separated word, like W/B/E/gE in vi.
+/// 按空白分隔词移动,如 vi 中的 W/B/E/gE。
 fn word<T: EventListener>(
     term: &Term<T>,
     mut point: Point,
     direction: Direction,
     side: Side,
 ) -> Point {
-    // Make sure we jump above wide chars.
+    // 确保跳过宽字符上方。
     point = term.expand_wide(point, direction);
 
     if direction == side {
-        // Skip whitespace until right before a word.
+        // 跳过空白直到词的正前方。
         let mut next_point = advance(term, point, direction);
         while !is_boundary(term, point, direction) && is_space(term, next_point) {
             point = next_point;
             next_point = advance(term, point, direction);
         }
 
-        // Skip non-whitespace until right inside word boundary.
+        // 跳过非空白直到词边界内侧。
         let mut next_point = advance(term, point, direction);
         while !is_boundary(term, point, direction) && !is_space(term, next_point) {
             point = next_point;
@@ -352,12 +352,12 @@ fn word<T: EventListener>(
     }
 
     if direction != side {
-        // Skip non-whitespace until just beyond word.
+        // 跳过非空白直到词边界外。
         while !is_boundary(term, point, direction) && !is_space(term, point) {
             point = advance(term, point, direction);
         }
 
-        // Skip whitespace until right inside word boundary.
+        // 跳过空白直到词边界内侧。
         while !is_boundary(term, point, direction) && is_space(term, point) {
             point = advance(term, point, direction);
         }
@@ -366,21 +366,21 @@ fn word<T: EventListener>(
     point
 }
 
-/// Find first non-empty cell in line.
+/// 找行内第一个非空单元格。
 fn first_occupied_in_line<T>(term: &Term<T>, line: Line) -> Option<Point> {
     (0..term.columns())
         .map(|col| Point::new(line, Column(col)))
         .find(|&point| !is_space(term, point))
 }
 
-/// Find last non-empty cell in line.
+/// 找行内最后一个非空单元格。
 fn last_occupied_in_line<T>(term: &Term<T>, line: Line) -> Option<Point> {
     (0..term.columns())
         .map(|col| Point::new(line, Column(col)))
         .rfind(|&point| !is_space(term, point))
 }
 
-/// Advance point based on direction.
+/// 按方向推进点。
 fn advance<T>(term: &Term<T>, point: Point, direction: Direction) -> Point {
     if direction == Direction::Left {
         point.sub(term, Boundary::Grid, 1)
@@ -389,19 +389,19 @@ fn advance<T>(term: &Term<T>, point: Point, direction: Direction) -> Point {
     }
 }
 
-/// Check if cell at point contains whitespace.
+/// 检查点处单元格是否为空白。
 fn is_space<T>(term: &Term<T>, point: Point) -> bool {
     let cell = &term.grid()[point.line][point.column];
     !cell.flags().intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
         && (cell.c == ' ' || cell.c == '\t')
 }
 
-/// Check if the cell at a point contains the WRAPLINE flag.
+/// 检查点处单元格是否带 WRAPLINE 标志。
 fn is_wrap<T>(term: &Term<T>, point: Point) -> bool {
     term.grid()[point].flags.contains(Flags::WRAPLINE)
 }
 
-/// Check if point is at screen boundary.
+/// 检查点是否位于屏幕边界。
 fn is_boundary<T>(term: &Term<T>, point: Point, direction: Direction) -> bool {
     (point.line <= term.topmost_line() && point.column == 0 && direction == Direction::Left)
         || (point.line == term.bottommost_line()
@@ -788,7 +788,7 @@ mod tests {
     fn scroll_simple() {
         let mut term = term();
 
-        // Create 1 line of scrollback.
+        // 创建 1 行回滚。
         for _ in 0..20 {
             term.newline();
         }
@@ -809,7 +809,7 @@ mod tests {
     fn scroll_over_top() {
         let mut term = term();
 
-        // Create 40 lines of scrollback.
+        // 创建 40 行回滚。
         for _ in 0..59 {
             term.newline();
         }
@@ -833,7 +833,7 @@ mod tests {
     fn scroll_over_bottom() {
         let mut term = term();
 
-        // Create 40 lines of scrollback.
+        // 创建 40 行回滚。
         for _ in 0..59 {
             term.newline();
         }
@@ -866,7 +866,7 @@ mod tests {
         term.grid_mut()[Line(0)][Column(4)].c = 'x';
         term.grid_mut()[Line(0)][Column(5)].c = 'x';
 
-        // Test motion to the right.
+        // 测试向右移动。
 
         let mut cursor = ViModeCursor::new(Point::new(Line(0), Column(0)));
         cursor = cursor.motion(&mut term, ViMotion::SemanticRight);
@@ -876,7 +876,7 @@ mod tests {
         cursor = cursor.motion(&mut term, ViMotion::SemanticRight);
         assert_eq!(cursor.point, Point::new(Line(0), Column(4)));
 
-        // Test motion to the left.
+        // 测试向左移动。
 
         let mut cursor = ViModeCursor::new(Point::new(Line(0), Column(5)));
         cursor = cursor.motion(&mut term, ViMotion::SemanticLeft);

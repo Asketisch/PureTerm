@@ -1,6 +1,6 @@
 ---
 gap: GAP-42
-title: Login Scripts
+title: 登录脚本
 category: SSH/网络
 plan_type: feature
 priority: P3

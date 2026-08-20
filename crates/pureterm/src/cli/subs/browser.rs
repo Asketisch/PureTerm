@@ -9,26 +9,26 @@ use serde_json::{json, Value};
 
 #[derive(Subcommand)]
 pub enum BrowserSub {
-    /// Navigate the pane to `url`.
+    /// 让窗格跳转到 `url`。
     Navigate {
         url: String,
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Click the element matching a CSS `selector`.
+    /// 点击匹配 CSS `selector` 的元素。
     Click {
         selector: String,
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Type `text` into the element matching `selector`.
+    /// 向匹配 `selector` 的元素输入 `text`。
     Type {
         selector: String,
         text: String,
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Extract text (or an `attribute`) from `selector`.
+    /// 从 `selector` 中提取文本(或某个 `attribute`)。
     Extract {
         selector: String,
         #[arg(long)]
@@ -36,7 +36,7 @@ pub enum BrowserSub {
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Scroll by `--x`/`--y` pixels, or scroll `--selector` into view.
+    /// 按 `--x`/`--y` 像素滚动,或把 `--selector` 滚动到可见区域。
     Scroll {
         #[arg(long, default_value = "0")]
         x: i64,
@@ -47,7 +47,7 @@ pub enum BrowserSub {
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Wait until `selector` appears (default 5s, override with `--timeout-ms`).
+    /// 等待 `selector` 出现(默认 5 秒,可用 `--timeout-ms` 覆盖)。
     Wait {
         selector: String,
         #[arg(long)]
@@ -55,30 +55,30 @@ pub enum BrowserSub {
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Print the pane's current URL.
+    /// 打印窗格的当前 URL。
     GetUrl {
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Print the pane's page title.
+    /// 打印窗格的页面标题。
     GetTitle {
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Native WKWebView snapshot (PNG data URL); macOS-only.
+    /// 原生 WKWebView 快照(PNG data URL);仅 macOS。
     Screenshot {
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Phase C: route the pane's traffic through a daemon SSH tunnel (rebuilds
-    /// the webview with a SOCKS5 proxy; reaches hosts only the gateway sees).
+    /// Phase C:让窗格流量经守护进程 SSH 隧道转发(重建
+    /// webview 并注入 SOCKS5 代理;可访问仅网关可见的主机)。
     BindTunnel {
-        /// Tunnel id from `ssh tunnel-list`.
+        /// 来自 `ssh tunnel-list` 的隧道 id。
         tunnel_id: String,
         #[arg(long)]
         pane_id: Option<u64>,
     },
-    /// Phase C: drop the tunnel binding, restoring direct connection.
+    /// Phase C:解除隧道绑定,恢复直连。
     ClearTunnel {
         #[arg(long)]
         pane_id: Option<u64>,
@@ -87,8 +87,8 @@ pub enum BrowserSub {
 
 impl BrowserSub {
     pub(crate) fn method_and_params(&self) -> (&'static str, Option<Value>) {
-        // Op-specific params first; `pane_id` is layered on at the end so every
-        // op (even the no-arg ones) can target a pane.
+        // 先放各操作独有参数;`pane_id` 最后统一叠加,使每个
+        // 操作(即使无参)都能指定目标窗格。
         let (method, mut params): (&'static str, Value) = match self {
             BrowserSub::Navigate { url, .. } => ("browser.navigate", json!({ "url": url })),
             BrowserSub::Click { selector, .. } => ("browser.click", json!({ "selector": selector })),
@@ -136,8 +136,8 @@ impl BrowserSub {
         (method, Some(params))
     }
 
-    /// Every variant carries an optional `pane_id`; collect it in one place so
-    /// the match above stays focused on op params.
+    /// 每个变体都带有可选的 `pane_id`;集中在此处提取,
+    /// 让上面的 match 只专注各操作的参数。
     fn pane_id(&self) -> Option<u64> {
         match self {
             BrowserSub::Navigate { pane_id, .. }

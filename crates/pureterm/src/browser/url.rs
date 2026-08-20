@@ -1,29 +1,29 @@
-//! GAP-3.5 / GAP-7.8: URL normalization for browser entry points.
+//! GAP-3.5 / GAP-7.8: 浏览器入口的 URL 规范化。
 //!
-//! [`loadable_url`] is the dependency-free "is this a loadable URL?" core shared by
-//! every place a raw string becomes a WebView navigation:
-//! - the address-bar UX ([`crate::iced_app::normalize_url_input`], which adds a
-//!   Google-search fallback for non-URL input), and
-//! - the **agent** paths (GAP-7.8 `browser.navigate` + GAP-3.5 `pane.split_web`),
-//!   which instead *error* on non-URL input — an agent passing garbage should hear
-//!   about it, not silently land on a search page.
+//! [`loadable_url`] 是免依赖的「是否为可加载 URL」核心,由
+//! 所有「原始字符串变成 WebView 导航」的位置共享:
+//! - 地址栏 UX([`crate::iced_app::normalize_url_input`],它会对非 URL 输入
+//!   做 Google 搜索回退),以及
+//! - **agent** 路径(GAP-7.8 `browser.navigate` + GAP-3.5 `pane.split_web`),
+//!   它们对非 URL 输入则直接*报错*——传垃圾数据的 agent 应当听到报错,
+//!   而不是被悄悄带到搜索页。
 //!
-//! Splitting the core out keeps the two policies (search-fallback vs. strict)
-//! honest: the URL-detection branches live in exactly one place.
+//! 把核心拆出来,使两种策略(搜索回退 vs. 严格)
+//! 保持诚实:URL 判定分支只存在于一处。
 
-/// Return `input` as a loadable URL if it is recognizable as one, else `None`.
+/// 若 `input` 可被识别为一个可加载 URL 则原样返回,否则返回 `None`。
 ///
-/// Recognized shapes (mirroring the GAP-3.5 address-bar heuristic):
-/// - already has a scheme (`contains "://"`) → as-is;
-/// - a bare scheme with no `//` and a non-numeric rhs (`about:blank`,
-///   `mailto:x@y.io`) → as-is;
-/// - a bare dot-less hostname + port (`localhost:8080`, `myhost:3000`) →
-///   `http://…` (dev servers);
-/// - a dotted host with no whitespace (`example.com`, `127.0.0.1:3000`) →
-///   `https://…`.
+/// 可识别的形态(镜像 GAP-3.5 地址栏启发式):
+/// - 已带 scheme(含 `"://"`)→ 原样返回;
+/// - 裸 scheme 且无 `//`、右侧非数字(`about:blank`),
+///   `mailto:x@y.io`)→ 原样返回;
+/// - 无点主机名 + 端口(`localhost:8080`, `myhost:3000`)→
+///   `http://…`(开发服务器);
+/// - 有点主机且无空白(`example.com`, `127.0.0.1:3000`)→
+///   `https://…`。
 ///
-/// `None` covers empty input and anything that isn't a URL (the caller decides
-/// what to do — search fallback or error). Pure function; harness-testable.
+/// `None` 覆盖空输入与一切非 URL 输入(由调用方决定
+/// 怎么处理——搜索回退或报错)。纯函数;可在测试环境中测试。
 pub(crate) fn loadable_url(input: &str) -> Option<String> {
     let s = input.trim();
     if s.is_empty() {
@@ -32,13 +32,13 @@ pub(crate) fn loadable_url(input: &str) -> Option<String> {
     if s.contains("://") {
         return Some(s.to_string());
     }
-    // `rhs` is a port number → `host:port` with no scheme, not a bare scheme
-    // like `about:blank`. Used to keep `localhost:8080` out of the bare-scheme
-    // passthrough below (it'd otherwise be returned verbatim and WKWebView can't
-    // load a scheme-less `localhost:8080`).
+    // `rhs` 是端口号 → 无 scheme 的 `host:port`,而非裸 scheme
+    // (如 `about:blank`)。用于把 `localhost:8080` 挡在裸 scheme
+    // 直通逻辑之外(否则它会原样返回,而 WKWebView 无法
+    // 加载无 scheme 的 `localhost:8080`)。
     let rhs_is_port = |rhs: &str| !rhs.is_empty() && rhs.chars().all(|c| c.is_ascii_digit());
-    // Bare scheme like "about:blank" (no "://") — pass through. Exclude the
-    // host:port shape (all-alpha host + numeric port), which is handled below.
+    // 裸 scheme(如 "about:blank",无 "://")— 直通。排除
+    // host:port 形态(全字母主机 + 数字端口),它在下面处理。
     if let Some((lhs, rhs)) = s.split_once(':') {
         if !lhs.is_empty()
             && lhs.chars().all(|c| c.is_ascii_alphabetic())
@@ -49,10 +49,10 @@ pub(crate) fn loadable_url(input: &str) -> Option<String> {
             return Some(s.to_string());
         }
     }
-    // Bare host:port with no scheme and a dot-less hostname (e.g.
-    // `localhost:8080`, `myhost:3000`) → prefix `http://` (dev servers). Dotted
-    // hosts (`127.0.0.1:3000`, `example.com:8443`) keep falling through to the
-    // domain branch's `https://` below.
+    // 无 scheme、无点主机名的裸 host:port(如
+    // `localhost:8080`, `myhost:3000`)→ 前缀 `http://`(开发服务器)。
+    // 有点主机(`127.0.0.1:3000`, `example.com:8443`)继续落入
+    // 下方域名分支的 `https://`。
     if !s.chars().any(char::is_whitespace) {
         if let Some((lhs, rhs)) = s.split_once(':') {
             if !lhs.is_empty()
@@ -64,7 +64,7 @@ pub(crate) fn loadable_url(input: &str) -> Option<String> {
             }
         }
     }
-    // Looks like a domain: has a dot, no whitespace.
+    // 看起来像域名:含点、无空白。
     if !s.chars().any(char::is_whitespace) && s.contains('.') {
         return Some(format!("https://{s}"));
     }
@@ -83,7 +83,7 @@ mod tests {
 
     #[test]
     fn bare_host_port_gets_http() {
-        // GAP-7.8 motivating case: `browser navigate localhost:8080` must load.
+        // GAP-7.8 动机场景:`browser navigate localhost:8080` 必须能加载。
         assert_eq!(loadable_url("localhost:8080").as_deref(), Some("http://localhost:8080"));
         assert_eq!(loadable_url("myhost:3000").as_deref(), Some("http://myhost:3000"));
     }
@@ -92,7 +92,7 @@ mod tests {
     fn dotted_domain_gets_https() {
         assert_eq!(loadable_url("example.com").as_deref(), Some("https://example.com"));
         assert_eq!(loadable_url("www.google.com/search").as_deref(), Some("https://www.google.com/search"));
-        // Dotted host:port stays https:// (surgical: only bare-host+port → http://).
+        // 有点 host:port 保持 https://(精确:仅裸 host+port → http://)。
         assert_eq!(loadable_url("127.0.0.1:3000").as_deref(), Some("https://127.0.0.1:3000"));
     }
 
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn non_url_and_empty_are_none() {
-        // The strict agent path errors on these (no silent search fallback here).
+        // 严格 agent 路径对这些报错(此处无静默搜索回退)。
         assert_eq!(loadable_url("hello world"), None);
         assert_eq!(loadable_url("how do i exit vim"), None);
         assert_eq!(loadable_url(""), None);

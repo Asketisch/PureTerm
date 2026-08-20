@@ -1,17 +1,16 @@
 mod automation;
 mod script_cli;
-// `macos_url_scheme` ships with built-in `#[cfg(not(target_os = "macos"))]`
-// stubs (no-op `register_default_handler` / `consume_pending_url` /
-// `add_open_urls_method`), so the module is unconditionally included. The
-// macOS-only `use objc2::*` import is wrapped in `#[cfg(target_os = "macos")]`
-// inside the file itself.
+// `macos_url_scheme` 自带 `#[cfg(not(target_os = "macos"))]` 空实现
+//（`register_default_handler` / `consume_pending_url` / `add_open_urls_method`
+// 均为 no-op），因此该模块可无条件包含。文件内部用 `#[cfg(target_os = "macos")]`
+// 包裹了仅 macOS 使用的 `use objc2::*` 导入。
 mod macos_url_scheme;
 mod agent_adapters;
 mod agent_detect;
 #[cfg(all(test, unix))]
 mod agent_e2e;
-/// GAP-6.6: join-pane Arc-follows invariant (headless, no PTY) — the
-/// cross-module seam `apply_attach_pane` drives on the split tree + pane map.
+/// GAP-6.6：join-pane 的 Arc-follows 不变量（headless，无 PTY）——
+/// 跨模块接缝 `apply_attach_pane` 在分割树与 pane 映射上驱动。
 #[cfg(all(test, unix))]
 mod join_pane_e2e;
 /// GAP-2.1: Workspace 切换「不丢 Surface 状态」不变量(headless,无 PTY)。
@@ -26,40 +25,40 @@ mod keyboard_routing_e2e;
 mod browser_address_bar_e2e;
 mod agent_hooks;
 mod agent_sessions;
-/// GAP-01: built-in AI Chat Panel — LLM provider abstraction (Anthropic +
-/// OpenAI-compatible), SSE streaming, Markdown rendering, dockable panel.
+/// GAP-01：内置 AI 对话面板——LLM 提供商抽象（Anthropic + OpenAI 兼容）、
+/// SSE 流式、Markdown 渲染、可停靠面板。
 mod ai_chat;
-/// GAP-02: Error Recovery — LLM fix suggestions on command failure.
+/// GAP-02：错误恢复——命令失败时的 LLM 修复建议。
 mod error_recovery;
-/// GAP-04: Computer Use — desktop screenshot + input stubs.
+/// GAP-04：Computer Use——桌面截图 + 输入桩。
 mod computer_use;
-/// GAP-08: Natural language shell commands (`# description`).
+/// GAP-08：自然语言 shell 命令（`# description`）。
 mod natural_language;
-/// GAP-07: Soul System — personality files for AI Chat.
+/// GAP-07：灵魂系统——AI 对话的人格文件。
 mod soul;
-/// GAP-4.2: Smart Selection Hover Preview — tooltip + semantic actions.
+/// GAP-4.2：智能选区悬停预览——提示气泡 + 语义操作。
 mod hover_preview;
-/// GAP-33: Port Scanner — listening ports sidebar tab.
+/// GAP-33：端口扫描器——监听端口侧边栏标签页。
 mod port_scanner;
-/// GAP-43: Remote file browse — sidebar Files tab.
+/// GAP-43：远程文件浏览——侧边栏 Files 标签页。
 mod remote_files;
-/// GAP-06: Ambient Agents local task queue MVP.
+/// GAP-06：环境 Agent 本地任务队列 MVP。
 mod ambient_agents;
-/// GAP-13: Broadcast keyboard input to multiple panes.
+/// GAP-13：向多个 pane 广播键盘输入。
 mod broadcast_input;
-/// GAP-18: BiDi text reorder helper.
+/// GAP-18：双向文本重排辅助工具。
 mod bidi;
-/// GAP-26: Workspace sidebar groups.
+/// GAP-26：工作区侧边栏分组。
 mod workspace_groups;
-/// GAP-30: Toolbelt sidebar panel.
+/// GAP-30：工具腰带侧边栏面板。
 mod toolbelt;
-/// GAP-31: Quake-style dropdown terminal.
+/// GAP-31：Quake 风格下拉终端。
 mod quake_dock;
-/// GAP-37: Password manager integration for SSH.
+/// GAP-37：SSH 密码管理器集成。
 mod password_manager;
-/// GAP-39: Serial & Telnet session types.
+/// GAP-39：串口与 Telnet 会话类型。
 mod serial_telnet;
-/// GAP-42: SSH login scripts.
+/// GAP-42：SSH 登录脚本。
 mod login_scripts;
 mod app_config;
 /// GAP-3.5: 内置 Browser 面板(WebView)— pane 的第二种内容载体。
@@ -67,18 +66,18 @@ mod browser;
 mod cli;
 mod codeindex;
 mod config_watcher;
-/// GAP-6.7: unified event schema (Category + AppEvent).
+/// GAP-6.7：统一事件结构（Category + AppEvent）。
 mod events;
-/// GAP-6.7: in-process event hub (broadcast + JSONL dual-write).
+/// GAP-6.7：进程内事件总线（广播 + JSONL 双写）。
 mod events_bus;
-/// GAP-6.7: pure file I/O for the event log (append/rotate/read/tail).
+/// GAP-6.7：事件日志的纯文件 I/O（追加/轮转/读取/tail）。
 mod events_log;
-/// GAP-32: GitHub PR status via the `gh` CLI (reuses the user's `gh auth`).
+/// GAP-32：通过 `gh` CLI 获取 GitHub PR 状态（复用用户已有的 `gh auth`）。
 mod gh_pr;
-/// T-core-windows-conpty v2: Windows-specific bindings.
+/// T-core-windows-conpty v2：Windows 专属绑定。
 #[cfg(target_os = "windows")]
 mod windows;
-/// T-core-plugin-runtime v2: plugin loader (trait + static + wasm sketch).
+/// T-core-plugin-runtime v2：插件加载器（trait + 静态 + wasm 草图）。
 mod plugin_loader;
 /// T-core-graphics v3: 后台图像解码 worker(PNG → RGBA)。
 /// 主线程把 GraphicsImage 推入 tx,worker 解码后通过 rx 喂给 GPU atlas。
@@ -98,13 +97,13 @@ mod tmux_cc_e2e;
 
 #[cfg(unix)]
 mod feed_client;
-/// GAP-7.6: read-only feed audit log viewer (`pureterm feed list`).
+/// GAP-7.6：只读 feed 审计日志查看器（`pureterm feed list`）。
 mod feed_log;
 #[cfg(unix)]
 mod feed_panel;
 #[cfg(unix)]
 mod hibernate_panel;
-/// GAP-7.6: detect-resume prompt panel state machine (GUI-side).
+/// GAP-7.6：探测-恢复提示面板状态机（GUI 侧）。
 #[cfg(unix)]
 mod detect_panel;
 #[cfg(unix)]
@@ -116,26 +115,26 @@ mod daemon_pty;
 mod iced_app;
 mod ime_widget;
 mod ipc;
-/// GAP-7.10: MCP server (`pureterm mcp serve`) — exposes the terminal surface
-/// to AI agents as native MCP tools. rmcp is feature-gated (`mcp-server`);
-/// the roster/whitelist/config pieces stay compiled without the feature.
+/// GAP-7.10：MCP 服务器（`pureterm mcp serve`）——以原生 MCP 工具形式向 AI
+/// Agent 暴露终端表面。rmcp 通过 `mcp-server` feature 门控；名册/白名单/
+/// 配置部分在不启用该 feature 时仍会编译。
 mod mcp;
 mod keymap;
-/// GAP-35: LSP client — rust-analyzer stdio + diagnostics.
+/// GAP-35：LSP 客户端——rust-analyzer stdio + 诊断。
 mod lsp;
 mod pane_exit;
 mod search;
 mod session_restore;
 mod split_tree;
-/// GAP-19: Dual Sidebar — left (Workspace + Git) / right (Find / Feed / Git).
+/// GAP-19：双栏侧边栏——左侧（Workspace + Git）/ 右侧（Find / Feed / Git）。
 mod sidebar;
-/// GAP-3.2: Programmable sidebar DSL (TOML scripts + EventBus).
+/// GAP-3.2：可编程侧边栏 DSL（TOML 脚本 + EventBus）。
 mod sidebar_dsl;
-/// GAP-11: Instant Replay — events.jsonl timeline export + scrub viewer.
+/// GAP-11：即时回放——events.jsonl 时间线导出 + 拖动查看器。
 mod instant_replay;
-/// GAP-12: Annotations & Marks — OSC 133 grid marks + line notes.
+/// GAP-12：标注与标记——OSC 133 网格标记 + 行注释。
 mod annotations;
-/// GAP-25: Multi-window cross-process IPC (workspace.switch fan-out).
+/// GAP-25：多窗口跨进程 IPC（workspace.switch 扇出）。
 mod multi_window_ipc;
 mod status_bar;
 mod surface_snapshot;
@@ -143,13 +142,13 @@ mod surface_snapshot;
 mod macos_menu;
 #[cfg(target_os = "macos")]
 mod macos_reopen;
-/// GAP-09 / GAP-21: Dock badge (unread + Feed pending) via NSDockTile.
+/// GAP-09 / GAP-21：通过 NSDockTile 显示 Dock 徽标（未读 + Feed 待处理）。
 #[cfg(target_os = "macos")]
 mod macos_dock_badge;
-/// GAP-21: Dock right-click menu — recent workspaces via NSMenu.
+/// GAP-21：Dock 右键菜单——通过 NSMenu 显示最近工作区。
 #[cfg(target_os = "macos")]
 mod macos_dock_menu;
-/// GAP-09: macOS desktop notifications (UNUserNotificationCenter toasts).
+/// GAP-09：macOS 桌面通知（UNUserNotificationCenter 通知）。
 #[cfg(target_os = "macos")]
 mod macos_notifications;
 #[cfg(target_os = "macos")]
@@ -158,99 +157,99 @@ mod macos_eyedropper;
 mod ssh;
 #[cfg(unix)]
 mod ssh_cli;
-/// GAP-5.2: `pureterm ssh tunnel …` — russh SOCKS5 tunnel (daemon-direct).
+/// GAP-5.2：`pureterm ssh tunnel …`——russh SOCKS5 隧道（守护进程直连）。
 #[cfg(unix)]
 mod tunnel_cli;
-/// GAP-7.7: custom resume bindings (`pureterm surface resume ...`).
+/// GAP-7.7：自定义恢复绑定（`pureterm surface resume ...`）。
 #[cfg(unix)]
 mod resume_bindings;
-/// GAP-6.6: `pureterm tmux …` — tmux-compatible command subset.
+/// GAP-6.6：`pureterm tmux …`——与 tmux 兼容的命令子集。
 mod tmux_cli;
-/// T-core-tmux-cc: tmux control mode (-CC) backend — envelope parser +
-/// PTY skeleton + Surface variant + mirror.
+/// T-core-tmux-cc：tmux 控制模式（-CC）后端——信封解析器 +
+/// PTY 骨架 + Surface 变体 + 镜像。
 mod tmux_cc;
-/// T-core-windows-conpty: cross-platform local-socket abstraction.
+/// T-core-windows-conpty：跨平台本地 socket 抽象。
 mod local_socket;
-/// GAP-32: Git overlay panel state + quick-action enum (view lives in iced_app).
+/// GAP-32：Git 浮层面板状态 + 快捷操作枚举（视图位于 iced_app）。
 mod git_panel;
-/// GAP-09: in-memory notification store (history + unread + attention + bell throttle).
+/// GAP-09：内存通知存储（历史 + 未读 + 关注 + 铃声节流）。
 mod notification_store;
-/// GAP-09: Notifications overlay panel state (view lives in iced_app).
+/// GAP-09：通知浮层面板状态（视图位于 iced_app）。
 mod notification_panel;
-/// GAP-15: per-pane shell-integration state (OSC 133 A/B/C/D state machine).
+/// GAP-15：每 pane 的 shell 集成状态（OSC 133 A/B/C/D 状态机）。
 mod shell_state;
-/// T-core-shaper v2: shaper config (backend, fallback chain).
+/// T-core-shaper v2：字形整形配置（后端、回退链）。
 mod shaper_config;
-/// GAP-51: block-based output scaffold (data model + feature flag).
+/// GAP-51：基于块的输出脚手架（数据模型 + feature 开关）。
 mod output_blocks;
-/// GAP-10: pattern-match triggers (regex on output → highlight/notify/send_text/exec).
+/// GAP-10：模式匹配触发器（对输出做正则匹配 → 高亮/通知/发送文本/执行）。
 mod triggers;
-/// GAP-15: AI-facing shell context builder (MCP get_shell_context + future AI panel).
+/// GAP-15：面向 AI 的 shell 上下文构建器（MCP get_shell_context + 未来 AI 面板）。
 mod shell_context;
 mod terminal_context;
 mod terminal_shader;
 mod vi_mode_handler;
-/// GAP-05: Voice input (push-to-talk scaffold).
+/// GAP-05：语音输入（一键通话脚手架）。
 mod voice_input;
-/// GAP-17: Sixel / chunked graphics protocol scaffold.
+/// GAP-17：Sixel / 分块图形协议脚手架。
 mod terminal_graphics;
-/// GAP-20: macOS glass / vibrancy effect.
-// Body is already platform-portable: `apply_glass_effect` no-ops on non-macOS.
+/// GAP-20：macOS 玻璃 / 活力效果。
+// 函数体已做到跨平台可移植：`apply_glass_effect` 在非 macOS 上为空操作。
 mod macos_glass_effect;
-/// GAP-22: MacBook Touch Bar scaffold.
-// Body is already platform-portable: `refresh_touch_bar` no-ops on non-macOS.
+/// GAP-22：MacBook Touch Bar 脚手架。
+// 函数体已做到跨平台可移植：`refresh_touch_bar` 在非 macOS 上为空操作。
 mod macos_touch_bar;
-/// GAP-23: Visual tab bar config.
+/// GAP-23：可视标签栏配置。
 mod visual_tab_bar;
-/// GAP-28: Custom window border.
+/// GAP-28：自定义窗口边框。
 mod window_border;
-/// GAP-29: Environment badge overlay.
+/// GAP-29：环境徽章浮层。
 mod badge_overlay;
-/// GAP-34: File preview (image/PDF/text).
+/// GAP-34：文件预览（图片/PDF/文本）。
 mod file_preview;
-/// GAP-38: SCP/SFTP file transfer.
+/// GAP-38：SCP/SFTP 文件传输。
 mod file_transfer;
-/// GAP-44: Shared sessions (stub).
+/// GAP-44：共享会话（占位实现）。
 mod shared_sessions;
-/// GAP-45: Auto-update check scaffold.
+/// GAP-45：自动更新检查脚手架。
 mod auto_update;
-/// GAP-49: Plugin system (stub).
+/// GAP-49：插件系统（占位实现）。
 mod plugin_system;
-/// GAP-50: Cloud sync (local bundle MVP).
+/// GAP-50：云同步（本地包 MVP）。
 mod cloud_sync;
-/// GAP-52: Parameterized workflows.
+/// GAP-52：参数化工作流。
 mod workflows;
-/// GAP-53: Interactive notebooks.
+/// GAP-53：交互式笔记本。
 mod notebooks;
-/// GAP-54: Background image config.
+/// GAP-54：背景图片配置。
 mod background_image;
-/// GAP-55: Window transparency + blur.
+/// GAP-55：窗口透明 + 模糊。
 mod window_effects;
-/// GAP-56: Focus-follows-mouse.
+/// GAP-56：随鼠标聚焦。
 mod focus_follows_mouse;
-/// GAP-57: MacBook haptic feedback.
-// Body is already platform-portable: `perform` returns `Skipped` on non-macOS.
+/// GAP-57：MacBook 触觉反馈。
+// 函数体已做到跨平台可移植：`perform` 在非 macOS 上返回 `Skipped`。
 mod macos_haptic;
-/// GAP-58: Extended theme overrides.
+/// GAP-58：扩展主题覆盖。
 mod custom_theme;
-/// GAP-59: Emoji rendering channel.
+/// GAP-59：Emoji 渲染通道。
 mod emoji_rendering;
-/// GAP-60: Pane screenshot / export.
+/// GAP-60：Pane 截图 / 导出。
 mod pane_capture;
-/// GAP-61: Print support.
+/// GAP-61：打印支持。
 mod print_support;
-/// GAP-4.6: VoiceOver / accessibility announcements.
+/// GAP-4.6：VoiceOver / 无障碍播报。
 mod accessibility;
-/// P4 GAP CLI helpers (plugin, sync, share, …).
+/// P4 GAP CLI 辅助命令（plugin、sync、share 等）。
 mod p4_cli;
-/// P4 GAP runtime bundle for iced_app.
+/// 供 iced_app 使用的 P4 GAP 运行时包。
 mod p4_runtime;
 
 fn main() -> iced::Result {
     env_logger::init();
 
-    // GAP-6.2: structured CLI command groups (clap derive). Bare `pureterm`
-    // (no args) launches the GUI; any argument dispatches to the CLI.
+    // GAP-6.2：结构化 CLI 命令分组（clap derive）。裸运行 `pureterm`（无参数）
+    // 启动 GUI；任何参数都会派发到 CLI。
     if std::env::args().count() > 1 {
         cli::run(cli::parse_from_env());
         std::process::exit(0);
@@ -260,7 +259,7 @@ fn main() -> iced::Result {
     iced_app::run()
 }
 
-// ── Keyboard shortcut helpers (invoked from cli.rs Shortcuts group) ───────
+// ── 键盘快捷键辅助函数(由 cli.rs Shortcuts 组调用) ─────────────────────────────────────
 
 pub(crate) fn shortcuts_list() {
     use iced::keyboard::Modifiers;
@@ -289,7 +288,7 @@ pub(crate) fn shortcuts_preset(name: &str) {
         }
     };
 
-    // Write preset as [[keyboard.bindings]] into the config file
+    // 将预设作为 [[keyboard.bindings]] 写入配置文件
     let config_path = app_config::AppConfig::config_path();
     write_keybindings_to_config(&config_path, &content);
     eprintln!("Applied preset '{name}' to {}", config_path.display());
@@ -302,16 +301,16 @@ pub(crate) fn shortcuts_reset() {
     eprintln!("Reset keybindings to defaults in {}", config_path.display());
 }
 
-/// Write the [[keyboard.bindings]] section to the config file.
-/// Uses toml_edit to preserve the rest of the config.
+/// 将 [[keyboard.bindings]] 段落写入配置文件。
+/// 使用 toml_edit 以保留配置的其余部分。
 fn write_keybindings_to_config(config_path: &std::path::Path, preset_content: &str) {
     use pureterm_settings::config_io;
 
     if let Err(e) = config_io::mutate_config(config_path, |doc| {
-        // Remove existing keyboard section
+        // 移除已有的键盘配置段
         doc.remove("keyboard");
 
-        // Parse the preset TOML and insert bindings
+        // 解析预设 TOML 并插入绑定
         if !preset_content.is_empty() {
             if let Ok(preset_doc) = preset_content.parse::<toml_edit::DocumentMut>() {
                 if let Some(kb) = preset_doc.get("keyboard") {
@@ -326,7 +325,7 @@ fn write_keybindings_to_config(config_path: &std::path::Path, preset_content: &s
     }
 }
 
-// ── Formatting helpers ──────────────────────────────────────────────────
+// ── 格式化辅助函数 ─────────────────────────────────────────────────────────────
 
 fn format_mods(mods: iced::keyboard::Modifiers) -> String {
     let mut parts = Vec::new();
@@ -435,13 +434,13 @@ fn format_action(action: &keymap::Action) -> String {
         keymap::Action::ToggleBroadcastInput => "Broadcast Input".into(),
         keymap::Action::ToggleQuakeDock => "Quake Dock".into(),
         keymap::Action::ToggleToolbelt => "Toolbelt".into(),
-        // GAP-6.4: user-defined commands aren't part of the preset set,
-        // but the match must be exhaustive for the `shortcuts` CLI.
+        // GAP-6.4：用户自定义命令不属于预设集合，
+        // 但为保证 `shortcuts` CLI 的匹配穷尽性，仍需处理。
         keymap::Action::CustomCommand(id) => format!("Custom: {id}"),
     }
 }
 
-// ── Config helpers ──────────────────────────────────────────────────────
+// ── 配置辅助函数 ──────────────────────────────────────────────────────────────
 
 fn ensure_default_config() {
     let config_dir = pureterm_config_dir();
