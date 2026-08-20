@@ -1,12 +1,12 @@
-//! GAP-1.2: DECSCL (Set Conformance Level) — VT100–VT400 level tracking.
+//! GAP-1.2:DECSCL(设置一致性等级)——VT100–VT400 等级跟踪。
 //!
-//! vte does not handle `CSI Ps " p`; we scan PTY output alongside OSC parsers
-//! in the event loop and store the level on [`Term`].
+//! vte 不处理 `CSI Ps " p`;我们在事件循环中与 OSC 解析器并行扫描 PTY
+//! 输出,并把等级存到 [`Term`] 上。
 
 use crate::event::EventListener;
 use crate::term::Term;
 
-/// DEC conformance level selected by DECSCL.
+/// DECSCL 选择的 DEC 一致性等级。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConformanceLevel {
     #[default]
@@ -37,7 +37,7 @@ impl ConformanceLevel {
     }
 }
 
-/// Scan PTY bytes for DECSCL `ESC [ Ps " p` and apply to the terminal.
+/// 扫描 PTY 字节中的 DECSCL `ESC [ Ps " p` 并应用到终端。
 pub fn scan_and_apply<T: EventListener>(term: &mut Term<T>, buf: &[u8]) {
     let mut i = 0;
     while i + 4 < buf.len() {
@@ -53,7 +53,7 @@ pub fn scan_and_apply<T: EventListener>(term: &mut Term<T>, buf: &[u8]) {
 }
 
 fn parse_decscl(buf: &[u8]) -> Option<(u16, usize)> {
-    // ESC [ Ps " p
+    // ESC [ Ps " p 的转义序列
     if buf.len() < 5 || buf[0] != 0x1b || buf[1] != b'[' {
         return None;
     }
@@ -63,7 +63,7 @@ fn parse_decscl(buf: &[u8]) -> Option<(u16, usize)> {
         ps = ps * 10 + (buf[j] - b'0') as u16;
         j += 1;
     }
-    if j + 2 >= buf.len() || buf[j] != b'"' || buf[j + 1] != b'p' {
+    if j + 2 > buf.len() || buf[j] != b'"' || buf[j + 1] != b'p' {
         return None;
     }
     Some((ps, j + 2))
