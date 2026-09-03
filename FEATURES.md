@@ -156,6 +156,26 @@
 
 ## C. 终端交互
 
+### GAP-63 Kitty 键盘协议 CSI u(2026-09-04)
+- kitty keyboard protocol(disambiguate 模式)按键编码:程序经 `CSI > 1 u` 协商后,活动窗格按键改走 kitty 编码——`Shift+Enter` 发 `\x1b[13;2u`(Claude Code 换行/提交区分)、`Alt+Enter` → `\x1b[13;3u`、`Ctrl+方向键` → `\x1b[1;5{A-D}`(shell/vim 词跳)、`~` 系列带 mods 参数
+- 裸键(Enter/方向键/功能键)完全保持 legacy 序列,遵循 kitty disambiguate 语义;`[terminal] kitty_keyboard` 默认 **true**(可关闭)
+- 实现:`crates/pureterm/src/kitty_keyboard.rs`(纯函数编码器)+ `iced_app.rs`(`key_to_bytes`/Enter 臂按 `TermMode::KITTY_KEYBOARD_PROTOCOL` 分流)
+- 单测:`kitty_keyboard::tests` 7
+
+### GAP-65 终端自识别(2026-09-04)
+- 子进程环境注入 `TERM_PROGRAM=PureTerm`、`TERM_PROGRAM_VERSION`、`PURETERM=1`(daemon 与 GUI 两条 spawn 路径共用 `setup_env`)
+- XTVERSION(`CSI > 0 q`)响应 `DCS >|PureTerm(版本) ST`;XTGETTCAP(`DCS + q`)响应 Tc/RGB/setrgbf/setrgbb 布尔能力(vte 不路由,在 PTY 字节流上扫描)
+- DA2 版本号改报 PureTerm 版本编码,不再误报 alacritty 内核版本;主 DA1 保持 xterm 兼容
+- **修复既有 bug**:`Event::PtyWrite`(查询响应)此前被事件映射静默丢弃——所有终端探测(DA/XTVERSION 等)从未得到响应;现已转发并写回 PTY
+- 实现:`tty/mod.rs` setup_env + `event_loop.rs` scan_terminal_queries + `terminal_context.rs` PtyWrite 转发
+- 单测:`tests_terminal_queries` 7;实战验证:真实 GUI 中 `printf '\033[>0q'` 得到 `PureTerm(0.1.0)` 响应、XTGETTCAP 得到 `RGB=1`
+
+### GAP-66 OSC 633 Shell Integration(VSCode 兼容)(2026-09-04)
+- 识别 VSCode shell integration 序列:`633;A/B/C/D[;exitcode]` 映射到既有 ShellMark 体系(prompt 跳转 / exit code badge / block 输出 / MCP get_shell_context 自动受益);`633;E;<cmd>[;<nonce>]` 填充命令文本(命令含分号时按末段 nonce 重组);`633;P;Cwd=<path>` 更新 cwd
+- 未知子命令静默忽略;跨缓冲截断序列跳过(与其他扫描器一致)
+- 实现:`crates/alacritty_terminal/src/event_loop.rs` `scan_osc633` + PTY 读循环接线
+- 单测:`tests_osc633` 11;实战验证:真实 GUI 发送 633 序列后事件流出现 `command_finished{command:"echo hello-633",exit_code:7}` 并触发 error_recovery 链
+
 ### GAP-4.1 Vim 复制模式(2026-06-12)
 - `Ctrl+Shift+Space` 进入,hjkl 导航,w/b/e 按词,0/$ 行首尾,g/G 屏顶底,Ctrl+u/d 半页
 - v/V/Ctrl+v 选区(字符/行/矩形),y 复制,yy 复制行,/ ? 搜索,n/N 遍历

@@ -9,10 +9,10 @@
 
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
-| 终端交互 | 1 | 1 | — | — | — | — |
+| 终端交互 | 4 | 3 | 1 | — | — | — |
 | 平台 | 1 | — | — | — | — | 1 |
 | 集成 | 5 | — | — | — | — | 5 |
-| **合计** | **7** | **1** | **—** | **—** | **—** | **6** |
+| **合计** | **10** | **3** | **1** | **—** | **—** | **6** |
 
 ---
 
@@ -21,6 +21,9 @@
 | GAP | 简述 | 详情 |
 |-----|------|------|
 | t-core-gap-closure | 终端模拟核心层差距补齐（graphics / shaper / tmux-CC / 多 shell / ConPTY / plugin runtime），6 个子组件 v1→v2→v3 全部闭环：GPU quad shader + 后台 PNG 解码；rustybuzz shaper + cluster_byte_to_cell 反查 + ime_widget cluster_demo；tmux-cc E2E；fish/nu/pwsh/elvish shell integration E2E；Windows CI runner + conpty_smoke；wasmtime 插件运行时 + scan_plugin_osc parser hook + 2 示例插件 + authoring.md | [spec](done/t-core-gap-closure/spec.md) · [checklist](done/t-core-gap-closure/checklist.md) |
+| GAP-63 | kitty keyboard protocol CSI u（disambiguate）：`kitty_keyboard` 纯函数编码器 + `key_to_bytes`/Enter 臂按协商模式分流（Shift+Enter → `\x1b[13;2u`，Ctrl+方向键 → `\x1b[1;5{A-D}`），裸键保持 legacy；`kitty_keyboard` 默认 true；7 单测 | [spec](done/GAP-63-kitty-keyboard-csi-u/spec.md) |
+| GAP-65 | 终端自识别：env 注入 `TERM_PROGRAM`/`TERM_PROGRAM_VERSION`/`PURETERM`（daemon 与 GUI 共用 setup_env）；`scan_terminal_queries` 响应 XTVERSION（`DCS>\|PureTerm(版本)ST`）与 XTGETTCAP（Tc/RGB/setrgbf/setrgbb）；DA2 版本号改报 PureTerm；顺带修复 `Event::PtyWrite` 被映射丢弃导致所有查询响应从未写回 PTY 的既有 bug；7 单测 + 实战验证 | [spec](done/GAP-65-terminal-self-identification/spec.md) |
+| GAP-66 | OSC 633（VSCode shell integration）扫描器：A/B/C/D 映射 ShellMarkKind + E 命令文本（含分号+nonce 重组）+ P;Cwd= cwd 上报 + 未知子命令忽略 + 跨缓冲跳过；复用 ShellMark 消费链（prompt 跳转/exit code/block/MCP get_shell_context）；11 单测 + 实战验证 | [spec](done/GAP-66-osc633-shell-integration/spec.md) |
 
 ## 平台
 
