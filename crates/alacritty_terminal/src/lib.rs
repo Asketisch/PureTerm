@@ -12,6 +12,13 @@
 /// GAP-1.2:DECSCL 一致性等级跟踪(VT100–VT400)。
 pub mod decscl;
 
+/// PureTerm(GAP-65):终端应用版本,经 XTVERSION(`CSI > 0 q` →
+/// `DCS >|PureTerm(版本) ST`)与 `TERM_PROGRAM_VERSION` 环境变量
+/// 向 Agent CLI 报告。与 GUI crate(crates/pureterm)的
+/// `CARGO_PKG_VERSION` 保持同步——内核 crate 不能反向依赖 GUI,
+/// 故独立维护;本注释作为同步提醒。
+pub const PURETERM_VERSION: &str = "0.1.0";
+
 pub mod event;
 pub mod event_loop;
 pub mod grid;

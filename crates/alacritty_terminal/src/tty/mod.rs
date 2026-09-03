@@ -106,6 +106,15 @@ pub fn setup_env() {
 
     // 宣告支持 24 位色。
     unsafe { env::set_var("COLORTERM", "truecolor") };
+
+    // PureTerm(GAP-65):终端自识别环境变量。Agent CLI(Claude
+    // Code / Codex 的能力探测)据 TERM_PROGRAM 识别宿主终端,
+    // 决定启用哪些能力;缺省时被当作未知终端降级到保守能力集。
+    // daemon(puretermd)与 GUI 两条 spawn 路径都会调用本函数,
+    // 注入一次即可同时覆盖。
+    unsafe { env::set_var("TERM_PROGRAM", "PureTerm") };
+    unsafe { env::set_var("TERM_PROGRAM_VERSION", crate::PURETERM_VERSION) };
+    unsafe { env::set_var("PURETERM", "1") };
 }
 
 /// 检查系统上是否存在某 terminfo 条目。

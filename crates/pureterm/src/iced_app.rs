@@ -5365,6 +5365,14 @@ impl PureTermApp {
                                         }
                                     }
                                 }
+                                TerminalEvent::PtyWrite(text) => {
+                                    // GAP-65:终端查询响应(DA1/DA2、
+                                    // XTVERSION、XTGETTCAP 等)写回 PTY,
+                                    // 使等待响应的程序能收到。此前该
+                                    // 事件被静默丢弃,所有终端探测均
+                                    // 超时失败。
+                                    ctx.write_to_pty(text.as_bytes());
+                                }
                             }
                         }
                     }
@@ -9120,7 +9128,20 @@ impl PureTermApp {
                     return task;
                 }
                 if let Some(ctx) = self.active_terminal_ctx() {
-                    ctx.write_to_pty(b"\r");
+                    // GAP-63:kitty 协商模式下,带修饰的 Enter 发
+                    // CSI u(Shift+Enter = \x1b[13;2u,Claude Code 的
+                    // 换行/提交区分依赖它);裸 Enter 保持 legacy \r。
+                    let bytes = if self.active_kitty_keyboard_enabled() {
+                        crate::kitty_keyboard::encode_enter(
+                            modifiers.shift(),
+                            modifiers.alt(),
+                            modifiers.control(),
+                            modifiers.macos_command(),
+                        )
+                    } else {
+                        b"\r".to_vec()
+                    };
+                    ctx.write_to_pty(&bytes);
                 }
             }
             KEvent::KeyPressed { key, text, modifiers, .. } => {
@@ -9720,9 +9741,60 @@ impl PureTermApp {
         use iced::keyboard::Key;
         use iced::keyboard::key::Named;
 
+        // GAP-63:活动窗格协商进了 kitty keyboard protocol(disambiguate
+        // 模式)时,按键改走 kitty 编码(见 kitty_keyboard 模块文档)。
+        let kitty = self.active_kitty_keyboard_enabled();
+        let (shift, alt, ctrl, super_key) = (
+            modifiers.shift(),
+            modifiers.alt(),
+            modifiers.control(),
+            modifiers.macos_command(),
+        );
+
         if let Key::Named(named) = key {
+            // Shift+Tab:legacy 与 kitty 语义一致(\x1b[Z 等价 \x1b[9;2u)。
             if modifiers.shift() && matches!(named, Named::Tab) {
                 return b"\x1b[Z".to_vec();
+            }
+            if kitty {
+                use crate::kitty_keyboard as kk;
+                use iced::keyboard::key::Named as N;
+                return match named {
+                    N::Enter => kk::encode_enter(shift, alt, ctrl, super_key),
+                    N::Backspace => b"\x7f".to_vec(),
+                    N::Tab => b"\t".to_vec(),
+                    N::Escape => b"\x1b".to_vec(),
+                    N::ArrowUp => kk::encode_navigation("A", shift, alt, ctrl, super_key),
+                    N::ArrowDown => kk::encode_navigation("B", shift, alt, ctrl, super_key),
+                    N::ArrowRight => kk::encode_navigation("C", shift, alt, ctrl, super_key),
+                    N::ArrowLeft => kk::encode_navigation("D", shift, alt, ctrl, super_key),
+                    N::Home => kk::encode_navigation("H", shift, alt, ctrl, super_key),
+                    N::End => kk::encode_navigation("F", shift, alt, ctrl, super_key),
+                    N::PageUp => kk::encode_tilde_key(5, shift, alt, ctrl, super_key),
+                    N::PageDown => kk::encode_tilde_key(6, shift, alt, ctrl, super_key),
+                    N::Delete => kk::encode_tilde_key(3, shift, alt, ctrl, super_key),
+                    N::Insert => kk::encode_tilde_key(2, shift, alt, ctrl, super_key),
+                    N::F1 => b"\x1bOP".to_vec(),
+                    N::F2 => b"\x1bOQ".to_vec(),
+                    N::F3 => b"\x1bOR".to_vec(),
+                    N::F4 => b"\x1bOS".to_vec(),
+                    N::F5 => kk::encode_tilde_key(15, shift, alt, ctrl, super_key),
+                    N::F6 => kk::encode_tilde_key(17, shift, alt, ctrl, super_key),
+                    N::F7 => kk::encode_tilde_key(18, shift, alt, ctrl, super_key),
+                    N::F8 => kk::encode_tilde_key(19, shift, alt, ctrl, super_key),
+                    N::F9 => kk::encode_tilde_key(20, shift, alt, ctrl, super_key),
+                    N::F10 => kk::encode_tilde_key(21, shift, alt, ctrl, super_key),
+                    N::F11 => kk::encode_tilde_key(23, shift, alt, ctrl, super_key),
+                    N::F12 => kk::encode_tilde_key(24, shift, alt, ctrl, super_key),
+                    _ => {
+                        if let Some(t) = text {
+                            if !t.is_empty() {
+                                return kk::encode_text_with_alt(t, alt);
+                            }
+                        }
+                        Vec::new()
+                    }
+                };
             }
             let escape = self.named_key_to_escape(*named);
             if !escape.is_empty() {
@@ -9731,10 +9803,26 @@ impl PureTermApp {
         }
         if let Some(t) = text {
             if !t.is_empty() {
+                if kitty && alt {
+                    return crate::kitty_keyboard::encode_text_with_alt(t, true);
+                }
                 return t.as_bytes().to_vec();
             }
         }
         Vec::new()
+    }
+
+    /// GAP-63:活动窗格是否处于 kitty keyboard protocol 模式。
+    /// 无活动窗格时为 false(保持 legacy)。
+    fn active_kitty_keyboard_enabled(&self) -> bool {
+        self.active_terminal_ctx()
+            .map(|ctx| {
+                ctx.terminal()
+                    .lock_unfair()
+                    .mode()
+                    .contains(TermMode::KITTY_KEYBOARD_PROTOCOL)
+            })
+            .unwrap_or(false)
     }
 
     fn named_key_to_escape(&self, named: iced::keyboard::key::Named) -> Vec<u8> {

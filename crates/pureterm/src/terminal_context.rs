@@ -57,6 +57,13 @@ pub enum TerminalEvent {
     /// / 内联图像)。向上暴露,使 GUI 的 `ImageStore` 能接住它,
     /// 渲染器能把它 blit 到网格上。
     GraphicsImage(alacritty_terminal::event::GraphicsImage),
+    /// GAP-65:终端对查询序列的响应字节(DA1/DA2 的 `\x1b[?6c`、
+    /// XTVERSION 的 `DCS >|…`、XTGETTCAP 的 `DCS 1+r…` 等)。内核
+    /// 经 `Event::PtyWrite` 发出,GUI 必须把它写回 PTY——否则
+    /// 查询方(如 `tia`、vim 的终端探测、Claude Code 能力探测)
+    /// 得不到响应而超时。此前的映射把它落在 `_ => return` 分支,
+    /// 所有查询响应都被静默丢弃。
+    PtyWrite(String),
 }
 
 /// 桥接:通过 crossbeam 通道发送,实现 `EventListener`。
@@ -96,6 +103,9 @@ impl EventListener for ChannelEventListener {
             // 由 GUI 的 `ImageStore` 决定是否 blit(它负责
             // 驱逐与回滚裁剪策略)。
             TEvent::GraphicsImage(img) => TerminalEvent::GraphicsImage(img),
+            // GAP-65:查询响应(DA/XTVERSION/XTGETTCAP 等)必须
+            // 转发给 GUI 写回 PTY。
+            TEvent::PtyWrite(text) => TerminalEvent::PtyWrite(text.to_string()),
             _ => return,
         };
         // Wakeup 高频且可再生(下一次输出必再来),通道满(bounded(64))
