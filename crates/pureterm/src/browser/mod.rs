@@ -20,5 +20,5 @@ pub mod platform;
 /// GAP-3.5 / GAP-7.8: 共享的 URL 规范化核心(`loadable_url`)。
 pub mod url;
 
-pub use commands::{BrowserOp, BrowserReply, BrowserResolved};
-pub use context::{BrowserContext, BrowserContextId};
+pub use commands::{BrowserReply, BrowserResolved};
+pub use context::BrowserContext;

@@ -109,7 +109,7 @@ pub fn handle_vi_keypress(
     modifiers: iced::keyboard::Modifiers,
     sub_mode: &mut ViSubMode,
     registers: &mut ViRegisters,
-    pending_register: &mut Option<char>,
+    _pending_register: &mut Option<char>,
     ctx: &std::sync::Arc<TerminalContext>,
 ) -> ViAction {
     // Escape 总是退出 vi 模式（从任意子模式）
@@ -334,7 +334,7 @@ fn capture_line(ctx: &std::sync::Arc<TerminalContext>) -> String {
 
 fn capture_word(ctx: &std::sync::Arc<TerminalContext>) -> String {
     apply_motion(ctx, ViMotion::WordRight);
-    let mut term = ctx.terminal().lock();
+    let term = ctx.terminal().lock();
     term.selection_to_string().unwrap_or_default()
 }
 
@@ -361,7 +361,7 @@ fn put_from_register(
     before: bool,
 ) -> ViAction {
     if let Some(text) = registers.get(None) {
-        let mut bytes = text.as_bytes().to_vec();
+        let bytes = text.as_bytes().to_vec();
         if before {
             // MVP：不做光标移动——直接在 PTY 粘贴
         }

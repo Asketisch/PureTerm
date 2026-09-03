@@ -28,7 +28,7 @@ pub(super) fn prepare_bg_color_pass(
     prim: &TerminalPrimitive,
     pipeline: &TerminalPipeline,
     device: &wgpu::Device,
-    bounds: &Rectangle,
+    _bounds: &Rectangle,
     gpu: &mut GpuResources,
     uniforms: &ScreenUniforms,
 ) {
@@ -306,7 +306,7 @@ pub(super) fn prepare_atlas_textures(
 /// 分配器输出 2 的幂宽度,因此恒成立。R8Unorm = 1 字节/像素。
 fn write_atlas_regions_r8(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &AtlasDirty, w: u32) {
     for region in &atlas.regions {
-        let byte_offset = (region.y as usize * w as usize + region.x as usize);
+        let byte_offset = region.y as usize * w as usize + region.x as usize;
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: tex,

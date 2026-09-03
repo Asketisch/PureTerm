@@ -30,7 +30,7 @@ pub fn add_reopen_method() {
 
     let sel = objc2::sel!(applicationShouldHandleReopen:hasVisibleWindows:);
     let types = b"B@:@B\0";
-    let imp: Imp = unsafe { transmute(handle_reopen as usize) };
+    let imp: Imp = unsafe { transmute(handle_reopen as *const () as usize) };
 
     unsafe {
         let _success = ffi::class_addMethod(

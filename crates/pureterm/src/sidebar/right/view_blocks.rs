@@ -7,10 +7,9 @@
 use iced::widget::{button, column, row, space, text, text_input};
 use iced::{Color, Element, Length, Theme};
 
-use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
+use super::data::BlocksTabData;
 use crate::iced_app::Message;
 use crate::output_blocks::{BlockFilter, OutputBlock};
-use crate::sidebar::RightMode;
 
 /// 最新优先的分页块大小。存储最多为每个窗格保留
 /// `BLOCK_STORE_MAX = 256` 个块;按 `PAGE_SIZE = 50` 算,最多

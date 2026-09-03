@@ -98,6 +98,14 @@ impl EventListener for ChannelEventListener {
             TEvent::GraphicsImage(img) => TerminalEvent::GraphicsImage(img),
             _ => return,
         };
-        let _ = self.tx.send(mapped);
+        // Wakeup 高频且可再生(下一次输出必再来),通道满(bounded(64))
+        // 时丢弃而非阻塞:后台 workspace 的 pane 不被 GUI 消费,阻塞
+        // send 会挂起 alacritty IO 线程,进而背压挂起子进程。其余事件
+        // 低频且不可再生(Exit 丢失会泄漏会话),保持阻塞语义。
+        if mapped == TerminalEvent::Wakeup {
+            let _ = self.tx.try_send(mapped);
+        } else {
+            let _ = self.tx.send(mapped);
+        }
     }
 }

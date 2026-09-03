@@ -262,7 +262,7 @@ fn main() -> iced::Result {
 // ── 键盘快捷键辅助函数(由 cli.rs Shortcuts 组调用) ─────────────────────────────────────
 
 pub(crate) fn shortcuts_list() {
-    use iced::keyboard::Modifiers;
+    
 
     let km = keymap::Keymap::from_defaults();
     for (mods, bk, action) in km.list_bindings() {

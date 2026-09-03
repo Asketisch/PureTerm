@@ -23,7 +23,7 @@ use super::vertices::{ImageQuadVertex, ScreenUniforms};
 /// 后续的 GPU 上传。
 pub(super) fn drain_decode_channel(prim: &TerminalPrimitive) {
     {
-        let mut rx = prim.decode_rx.lock().unwrap();
+        let rx = prim.decode_rx.lock().unwrap();
         while let Ok(decoded) = rx.try_recv() {
             let mut state = prim.image_quad_state.lock().unwrap();
             // 图像超过 ATLAS_SIZE 时 `insert` 返回 `None`,或

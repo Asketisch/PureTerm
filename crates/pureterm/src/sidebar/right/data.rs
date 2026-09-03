@@ -1,12 +1,6 @@
 //! GAP-19:右侧边栏——Find / Feed / Git 模式标签页。
 
-use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
 
-use crate::git_panel::GitQuickAction;
-use crate::iced_app::Message;
-use crate::sidebar::RightMode;
-use crate::status_bar::GitOp;
 
 /// Git 标签页的面板数据(镜像覆盖层字段)。
 pub struct GitTabData<'a> {

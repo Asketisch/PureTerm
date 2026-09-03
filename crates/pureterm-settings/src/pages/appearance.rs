@@ -494,10 +494,13 @@ fn background_image_section(
         .background_image
         .as_ref()
         .map(|p| {
-            // 长路径截断，避免破坏布局
+            // 长路径截断，避免破坏布局。按字符而非字节截断:
+            // 非 ASCII 路径按字节切可能落在字符中间导致 panic。
             let s = p.to_string_lossy().into_owned();
-            if s.len() > 40 {
-                format!("…{}", &s[s.len() - 39..])
+            let chars: Vec<char> = s.chars().collect();
+            if chars.len() > 40 {
+                let tail: String = chars[chars.len() - 39..].iter().collect();
+                format!("…{tail}")
             } else {
                 s
             }
@@ -599,16 +602,37 @@ fn set_font_family(doc: &mut toml_edit::DocumentMut, family: &str) {
     table.insert("normal", toml_edit::Item::Value(toml_edit::Value::InlineTable(inline)));
 }
 
+/// 整数值省略小数点,其余原样输出,供文本框回显。
+fn format_float(f: f64) -> String {
+    if f.fract() == 0.0 {
+        format!("{}", f as i64)
+    } else {
+        format!("{f}")
+    }
+}
+
 fn get_padding_val(doc: &toml_edit::DocumentMut, key: &str) -> Option<String> {
+    // padding 接受浮点(如 x = 3.5)。只读整数会让小数值回退
+    // 默认 "0",Save 时把用户的合法配置静默清零。InlineTable
+    // 与 Table 的 get 分别返回 &Value / &Item,故经
+    // (as_integer, as_float) 元组统一出口。
+    fn num_string(as_int: Option<i64>, as_float: Option<f64>) -> Option<String> {
+        as_int
+            .map(|i| i.to_string())
+            .or_else(|| as_float.map(format_float))
+    }
     let window = doc.get("window")?.as_table()?;
     let padding = window.get("padding")?;
     if let Some(t) = padding.as_inline_table() {
-        return t.get(key)?.as_integer().map(|i| i.to_string());
+        let v = t.get(key)?;
+        return num_string(v.as_integer(), v.as_float());
     }
     if let Some(t) = padding.as_table() {
-        return t.get(key)?.as_integer().map(|i| i.to_string());
+        let item = t.get(key)?;
+        return num_string(item.as_integer(), item.as_float());
     }
-    None
+    // 标量形式(如 `padding = 4`)同样接受。
+    num_string(padding.as_integer(), padding.as_float())
 }
 
 fn set_padding(doc: &mut toml_edit::DocumentMut, key: &str, value: i64) {

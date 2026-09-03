@@ -11,11 +11,12 @@
 [build]
 incremental = true
 # sccache:跨构建、跨 crate 透明缓存 rustc 调用输出。
-# sccache 不在 PATH 时,cargo 回退为
-# 直接调用 rustc — 无硬错误,新克隆与未装 sccache 的
-# CI runner 也能正常工作。用 `cargo install sccache --locked`(或
-# macOS 上 `brew install sccache`)安装即可提速。
-rustc-wrapper = "sccache"
+# 注意:此处*有意*不设置 `rustc-wrapper = "sccache"`——
+# 该配置在 sccache 不在 PATH 时是硬错误(不会回退),
+# 会让新克隆/未装 sccache 的机器直接构建失败。想启用
+# sccache 请用环境变量(缺失时 cargo 不受影响):
+#   export RUSTC_WRAPPER=sccache
+# (需先 `cargo install sccache --locked` 或 `brew install sccache`)。
 
 # ── Linux x86_64 CI:mold 最快,lld 是不错的兜底 ────────────────
 [target.x86_64-unknown-linux-gnu]

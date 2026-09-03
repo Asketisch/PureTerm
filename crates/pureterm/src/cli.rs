@@ -11,10 +11,9 @@ mod subs;
 mod top;
 
 pub use dispatch::{run, send};
-pub use subs::{
-    AgentSub, AgentsSub, BrowserSub, ConfigSub, DaemonSub, DebugSub, EventsSub, FeedSub, McpSub,
-    PaneSub, ReplaySub, ResumeSub, ShortcutsSub, SshSub, SurfaceSub, SystemSub, TabSub, WindowSub,
-};
+// Cli/Command/SurfaceSub 一并 re-export:resume_bindings 的 CLI
+// 解析测试经 `crate::cli::` 路径引用它们。
+pub use subs::{AgentsSub, DaemonSub, ResumeSub, SurfaceSub};
 pub use top::{parse_from_env, Cli, Command};
 
 #[cfg(test)]

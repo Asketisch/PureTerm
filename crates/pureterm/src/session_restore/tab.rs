@@ -1,12 +1,10 @@
 //! 单 tab 恢复 —— `restore_one_tab`(遍历 SplitNode → 创建 pane/pty/ssh)。
 
-use std::sync::Arc;
 
 use super::{RestoredPane, RestoredTab, TabSnapshot};
 use super::restore::{attach_pane, cold_resume_agent};
 use crate::ssh::config::SshProfile;
-use crate::split_tree::{PaneId, SplitNode};
-use crate::terminal_context::TerminalContext;
+use crate::split_tree::PaneId;
 
 #[cfg(unix)]
 #[allow(clippy::too_many_arguments)]

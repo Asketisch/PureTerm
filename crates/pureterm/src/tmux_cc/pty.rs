@@ -283,8 +283,6 @@ mod unix {
     }
 }
 
-#[cfg(unix)]
-pub use unix::spawn_tmux_cc;
 
 #[cfg(test)]
 mod tests {

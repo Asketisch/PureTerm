@@ -12,7 +12,6 @@
 
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
 
 use crate::split_tree::SplitNode;
 
@@ -20,8 +19,8 @@ mod restore;
 mod snapshot;
 mod tab;
 
-pub use restore::{cold_resume_agent, restore};
-pub use snapshot::{save_atomic, save_atomic_to};
+pub use restore::restore;
+pub use snapshot::save_atomic;
 
 /// 一个持久化的窗格,按与该 tab 的 `split_tree` 对齐的 DFS 叶子顺序排列。
 /// `session_id == None` 表示非守护进程(直连 PTY)窗格,它无法

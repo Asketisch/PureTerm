@@ -200,15 +200,15 @@ impl TerminalContext {
         password: Option<String>,
         stderr: Option<File>,
     ) -> io::Result<Self> {
-        use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
+        
 
         let (event_tx, event_rx) = bounded(64);
         let event_listener = ChannelEventListener::new(event_tx);
 
         let num_cols: u16 = 80;
         let num_lines: u16 = 24;
-        let cell_width: u16 = 8;
-        let cell_height: u16 = 16;
+        let _cell_width: u16 = 8;
+        let _cell_height: u16 = 16;
         let size = TermSize::new(num_cols as usize, num_lines as usize);
 
         let term_config = TermConfig::default();

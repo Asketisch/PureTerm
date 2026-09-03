@@ -11,8 +11,7 @@ use std::path::{Path, PathBuf};
 use fs2::FileExt;
 use serde_json::{json, Map, Value};
 
-use super::{AdapterError, AgentAdapter, HookRegistration, InstallReport};
-use crate::cli::AgentsSub;
+use super::{AdapterError, AgentAdapter, HookRegistration};
 
 // ── Claude Code 适配器 ───────────────────────────────────────────────────────
 

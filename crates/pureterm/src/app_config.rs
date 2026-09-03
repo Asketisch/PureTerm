@@ -33,7 +33,7 @@ pub use structs_ui::{
 };
 
 // parse_helpers 的函数仅在 app_config 模块树内部使用,不对外 re-export。
-use parse_helpers::{parse_hex_color, parse_trigger_action};
+use parse_helpers::parse_hex_color;
 
 #[derive(Clone, Debug)]
 pub struct AppConfig {

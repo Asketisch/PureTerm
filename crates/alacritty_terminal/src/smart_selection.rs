@@ -11,20 +11,15 @@ use regex::Regex;
 #[cfg(feature = "serde")]
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub enum Precision {
     VeryLow,
     Low,
+    #[default]
     Normal,
     High,
     VeryHigh,
-}
-
-impl Default for Precision {
-    fn default() -> Self {
-        Precision::Normal
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

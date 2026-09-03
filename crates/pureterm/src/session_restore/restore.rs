@@ -3,8 +3,8 @@
 use std::sync::Arc;
 
 use super::{
-    LayoutSnapshot, RestoredPane, RestoredTab, RestoredWorkspace, RestoreOutcome, TabSnapshot,
-    WindowSnapshot, WorkspaceSnapshot,
+    LayoutSnapshot, RestoredPane, RestoredTab, RestoredWorkspace, RestoreOutcome,
+    WindowSnapshot,
 };
 use super::tab::restore_one_tab;
 use crate::ssh::config::SshProfile;

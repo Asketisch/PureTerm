@@ -108,7 +108,7 @@ impl BrowserOp {
             BrowserOp::Scroll { x, y, selector } => {
                 json!({ "verb": "scroll", "x": x.unwrap_or(0), "y": y.unwrap_or(0), "selector": selector })
             }
-            BrowserOp::Wait { selector, timeout_ms } => {
+            BrowserOp::Wait { selector, timeout_ms: _ } => {
                 json!({ "verb": "wait", "selector": selector, "timeout_ms": self.wait_deadline_ms() })
             }
             BrowserOp::GetUrl => json!({ "verb": "get_url" }),

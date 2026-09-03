@@ -19,15 +19,14 @@ pub mod stats;
 
 use crate::app_config::StatusBarConfig;
 
-pub use chip::{bar_bg, bar_border, chip, chip_bg, chip_border, chip_text, chip_with_color,
-    empty as empty_chip, group_spacer};
-pub use component::{BarData, BarGroup, StatusBarComponent};
+pub use chip::{bar_bg, bar_border, chip_bg, chip_border, chip_text};
+pub use component::{BarData, StatusBarComponent};
 pub use git::{
-    detect_git_op, find_git_dir, is_binary_available, parse_porcelain_v2, read_git_branch,
+    is_binary_available, read_git_branch,
     spawn_git_status, GitOp, GitStatus,
 };
 pub use publisher::stats_subscription;
-pub use stats::{StatSnapshot, StatsKey};
+pub use stats::StatSnapshot;
 
 /// 获取指定 PID 的前台进程名。
 #[cfg(target_os = "macos")]

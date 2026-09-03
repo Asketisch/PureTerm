@@ -19,7 +19,6 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
 use std::time::{Duration, Instant};
 
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
@@ -27,7 +26,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
 use super::pty::SshPty;
 use pureterm_ssh::SshForwards;
 
-use super::session::{ConnectionKey, SshSessionManager};
+use super::session::ConnectionKey;
 use crate::split_tree::PaneId;
 
 /// 重连尝试之间的指数退避时间表。

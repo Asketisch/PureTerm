@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-use super::plugin_system::{PluginManifest, Provides};
+use super::plugin_system::PluginManifest;
 
 /// 从哪里加载插件。
 #[derive(Clone, Debug, PartialEq, Eq)]

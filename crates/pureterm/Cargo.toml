@@ -94,7 +94,13 @@ tempfile = "3"
 # `WebViewBuilder::with_proxy_config`(即 Network framework 的 SOCKS5;macOS 14+),
 # 即把 web 窗格绑定到 SSH 隧道的 Phase C R8 机制。该 feature
 # 在非 macOS 上编译为空,无条件启用是安全的。
-wry = { version = "0.55.1", features = ["mac-proxy"] }
+# PureTerm:mac-proxy 当前*停用*——它强引用 macOS 14+ 才存在的
+# Network framework 符号(nw_proxy_config_create_*),在 macOS ≤13
+# 的构建机上链接必然失败(undefined symbols),使整个应用无法
+# 构建。调用处(browser/context.rs)已按 feature 门控:停用期间
+# web 窗格仍可嵌入浏览,只是不绑定 SSH SOCKS5 代理。需要在
+# macOS 14+ SDK 构建时恢复此 feature 即可。
+wry = { version = "0.55.1" }
 raw-window-handle = "0.6.2"
 # GAP-7.10:MCP stdio 服务器。可选 + feature 门控(`mcp-server`)。`server`
 # 拉入 handler + `#[tool]` 宏(macros 默认开启);`transport-io`

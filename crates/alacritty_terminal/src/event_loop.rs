@@ -833,6 +833,14 @@ mod tests_osc7 {
         let buf = b"\x1b]7;file://host/home/user/My%20Docs\x1b\\";
         assert_eq!(scan_osc7(buf).as_deref(), Some("/home/user/My Docs"));
     }
+
+    #[test]
+    fn scan_percent_encoded_utf8_path() {
+        // "中文" = %E4%B8%AD%E6%96%87;按字节重组后必须还原为
+        // 多字节字符,而非 6 个 mojibake char。
+        let encoded = b"\x1b]7;file://host/%E4%B8%AD%E6%96%87\x07";
+        assert_eq!(scan_osc7(encoded).as_deref(), Some("/中文"));
+    }
 }
 
 #[cfg(test)]
@@ -1104,22 +1112,27 @@ fn extract_osc7_path(url: &[u8]) -> Option<String> {
 }
 
 /// URL 路径的简易百分号解码。
+///
+/// 按字节解码后再整体做 UTF-8 校验:百分号编码的 UTF-8 多字节字符
+/// (如中文目录 `%E4%B8%AD`)必须先重组字节序列,逐字节 `as char`
+/// 会产生 mojibake,导致 OSC 7 上报的 cwd 乱码。无效 UTF-8 用
+/// replacement char 降级而非丢弃整个路径。
 fn percent_decode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
     let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                result.push(((hi << 4) | lo) as char);
+                out.push((hi << 4) | lo);
                 i += 3;
                 continue;
             }
         }
-        result.push(bytes[i] as char);
+        out.push(bytes[i]);
         i += 1;
     }
-    result
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn hex_val(b: u8) -> Option<u8> {
@@ -1161,15 +1174,14 @@ struct RawGraphics {
 ///
 /// 受支持:
 /// - **Sixel**(`\x1bPq ... \x1b\\`)——DEC 六位像素流,每 DCS 一张图。
-/// v1 仅转发原始像素字节(解码 RGBA 留在
-/// 渲染器内)。
+///   v1 仅转发原始像素字节(解码 RGBA 留在渲染器内)。
 /// - **Kitty graphics**(`\x1b_G ... \x1b\\`)——`;` 分隔的 `key=value`
-/// 参数 + base64 载荷。v1 识别 `a=T`(发送并使用)、`a=A`
-///(发送并使用、分块)、`q=1`(静默)、`f=32`(RGBA)、`f=100`(PNG)、
-/// `c=`/`r=`(单元格列/行)、`i=`(图像 id)及分块标记
-/// `m=0`(还有更多块)/`m=1`(最终)。
+///   参数 + base64 载荷。v1 识别 `a=T`(发送并使用)、`a=A`
+///   (发送并使用、分块)、`q=1`(静默)、`f=32`(RGBA)、`f=100`(PNG)、
+///   `c=`/`r=`(单元格列/行)、`i=`(图像 id)及分块标记
+///   `m=0`(还有更多块)/`m=1`(最终)。
 /// - **iTerm2 inline**(`\x1b]1337;File=...`)——`;` 分隔的 `key=value`
-/// 参数 + base64 载荷。v1 仅识别 `inline=1`。
+///   参数 + base64 载荷。v1 仅识别 `inline=1`。
 ///
 /// v1 中扫描器刻意**跨 PTY 读无状态**(与 `scan_osc7`/`scan_osc133`
 /// 一致):跨读取边界的 Kitty 分块图像会被丢弃。单块图像总能
@@ -1471,10 +1483,6 @@ fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// GAP-09:从原始 PTY 缓冲扫描出的一条通知,在应用
-/// occasion/source 之前。共享同一 `i` 的 OSC 99 分块载荷会被
-/// 合并为一条(见 `scan_osc_notify`)。
-
-/// GAP-09:从原始 PTY 缓冲扫描出的一条通知,在应用
 /// occasion/source 默认值之前。共享同一 `i` 的 OSC 99 分块载荷会被
 /// 合并为一条(见 `scan_osc_notify`)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1489,14 +1497,13 @@ struct RawNotification {
 /// GAP-09:扫描原始字节中的 OSC 9 / OSC 99 / OSC 777 通知序列。
 ///
 /// - OSC 9(iTerm2 遗留):`\x1b]9;<message>\x07|ST`——单一正文,**后写入胜出**
-///(镜像 `scan_osc7`)。
+///   (镜像 `scan_osc7`)。
 /// - OSC 99(kitty,分块):`\x1b]99;<metadata>;<payload>\x07|ST`——`:` 分隔的
-/// `key=value` 元数据。v1 解析 `p`(title|body)、`i`(id)、`d`(0=保留/1=冲刷)、
-/// `e`(1=base64)、`o`(occasion)。同一 `i` 块合并;`d=1` 时冲刷。未知
-/// 载荷类型(`icon`/`close`/`buttons`/`?`/`alive`)被优雅地空操作(规范前向
-/// 兼容)。跨缓冲分块(一次 PTY 读里 `d=0`、下一次里 `d=1`)在 v1 中
-/// 由 GUI 侧存储按 `id` 去重兜底。
-/// 兜底机制即按 `id` 去重。
+///   `key=value` 元数据。v1 解析 `p`(title|body)、`i`(id)、`d`(0=保留/1=冲刷)、
+///   `e`(1=base64)、`o`(occasion)。同一 `i` 块合并;`d=1` 时冲刷。未知
+///   载荷类型(`icon`/`close`/`buttons`/`?`/`alive`)被优雅地空操作(规范前向
+///   兼容)。跨缓冲分块(一次 PTY 读里 `d=0`、下一次里 `d=1`)在 v1 中
+///   由 GUI 侧存储按 `id` 去重兜底。
 /// - OSC 777(urxvt):`\x1b]777;notify;<title>;<body>\x07|ST`——无状态。
 ///
 /// 三种都同时接受 `\x07`(BEL)与 `\x1b\\`(ST)终止符(镜像
@@ -1504,7 +1511,7 @@ struct RawNotification {
 /// 字节不会跨读保留(读循环重置
 /// `unprocessed`),因此跨两次 PTY 读的通知会被丢弃。
 /// 这与 `scan_osc7`/`scan_osc133` 限制一致,实践中罕见
-///(通知都很小,一次 `write` 即可)。见
+/// (通知都很小,一次 `write` 即可)。见
 /// `split_across_reads_is_dropped`.
 fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
     let mut out: SmallVec<[RawNotification; 2]> = SmallVec::new();
@@ -2255,7 +2262,7 @@ mod tests_graphics {
     fn base64_encode(input: &[u8]) -> String {
         const ALPH: &[u8; 64] =
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+        let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
         let mut i = 0;
         while i + 3 <= input.len() {
             let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8) | (input[i + 2] as u32);

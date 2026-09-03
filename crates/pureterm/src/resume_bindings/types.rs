@@ -19,17 +19,10 @@
 //! 的持久审批 token、`run` 执行路径与冷恢复
 //! 集成。仅 Unix——执行经 `puretermd` 完成。
 
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
-use hmac::{Hmac, Mac};
-use pureterm_settings::config_io::{self, ConfigError};
-use rand::RngCore;
+use hmac::Hmac;
 use sha2::Sha256;
-use toml_edit::{ArrayOfTables, Item, Table};
 
-use crate::app_config::{AppConfig, ResumeBinding};
-use crate::cli::ResumeSub;
 
 /// 用于 token 计算的 HMAC-SHA256 类型别名。
 type HmacSha256 = Hmac<Sha256>;

@@ -95,7 +95,7 @@ pub fn add_dock_menu_methods() {
     };
 
     let types_void = b"v@:@\0";
-    let imp_workspace: Imp = unsafe { transmute(handle_dock_workspace as usize) };
+    let imp_workspace: Imp = unsafe { transmute(handle_dock_workspace as *const () as usize) };
     unsafe {
         let _ = ffi::class_addMethod(
             class as *const _ as *mut _,
@@ -106,7 +106,7 @@ pub fn add_dock_menu_methods() {
     }
 
     let types_menu = b"@@:@\0";
-    let imp_menu: Imp = unsafe { transmute(handle_dock_menu as usize) };
+    let imp_menu: Imp = unsafe { transmute(handle_dock_menu as *const () as usize) };
     unsafe {
         let _ = ffi::class_addMethod(
             class as *const _ as *mut _,

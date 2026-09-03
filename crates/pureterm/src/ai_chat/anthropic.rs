@@ -265,7 +265,7 @@ impl ChatProvider for AnthropicProvider {
                 .json(&body)
                 .send()
                 .await;
-            let mut resp = match resp {
+            let resp = match resp {
                 Ok(r) if r.status().is_success() => r,
                 Ok(r) => {
                     let _ = tx

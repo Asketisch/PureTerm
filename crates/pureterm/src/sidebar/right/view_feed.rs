@@ -1,10 +1,8 @@
 #[cfg(unix)]
-use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
+use iced::widget::{button, column, row, space, text};
+use iced::{Alignment, Color, Element, Length, Theme};
 
-use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
 use crate::iced_app::Message;
-use crate::sidebar::RightMode;
 
 pub(crate) fn view_feed(
     visible: bool,

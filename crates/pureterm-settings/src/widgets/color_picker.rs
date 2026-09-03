@@ -82,7 +82,9 @@ pub fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
 /// 解析 hex 字符串(#RRGGBB 或 RRGGBB)为 iced::Color。
 pub fn hex_to_color(hex: &str) -> Option<Color> {
     let hex = hex.trim_start_matches('#');
-    if hex.len() != 6 {
+    // 按字节判长后切片要求内容为 ASCII,否则 CJK 输入(两个汉字恰好
+    // 6 字节)会在非字符边界切片 panic——用户敲一半的输入即可触发。
+    if hex.len() != 6 || !hex.is_ascii() {
         return None;
     }
     let r = u8::from_str_radix(&hex[0..2], 16).ok()?;

@@ -1,7 +1,7 @@
 //! ssh/reconnect 模块单元测试 —— 从原 reconnect.rs 内联测试迁出。
 
 use super::*;
-
+use std::thread;
 
     #[test]
     fn backoff_is_nondecreasing_and_capped() {

@@ -276,7 +276,7 @@ impl TerminalContext {
     /// 静默失效（输入无人处理）——届时需重新审计。
     #[cfg(unix)]
     pub fn reattach(&self, ssh_pty: SshPty, stderr: Option<File>) -> io::Result<()> {
-        use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
+        
         use crossbeam_channel::bounded;
 
         let TerminalContext::Ssh(ctx) = self else {

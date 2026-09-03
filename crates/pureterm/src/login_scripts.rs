@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use alacritty_terminal::event::Notify;
-use alacritty_terminal::event_loop::Notifier;
 use crate::terminal_context::TerminalContext;
 
 /// 在后台线程上顺序执行登录命令。每条命令按

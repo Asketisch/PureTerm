@@ -127,15 +127,19 @@ impl BrowserContext {
         // `nw_proxy_config_create_socksv5` 实现真正的 per-view 代理(mac-proxy
         // feature,需 macOS 14+)。代理是 build-time 配置 —— 绑定/解绑隧道会
         // 重建整个 webview(见 [`BrowserContext::set_tunnel`])。
+        // PureTerm:mac-proxy feature 默认停用(其符号在 macOS ≤13
+        // 构建机上链接失败,见 Cargo.toml);停用时跳过代理绑定,
+        // web 窗格用系统默认网络配置。
         let proxy = self.proxy.lock().clone();
         let mut builder = wry::WebViewBuilder::new().with_url(&url).with_bounds(bounds);
-        #[cfg(target_os = "macos")]
+        #[cfg(all(target_os = "macos", feature = "mac-proxy"))]
         if let Some((host, port)) = proxy {
             builder = builder.with_proxy_config(wry::ProxyConfig::Socks5(wry::ProxyEndpoint {
                 host,
                 port: port.to_string(),
             }));
         }
+        let _ = proxy;
         let result = builder.build_as_child(parent);
         match result {
             Ok(wv) => *guard = Some(wv),

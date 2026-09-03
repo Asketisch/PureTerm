@@ -79,8 +79,8 @@ impl SplitNode {
             }
             SplitNode::Split {
                 split_id: _,
-                direction,
-                ratio,
+                direction: _,
+                ratio: _,
                 first,
                 second,
             } => {

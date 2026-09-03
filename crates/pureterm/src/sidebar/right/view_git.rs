@@ -1,11 +1,10 @@
-use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
+use iced::widget::{button, column, row, space, text};
+use iced::{Color, Element, Length, Theme};
 
-use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
+use super::data::GitTabData;
 use crate::iced_app::Message;
 use crate::git_panel::GitQuickAction;
 use crate::status_bar::GitOp;
-use crate::sidebar::RightMode;
 
 pub(crate) fn view_git<'a>(git: GitTabData<'a>) -> Element<'a, Message, Theme, iced::Renderer> {
     let dim = Color::from_rgba(0.55, 0.55, 0.55, 1.0);

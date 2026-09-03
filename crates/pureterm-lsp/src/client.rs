@@ -78,12 +78,15 @@ impl LspClient {
         let store = Arc::new(Mutex::new(DiagnosticStore::default()));
         let pending = Arc::new(Mutex::new(std::collections::HashMap::new()));
         let alive = Arc::new(AtomicBool::new(true));
+        let writer = Arc::new(Mutex::new(Some(stdin)));
         let store_reader = Arc::clone(&store);
         let pending_reader = Arc::clone(&pending);
         let alive_reader = Arc::clone(&alive);
-        thread::spawn(move || reader_loop(stdout, store_reader, pending_reader, alive_reader));
+        let writer_reader = Arc::clone(&writer);
+        thread::spawn(move || {
+            reader_loop(stdout, store_reader, pending_reader, alive_reader, writer_reader)
+        });
 
-        let writer = Arc::new(Mutex::new(Some(stdin)));
         let client = Self {
             child,
             writer,
@@ -117,12 +120,17 @@ impl LspClient {
 
     pub fn did_open(&self, path: &Path) -> Result<(), LspError> {
         let lang = language_id(path).ok_or_else(|| LspError::UnsupportedLanguage(path.to_path_buf()))?;
-        let text = std::fs::read_to_string(path).map_err(LspError::Io)?;
         let uri = path_to_uri(path);
-        let mut versions = self.open_versions.lock();
-        let version = versions.get(&uri).copied().unwrap_or(0) + 1;
-        versions.insert(uri.clone(), version);
-        drop(versions);
+        {
+            let mut versions = self.open_versions.lock();
+            if versions.contains_key(&uri) {
+                // 同一 URI 重复 didOpen 违反 LSP(会被视为文档
+                // 重置);首次之后直接跳过。
+                return Ok(());
+            }
+            versions.insert(uri.clone(), 1);
+        }
+        let text = std::fs::read_to_string(path).map_err(LspError::Io)?;
 
         self.notify(
             "textDocument/didOpen",
@@ -130,7 +138,7 @@ impl LspClient {
                 "textDocument": {
                     "uri": uri,
                     "languageId": lang,
-                    "version": version,
+                    "version": 1,
                     "text": text,
                 }
             }),
@@ -245,16 +253,38 @@ fn reader_loop(
     store: Arc<Mutex<DiagnosticStore>>,
     pending: Arc<Mutex<std::collections::HashMap<u64, mpsc::Sender<Value>>>>,
     alive: Arc<AtomicBool>,
+    writer: Arc<Mutex<Option<std::process::ChildStdin>>>,
 ) {
     let mut reader = BufReader::new(stdout);
     loop {
         match read_message(&mut reader) {
             Ok(msg) => {
-                if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
-                    if let Some(tx) = pending.lock().remove(&id) {
-                        let _ = tx.send(msg);
-                        continue;
+                // 客户端请求的响应:带 id 且不带 method。
+                if msg.get("method").is_none() {
+                    if let Some(id) = msg.get("id").and_then(|v| v.as_u64()) {
+                        if let Some(tx) = pending.lock().remove(&id) {
+                            let _ = tx.send(msg);
+                            continue;
+                        }
                     }
+                } else if let Some(id) = msg.get("id").cloned() {
+                    // 服务器→客户端请求(如 workspace/configuration、
+                    // client/registerCapability)。本 MVP 未实现任何
+                    // server-initiated 特性,按 LSP 规范回
+                    // MethodNotFound,防止服务器等待悬挂。
+                    let resp = json!({
+                        "jsonrpc": JSONRPC_VERSION,
+                        "id": id,
+                        "error": {
+                            "code": -32601,
+                            "message": "method not supported by pureterm client"
+                        }
+                    });
+                    let mut guard = writer.lock();
+                    if let Some(stdin) = guard.as_mut() {
+                        let _ = write_message(stdin, &resp);
+                    }
+                    continue;
                 }
                 if msg.get("method").and_then(|m| m.as_str())
                     == Some("textDocument/publishDiagnostics")

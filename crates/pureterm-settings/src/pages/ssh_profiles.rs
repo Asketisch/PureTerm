@@ -30,6 +30,12 @@ pub struct SshProfile {
 pub struct SshState {
     pub profiles: Vec<SshProfile>,
     pub selected: Option<usize>,
+    /// `load` 时刻磁盘上已存在的 profile 名字序列(含重名)。
+    /// Save 时用于区分「用户在 UI 里删除的 profile」(快照里有、
+    /// UI 里没有 → 丢弃)与「设置打开期间外部进程新增的
+    /// profile」(快照里没有 → 原样保留),后者不能被
+    /// Save 静默回滚。
+    loaded_names: Vec<String>,
 }
 
 impl Default for SshState {
@@ -37,6 +43,7 @@ impl Default for SshState {
         Self {
             profiles: Vec::new(),
             selected: None,
+            loaded_names: Vec::new(),
         }
     }
 }
@@ -44,11 +51,14 @@ impl Default for SshState {
 impl SshState {
     pub fn load(doc: &toml_edit::DocumentMut) -> Self {
         let mut profiles = Vec::new();
+        let mut loaded_names = Vec::new();
         if let Some(ssh) = doc.get("ssh").and_then(|i| i.as_table()) {
             if let Some(arr) = ssh.get("profiles").and_then(|i| i.as_array_of_tables()) {
                 for item in arr.iter() {
+                    let name = item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    loaded_names.push(name.clone());
                     profiles.push(SshProfile {
-                        name: item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        name,
                         host: item.get("host").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         user: item.get("user").and_then(|v| v.as_str()).unwrap_or("").to_string(),
                         port: item.get("port").and_then(|v| v.as_integer())
@@ -60,7 +70,7 @@ impl SshState {
             }
         }
         let selected = if profiles.is_empty() { None } else { Some(0) };
-        Self { profiles, selected }
+        Self { profiles, selected, loaded_names }
     }
 
     pub fn update(&mut self, msg: SshMsg, doc: &mut toml_edit::DocumentMut) {
@@ -146,15 +156,18 @@ impl SshState {
     /// 匹配语义:
     /// - `name` 相同:保留原表的条目,用 UI 值覆盖 5 个
     ///   已知字段,丢弃 UI 清空的可选字段(空 `user`/`key_path`、
-    ///   默认端口 22)。
+    ///   默认端口 22)。重名时按出现次序逐一配对。
     /// - UI 有而文档没有的名字:追加全新的 5 字段表。
-    /// - 文档有而 UI 没有的名字:丢弃(用户在 UI 中删除了)。
+    /// - 文档有而 UI 没有的名字:仅当该名字在 `loaded_names`
+    ///   快照中才视为「用户在 UI 中删除」而丢弃;快照之外的
+    ///   条目(设置打开期间外部进程新增)原样保留,防止
+    ///   Save 回滚外部写入。
     fn sync_to_doc(&self, doc: &mut toml_edit::DocumentMut) {
         // 按名字快照既有磁盘配置档表,以便恢复任何 UI 未知
         // 字段(password / shortcut / 未来
-        // 新增)。这里克隆表,使对 `doc` 的借用
-        // 在下面再次借用写入前结束。
-        let mut existing_by_name: std::collections::HashMap<String, toml_edit::Table> =
+        // 新增)。同名多条目进同一队列,按出现次序配对,
+        // 避免重名时 HashMap 静默覆盖导致字段丢失。
+        let mut existing_by_name: std::collections::HashMap<String, Vec<toml_edit::Table>> =
             std::collections::HashMap::new();
         if let Some(arr) = doc
             .get("ssh")
@@ -164,7 +177,10 @@ impl SshState {
         {
             for table in arr.iter() {
                 if let Some(name) = table.get("name").and_then(|v| v.as_str()) {
-                    existing_by_name.insert(name.to_string(), table.clone());
+                    existing_by_name
+                        .entry(name.to_string())
+                        .or_default()
+                        .push(table.clone());
                 }
             }
         }
@@ -174,7 +190,10 @@ impl SshState {
             // 从既有磁盘表(若有)出发,使 password 和
             // shortcut 这类未知字段在往返后存活。
             let mut table = existing_by_name
-                .remove(&p.name)
+                .get_mut(&p.name)
+                .and_then(|v| {
+                    if v.is_empty() { None } else { Some(v.remove(0)) }
+                })
                 .unwrap_or_else(toml_edit::Table::new);
 
             // 总是用内存值覆盖 UI 已知字段。
@@ -214,6 +233,18 @@ impl SshState {
 
             arr.push(table);
         }
+
+        // 未被 UI 匹配的磁盘条目:仅「快照里存在」的才视为用户
+        // 删除;其余(外部进程在设置打开期间新增)原样保留。
+        for (name, tables) in existing_by_name {
+            if self.loaded_names.contains(&name) {
+                continue;
+            }
+            for table in tables {
+                arr.push(table);
+            }
+        }
+
         crate::config_io::ensure_table(doc, &["ssh"]);
         doc["ssh"]["profiles"] = toml_edit::Item::ArrayOfTables(arr);
     }
@@ -372,4 +403,125 @@ fn labeled_row<'a>(label: String, widget: Element<'a, Message>) -> Element<'a, M
     .spacing(SPACING)
     .align_y(iced::Alignment::Center)
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn doc_with_profiles(toml: &str) -> toml_edit::DocumentMut {
+        toml.parse::<toml_edit::DocumentMut>().unwrap()
+    }
+
+    fn profile_tables(doc: &toml_edit::DocumentMut) -> Vec<&toml_edit::Table> {
+        doc.get("ssh").unwrap().as_table().unwrap()
+            .get("profiles").unwrap().as_array_of_tables().unwrap()
+            .iter().collect()
+    }
+
+    fn profile_names(doc: &toml_edit::DocumentMut) -> Vec<String> {
+        profile_tables(doc)
+            .iter()
+            .map(|t| t.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string())
+            .collect()
+    }
+
+    #[test]
+    fn sync_preserves_invisible_fields_on_roundtrip() {
+        let initial = r#"[[ssh.profiles]]
+name = "prod"
+host = "10.0.0.1"
+password = "ENCRYPTED_BLOB"
+shortcut = "Ctrl+1"
+"#;
+        let doc = doc_with_profiles(initial);
+        let state = SshState::load(&doc);
+        // 真实 Save 流程:mutate_config 重载的磁盘文档是初始内容的
+        // 超集,这里用同一份内容模拟。
+        let mut out = doc_with_profiles(initial);
+        state.apply(&mut out);
+
+        let tables = profile_tables(&out);
+        assert_eq!(tables.len(), 1);
+        let t = tables[0];
+        assert_eq!(t.get("password").and_then(|v| v.as_str()), Some("ENCRYPTED_BLOB"));
+        assert_eq!(t.get("shortcut").and_then(|v| v.as_str()), Some("Ctrl+1"));
+        assert_eq!(t.get("host").and_then(|v| v.as_str()), Some("10.0.0.1"));
+    }
+
+    #[test]
+    fn sync_keeps_externally_added_profile() {
+        // 打开设置时只有 old;Save 时磁盘多出 external(主进程
+        // 新增)。apply 不得回滚掉 external。
+        let doc = doc_with_profiles(
+            r#"[[ssh.profiles]]
+name = "old"
+host = "h1"
+"#,
+        );
+        let state = SshState::load(&doc);
+
+        let mut fresh = doc_with_profiles(
+            r#"[[ssh.profiles]]
+name = "old"
+host = "h1"
+password = "ENC"
+
+[[ssh.profiles]]
+name = "external"
+host = "h2"
+password = "ENC2"
+"#,
+        );
+        state.apply(&mut fresh);
+
+        let tables = profile_tables(&fresh);
+        assert_eq!(profile_names(&fresh), vec!["old", "external"],
+            "external profile must survive save");
+        assert_eq!(tables[1].get("password").and_then(|v| v.as_str()), Some("ENC2"));
+    }
+
+    #[test]
+    fn sync_drops_profile_deleted_in_ui() {
+        // 快照里有 a/b,UI 删除了 b → Save 时 b 丢弃;外部新增
+        // 的 c 保留。
+        let doc = doc_with_profiles(
+            "[[ssh.profiles]]\nname = \"a\"\n[[ssh.profiles]]\nname = \"b\"\n",
+        );
+        let mut state = SshState::load(&doc);
+        state.profiles.remove(1); // 删除 b
+        state.loaded_names = vec!["a".into(), "b".into()];
+
+        let mut fresh = doc_with_profiles(
+            "[[ssh.profiles]]\nname = \"a\"\n[[ssh.profiles]]\nname = \"b\"\n[[ssh.profiles]]\nname = \"c\"\n",
+        );
+        state.apply(&mut fresh);
+
+        assert_eq!(profile_names(&fresh), vec!["a", "c"]);
+    }
+
+    #[test]
+    fn sync_handles_duplicate_names_pairwise() {
+        // 两个同名 profile:按出现次序配对,各自携带各自的
+        // 不可见字段,不再被 HashMap 覆盖。
+        let initial = r#"[[ssh.profiles]]
+name = "dup"
+host = "h1"
+password = "P1"
+
+[[ssh.profiles]]
+name = "dup"
+host = "h2"
+password = "P2"
+"#;
+        let doc = doc_with_profiles(initial);
+        let state = SshState::load(&doc);
+        let mut out = doc_with_profiles(initial);
+        state.apply(&mut out);
+
+        let tables = profile_tables(&out);
+        assert_eq!(tables.len(), 2);
+        assert_eq!(tables[0].get("password").and_then(|v| v.as_str()), Some("P1"));
+        assert_eq!(tables[1].get("password").and_then(|v| v.as_str()), Some("P2"));
+    }
 }

@@ -39,7 +39,7 @@ pub(crate) fn cold_resume_argv_from(
     cwd: &str,
     authorized: impl Fn(&ResumeBinding) -> AuthDecision,
 ) -> Option<Vec<String>> {
-    let mut matches: Vec<ResumeBinding> = bindings.iter().filter(|b| b.auto && b.kind == kind).cloned().collect();
+    let matches: Vec<ResumeBinding> = bindings.iter().filter(|b| b.auto && b.kind == kind).cloned().collect();
     if matches.len() > 1 {
         log::warn!(
             "cold_resume_argv: multiple auto bindings for kind `{kind}`; using the first"

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use crate::local_socket::{connect as local_connect, LocalStream};
+use crate::local_socket::connect as local_connect;
 
 use pureterm_jsonrpc::{JsonRpcRequest, JsonRpcResponse};
 
