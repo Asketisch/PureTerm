@@ -186,7 +186,7 @@ where
             // GAP-66:扫描 OSC 633(VSCode shell integration)——
             // A/B/C/D 映射为 ShellMark(复用 133 消费链),P;Cwd=
             // 映射为 cwd 上报。无内容时零开销跳过。
-            let scan633 = scan_osc633(&buf[..unprocessed]);
+            let scan633 = scan_osc633(&buf[..unprocessed], &mut state.osc633);
             if !scan633.marks.is_empty() {
                 let cursor_row = terminal.grid().cursor.point.line.0 as usize;
                 for raw in scan633.marks {
@@ -515,6 +515,10 @@ pub struct State {
     write_list: VecDeque<Cow<'static, [u8]>>,
     writing: Option<Writing>,
     parser: ansi::Processor,
+    /// GAP-66:OSC 633 跨缓冲状态——E 标记(用户按回车)与其
+    /// 所属 B 分处不同 read chunk,命令文本必须暂存到这里,直到
+    /// 同命令周期的 C(OutputStart)到达时一并产出。
+    pub osc633: Osc633State,
 }
 
 impl State {
@@ -721,6 +725,17 @@ fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
 // OSC 633(VSCode shell integration)扫描器 —— GAP-66
 // ---------------------------------------------------------------------------
 
+/// GAP-66:OSC 633 扫描器的跨缓冲状态。VSCode 的序列生命周期是
+/// A → B(prompt end)→ E(用户按回车,携带命令文本)→ C → D;
+/// B 与 E 之间隔着整个用户输入阶段,必然分处不同的 PTY read
+/// chunk,因此 E 的命令文本必须暂存,直到同命令周期的 C 到达。
+#[derive(Debug, Default)]
+pub struct Osc633State {
+    /// 最近一条 `E` 的命令文本,待 C(OutputStart)到达时随
+    /// CommandStart 一并产出;A/D(新提示符/命令结束)时清除。
+    pub pending_command: Option<String>,
+}
+
 /// 从 PTY 字节流提取的一条 OSC 633 语义标记。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Raw633Mark {
@@ -728,9 +743,7 @@ pub struct Raw633Mark {
     /// `D` 标记的退出码(VSCode 传裸数字 `633;D;0`,亦兼容
     /// `exit=0` 键值形式)。
     pub exit_code: Option<i32>,
-    /// `E` 标记携带的命令文本(明文)。VSCode 脚本把命令原样放在
-    /// 第二参数;命令本身含 `;` 且带 nonce 时,按「末段为 nonce」
-    /// 重组。
+    /// `E` 标记携带的命令文本(明文)。
     pub command: Option<String>,
 }
 
@@ -749,13 +762,14 @@ pub struct Osc633Scan {
 /// - `A`/`B`/`C`/`D[;<exitcode>]` —— 映射到 [`ShellMarkKind`]
 ///   (与 OSC 133 的 A/B/C/D 同语义),复用现有 ShellMark 消费链
 ///   (prompt 跳转 / exit code / block 输出 / MCP get_shell_context)。
-/// - `E;<cmdline>[;<nonce>]` —— 命令文本,合并到同缓冲内最后一条
-///   CommandStart(启动早期只发 E 时生成一条)。
+/// - `E;<cmdline>[;<nonce>]` —— 命令文本暂存到 `state`,在随后
+///   的 `C`(OutputStart)处随一条带命令的 CommandStart 一并产出
+///   (B→E 跨读缓冲,见 [`Osc633State`])。仅当末段形如 nonce
+///   (≥8 位 hex)时才按「末段为 nonce」重组,避免截断本身含
+///   分号的第三方命令。
 /// - `P;Cwd=<path>[;IsWindows=..]` —— cwd 上报。
-pub fn scan_osc633(buf: &[u8]) -> Osc633Scan {
+pub fn scan_osc633(buf: &[u8], state: &mut Osc633State) -> Osc633Scan {
     let mut out = Osc633Scan::default();
-    // 同缓冲内暂存的 E 命令文本(B 与 E 是相邻两条序列)。
-    let mut pending_command: Option<String> = None;
     let prefix = b"\x1b]633;";
     let mut i = 0;
     while i + prefix.len() < buf.len() {
@@ -787,32 +801,45 @@ pub fn scan_osc633(buf: &[u8]) -> Osc633Scan {
             i = start + 1;
             continue;
         }
-        let params = std::str::from_utf8(&buf[params_start..p]).unwrap_or("");
+        let params = String::from_utf8_lossy(&buf[params_start..p]).into_owned();
         let mut parts = params.split(';');
-        let sub = parts.next().unwrap_or("");
-        // 刷新上一条 B 的挂起命令:E 语义上属于它之前最近的 B。
-        if sub != "E" && pending_command.is_some() {
-            attach_command(&mut out, pending_command.take());
-        }
-        match sub {
-            "A" => out.marks.push(Raw633Mark {
-                kind: ShellMarkKind::PromptStart,
-                exit_code: None,
-                command: None,
-            }),
-            "C" => out.marks.push(Raw633Mark {
-                kind: ShellMarkKind::OutputStart,
-                exit_code: None,
-                command: None,
-            }),
+        let sub = parts.next().unwrap_or("").to_string();
+        match sub.as_str() {
+            "A" => {
+                // 新提示符:上一命令周期若未消费(异常序列),丢弃。
+                state.pending_command = None;
+                out.marks.push(Raw633Mark {
+                    kind: ShellMarkKind::PromptStart,
+                    exit_code: None,
+                    command: None,
+                });
+            },
             "B" => {
                 out.marks.push(Raw633Mark {
                     kind: ShellMarkKind::CommandStart,
                     exit_code: None,
                     command: None,
                 });
-            }
+            },
+            "C" => {
+                // 输出开始 = 命令文本确立点:把暂存的 E 命令随一条
+                // CommandStart 产出,保证消费方先见命令、再见输出。
+                if let Some(cmd) = state.pending_command.take() {
+                    out.marks.push(Raw633Mark {
+                        kind: ShellMarkKind::CommandStart,
+                        exit_code: None,
+                        command: Some(cmd),
+                    });
+                }
+                out.marks.push(Raw633Mark {
+                    kind: ShellMarkKind::OutputStart,
+                    exit_code: None,
+                    command: None,
+                });
+            },
             "D" => {
+                // 命令周期结束:残留的 E(无 C 的异常序列)作废。
+                state.pending_command = None;
                 let exit_code = parts.next().and_then(|v| {
                     v.strip_prefix("exit=").unwrap_or(v).parse().ok()
                 });
@@ -821,55 +848,45 @@ pub fn scan_osc633(buf: &[u8]) -> Osc633Scan {
                     exit_code,
                     command: None,
                 });
-            }
+            },
             "E" => {
                 let segs: Vec<&str> = params.split(';').skip(1).collect();
-                // `[cmdline]` 或 `[cmdline, ..., nonce]`:nonce 只可能
-                // 是末段;cmdline 自身含分号时把中间各段 join 回来。
-                let cmdline = if segs.len() >= 2 {
-                    segs[..segs.len() - 1].join(";")
-                } else {
-                    segs.first().copied().unwrap_or("").to_string()
+                // VSCode 总是带 nonce;第三方可能只发 [cmdline] 或
+                // [cmdline, ...] 。仅当末段形如 nonce(≥8 位 hex,
+                // VSCode nonce 为长 hex)时剥离,避免把本身含分号
+                // 的命令截断。
+                let cmdline = match segs.len() {
+                    0 => String::new(),
+                    1 => segs[0].to_string(),
+                    _ => {
+                        let last = segs[segs.len() - 1];
+                        let nonce_like = last.len() >= 8
+                            && !last.is_empty()
+                            && last.bytes().all(|b| b.is_ascii_hexdigit());
+                        if nonce_like {
+                            segs[..segs.len() - 1].join(";")
+                        } else {
+                            segs.join(";")
+                        }
+                    },
                 };
                 if !cmdline.is_empty() {
-                    pending_command = Some(cmdline.to_string());
+                    state.pending_command = Some(cmdline);
                 }
-            }
+            },
             "P" => {
                 for kv in parts {
                     if let Some(path) = kv.strip_prefix("Cwd=") {
                         out.cwd = Some(path.to_string());
                     }
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
         i = p + if buf[p] == 0x07 { 1 } else { 2 };
     }
-    // 缓冲末尾仍挂起的 E(通常 E 与 B 同缓冲相邻,此为兜底)。
-    attach_command(&mut out, pending_command);
 
     out
-}
-
-/// 把 E 的命令文本合并到最后一条 CommandStart;没有时生成一条
-/// (启动早期只发 E 的脚本变体)。
-fn attach_command(out: &mut Osc633Scan, command: Option<String>) {
-    let Some(command) = command else { return };
-    if let Some(b) = out
-        .marks
-        .iter_mut()
-        .rev()
-        .find(|m| m.kind == ShellMarkKind::CommandStart && m.command.is_none())
-    {
-        b.command = Some(command);
-    } else {
-        out.marks.push(Raw633Mark {
-            kind: ShellMarkKind::CommandStart,
-            exit_code: None,
-            command: Some(command),
-        });
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1129,7 +1146,8 @@ mod tests_osc633 {
     #[test]
     fn scan_abcd_marks() {
         let buf = b"\x1b]633;A\x07prompt\x1b]633;B\x07\x1b]633;C\x07out\x1b]633;D;0\x07";
-        let scan = scan_osc633(buf);
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
         let kinds: Vec<ShellMarkKind> = scan.marks.iter().map(|m| m.kind).collect();
         assert_eq!(
             kinds,
@@ -1146,7 +1164,8 @@ mod tests_osc633 {
     #[test]
     fn scan_st_terminated() {
         let buf = b"\x1b]633;A\x1b\\";
-        let scan = scan_osc633(buf);
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
         assert_eq!(scan.marks.len(), 1);
         assert_eq!(scan.marks[0].kind, ShellMarkKind::PromptStart);
     }
@@ -1154,7 +1173,8 @@ mod tests_osc633 {
     #[test]
     fn scan_exit_code_nonzero() {
         let buf = b"\x1b]633;D;127\x07";
-        let scan = scan_osc633(buf);
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
         assert_eq!(scan.marks[0].exit_code, Some(127));
     }
 
@@ -1162,44 +1182,112 @@ mod tests_osc633 {
     fn scan_exit_code_key_value_form() {
         // 兼容 133 风格的 `exit=` 键值形式。
         let buf = b"\x1b]633;D;exit=3\x07";
-        let scan = scan_osc633(buf);
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
         assert_eq!(scan.marks[0].exit_code, Some(3));
     }
 
     #[test]
     fn scan_cwd_property() {
         let buf = b"\x1b]633;P;Cwd=/Users/demo/my dir;IsWindows=0\x07";
-        let scan = scan_osc633(buf);
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
         assert_eq!(scan.cwd.as_deref(), Some("/Users/demo/my dir"));
     }
 
     #[test]
     fn scan_cwd_bel_terminated() {
         let buf = b"\x1b]633;P;Cwd=/tmp\x07";
-        assert_eq!(scan_osc633(buf).cwd.as_deref(), Some("/tmp"));
+        let mut st = Osc633State::default();
+        assert_eq!(scan_osc633(buf, &mut st).cwd.as_deref(), Some("/tmp"));
     }
 
     #[test]
     fn scan_e_command_attaches_to_command_start() {
-        let buf = b"\x1b]633;B\x07\x1b]633;E;cargo test --nocapture;abc123\x07\x1b]633;C\x07";
-        let scan = scan_osc633(buf);
-        let b = scan.marks.iter().find(|m| m.kind == ShellMarkKind::CommandStart).unwrap();
+        // VSCode 的 nonce 为长 hex(≥8 位);短 hex 串视为命令一部分。
+        let buf =
+            b"\x1b]633;B\x07\x1b]633;E;cargo test --nocapture;abc12345\x07\x1b]633;C\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        let b = scan
+            .marks
+            .iter()
+            .find(|m| m.kind == ShellMarkKind::CommandStart && m.command.is_some())
+            .unwrap();
         // 命令文本含分号:末段是 nonce,中间重组。
         assert_eq!(b.command.as_deref(), Some("cargo test --nocapture"));
     }
 
     #[test]
     fn scan_e_without_nonce() {
-        let buf = b"\x1b]633;B\x07\x1b]633;E;ls -la\x07";
-        let scan = scan_osc633(buf);
-        let b = scan.marks.iter().find(|m| m.kind == ShellMarkKind::CommandStart).unwrap();
-        assert_eq!(b.command.as_deref(), Some("ls -la"));
+        let buf = b"\x1b]633;B\x07\x1b]633;E;ls -la\x07\x1b]633;C\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        // 带命令的 CommandStart 是 E 确立时(C 处)产出的那条。
+        let with_cmd = scan
+            .marks
+            .iter()
+            .find(|m| m.kind == ShellMarkKind::CommandStart && m.command.is_some())
+            .unwrap();
+        assert_eq!(with_cmd.command.as_deref(), Some("ls -la"));
+    }
+
+    #[test]
+    fn scan_e_semicolon_command_without_nonce_not_truncated() {
+        // 第三方发射方常无 nonce;命令本身含分号不得被截断。
+        let buf = b"\x1b]633;E;echo a;b\x07\x1b]633;C\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        let b = scan
+            .marks
+            .iter()
+            .find(|m| m.kind == ShellMarkKind::CommandStart && m.command.is_some())
+            .unwrap();
+        assert_eq!(b.command.as_deref(), Some("echo a;b"));
+    }
+
+    #[test]
+    fn scan_b_e_across_buffers_command_arrives_at_output_start() {
+        // 真实生命周期:B 在提示符 chunk,E+C 在回车 chunk。E 的
+        // 命令文本在 C(OutputStart)到达时随一条带命令的
+        // CommandStart 产出;GUI 侧 ShellState::apply_mark 收到它
+        // 会覆盖 pending_b(时间戳更准)并补全命令文本——事件流
+        // 上第二条 command_started 携带命令文本,属「命令确立」
+        // 通知而非重复。
+        let mut st = Osc633State::default();
+        let scan1 = scan_osc633(b"\x1b]633;A\x07\x1b]633;B\x07", &mut st);
+        assert_eq!(scan1.marks.len(), 2);
+        assert!(scan1.marks.iter().all(|m| m.command.is_none()));
+        assert!(st.pending_command.is_none());
+
+        let scan2 = scan_osc633(b"\x1b]633;E;echo hi\x07\x1b]633;C\x07", &mut st);
+        let starts: Vec<Option<&str>> = scan2
+            .marks
+            .iter()
+            .filter(|m| m.kind == ShellMarkKind::CommandStart)
+            .map(|m| m.command.as_deref())
+            .collect();
+        assert_eq!(starts, vec![Some("echo hi")], "E+C chunk 产出一条带命令的 CommandStart");
+        assert_eq!(scan2.marks[0].kind, ShellMarkKind::CommandStart);
+        assert_eq!(scan2.marks[1].kind, ShellMarkKind::OutputStart);
+        assert!(st.pending_command.is_none());
+    }
+
+    #[test]
+    fn scan_d_clears_stale_pending() {
+        // 无 C 的异常序列:D 必须丢弃残留的 pending,防泄漏到下条命令。
+        let mut st = Osc633State::default();
+        scan_osc633(b"\x1b]633;E;orphan\x07", &mut st);
+        assert!(st.pending_command.is_some());
+        scan_osc633(b"\x1b]633;D;0\x07", &mut st);
+        assert!(st.pending_command.is_none());
     }
 
     #[test]
     fn scan_unknown_subcommand_ignored() {
         let buf = b"\x1b]633;X;mystery\x07\x1b]633;A\x07";
-        let scan = scan_osc633(buf);
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
         assert_eq!(scan.marks.len(), 1);
         assert_eq!(scan.marks[0].kind, ShellMarkKind::PromptStart);
     }
@@ -1207,15 +1295,17 @@ mod tests_osc633 {
     #[test]
     fn scan_incomplete_at_buffer_end_is_skipped() {
         let buf = b"\x1b]633;A\x07ok\x1b]633;D;0";
-        let scan = scan_osc633(buf);
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
         assert_eq!(scan.marks.len(), 1, "跨缓冲的截断序列必须跳过");
         assert_eq!(scan.marks[0].kind, ShellMarkKind::PromptStart);
     }
 
     #[test]
     fn scan_no_osc633() {
-        assert!(scan_osc633(b"plain output\n").marks.is_empty());
-        assert_eq!(scan_osc633(b"plain output\n").cwd, None);
+        let mut st = Osc633State::default();
+        assert!(scan_osc633(b"plain output\n", &mut st).marks.is_empty());
+        assert_eq!(scan_osc633(b"plain output\n", &mut st).cwd, None);
     }
 }
 

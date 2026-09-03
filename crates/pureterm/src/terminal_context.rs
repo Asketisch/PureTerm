@@ -110,9 +110,12 @@ impl EventListener for ChannelEventListener {
         };
         // Wakeup 高频且可再生(下一次输出必再来),通道满(bounded(64))
         // 时丢弃而非阻塞:后台 workspace 的 pane 不被 GUI 消费,阻塞
-        // send 会挂起 alacritty IO 线程,进而背压挂起子进程。其余事件
+        // send 会挂起 alacritty IO 线程,进而背压挂起子进程。
+        // GAP-65:PtyWrite(查询响应)同样改 try_send——丢一条响应
+        // 只让查询方超时后重发;阻塞则会在后台窗格查询风暴下永久
+        // 挂死 IO 线程(丢响应可恢复 vs 挂死不可恢复)。其余事件
         // 低频且不可再生(Exit 丢失会泄漏会话),保持阻塞语义。
-        if mapped == TerminalEvent::Wakeup {
+        if mapped == TerminalEvent::Wakeup || matches!(mapped, TerminalEvent::PtyWrite(_)) {
             let _ = self.tx.try_send(mapped);
         } else {
             let _ = self.tx.send(mapped);

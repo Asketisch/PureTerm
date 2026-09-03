@@ -9761,6 +9761,18 @@ impl PureTermApp {
                 use iced::keyboard::key::Named as N;
                 return match named {
                     N::Enter => kk::encode_enter(shift, alt, ctrl, super_key),
+                    // kitty disambiguate:带修饰的 Tab/Backspace/Escape
+                    // 用 CSI u(legacy 无法表达修饰);Ctrl+Tab 若仍发
+                    // \t 会与裸 Tab 同字节,程序无法区分。
+                    N::Tab if ctrl || alt || super_key => {
+                        kk::encode_csi_u(9, kk::mods_param(shift, alt, ctrl, super_key))
+                    }
+                    N::Backspace if ctrl || alt || super_key || shift => {
+                        kk::encode_csi_u(127, kk::mods_param(shift, alt, ctrl, super_key))
+                    }
+                    N::Escape if ctrl || alt || super_key || shift => {
+                        kk::encode_csi_u(27, kk::mods_param(shift, alt, ctrl, super_key))
+                    }
                     N::Backspace => b"\x7f".to_vec(),
                     N::Tab => b"\t".to_vec(),
                     N::Escape => b"\x1b".to_vec(),
@@ -9814,13 +9826,19 @@ impl PureTermApp {
 
     /// GAP-63:活动窗格是否处于 kitty keyboard protocol 模式。
     /// 无活动窗格时为 false(保持 legacy)。
+    ///
+    /// 注意判定用 `DISAMBIGUATE_ESC_CODES` 单个 flag:主流程序
+    /// (Claude Code / kitty 默认)push 的是 `CSI > 1 u`,只置
+    /// disambiguate 一位;`KITTY_KEYBOARD_PROTOCOL` 是全部 5 个
+    /// kitty flag 的并集,`contains` 要求 5 位全置,用它判定会
+    /// 使本 gate 永远为 false。
     fn active_kitty_keyboard_enabled(&self) -> bool {
         self.active_terminal_ctx()
             .map(|ctx| {
                 ctx.terminal()
                     .lock_unfair()
                     .mode()
-                    .contains(TermMode::KITTY_KEYBOARD_PROTOCOL)
+                    .contains(TermMode::DISAMBIGUATE_ESC_CODES)
             })
             .unwrap_or(false)
     }
