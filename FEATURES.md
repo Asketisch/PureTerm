@@ -40,9 +40,68 @@
 - **未做(独立后续)**:CLI `workspace` 命令组(独立 phase);侧栏拖拽调宽(defer);close / rename workspace 操作(plan.md Phase 3 曾列但从未实现,DoD 不依赖,记 follow-up)
 - **Review（2026-06-29）**:修 5 bug —— ① v1→v2 迁移改「先写盘、成功后才把旧 v1 改名 `.bak`」(写失败不丢 v1,`save_atomic_to()->bool` + `migrate_v1_to_v2_in` 路径参数化);② 关闭 detached 窗口补 `mark_layout_dirty`(此前 retain 后不排期持久化 → 重启复现);③ `flush_layout_if_dirty` 抽 `dirty_should_clear` 纯函数,仅在 capture 前后时间戳一致时清 dirty(防 debounce 丢最终态;iced 单线程故当前非 live bug,纯防御硬化);④ `WindowClosed` 焦点回退由「仅弹回主窗」改为「回退到任意存活窗口」,修「聚焦主窗被关 + detached 存活」时 `main_window` 已 None → snap-back 跳过 → `active_window_id` 悬空 → 下条按键撞 `tabs().expect` panic;⑤ `NewWorkspace` 加无活跃窗口防御早退(避免下方无条件 `create_tab` → `.expect` latent panic)。+ 后台 PTY 持续产字进 grid 的 DoD 浴(`gap21_background_grid_accumulates_without_event_polling`,补既有「仅 Arc 身份」较弱断言)+ 迁移先写后改名 tempdir 单测 + debounce re-arm 单测;wakeup loop 注释订正(只扫活跃窗口·活跃 workspace,后台 grid 字节靠 alacritty IO 线程独立喂养)。745 pureterm 单测全绿。
 
+### 端到端测试体系 + 启动性能基线(2026-10-21)
+- **Python E2E 套件**(`tests/e2e/`,16 个文件 / 226 例;Rust 全仓 1523 例):覆盖 Rust 单测够不到的**跨进程接缝** —— CLI ↔ GUI ↔ `puretermd` ↔ MCP ↔ 窗口服务器
+  - `test_cli_local.py` 本地命令组(退出码 / JSON 形状 / 配置 CRUD / 插件 / 记事本 / hook 垫片)
+  - `test_cli_ipc.py` + `test_rpc.py` Socket API(逐个已注册方法 + 错误路径 + 非法参数)
+  - `test_daemon.py` 守护进程生命周期、会话增删查、**GUI 冷启动是否真的挂上守护进程**
+  - `test_mcp.py` MCP stdio 协议(握手 / `tools/list` / `tools/call` 与 GUI 的桥接)
+  - `test_display.py` + `test_background.py` **显示层像素检测**:抓真实窗口截图,断言非空白、字形已光栅化、背景色符合配置、无 panic 覆盖层、背景图通道真的画出来
+  - `test_startup.py` 启动里程碑回归护栏 + 耗时上限
+  - `test_session.py` 会话跨 GUI 重启存活
+  - `test_graphics.py` **终端图形链路**:Kitty 图形 → 事件 → 存储 → 解码 → GPU 图集 → 屏幕(截图断言)
+  - `test_browser.py` **内嵌浏览器**:本地 HTTP 服务器 → `pane split-web` → `browser.get-title` / `extract` / `navigate` / `wait`(含**页面脚本动态插入**的元素)
+  - `test_ssh.py` **SSH 通道**:假 `ssh` 二进制 + `[[ssh.profiles]]` → `ssh.connect` → 事件日志确认「标签页建成 / 会话起来 / 连上了」
+  - `test_triggers.py` **模式匹配触发器**:`[[triggers]]` → 输出匹配 → `trigger.matched` 事件 → notify / send_text / exec / set_variable 动作
+  - `test_tmux_cc.py` **tmux 控制模式**:真 tmux 会话接进 GUI(标签页 / 当前屏幕 / 按键回传)
+  - `test_agents.py` **agent 适配器**:安装 / 卸载 Claude Code 钩子(幂等 / 不动用户配置 / dry-run 不写盘)
+  - `test_windows_config.py` **多窗口 / 工作区 / 配置读写 / 分割树手术**(`window.create|focus|close`、`workspace.switch`、`config.get|set`、`pane.detach|attach|swap|equalize|resize`)
+- **守护进程泄漏(把机器拖垮)**:守护进程**故意**在 GUI 退出后继续存活(会话要扛过 GUI 重启),但**没有任何自停手段** —— 用户没法回收它,自动化测试更是每个用例泄漏一个。实测 E2E 套件跑到一半时机器上堆了 **401 个 `puretermd`**,套件耗时从 85s 涨到 **345s**,大批用例超时
+  - 新增 `daemon.shutdown` RPC:回完应答后杀掉全部会话、清掉控制 socket、退出进程
+  - 新增 `pureterm daemon stop` CLI:用户终于能回收它(此前只有 `status` / `install` / `uninstall`)
+  - E2E fixture 在每个用例收尾时回收自己那个守护进程(沙箱给每个用例**专属**的 daemon socket,互不影响)
+- **八个「空实现 / 谎报成功」的 API**(此前**完全没有 E2E 覆盖**,审计后逐个发现并修掉):
+  - `window.focus` 回 `{"focused": true}` 却**没有任何副作用** —— 调用方以为窗口被聚焦了,实际什么都没发生 → 真的切窗口
+  - `window.list` 的窗口数取自 `main_window`(恒 ≤1),且**每个**窗口都报**活动窗口**的标签页数 → 改为按 `self.windows` 报每窗口自己的标签页数 + 活动标志
+  - `config.set` 回一句「not yet supported」却带**成功**状态 → 真的经 `mutate_config` 写盘(保留文件其余内容)+ 重载
+  - `config.get` 只回 `key`、没有 `value` → 真的按点分键路径读值
+  - `workspace.switch` 对**不存在**的工作区 id/name 回「switching: true」,主循环却什么也没做 → 改成报错
+  - `pane.attach`(join-pane)拒绝移动「标签页里**唯一**的窗格」→ 刚被 `pane.detach` 拆出来的窗格**永远并不回去**(detach → attach 往返不成立),而 RPC 还回「attached: true」→ 允许移动,并把变空的源标签页一并删掉
+  - **默认配置里 `font.size` 放在 `[font.normal]` 下,而加载器与设置 UI 都读 `[font].size`** → 默认配置中的字号**根本没被读到**;用户照着默认文件改 `size` 也毫无效果
+  - `pureterm tmux-attach --socket` 与顶层**全局** `--socket`(IPC 路径)同名 → clap 在**解析时 panic**,命令行直接崩 → 改名 `--tmux-socket`
+- **两个致命 panic(远程内容可触发)**:
+  - 触发器模板按**字节**切片 → 模板含非 ASCII 字符(如中文标题「构建完成」)就切在字符边界之外 panic;触发器在 **GUI 主线程**求值,panic 直接把**整个应用 abort 掉**(终端消失,不只是这条规则失效)。改为按 `char` 扫描
+  - `hover_preview` 的 favicon 解析用字节长度切 HTML → 远程页面里一个中文标题或 emoji 就足以 panic。切片前先把下标向下取整到字符边界
+- **tmux 控制模式(`tmux -CC`)修复 + GUI 侧接线**(此前该后端**从未工作过**,且 GUI **从不消费**它):
+  - `tmux -CC` 必须在 **pty** 上启动(它对 stdin 做 `tcgetattr` 进 raw 模式;用管道会直接报 `tcgetattr failed` 退出)
+  - slave 端设 raw 模式(否则我们写进去的 `%…` 命令会被行规程**回显**回来污染信封流)
+  - `%output` 载荷是 tmux 的 `\ooo` **八进制转义**(不是 base64)—— 早前按 base64 解码,导致**每一帧终端输出都被整条丢弃**
+  - `%begin` 的真实格式是 `%begin <ts> <version> <flags>`(全局帧边界,**不带 pane id**)
+  - 首行前的终端能力查询(`ESC P 1000 p`)不再吞掉第一条信封
+  - 新增 `%window-add` / `%sessions-changed` / `%client-session-changed` / `%layout-change` 等通知类型
+  - 3 个真实 tmux E2E 用例进入常规测试套件(缺 tmux 时优雅跳过)
+  - **GUI 侧接线**:`TerminalContext` 新增 `Tmux` 变体 + `tmux_cc::pump` 把 `%output` 信封泵进网格 + `tmux.attach` IPC + `pureterm tmux-attach --session <name>`(此前该命令只**打印**一行 `tmux -CC …` 就退出 0,看起来「附加成功了」而实际什么都没发生)
+  - tmux 3.6a 附加时**不回放屏幕**(只发 `%begin`/`%end`/`%session-changed`)→ 收到 `%session-changed` 后主动发 `capture-pane -p`,把命令输出块(`%begin flags=1`)里的原始行喂进网格
+  - tmux 3.6a **不接受**客户端发来的 `%input`(回 `parse error: syntax error`,按键根本没送达)→ 改用 `send-keys -t %<pane> -H <逐字节十六进制>`;目标 pane id 由 `%output` 信封带出
+  - **tmux socket 命名空间**(`tmux -L <name>`):测试用独立 socket,既不污染用户自己的 tmux 会话,也避开「多个控制模式客户端并发连接会让 tmux 服务器在启动期随机退出」的竞态;`tmux-attach --tmux-socket <name>` 也可指定
+- **终端图形链路修复**(此前**大图一律不显示**):
+  - 跨读取边界的图形序列不再被丢弃(PTY 一次 `read()` 不保证返回全部字节,2KB 以上的图像载荷几乎必然跨边界)→ 增加尾巴保留
+  - Kitty 的 `c`/`r` 是**单元格**数而非像素数 → 像素尺寸改由载荷长度推导
+  - 图像图集命中缓存时**重新上传像素**(同 id 重传原本永远显示旧图)
+- **SSH 通道**:`ssh.connect` 经 IPC 打通「配置 → 守护进程 → `ssh` 二进制 → PTY → 会话」全链路,并有事件日志断言
+- **内嵌浏览器(GAP-7.8)修复**:
+  - `browser.wait` 原本让 JS 返回 **Promise**,而 WKWebView 的 `evaluateJavaScript` 默认**不 await Promise**(直接回 `undefined`)—— 该操作**永远**报 “no value”,形同虚设
+  - 改法:早期用 JS 里 `while(true)` **同步忙等**——但那会**占住页面的 JS 线程**,页面靠 `setTimeout` 插入的元素永远出不来,`wait` 对动态元素必然超时。现改为 **Rust 侧轮询**(iced 定时器驱动,每次一次非阻塞 `querySelector` 探测),两次探测之间页面线程空闲
+  - WKWebView 只在窗口**可见/在前台**时才加载页面并执行脚本求值 → E2E 需要先把应用置前台
+- **启动埋点**:`PURETERM_TRACE_STARTUP=1` 把 `main_enter` / `first_frame` / `terminal_ready` 等里程碑打到 stderr(`crates/pureterm/src/startup_trace.rs`)
+- **基准工具**:`scripts/bench_startup.py`(分阶段耗时)、`scripts/ab_startup.py`(两二进制交替对照,直接轮询 IPC socket 以剔除测量开销)、`cargo run --example wgpu_probe`(wgpu 各阶段成本探针)
+- **启动优化**:背景图 / Sixel 两条 GPU 管线**按需创建**(`LazyPipeline`)—— 每次启动少编译 2 个 Metal shader library(实测约 80ms 的 Metal 编译);守护进程在应用构造阶段**预热**,与窗口创建并行;字体泛型名按平台解析(macOS/Windows 上 `monospace` → `Menlo`/`Consolas`)
+- 详见 [tests/e2e/README.md](tests/e2e/README.md)
+
 ---
 
 ## B. UI/UX 界面
+
 
 ### GAP-3.3 命令面板 ⌘⇧P(2026-06-08)
 - nucleo-matcher 模糊搜索,Actions / Profiles 双模式

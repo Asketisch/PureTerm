@@ -25,6 +25,36 @@ cargo nextest run -p <crate>      # 测试（用 nextest，不要用 cargo test�
 - 改了某 crate 就只测该 crate，提交前再 `cargo nextest run --workspace` 全量测
 - 想用 sccache 加速：`export RUSTC_WRAPPER=sccache`（需先 `cargo install sccache`，未装时裸 cargo 也正常）
 
+## 端到端测试（Python）
+
+Rust 单元测试覆盖内部逻辑；**跨进程接缝**（CLI ↔ GUI ↔ 守护进程 ↔ MCP ↔ 窗口服务器）
+由 `tests/e2e/` 下的 pytest 套件覆盖，含**显示层像素检测**（真实抓窗口截图并断言像素）。
+
+```bash
+cargo build --release --bin pureterm --bin puretermd   # 测试跑真实二进制
+python3 -m pytest tests/e2e -v                        # 全量（约 1.5 分钟）
+python3 -m pytest tests/e2e/test_display.py -v        # 只跑显示层
+PURETERM_BIN=target/debug/pureterm python3 -m pytest tests/e2e -v
+```
+
+覆盖的接缝：CLI ↔ GUI ↔ 守护进程 ↔ MCP ↔ 窗口服务器 ↔ 真 tmux ↔
+内嵌 WebView。用例清单与「踩过的坑」见
+[tests/e2e/README.md](tests/e2e/README.md)。
+
+## 启动耗时
+
+应用内置启动埋点：`PURETERM_TRACE_STARTUP=1` 会把里程碑打到 stderr
+（`main_enter` / `first_frame` / `terminal_ready` / …）。
+
+```bash
+python3 scripts/bench_startup.py --rounds 5      # 分阶段耗时
+python3 scripts/ab_startup.py A B --rounds 6     # 两个二进制交替对照
+cargo run --release --example wgpu_probe         # wgpu 各阶段成本探针
+```
+
+`scripts/ab_startup.py` 直接轮询 IPC socket（不经 CLI 子进程），
+避免测量开销算进启动耗时。
+
 ## 架构
 
 12 个 crate 的工作区：
