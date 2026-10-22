@@ -22,6 +22,16 @@ foreground = "#D4D6CF"
 padding = { x = 2, y = 0 }
 dynamic_title = true
 #
+# GAP-73/74:标题栏样式。
+# overlay = 窗口内容铺满标题栏,红绿灯浮在界面顶栏上(与主题融为一体)
+#           —— 仅 macOS 有效,其它平台自动退化为 native。macOS 默认值。
+# native  = 保留系统原生标题栏(Windows 上额外用 DWM 把标题栏染成主题色)
+# unified = 隐藏系统标题栏,由应用自绘标题栏(标题 + 最小化/最大化/关闭)
+#           —— 跨平台可用,Linux 上获得同款观感的唯一途径;
+#              代价是失去系统的鼠标拖拽边框(窗口只能用键盘/程序化缩放)。
+# 非法值一律回落 native。
+titlebar = "overlay"
+#
 # GAP-20 / GAP-55:窗口玻璃 + 透明度/模糊(`[window]` 嵌套表)。
 # [window.glass]
 # enabled = false
@@ -260,6 +270,14 @@ height_fraction = 0.45
 # GAP-46:UI 语言(设置 + 主应用,经 pureterm-settings I18n)。
 [pureterm]
 locale = "en"
+
+# GAP-72:界面外观预设。
+# classic   = 经典深色(默认,行为与旧版完全一致)
+# cyberpunk = 霓虹赛博朋克(外壳 + 终端 ANSI 16 色 + 终端主色)
+# terminal_palette: follow(默认,跟随 preset) | user(保留自己的 [colors.*])
+[appearance]
+preset = "classic"
+terminal_palette = "follow"
 #
 # ── P4 GAP MVP(默认关闭,另有注明除外) ────────────────────────
 #

@@ -1,6 +1,10 @@
 use std::env;
-use std::path::PathBuf;
 use std::process::Command;
+
+// 仅 Windows 分支用到 `PathBuf`;非 Windows 上留着会触发 unused import,
+// 而 CI 的 clippy 门禁是 `-D warnings`(构建脚本同样受 RUSTFLAGS 约束)。
+#[cfg(windows)]
+use std::path::PathBuf;
 
 fn main() {
     let mut version = String::from(env!("CARGO_PKG_VERSION"));

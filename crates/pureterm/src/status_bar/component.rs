@@ -25,7 +25,9 @@
 
 use std::borrow::Cow;
 
-use iced::{Color, Element, Theme};
+use iced::{Color, Element};
+
+use pureterm_settings::theme::palette::StatusBarTokens;
 
 use crate::iced_app::Message;
 use crate::notification_store::NotificationSummary;
@@ -85,10 +87,9 @@ pub struct BarData<'a> {
     /// 时钟分段配置（format + show_seconds）。持有的；从 `[statusbar]`
     /// 配置转发，逐帧渲染无需再查配置。
     pub clock_cfg: &'a ClockCfg,
-    /// 活动的 Iced 主题，转发过来让 chip 能从调色板派生自己的背景。
-    /// 引用由 `iced::Application::theme` 拥有；此处借用是安全的，因为
-    /// 状态栏在生成该快照的同一个 `view` 调用内渲染。
-    pub theme_for_view: &'a Theme,
+    /// 状态栏的调色板（chip 底色 / 描边 / 语义色）。GAP-72 起由
+    /// `UiPalette::status_bar` 提供,跟随界面预设变化。
+    pub status_tokens: StatusBarTokens,
 }
 
 /// 底部状态栏的一个分段。

@@ -4,7 +4,7 @@ use iced::{Element, Length, Padding};
 use crate::app::Message;
 use crate::i18n::I18n;
 use crate::pages::colors::{ColorPickerTarget, ColorsMsg};
-use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::theme::{self, PADDING, SPACING};
 use crate::widgets::color_field;
 use crate::widgets::color_picker::hex_to_color;
 
@@ -206,7 +206,7 @@ pub fn view(state: &TerminalState, i18n: &I18n) -> Element<'static, Message> {
 fn section_title(title: String) -> Element<'static, Message> {
     text(title)
         .size(theme::FONT_SIZE + 2.0)
-        .color(theme::TEXT_PRIMARY)
+        .color(theme::tokens().text_primary)
         .into()
 }
 
@@ -214,7 +214,7 @@ fn labeled_row<'a>(label: String, widget: Element<'a, Message>) -> Element<'a, M
     row![
         text(label)
             .size(theme::FONT_SIZE)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(160),
         widget,
     ]

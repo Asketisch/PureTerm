@@ -60,7 +60,7 @@ impl StatusBarComponent for Cwd {
         // 主题随调用传入,让 chip 的文本颜色跟随当前调色板。目前应用只用
         // `Theme::Dark`;解析路径见 `view_bottom_bar`。
         chip(format!("\u{1f4c1} {}", data.cwd.unwrap_or("~")), self.group(),
-             data.theme_for_view)
+             &data.status_tokens)
     }
 }
 
@@ -117,21 +117,22 @@ impl StatusBarComponent for Git {
             return empty_chip();
         };
 
-        let theme = data.theme_for_view;
+        let sb = data.status_tokens;
         let group = self.group();
         let label = git_bar_label(&branch, data.git_status);
 
         // 构建基础 chip(组着色文本)。
-        let mut r = row![chip(label, group, theme)].spacing(4);
+        let mut r = row![chip(label, group, &sb)].spacing(4);
 
         // 可选后缀:进行中的操作 + 关联的 PR。我们把它们渲染成兄弟小文本组件
         // 而非 chip,使它们的语义色(进行中为琥珀色,PR 按状态着色)与基础
         // Context chip 保持区分。
         let g = data.git_status;
-        let amber = Color::from_rgba(0.95, 0.75, 0.3, 1.0);
-        let green = Color::from_rgba(0.5, 0.8, 0.55, 1.0);
-        let red = Color::from_rgba(0.9, 0.45, 0.45, 1.0);
-        let purple = Color::from_rgba(0.65, 0.45, 0.85, 1.0);
+        let sem = data.status_tokens.semantics;
+        let amber = sem.running;
+        let green = sem.ok;
+        let red = sem.error;
+        let purple = sem.merged;
 
         if let Some(g) = g {
             if g.op != super::git::GitOp::None {
@@ -162,7 +163,7 @@ impl StatusBarComponent for Ssh {
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some((label, color)) = &data.ssh {
-            chip_with_color(label.clone(), self.group(), *color, data.theme_for_view)
+            chip_with_color(label.clone(), self.group(), *color, &data.status_tokens)
         } else {
             empty_chip()
         }
@@ -182,8 +183,8 @@ impl StatusBarComponent for ViMode {
             chip_with_color(
                 label.to_string(),
                 self.group(),
-                Color::from_rgba(0.2, 0.85, 0.7, 1.0),
-                data.theme_for_view,
+                data.status_tokens.semantics.vi,
+                &data.status_tokens,
             )
         } else {
             empty_chip()
@@ -201,7 +202,7 @@ impl StatusBarComponent for Process {
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some(proc) = data.process {
-            chip(format!("\u{25b8} {}", proc), self.group(), data.theme_for_view)
+            chip(format!("\u{25b8} {}", proc), self.group(), &data.status_tokens)
         } else {
             empty_chip()
         }
@@ -218,7 +219,7 @@ impl StatusBarComponent for Agent {
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some((label, color)) = &data.agent {
-            chip_with_color(label.clone(), self.group(), *color, data.theme_for_view)
+            chip_with_color(label.clone(), self.group(), *color, &data.status_tokens)
         } else {
             empty_chip()
         }
@@ -236,7 +237,7 @@ impl StatusBarComponent for CodeIndex {
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         if let Some(pct) = data.codeindex_percent {
-            chip(format!("idx {pct}%"), self.group(), data.theme_for_view)
+            chip(format!("idx {pct}%"), self.group(), &data.status_tokens)
         } else {
             empty_chip()
         }
@@ -257,8 +258,8 @@ impl StatusBarComponent for Lsp {
             chip_with_color(
                 format!("LSP {errors}E {warnings}W"),
                 self.group(),
-                Color::from_rgba(1.0, 0.55, 0.45, 1.0),
-                data.theme_for_view,
+                data.status_tokens.semantics.lsp_error,
+                &data.status_tokens,
             )
         } else {
             empty_chip()
@@ -283,8 +284,8 @@ impl StatusBarComponent for Notifications {
             chip_with_color(
                 format!("\u{1f514} {n}"),
                 self.group(),
-                Color::from_rgba(1.0, 0.7, 0.2, 1.0),
-                data.theme_for_view,
+                data.status_tokens.semantics.notification,
+                &data.status_tokens,
             )
         } else {
             empty_chip()
@@ -313,7 +314,7 @@ impl StatusBarComponent for TriggerCount {
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
         let n = self.hits.load(std::sync::atomic::Ordering::Relaxed);
         if n > 0 {
-            chip(format!("\u{26a1} {n}"), self.group(), data.theme_for_view)
+            chip(format!("\u{26a1} {n}"), self.group(), &data.status_tokens)
         } else {
             empty_chip()
         }
@@ -340,7 +341,7 @@ impl StatusBarComponent for Cursor {
         chip(
             format!("\u{1f4cd} {}:{}", r + 1, c + 1),
             self.group(),
-            data.theme_for_view,
+            &data.status_tokens,
         )
     }
 }
@@ -380,7 +381,7 @@ impl StatusBarComponent for Clock {
         chip(
             format!("\u{1f552} {}", now.format(fmt_slice)),
             self.group(),
-            data.theme_for_view,
+            &data.status_tokens,
         )
     }
 }
@@ -403,9 +404,9 @@ impl StatusBarComponent for Cpu {
         BarGroup::System
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
-        let color = Color::from_rgba(0.95, 0.6, 0.4, 1.0);
+        let color = data.status_tokens.semantics.cpu;
         let label = chip(format!("cpu {:>3.0}%", self.cpu_pct), self.group(),
-                          data.theme_for_view);
+                          &data.status_tokens);
         if self.show_sparkline && self.history.len() >= 2 {
             row![label, sparkline(&self.history, color)].spacing(4).into()
         } else {
@@ -436,9 +437,9 @@ impl StatusBarComponent for Memory {
         BarGroup::System
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
-        let color = Color::from_rgba(0.55, 0.8, 0.65, 1.0);
+        let color = data.status_tokens.semantics.memory;
         let label = chip(format!("mem {}", human_bytes(self.used)), self.group(),
-                          data.theme_for_view);
+                          &data.status_tokens);
         if self.show_sparkline && self.history.len() >= 2 {
             row![label, sparkline(&self.history, color)].spacing(4).into()
         } else {
@@ -470,7 +471,7 @@ impl StatusBarComponent for Network {
         BarGroup::System
     }
     fn view(&self, data: &BarData<'_>) -> BarElement<'static> {
-        let color = Color::from_rgba(0.5, 0.75, 0.95, 1.0);
+        let color = data.status_tokens.semantics.network;
         let label = chip(
             format!(
                 "net {}\u{2193} {}\u{2191}",
@@ -478,7 +479,7 @@ impl StatusBarComponent for Network {
                 human_bytes(self.up_bps),
             ),
             self.group(),
-            data.theme_for_view,
+            &data.status_tokens,
         );
         if self.show_sparkline && self.history.len() >= 2 {
             row![label, sparkline(&self.history, color)].spacing(4).into()
@@ -524,15 +525,15 @@ impl StatusBarComponent for Battery {
                     _ => "\u{1f50b}",          // 电池
                 };
                 let color = if pct <= 15.0 {
-                    Color::from_rgba(0.95, 0.4, 0.4, 1.0)
+                    data.status_tokens.semantics.battery_low
                 } else {
-                    Color::from_rgba(0.7, 0.85, 0.5, 1.0)
+                    data.status_tokens.semantics.battery_ok
                 };
                 chip_with_color(
                     format!("{icon} {:>3.0}%", pct),
                     self.group(),
                     color,
-                    data.theme_for_view,
+                    &data.status_tokens,
                 )
             }
             // 无电池(台式机):不渲染任何内容。

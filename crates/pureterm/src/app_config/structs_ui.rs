@@ -313,3 +313,30 @@ impl Default for SemanticHistoryConfig {
     }
 }
 
+
+/// GAP-72:`[appearance]` 设置 —— 界面外观预设。
+///
+/// `preset` 决定主应用外壳 + 设置窗口 + 终端 ANSI 配色的整套观感:
+/// - `classic`(默认):与引入本特性之前完全一致;
+/// - `cyberpunk`:霓虹赛博朋克(深靛底 + 青/品红强调 + 赛博终端配色)。
+///
+/// `terminal_palette` 是**逃生阀**:`follow`(默认)跟随 `preset`;
+/// `user` 时即使 preset=cyberpunk 也保留用户自己的 `[colors.*]`。
+///
+/// 表缺失/畸形时返回 `Default`(classic)—— 坏配置永不导致启动失败。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppearanceConfig {
+    /// 外观预设名(classic / cyberpunk)。
+    pub preset: String,
+    /// 终端配色来源(follow / user)。
+    pub terminal_palette: String,
+}
+
+impl Default for AppearanceConfig {
+    fn default() -> Self {
+        Self {
+            preset: "classic".to_string(),
+            terminal_palette: "follow".to_string(),
+        }
+    }
+}

@@ -23,6 +23,7 @@
 mod glyph;
 mod helpers;
 mod image_quad;
+mod overrides;
 mod pipeline;
 mod primitive;
 mod primitive_prepare;
@@ -35,6 +36,7 @@ mod shaper_tests;
 
 pub use glyph::GlyphState;
 pub use image_quad::{ImageQuadDraw, ImageQuadState};
+pub use overrides::{rgb_from_rgba, TermColorOverrides};
 pub use primitive::TerminalPrimitive;
 pub use program::{TerminalProgram, TerminalState};
 pub use vertices::{BgImageVertex, BgVertex, ImageQuadVertex, ScreenUniforms, TextVertex};

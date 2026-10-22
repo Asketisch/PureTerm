@@ -28,6 +28,7 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
+from functools import cached_property
 from pathlib import Path
 
 import pytest
@@ -72,9 +73,16 @@ class Sandbox:
     home: Path
     tmp: Path
 
-    @property
+    @cached_property
     def env(self) -> dict[str, str]:
-        """子进程环境变量(完全替换,避免继承用户配置)。"""
+        """子进程环境变量(完全替换,避免继承用户配置)。
+
+        **缓存一次**:以前每次访问都重建一份字典,于是
+        `sandbox.env["PATH"] = ...` 这类**就地修改会被丢掉** ——
+        桩 `ssh` 因此根本没进到被测进程的 PATH 里,SSH 用例只能靠真
+        `ssh` 连假主机(行为随 DNS 时序飘忽,用例会随机失败)。
+        缓存后修改能生效,桩才真的被用上。
+        """
         env = dict(os.environ)
         # 把被测二进制所在目录加进 PATH:`puretermd` 是守护进程,GUI 在
         # 冷启动时按「与主二进制同目录 → PATH」的顺序查找它。测试用的二进制

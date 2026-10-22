@@ -8,9 +8,9 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    AiChatConfig, BlockOutputConfig, ErrorRecoveryConfig, GitConfig, NaturalLanguageConfig,
-    NotificationConfig, PortScannerConfig, SemanticHistoryConfig, ShellIntegrationConfig,
-    SidebarConfig, SoulConfig, StatusBarConfig,
+    AiChatConfig, AppearanceConfig, BlockOutputConfig, ErrorRecoveryConfig, GitConfig,
+    NaturalLanguageConfig, NotificationConfig, PortScannerConfig, SemanticHistoryConfig,
+    ShellIntegrationConfig, SidebarConfig, SoulConfig, StatusBarConfig,
 };
 
 use super::AppConfig;
@@ -129,6 +129,59 @@ impl AppConfig {
             cfg.left_default_open = b;
         }
         cfg
+    }
+
+    /// 加载 `[appearance]` 配置表(GAP-72)。缺失/损坏的表返回
+    /// `Default`(= classic)。与 `load_sidebar` 一致:
+    /// read_to_string → toml::from_str → 遍历 `value.get("appearance")`。
+    pub fn load_appearance(path: &Path) -> AppearanceConfig {
+        let mut cfg = AppearanceConfig::default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return cfg,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return cfg,
+        };
+        let Some(table) = value.get("appearance").and_then(|t| t.as_table()) else {
+            return cfg;
+        };
+        if let Some(p) = table.get("preset").and_then(|v| v.as_str()) {
+            if !p.trim().is_empty() {
+                cfg.preset = p.trim().to_string();
+            }
+        }
+        if let Some(p) = table.get("terminal_palette").and_then(|v| v.as_str()) {
+            if !p.trim().is_empty() {
+                cfg.terminal_palette = p.trim().to_string();
+            }
+        }
+        cfg
+    }
+
+    /// 加载 `[window].titlebar` 配置项(GAP-73)。
+    ///
+    /// `overlay` = 窗口内容铺满标题栏,macOS 红绿灯浮在界面顶栏之上
+    /// (与主题融为一体);`native` = 保留系统原生标题栏。
+    /// 缺省 / 非法值 → 平台默认(macOS = overlay,其它 = native)。
+    pub fn load_titlebar(path: &Path) -> pureterm_settings::theme::titlebar::TitleBarStyle {
+        let default = pureterm_settings::theme::titlebar::TitleBarStyle::platform_default();
+        let contents = match std::fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(_) => return default,
+        };
+        let value: toml::Value = match toml::from_str(&contents) {
+            Ok(v) => v,
+            Err(_) => return default,
+        };
+        let Some(window) = value.get("window").and_then(|t| t.as_table()) else {
+            return default;
+        };
+        match window.get("titlebar").and_then(|v| v.as_str()) {
+            Some(s) => pureterm_settings::theme::titlebar::TitleBarStyle::parse(s),
+            None => default,
+        }
     }
 
     /// 加载 `[shell_integration]` 配置表(GAP-15)。缺失/损坏的表

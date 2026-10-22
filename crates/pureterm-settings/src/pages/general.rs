@@ -3,7 +3,7 @@ use iced::{Element, Length, Padding};
 
 use crate::app::Message;
 use crate::i18n::{I18n, PickMapping};
-use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::theme::{self, PADDING, SPACING};
 
 #[derive(Debug, Clone)]
 pub enum GeneralMsg {
@@ -209,7 +209,7 @@ pub fn view(state: &GeneralState, i18n: &I18n) -> Element<'static, Message> {
 fn section_title(title: String) -> Element<'static, Message> {
     text(title)
         .size(theme::FONT_SIZE + 2.0)
-        .color(theme::TEXT_PRIMARY)
+        .color(theme::tokens().text_primary)
         .into()
 }
 
@@ -220,7 +220,7 @@ fn labeled_row<'a>(
     row![
         text(label)
             .size(theme::FONT_SIZE)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(160),
         widget,
     ]

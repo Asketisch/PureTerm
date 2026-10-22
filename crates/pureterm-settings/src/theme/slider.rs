@@ -1,13 +1,14 @@
 use iced::widget::slider;
 use iced::{Background, Border, Color, Theme};
 
-use super::{ACCENT, ACCENT_HOVER, BORDER};
+use super::tokens;
 
 pub fn field(_theme: &Theme, status: slider::Status) -> slider::Style {
+    let t = tokens();
     let rail = slider::Rail {
         backgrounds: (
-            Background::Color(ACCENT),
-            Background::Color(BORDER),
+            Background::Color(t.accent),
+            Background::Color(t.hairline),
         ),
         width: 4.0,
         border: Border {
@@ -26,15 +27,15 @@ pub fn field(_theme: &Theme, status: slider::Status) -> slider::Style {
     match status {
         slider::Status::Active => slider::Style {
             rail,
-            handle: handle_style(ACCENT),
+            handle: handle_style(t.accent),
         },
         slider::Status::Hovered => slider::Style {
             rail,
-            handle: handle_style(ACCENT_HOVER),
+            handle: handle_style(t.accent_hover),
         },
         slider::Status::Dragged => slider::Style {
             rail,
-            handle: handle_style(ACCENT_HOVER),
+            handle: handle_style(t.accent_hover),
         },
     }
 }

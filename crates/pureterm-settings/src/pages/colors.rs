@@ -3,7 +3,7 @@ use iced::{Color, Element, Length, Padding, Theme, window};
 
 use crate::app::Message;
 use crate::i18n::I18n;
-use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::theme::{self, PADDING, SPACING};
 use crate::widgets::color_field;
 use crate::widgets::color_picker::{self, hsv_to_hex, hex_to_color, WheelProgram};
 
@@ -280,13 +280,13 @@ pub fn color_picker_window_view(
 
     let target_for_slider = target.clone();
     let brightness_slider = row![
-        text("Brightness").size(13).color(TEXT_SECONDARY).width(80),
+        text("Brightness").size(13).color(theme::tokens().text_secondary).width(80),
         slider(0.0..=1.0, val, move |v| {
             Message::Colors(ColorsMsg::ValueChanged(target_for_slider.clone(), v))
         })
         .step(0.01)
         .width(Length::Fixed(170.0)),
-        text(format!("{:.0}%", val * 100.0)).size(13).color(theme::TEXT_PRIMARY).width(40),
+        text(format!("{:.0}%", val * 100.0)).size(13).color(theme::tokens().text_primary).width(40),
     ]
     .spacing(SPACING)
     .align_y(iced::Alignment::Center);
@@ -328,12 +328,12 @@ pub fn color_picker_window_view(
 
     container(
         column![
-            text(format!("Color: {}", target_name)).size(16).color(theme::TEXT_PRIMARY),
+            text(format!("Color: {}", target_name)).size(16).color(theme::tokens().text_primary),
             wheel,
             brightness_slider,
             preview,
             row![
-                text("Hex:").size(14).color(TEXT_SECONDARY),
+                text("Hex:").size(14).color(theme::tokens().text_secondary),
                 text_input("#rrggbb", hex)
                     .on_input(|s| Message::Colors(ColorsMsg::ColorPickerHexChanged(s)))
                     .style(if hex_valid {
@@ -361,7 +361,7 @@ pub fn color_picker_window_view(
 fn section_title(title: String) -> Element<'static, Message> {
     text(title)
         .size(theme::FONT_SIZE + 2.0)
-        .color(theme::TEXT_PRIMARY)
+        .color(theme::tokens().text_primary)
         .into()
 }
 
@@ -380,7 +380,7 @@ where
     row![
         text(label)
             .size(theme::FONT_SIZE)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(120),
         color_field::color_input(
             hex,
@@ -453,7 +453,7 @@ where
     let target_wheel = target.clone();
     let target_screen = target;
     column![
-        text(name.to_string()).size(11.0).color(TEXT_SECONDARY),
+        text(name.to_string()).size(11.0).color(theme::tokens().text_secondary),
         color_field::color_input(
             hex,
             20.0,

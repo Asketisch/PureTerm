@@ -9,10 +9,13 @@ use super::view_find::view_find;
 use super::view_git::view_git;
 use super::view_ports::view_ports;
 use super::view_toolbelt::view_toolbelt;
+use pureterm_settings::theme::palette::ShellTokens;
+
 use crate::iced_app::Message;
 use crate::sidebar::RightMode;
 
 pub fn view<'a>(
+    tokens: ShellTokens,
     mode: RightMode,
     width: f32,
     height: f32,
@@ -39,9 +42,14 @@ pub fn view<'a>(
         let label = m.label();
         let msg = Message::SidebarRightMode(m);
         let bg = if active {
-            Color::from_rgba(0.35, 0.75, 0.65, 0.25)
+            tokens.accent.scale_alpha(0.25)
         } else {
             Color::TRANSPARENT
+        };
+        let tab_fg = if active && tokens.neon_active_tab {
+            tokens.accent
+        } else {
+            tokens.text_primary
         };
         tabs = tabs.push(
             button(text(label).size(11))
@@ -49,7 +57,7 @@ pub fn view<'a>(
                 .padding([4, 8])
                 .style(move |_theme: &Theme, _status: button::Status| button::Style {
                     background: Some(Background::Color(bg)),
-                    text_color: Color::WHITE,
+                    text_color: tab_fg,
                     border: Border {
                         radius: 4.0.into(),
                         ..Default::default()
@@ -71,9 +79,10 @@ pub fn view<'a>(
     .padding([6, 8]);
 
     let content: Element<'a, Message, Theme, iced::Renderer> = match mode {
-        RightMode::Find => view_find(surface, dir, width, height),
+        RightMode::Find => view_find(tokens, surface, dir, width, height),
         #[cfg(unix)]
         RightMode::Feed => view_feed(
+            tokens,
             feed_visible,
             feed_subject,
             feed_event,
@@ -85,11 +94,11 @@ pub fn view<'a>(
         ),
         #[cfg(not(unix))]
         RightMode::Feed => text("Feed (unix only)").size(11).color(dim).into(),
-        RightMode::Git => view_git(git),
-        RightMode::Ports => view_ports(ports),
-        RightMode::Files => view_files(files),
-        RightMode::Blocks => view_blocks(blocks),
-        RightMode::Toolbelt => view_toolbelt(toolbelt, width),
+        RightMode::Git => view_git(tokens, git),
+        RightMode::Ports => view_ports(tokens, ports),
+        RightMode::Files => view_files(tokens, files),
+        RightMode::Blocks => view_blocks(tokens, blocks),
+        RightMode::Toolbelt => view_toolbelt(tokens, toolbelt, width),
     };
 
     let body = scrollable(
@@ -103,15 +112,17 @@ pub fn view<'a>(
         .width(Length::Fixed(width))
         .height(Length::Fixed(height));
 
+    let panel_bg = tokens.surface;
+    let panel_border = tokens.hairline;
     container(panel)
         .width(Length::Fixed(width))
         .height(Length::Fixed(height))
-        .style(|_| container::Style {
-            background: Some(Background::Color(Color::from_rgba(0.10, 0.10, 0.12, 1.0))),
+        .style(move |_| container::Style {
+            background: Some(Background::Color(panel_bg)),
             text_color: None,
             snap: false,
             border: Border {
-                color: Color::from_rgba(0.25, 0.25, 0.28, 1.0),
+                color: panel_border,
                 width: 1.0,
                 radius: 0.0.into(),
             },

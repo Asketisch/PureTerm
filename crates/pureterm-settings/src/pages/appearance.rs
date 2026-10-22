@@ -7,7 +7,8 @@ use iced::{Element, Length, Padding};
 
 use crate::app::Message;
 use crate::i18n::{I18n, PickMapping};
-use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::theme::{self, PADDING, SPACING};
+use crate::theme::palette::ThemePreset;
 
 #[derive(Debug, Clone)]
 pub enum AppearanceMsg {
@@ -26,6 +27,11 @@ pub enum AppearanceMsg {
     UnfocusedHollowToggled(bool),
     BackgroundImagePicked(Option<PathBuf>),
     BackgroundImageOpacityChanged(f32),
+    /// GAP-74:标题栏样式(native / overlay / unified)。**重启后**生效
+    /// (窗口装饰在创建时就定下了)。
+    TitleBarStyleChanged(String),
+    /// GAP-72:界面外观预设(classic / cyberpunk)。
+    PresetChanged(String),
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +59,10 @@ pub struct AppearanceState {
     pub background_image: Option<PathBuf>,
     /// PureTerm: 背景图不透明度（0.0..=1.0），仅作用于图片层。
     pub background_image_opacity: f32,
+    /// GAP-74:标题栏样式（native / overlay / unified）。
+    pub titlebar_style: String,
+    /// GAP-72:界面外观预设。决定主应用外壳 + 设置窗口 + 终端 ANSI 配色。
+    pub preset: ThemePreset,
 }
 
 impl Default for AppearanceState {
@@ -77,6 +87,10 @@ impl Default for AppearanceState {
             unfocused_hollow: true,
             background_image: None,
             background_image_opacity: 0.5,
+            titlebar_style: crate::theme::TitleBarStyle::platform_default()
+                .as_str()
+                .to_string(),
+            preset: ThemePreset::Classic,
         }
     }
 }
@@ -132,6 +146,21 @@ impl AppearanceState {
         .map(|f| f as f32)
         .unwrap_or(0.5);
 
+        // GAP-74:标题栏样式。未知值回落 native。
+        // 缺省时用**平台默认**(macOS=overlay,其它=native)—— 必须与主应用
+        // `AppConfig::load_titlebar` 的缺省一致,否则设置页显示的模式和
+        // 实际运行的模式对不上。
+        let titlebar_style = crate::config_io::get_string(doc, &["window"], "titlebar")
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| {
+                crate::theme::TitleBarStyle::platform_default().as_str().to_string()
+            });
+
+        // GAP-72:外观预设。未知值回落 classic(坏配置不让启动失败)。
+        let preset = ThemePreset::parse(
+            &crate::config_io::get_string(doc, &["appearance"], "preset").unwrap_or_default(),
+        );
+
         Self {
             font_family, font_size, opacity, blur, blur_style,
             settings_window_blur,
@@ -139,6 +168,8 @@ impl AppearanceState {
             cursor_shape, cursor_blinking, cursor_thickness, unfocused_hollow,
             background_image,
             background_image_opacity,
+            titlebar_style,
+            preset,
         }
     }
 
@@ -232,6 +263,29 @@ impl AppearanceState {
                     }
                 }
             }
+            AppearanceMsg::PresetChanged(v) => {
+                self.preset = ThemePreset::parse(&v);
+                crate::config_io::set_string(
+                    doc,
+                    &["appearance"],
+                    "preset",
+                    self.preset.as_str(),
+                );
+                // 立即套用新预设(不等保存)—— 设置窗口当场换肤,
+                // 让用户立刻看到效果。
+                crate::theme::set_tokens(
+                    crate::theme::palette::UiPalette::for_preset(self.preset).settings,
+                );
+            }
+            AppearanceMsg::TitleBarStyleChanged(v) => {
+                self.titlebar_style = v.trim().to_string();
+                crate::config_io::set_string(
+                    doc,
+                    &["window"],
+                    "titlebar",
+                    &self.titlebar_style,
+                );
+            }
             AppearanceMsg::BackgroundImageOpacityChanged(v) => {
                 self.background_image_opacity = v.clamp(0.0, 1.0);
                 crate::config_io::set_float(
@@ -291,6 +345,22 @@ impl AppearanceState {
         );
         crate::config_io::set_bool(doc, &["cursor"], "unfocused_hollow", self.unfocused_hollow);
 
+        // GAP-72:外观预设
+        crate::config_io::set_string(
+            doc,
+            &["appearance"],
+            "preset",
+            self.preset.as_str(),
+        );
+
+        // GAP-74:标题栏样式
+        crate::config_io::set_string(
+            doc,
+            &["window"],
+            "titlebar",
+            &self.titlebar_style,
+        );
+
         // 背景图
         match &self.background_image {
             Some(p) => {
@@ -317,7 +387,55 @@ pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {
     let cursor_mapping = PickMapping::new(i18n, "pick_list.cursor", &["Block", "Underline", "Beam"]);
     let cursor_display = cursor_mapping.display_options();
 
+    let preset_mapping = PickMapping::new(i18n, "pick_list.preset", &["classic", "cyberpunk"]);
+    let preset_display = preset_mapping.display_options();
+    let titlebar_mapping = PickMapping::new(
+        i18n,
+        "pick_list.titlebar",
+        &["native", "overlay", "unified"],
+    );
+    let titlebar_display = titlebar_mapping.display_options();
+
     let content = column![
+        section_title(i18n.t("appearance.section.theme")),
+        labeled_row(
+            i18n.t("appearance.theme_preset"),
+            {
+                let selected_display = preset_mapping.display_for(state.preset.as_str());
+                pick_list(
+                    preset_display,
+                    Some(selected_display),
+                    move |v| {
+                        let cfg = preset_mapping.config_for(&v).unwrap_or_default();
+                        Message::Appearance(AppearanceMsg::PresetChanged(cfg))
+                    },
+                )
+                .style(theme::pick_list::field)
+                .width(240)
+                .into()
+            },
+        ),
+        labeled_row(
+            i18n.t("appearance.titlebar_style"),
+            {
+                let selected_display = titlebar_mapping.display_for(&state.titlebar_style);
+                pick_list(
+                    titlebar_display,
+                    Some(selected_display),
+                    move |v| {
+                        let cfg = titlebar_mapping.config_for(&v).unwrap_or_default();
+                        Message::Appearance(AppearanceMsg::TitleBarStyleChanged(cfg))
+                    },
+                )
+                .style(theme::pick_list::field)
+                .width(240)
+                .into()
+            },
+        ),
+        text(i18n.t("appearance.titlebar_style_hint"))
+            .size(11)
+            .color(theme::tokens().text_dim),
+        iced::widget::rule::horizontal(1),
         section_title(i18n.t("appearance.section.font")),
         labeled_row(
             i18n.t("appearance.family"),
@@ -348,7 +466,7 @@ pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {
                 .style(theme::slider::field),
                 text(format!("{:.0}%", state.opacity * 100.0))
                     .size(theme::FONT_SIZE)
-                    .color(TEXT_SECONDARY),
+                    .color(theme::tokens().text_secondary),
             ]
             .spacing(SPACING)
             .align_y(iced::Alignment::Center)
@@ -393,12 +511,12 @@ pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {
         labeled_row(
             i18n.t("appearance.padding"),
             row![
-                text("X").size(theme::FONT_SIZE).color(TEXT_SECONDARY),
+                text("X").size(theme::FONT_SIZE).color(theme::tokens().text_secondary),
                 text_input("0", &state.padding_x)
                     .on_input(|v| Message::Appearance(AppearanceMsg::PaddingXChanged(v)))
                     .style(theme::text_input::field)
                     .width(60),
-                text("Y").size(theme::FONT_SIZE).color(TEXT_SECONDARY),
+                text("Y").size(theme::FONT_SIZE).color(theme::tokens().text_secondary),
                 text_input("0", &state.padding_y)
                     .on_input(|v| Message::Appearance(AppearanceMsg::PaddingYChanged(v)))
                     .style(theme::text_input::field)
@@ -461,7 +579,7 @@ pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {
                 .style(theme::slider::field),
                 text(format!("{:.2}", state.cursor_thickness))
                     .size(theme::FONT_SIZE)
-                    .color(TEXT_SECONDARY),
+                    .color(theme::tokens().text_secondary),
             ]
             .spacing(SPACING)
             .align_y(iced::Alignment::Center)
@@ -481,7 +599,7 @@ pub fn view(state: &AppearanceState, i18n: &I18n) -> Element<'static, Message> {
 fn section_title(title: String) -> Element<'static, Message> {
     text(title)
         .size(theme::FONT_SIZE + 2.0)
-        .color(theme::TEXT_PRIMARY)
+        .color(theme::tokens().text_primary)
         .into()
 }
 
@@ -528,7 +646,7 @@ fn background_image_section(
     let mut row_path = row![
         text(path_display)
             .size(theme::FONT_SIZE)
-            .color(TEXT_SECONDARY),
+            .color(theme::tokens().text_secondary),
         space::horizontal(),
         pick_btn,
     ]
@@ -542,7 +660,7 @@ fn background_image_section(
     let opacity_row = row![
         text(i18n.t("appearance.background_image_opacity"))
             .size(theme::FONT_SIZE)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(160),
         slider(
             0.0..=1.0,
@@ -557,7 +675,7 @@ fn background_image_section(
             state.background_image_opacity * 100.0
         ))
         .size(theme::FONT_SIZE)
-        .color(TEXT_SECONDARY),
+        .color(theme::tokens().text_secondary),
     ]
     .spacing(SPACING)
     .align_y(iced::Alignment::Center);
@@ -571,7 +689,7 @@ fn labeled_row<'a>(label: String, widget: Element<'a, Message>) -> Element<'a, M
     row![
         text(label)
             .size(theme::FONT_SIZE)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(160),
         widget,
     ]

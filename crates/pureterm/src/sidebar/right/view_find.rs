@@ -2,16 +2,19 @@ use iced::widget::{button, column, container, row, scrollable, space, text, text
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
 
 use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
+use pureterm_settings::theme::palette::ShellTokens;
+
 use crate::iced_app::Message;
 use crate::sidebar::RightMode;
 
 pub(crate) fn view_find<'a>(
+    tokens: ShellTokens,
     surface: Option<SurfaceFindData<'a>>,
     dir: Option<DirFindData<'a>>,
     _width: f32,
     _height: f32,
 ) -> Element<'a, Message, Theme, iced::Renderer> {
-    let dim = Color::from_rgba(0.55, 0.55, 0.55, 1.0);
+    let dim = tokens.text_secondary;
     let mut col = column![].spacing(8);
 
     col = col.push(text("In Surface (⌘F)").size(12).color(dim));
@@ -72,7 +75,7 @@ pub(crate) fn view_find<'a>(
             col = col.push(text("searching…").size(11).color(dim));
         }
         if let Some(err) = d.error {
-            col = col.push(text(err).size(11).color(Color::from_rgb(0.9, 0.5, 0.4)));
+            col = col.push(text(err).size(11).color(tokens.error_text_soft));
         }
         if !d.results.is_empty() {
             let mut list = column![].spacing(2);

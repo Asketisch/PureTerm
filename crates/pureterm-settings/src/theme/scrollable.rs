@@ -1,14 +1,16 @@
 use iced::widget::{container, scrollable};
 use iced::{Background, Border, Color, Shadow, Theme};
 
-use super::{ACCENT, BORDER, CORNER_RADIUS, SURFACE_HOVER};
+use super::tokens;
+use super::CORNER_RADIUS;
 
 pub fn dark(_theme: &Theme, status: scrollable::Status) -> scrollable::Style {
+    let t = tokens();
     let rail = scrollable::Rail {
         background: Some(Background::Color(Color::TRANSPARENT)),
         border: Border::default(),
         scroller: scrollable::Scroller {
-            background: Background::Color(BORDER),
+            background: Background::Color(t.hairline),
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -38,9 +40,9 @@ pub fn dark(_theme: &Theme, status: scrollable::Status) -> scrollable::Style {
                 border: Border::default(),
                 scroller: scrollable::Scroller {
                     background: Background::Color(if is_vertical_scrollbar_hovered {
-                        ACCENT
+                        t.accent
                     } else {
-                        SURFACE_HOVER
+                        t.surface_hover
                     }),
                     border: Border {
                         radius: CORNER_RADIUS.into(),
@@ -66,7 +68,7 @@ pub fn dark(_theme: &Theme, status: scrollable::Status) -> scrollable::Style {
                 background: Some(Background::Color(Color::TRANSPARENT)),
                 border: Border::default(),
                 scroller: scrollable::Scroller {
-                    background: Background::Color(ACCENT),
+                    background: Background::Color(t.accent),
                     border: Border {
                         radius: CORNER_RADIUS.into(),
                         ..Border::default()

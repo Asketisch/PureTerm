@@ -3,10 +3,13 @@ use iced::widget::{button, column, container, row, scrollable, space, text, text
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
 
 use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
+use pureterm_settings::theme::palette::ShellTokens;
+
 use crate::iced_app::Message;
 use crate::sidebar::RightMode;
 
 pub(crate) fn view_feed(
+    tokens: ShellTokens,
     visible: bool,
     subject: Option<String>,
     event: Option<String>,
@@ -18,7 +21,7 @@ pub(crate) fn view_feed(
 ) -> Element<'static, Message, Theme, iced::Renderer> {
     use crate::feed_client::FeedChoice;
 
-    let dim = Color::from_rgba(0.55, 0.55, 0.55, 1.0);
+    let dim = tokens.text_secondary;
 
     if !visible {
         return column![

@@ -1,11 +1,12 @@
 use iced::widget::container;
 use iced::{Background, Border, Color, Theme};
 
-use super::{BACKGROUND, CORNER_RADIUS, SURFACE};
+use super::tokens;
+use super::CORNER_RADIUS;
 
 pub fn sidebar(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(SURFACE)),
+        background: Some(Background::Color(tokens().surface)),
         ..container::Style::default()
     }
 }
@@ -17,7 +18,7 @@ pub fn page(_theme: &Theme) -> container::Style {
     container::Style {
         background: Some(Background::Color(Color {
             a: 0.0,
-            ..BACKGROUND
+            ..tokens().bg
         })),
         ..container::Style::default()
     }
@@ -25,7 +26,7 @@ pub fn page(_theme: &Theme) -> container::Style {
 
 pub fn card(_theme: &Theme) -> container::Style {
     container::Style {
-        background: Some(Background::Color(SURFACE)),
+        background: Some(Background::Color(tokens().surface)),
         border: Border {
             radius: CORNER_RADIUS.into(),
             ..Border::default()

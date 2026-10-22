@@ -149,6 +149,8 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("general.ipc_socket".into(), "IPC socket".into());
 
     // 外观页
+    m.insert("appearance.section.theme".into(), "Theme".into());
+    m.insert("appearance.theme_preset".into(), "Appearance preset".into());
     m.insert("appearance.section.font".into(), "Font".into());
     m.insert("appearance.family".into(), "Family".into());
     m.insert("appearance.placeholder.font".into(), "e.g. JetBrains Mono".into());
@@ -245,6 +247,13 @@ fn builtin_en() -> HashMap<String, String> {
     m.insert("pick_list.cursor.Beam".into(), "Beam".into());
 
     // PureTerm:模糊样式选择列表
+    m.insert("pick_list.preset.classic".into(), "Classic (dark)".into());
+    m.insert("pick_list.titlebar.native".into(), "Native (system title bar)".into());
+    m.insert("pick_list.titlebar.overlay".into(), "Overlay (content fills title bar, macOS)".into());
+    m.insert("pick_list.titlebar.unified".into(), "Unified (app-drawn title bar)".into());
+    m.insert("appearance.titlebar_style".into(), "Title bar".into());
+    m.insert("appearance.titlebar_style_hint".into(), "Title bar style applies after restart. Overlay is macOS-only; Unified hides the system title bar and draws its own.".into());
+    m.insert("pick_list.preset.cyberpunk".into(), "Cyberpunk (neon)".into());
     m.insert("pick_list.blur_style.System".into(), "System Default".into());
     m.insert("pick_list.blur_style.Titlebar".into(), "Titlebar (Light)".into());
     m.insert("pick_list.blur_style.Selection".into(), "Selection".into());
@@ -403,6 +412,8 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("general.ipc_socket".into(), "IPC 套接字".into());
 
     // 外观页
+    m.insert("appearance.section.theme".into(), "主题".into());
+    m.insert("appearance.theme_preset".into(), "外观预设".into());
     m.insert("appearance.section.font".into(), "字体".into());
     m.insert("appearance.family".into(), "字体族".into());
     m.insert("appearance.placeholder.font".into(), "例如 JetBrains Mono".into());
@@ -484,6 +495,13 @@ fn builtin_zh() -> HashMap<String, String> {
     m.insert("footer.unsaved_changes".into(), "有未保存的更改".into());
 
     // 选择列表的展示标签
+    m.insert("pick_list.preset.classic".into(), "经典(深色)".into());
+    m.insert("pick_list.titlebar.native".into(), "Native(系统原生标题栏)".into());
+    m.insert("pick_list.titlebar.overlay".into(), "Overlay(内容铺满标题栏,仅 macOS)".into());
+    m.insert("pick_list.titlebar.unified".into(), "Unified(应用自绘标题栏)".into());
+    m.insert("appearance.titlebar_style".into(), "标题栏".into());
+    m.insert("appearance.titlebar_style_hint".into(), "标题栏样式需重启后生效。Overlay 仅 macOS 可用;Unified 会隐藏系统标题栏并由应用自绘。".into());
+    m.insert("pick_list.preset.cyberpunk".into(), "赛博朋克(霓虹)".into());
     m.insert("pick_list.osc52.Disabled".into(), "禁用".into());
     m.insert("pick_list.osc52.OnlyCopy".into(), "仅复制".into());
     m.insert("pick_list.osc52.OnlyPaste".into(), "仅粘贴".into());

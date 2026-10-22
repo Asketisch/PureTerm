@@ -3,7 +3,7 @@ use iced::{Element, Length, Padding};
 
 use crate::app::Message;
 use crate::i18n::I18n;
-use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::theme::{self, PADDING, SPACING};
 
 #[derive(Debug, Clone)]
 pub struct KeybindingsState {
@@ -67,15 +67,15 @@ pub fn view(state: &KeybindingsState, i18n: &I18n) -> Element<'static, Message> 
     let header = iced::widget::row![
         text(i18n.t("keybindings.key"))
             .size(11.0)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(120),
         text(i18n.t("keybindings.modifiers"))
             .size(11.0)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(200),
         text(i18n.t("keybindings.action"))
             .size(11.0)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(Length::Fill),
     ]
     .spacing(SPACING)
@@ -89,7 +89,7 @@ pub fn view(state: &KeybindingsState, i18n: &I18n) -> Element<'static, Message> 
                 text(b.key.clone()).size(theme::FONT_SIZE).width(120),
                 text(b.mods.clone())
                     .size(theme::FONT_SIZE)
-                    .color(TEXT_SECONDARY)
+                    .color(theme::tokens().text_secondary)
                     .width(200),
                 text(b.action.clone())
                     .size(theme::FONT_SIZE)
@@ -105,10 +105,10 @@ pub fn view(state: &KeybindingsState, i18n: &I18n) -> Element<'static, Message> 
         column![
             text(i18n.t("keybindings.empty"))
                 .size(theme::FONT_SIZE)
-                .color(TEXT_SECONDARY),
+                .color(theme::tokens().text_secondary),
             text(i18n.t("keybindings.default_hint"))
                 .size(12.0)
-                .color(TEXT_SECONDARY),
+                .color(theme::tokens().text_secondary),
         ]
         .spacing(SPACING)
         .padding(Padding::from(PADDING as u16))

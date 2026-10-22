@@ -1,35 +1,38 @@
 //! 状态栏的分组 chip 渲染。
 //!
-//! 状态栏片段渲染为'chip':带内嵌小标签的圆角半透明容器,
+//! 状态栏片段渲染成'chip':带内嵌小标签的圆角半透明容器,
 //! 并按 `BarGroup` 着色,使整条栏呈现为视觉上彼此区分的簇
 //! (Context / Runtime / System / Meta),而不是一条密集的线。
-//! 颜色取自 `Theme::Palette`(目前仅内置 `Theme::Dark`);
 //!
-//! 将来应用加入浅色/System 主题时,chip 会自动跟随,
-//! 无需逐段重写。
-//!
+//! 颜色全部来自调色板(`StatusBarTokens`),跟随界面预设变化 ——
+//! GAP-72 起 classic 与 cyberpunk 用同一套结构,只是色值不同。
 
 use iced::widget::{container, text};
-use iced::{Background, Border, Color, Element, Theme};
+use iced::{Background, Border, Color, Element};
+
+use pureterm_settings::theme::palette::StatusBarTokens;
 
 use crate::iced_app::Message;
 
 use super::component::{BarElement, BarGroup};
 
+/// chip 的圆角。
+const CHIP_RADIUS: f32 = 4.0;
+
 /// 构建一个 chip 元素:圆角半透明容器内的 11px 标签,
 /// 由 `group` 着色。标签颜色通过 [`chip_text`] 原样取自调用方,
 /// 供调用方表达状态色(如 agent 红、ssh 灰)时使用。
-pub fn chip(label: String, group: BarGroup, theme: &Theme) -> BarElement<'static> {
-    let fg = chip_text(theme, group);
-    let bg = chip_bg(theme, group);
-    let border = chip_border(theme);
+pub fn chip(label: String, group: BarGroup, sb: &StatusBarTokens) -> BarElement<'static> {
+    let fg = chip_text(sb);
+    let bg = chip_bg(group, sb);
+    let border = chip_border(sb);
 
     container(text(label).size(11).color(fg))
         .padding([2, 6])
-        .style(move |_t: &Theme| container::Style {
+        .style(move |_t: &iced::Theme| container::Style {
             background: Some(Background::Color(bg)),
             text_color: Some(fg),
-            border: Border { color: border, width: 1.0, radius: 4.0.into() },
+            border: Border { color: border, width: 1.0, radius: CHIP_RADIUS.into() },
             snap: false,
             shadow: Default::default(),
         })
@@ -43,17 +46,17 @@ pub fn chip_with_color(
     label: String,
     group: BarGroup,
     fg: Color,
-    theme: &Theme,
+    sb: &StatusBarTokens,
 ) -> BarElement<'static> {
-    let bg = chip_bg(theme, group);
-    let border = chip_border(theme);
+    let bg = chip_bg(group, sb);
+    let border = chip_border(sb);
 
     container(text(label).size(11).color(fg))
         .padding([2, 6])
-        .style(move |_t: &Theme| container::Style {
+        .style(move |_t: &iced::Theme| container::Style {
             background: Some(Background::Color(bg)),
             text_color: Some(fg),
-            border: Border { color: border, width: 1.0, radius: 4.0.into() },
+            border: Border { color: border, width: 1.0, radius: CHIP_RADIUS.into() },
             snap: false,
             shadow: Default::default(),
         })
@@ -66,91 +69,111 @@ pub fn empty() -> BarElement<'static> {
     text(String::new()).size(11).into()
 }
 
-/// 按活动 `Theme` 调色板派生的分组色调半透明背景。
-pub fn chip_bg(theme: &Theme, group: BarGroup) -> Color {
-    let p = theme.palette();
-    let (dr, dg, db) = match group {
-        BarGroup::Context => (0.10, 0.18, 0.13), // 冷绿色调
-        BarGroup::Runtime => (0.20, 0.10, 0.18), // 暖品红调
-        BarGroup::System => (0.10, 0.14, 0.22),  // 冷蓝色调
-        BarGroup::Meta => (0.16, 0.16, 0.16),    // 中性灰
+/// 按分组取 chip 底色。
+pub fn chip_bg(group: BarGroup, sb: &StatusBarTokens) -> Color {
+    let idx = match group {
+        BarGroup::Context => 0,
+        BarGroup::Runtime => 1,
+        BarGroup::System => 2,
+        BarGroup::Meta => 3,
     };
-    // 向白色提亮 35%,以保持与深色栏填充的对比度。
-    mix(p.background, dr, dg, db, 0.40)
+    sb.chip_groups[idx]
 }
 
-/// 比 chip 背景略深的边框色。保持微妙
-/// 以免极低对比主题(纯黑)丢失 chip 轮廓。
-pub fn chip_border(theme: &Theme) -> Color {
-    let p = theme.palette();
-    Color { a: 0.30, ..p.text }
+/// chip 描边色。
+pub fn chip_border(sb: &StatusBarTokens) -> Color {
+    sb.chip_border
 }
 
 /// 默认 chip 文字颜色(调用方不通过 `chip_with_color` 覆盖时使用)。
-/// 取自调色板的 `text`,以便自动跟随主题。
-///
-pub fn chip_text(theme: &Theme, group: BarGroup) -> Color {
-    let _ = group; // 着色预留给未来的浅色主题;目前使用调色板文字色。
-    theme.palette().text
+pub fn chip_text(sb: &StatusBarTokens) -> Color {
+    sb.chip_text
 }
 
-/// 栏(顶栏或底栏)背景色,由活动主题派生。目前
-/// `Theme::Dark.background` → 不透明的近黑 `~rgb(34,34,39)`;将来
-/// 会自动跟随 Light 主题。
-pub fn bar_bg(theme: &Theme) -> Color {
-    let p = theme.palette();
-    // 比 `background` 略深,以便在 chip 行下方做视觉分层。
-    Color { r: p.background.r * 0.85, g: p.background.g * 0.85, b: p.background.b * 0.85, a: 1.0 }
+/// 栏(顶栏或底栏)背景色。
+pub fn bar_bg(sb: &StatusBarTokens) -> Color {
+    sb.bar_bg
 }
 
 /// 底栏边框色(栏上方 0.5px 线)。
-pub fn bar_border(theme: &Theme) -> Color {
-    Color { a: 0.05, ..theme.palette().text }
+pub fn bar_border(sb: &StatusBarTokens) -> Color {
+    sb.bar_border
 }
 
 /// 连续分组之间用于干净分隔的 8px 填充。
 pub fn group_spacer() -> BarElement<'static> {
     use iced::Length;
-    Element::<Message, Theme, iced::Renderer>::from(
+    Element::<Message, iced::Theme, iced::Renderer>::from(
         iced::widget::space::horizontal().width(Length::Fixed(8.0)),
     )
-}
-
-/// 内部:将 `base`(主题背景 RGB)按 `t` 向 (dr,dg,db) 混合。
-fn mix(base: Color, dr: f32, dg: f32, db: f32, t: f32) -> Color {
-    Color {
-        r: base.r * (1.0 - t) + dr * t,
-        g: base.g * (1.0 - t) + dg * t,
-        b: base.b * (1.0 - t) + db * t,
-        a: 0.55,
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pureterm_settings::theme::palette::{ThemePreset, UiPalette};
 
-    /// 针对真实 `Theme::Dark` 调色板构建 chip 不得 panic。
-    /// Iced 没有原生快照匹配器,因此这里仅覆盖构造部分。
+    fn cyber() -> StatusBarTokens {
+        UiPalette::for_preset(ThemePreset::Cyberpunk).status_bar
+    }
+
+    fn classic() -> StatusBarTokens {
+        UiPalette::for_preset(ThemePreset::Classic).status_bar
+    }
+
+    /// 针对真实调色板构建 chip 不得 panic。
     #[test]
-    fn chip_does_not_panic_on_dark_theme() {
-        let theme = Theme::Dark;
+    fn chip_does_not_panic() {
+        let sb = cyber();
         for group in [BarGroup::Context, BarGroup::Runtime, BarGroup::System, BarGroup::Meta] {
-            let _ = chip("hello".into(), group, &theme);
-            let _ = chip_with_color("with-color".into(), group, Color::from_rgba(1.0, 0.0, 0.0, 1.0), &theme);
+            let _ = chip("hello".into(), group, &sb);
+            let _ = chip_with_color("with-color".into(), group, sb.chip_text, &sb);
         }
         let _ = empty();
-        let _ = bar_bg(&theme);
-        let _ = bar_border(&theme);
+        let _ = bar_bg(&sb);
+        let _ = bar_border(&sb);
         let _ = group_spacer();
     }
 
     #[test]
     fn chip_bg_is_translucent() {
-        let theme = Theme::Dark;
+        let sb = cyber();
         for group in [BarGroup::Context, BarGroup::Runtime, BarGroup::System, BarGroup::Meta] {
-            let c = chip_bg(&theme, group);
+            let c = chip_bg(group, &sb);
             assert!(c.a < 1.0 && c.a > 0.0, "chip bg alpha out of range: {:?}", c);
         }
+    }
+
+    #[test]
+    fn groups_have_distinct_colors() {
+        let sb = cyber();
+        let colors: Vec<Color> = [
+            BarGroup::Context,
+            BarGroup::Runtime,
+            BarGroup::System,
+            BarGroup::Meta,
+        ]
+        .iter()
+        .map(|g| chip_bg(*g, &sb))
+        .collect();
+        for i in 0..colors.len() {
+            for j in (i + 1)..colors.len() {
+                assert_ne!(colors[i], colors[j], "分组 {i} 与 {j} 撞色");
+            }
+        }
+    }
+
+    /// chip 取色必须直接来自调色板(精确值由 `palette/tests.rs` 守住)。
+    #[test]
+    fn chip_colors_come_from_palette() {
+        let sb = classic();
+        assert_eq!(chip_bg(BarGroup::Context, &sb), sb.chip_groups[0]);
+        assert_eq!(chip_bg(BarGroup::Runtime, &sb), sb.chip_groups[1]);
+        assert_eq!(chip_bg(BarGroup::System, &sb), sb.chip_groups[2]);
+        assert_eq!(chip_bg(BarGroup::Meta, &sb), sb.chip_groups[3]);
+        assert_eq!(chip_text(&sb), sb.chip_text);
+        assert_eq!(chip_border(&sb), sb.chip_border);
+        assert_eq!(bar_border(&sb), sb.bar_border);
+        assert_eq!(bar_bg(&sb), sb.bar_bg);
     }
 }

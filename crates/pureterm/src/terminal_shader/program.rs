@@ -23,6 +23,7 @@ use pureterm_alacritty_runtime::renderer::glyph_atlas::AtlasKind;
 use super::glyph::GlyphState;
 use super::helpers::{bits_to_f32, color_to_f32, push_bg_quad};
 use super::image_quad::{ImageQuadDraw, ImageQuadState};
+use super::overrides::TermColorOverrides;
 use super::pipeline::GpuResources;
 use super::primitive::TerminalPrimitive;
 use super::vertices::{BgVertex, TextVertex};
@@ -54,6 +55,13 @@ pub struct TerminalProgram {
 
     // GAP-54：共享的背景图片（加载一次，克隆进每个逐帧 primitive）。
     // 签名让 primitive 在无变化时跳过重新上传 GPU 纹理。
+    /// GAP-72:预设注入的 ANSI 16 色。`None` = 用内核默认色板
+    /// (`helpers::named_color_default` 的回退板)。
+    pub ansi_palette: Option<[Rgb; 16]>,
+    /// GAP-72:终端内叠加层配色(光标 / 选区 / 搜索命中 / 折叠遮罩 /
+    /// vi 光标)。`None` = 用 `TermColorOverrides::default()`(与改动前
+    /// 逐值一致)。
+    pub term_overrides: Option<TermColorOverrides>,
     pub background_image: Arc<Mutex<Option<DecodedBackground>>>,
     pub background_mode: BackgroundMode,
     pub background_opacity: f32,
@@ -158,6 +166,16 @@ impl<M> shader::Program<M> for TerminalProgram {
         };
         colors[NamedColor::Foreground as usize] = Some(fg_rgb);
 
+        // GAP-72:预设的 ANSI 16 色注入。`NamedColor::Black..BrightWhite`
+        // 的判别值正好是 0..15,与 256 色调色板前 16 项同槽 —— 一次写入
+        // 同时覆盖具名色与 `38;5;N` 索引色。
+        if let Some(ansi) = self.ansi_palette.as_ref() {
+            super::overrides::inject_ansi_palette(&mut colors, ansi);
+        }
+
+        // GAP-72:叠加层配色。`None` → 与改动前逐值相同的默认值。
+        let ov = self.term_overrides.unwrap_or_default();
+
         // 阶段 2：从快照构建 GPU primitive（不持锁）
         let mut gs = self.glyph_state.borrow_mut();
         let cell_w = gs.cell_width; // 逻辑像素
@@ -181,13 +199,12 @@ impl<M> shader::Program<M> for TerminalProgram {
         push_bg_quad(&mut bg_vertices, &mut bg_indices, 0.0, 0.0, screen_w, screen_h, bg_color);
         let bg_base_index_count = bg_indices.len() as u32;
 
-        // 选区高亮颜色(半透明蓝)。
-        // alacritty kernel 的 Colors 数组没有 selection 槽,色彩配置不通过它走;
-        // 这里固定一个 macOS 系蓝色,后续可暴露为 config 项。
-        let sel_color: [f32; 4] = [0.30, 0.50, 0.90, 0.40];
+        // 选区高亮颜色。alacritty kernel 的 Colors 数组没有 selection 槽,
+        // 色彩配置不通过它走;GAP-72 起由预设决定(classic 保持原蓝色)。
+        let sel_color: [f32; 4] = ov.selection;
 
         // GAP-4.1：vi 搜索匹配高亮。若设置了模式，计算可见的搜索匹配。
-        let search_match_color: [f32; 4] = [0.85, 0.65, 0.15, 0.35]; // 暖琥珀色
+        let search_match_color: [f32; 4] = ov.search_hit; // 暖琥珀色
         let search_matches: Vec<std::ops::RangeInclusive<TermPoint>> = {
             let pattern = self.vi_search_pattern.lock().ok().and_then(|p| p.clone());
             match pattern {
@@ -265,7 +282,7 @@ impl<M> shader::Program<M> for TerminalProgram {
                 .collect()
         };
 
-        let fold_conceal_color: [f32; 4] = [0.15, 0.15, 0.18, 0.85];
+        let fold_conceal_color: [f32; 4] = ov.fold_conceal;
 
         // 遍历 cell 快照：背景 + 文本字形
         for cell in &cells {
@@ -376,7 +393,7 @@ impl<M> shader::Program<M> for TerminalProgram {
         }
 
         // 光标
-        let cursor_color = [0.6, 0.6, 0.6, 0.8];
+        let cursor_color: [f32; 4] = ov.cursor;
         let cx = pad_x + cursor_col as f32 * cell_w;
         let cy = pad_y + cursor_row as f32 * cell_h;
         push_bg_quad(&mut bg_vertices, &mut bg_indices, cx, cy, cell_w, cell_h, cursor_color);
@@ -385,10 +402,10 @@ impl<M> shader::Program<M> for TerminalProgram {
         // vi 模式下主光标变暗，vi 光标突出。
         if vi_mode_active {
             // 调暗主光标
-            let dim_color = [0.4, 0.4, 0.4, 0.3];
+            let dim_color: [f32; 4] = ov.vi_dim;
             push_bg_quad(&mut bg_vertices, &mut bg_indices, cx, cy, cell_w, cell_h, dim_color);
             // 用青色渲染 vi 光标
-            let vi_color = [0.2, 0.8, 0.7, 0.85];
+            let vi_color: [f32; 4] = ov.vi_cursor;
             let vx = pad_x + vi_cursor_col as f32 * cell_w;
             let vy = pad_y + vi_cursor_row as f32 * cell_h;
             push_bg_quad(&mut bg_vertices, &mut bg_indices, vx, vy, cell_w, cell_h, vi_color);

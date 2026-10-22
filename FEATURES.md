@@ -102,6 +102,45 @@
 
 ## B. UI/UX 界面
 
+### GAP-74 跨平台标题栏适配：Windows 主题化 / Linux 自绘标题栏（2026-10-22）
+- **问题**：GAP-73 的「红绿灯融入顶栏」依赖 macOS 独有的透明标题栏三件套，Windows / Linux 没有等价物 —— Windows 标题栏由 DWM 绘制、Linux 归 WM 所有，应用都改不了颜色，深色主题下同样割裂
+- **三态**：`[window].titlebar = "native" | "overlay" | "unified"`（`effective()` 做平台门控：非 macOS 的 `overlay` 静默退化为 `native`，`unified` 全平台可用；未知值回落 `native`）
+- **Windows —— DWM 染色（保留原生标题栏）**：裸 FFI 调 `DwmSetWindowAttribute`，把标题栏**染成主题色**，于是系统标题栏与界面顶栏连成一条；保住原生 resize / snap / 关闭按钮 / 阴影
+  - `DWMWA_CAPTION_COLOR`(35) / `TEXT_COLOR`(36) / `BORDER_COLOR`(34) / `USE_IMMERSIVE_DARK_MODE`(20) / `SYSTEMBACKDROP_TYPE`(38, Win11 Mica)
+  - 不引入 `windows` crate —— 只需 4 个 Win32 入口，裸 FFI 足够（免去大依赖与 Cargo.lock 变动）
+  - `EnumWindows` + `GetWindowThreadProcessId` 过滤本进程窗口；主应用在 `TerminalWakeup` 里**节流 2 秒**调一次，覆盖后创建的窗口
+- **unified —— 应用自绘标题栏（跨平台）**：`pureterm-settings::theme::titlebar_view` 泛型组件，左标题 + 右 `─ □ ✕` 三按钮（38px）+ 中间拖动区
+  - 隐藏系统装饰（`decorations = false`）→ **代价**：失去系统的鼠标拖拽边框，窗口只能用键盘/程序化缩放（`native` 无此问题）
+  - **拖动自己算位移**：`iced::window::drag` 在消息回调里不生效 → 记窗口位置 + 光标位置，每次全局光标移动用**屏幕坐标**算增量再 `move_to`；必须用屏幕坐标（用窗口内容坐标会漂，实测只走 42%）
+- **工具型窗口保留系统边框**：进程内设置窗口（⌘,）/ 独立 `pureterm-settings` / 取色器一律 `decorations: true`（它们没画自绘条，跟着关掉系统装饰就既没标题栏也没关闭按钮）；Windows 上它们的标题栏同样被染色
+- **设置界面**：Appearance 页新增「标题栏」下拉 + 说明文字（中英双语），写 `[window].titlebar`，提示重启生效；缺省取**平台默认**（与主应用一致，避免设置页显示与实际运行对不上）
+- **实测**（macOS）：`unified` 三按钮全部可用（─ 最小化 / □ 全屏 / ✕ 关闭）、拖动 1:1 跟随；`overlay` 回归通过（红绿灯仍坐在主题色顶栏上）；像素探针确认 unified 下主窗口无红绿灯、设置窗口有红绿灯
+- **已知缺口**：Windows / Linux 代码路径**已用交叉目标编译验证**（`cargo check --target x86_64-pc-windows-msvc` 与 `--target x86_64-unknown-linux-gnu`，`-p pureterm-settings` 均 0 error，覆盖 DWM FFI 与非 macOS 分支；本轮 Windows 代码就是在这条检查下从 4 个编译错误修到通过的），但**未在真实目标系统上跑过**——DWM 染色的实际观感、Linux 下 WM 的配合表现仍需人工确认；CI 的 `clippy -D warnings` 在 HEAD 上即为红（vendored `alacritty_terminal` 有 19 个 doc 告警，规则禁止无关格式化），本轮只保证不引入新告警
+- **文档**：`docs/done/GAP-74-crossplatform-titlebar/`（spec + 手动验收 test-plan）
+
+### GAP-73 macOS 标题栏融合：红绿灯融入主题顶栏（2026-10-22）
+- **问题**：窗口顶部那条 macOS 原生标题栏（系统深灰 `#1D1D1D`）与 PureTerm 自己的顶栏/终端底色是两套颜色，深色主题（尤其 cyberpunk 的 `#05070F` 深靛底）下割裂感很强
+- **做法**：`[window].titlebar = "overlay"`（macOS 默认；`native` 可切回）→ 窗口内容**铺满标题栏区域**，系统红绿灯直接浮在**应用自己的顶栏**上，共用同一套主题底色
+  - iced 0.14 的 `platform_specific`：`title_hidden` + `titlebar_transparent` + `fullsize_content_view` 三件套
+  - 顶栏行首留 78px 红绿灯位（`TRAFFIC_LIGHT_INSET`），红绿灯不压住第一个标签
+- **拖动/点击分工保持原生**：透明标题栏下，顶部 28px 区域由**系统**负责拖动窗口（实测位移与鼠标位移一致），而点击又能正常送达应用（实测点标签能切换）——因此**刻意不自己接管拖动**：自挂 `on_press` 反而会抢走事件、留下「按了没反应」的死区
+- **没有标签栏的窗口**（detached / secondary / 冷启动占位符 / 进程内设置窗口）补一条 28px **主题色**顶条，内容不再被红绿灯压住
+- **设置窗口**：独立 `pureterm-settings` 进程与进程内设置窗口（⌘,）都接入同一套 overlay + 顶条
+- **共享实现**：判定逻辑放在 `pureterm-settings/src/theme/titlebar.rs`（设置窗口是独立进程，两边共用；主 crate 已依赖 settings crate，反向会成环）；`TitleBarStyle::parse` 对未知值回落 `native`
+- **实测**：红绿灯落在主题色顶栏上 ✓、窗口圆角保留 ✓（透明窗口 + 全屏内容视图下 macOS 仍裁圆角）、拖动可用 ✓
+
+### GAP-72 赛博朋克视觉改版（2026-10-22）
+- **外观预设机制**：`[appearance].preset = "classic" | "cyberpunk"`（`classic` 保持默认，老用户零回归）+ `terminal_palette = "follow" | "user"` 逃生阀；坏配置/未知值一律回落 classic
+- **调色板单一真源**：新增 `crates/pureterm-settings/src/theme/palette/`（`ShellTokens` 40+ 语义色 / `StatusBarTokens` / `StatusSemantics` / `TerminalTokens` / `UiPalette`）—— 主应用与设置窗口是**两个进程**，共用同一份色值定义（放在 settings crate，主 crate 已依赖它，反向会成环）
+- **终端 ANSI 16 色注入**：`terminal_shader/overrides.rs` 把预设色写入 `Colors` 的 0..15 槽位（`NamedColor::Black..BrightWhite` 判别值正好 0..15，与 256 色调色板前 16 项同槽）→ 具名色与 `38;5;N` 索引色**同时**生效；**零新增 pipeline / render target / 纹理**，每帧仅多 16 次数组写入
+- **外壳换肤**：`theme()` 从硬编码 `Theme::Dark` 改为 `palette.app.to_iced_theme()`；标签栏 / 双侧栏 / 状态栏 / 约 20 个浮层的 **128 处硬编码色值归零**（字面量只留在调色板模块）
+- **状态栏 chip**：四组（Context / Runtime / System / Meta）按 `BarGroup` 着色，签名从 `&Theme` 改为 `&StatusBarTokens`（原注释「将来加浅色主题时 chip 会自动跟随」的前提终于成立）
+- **浮层统一化**：backdrop 变暗 + 面板 `overlay_bg` + 1px `overlay_border` 描边 + 外发光；发光（Iced 原生 `Shadow`）**只用于**激活 tab / 焦点输入框 / 浮层面板三处
+- **设置窗口**：Appearance 页新增「外观预设」下拉，切换时**当场换肤**（`theme::set_tokens`），不需重启
+- **视觉稿**：`docs/preview/cyberpunk-ui.html` —— 自包含单文件（无外部依赖/无网络请求），含顶栏 / 双侧栏 / 终端 / 状态栏 / 命令面板浮层 6 区块 + 色板卡，可切换 CYBERPUNK / CLASSIC 对照
+- **测试**：`palette/tests.rs`（预设解析回落 / classic 逐值等价 / cyberpunk 与视觉稿一致 / 16 色互异）、`overrides.rs`（槽位对齐 / 注入双路径生效）、`ui_theme`（接线规则三态）、`chip.rs`（四组互异）；E2E `test_display.py` 改为按 preset 期望背景色 + 新增 `test_cyberpunk_palette_renders`（真实启动抓屏，断言霓虹青/品红像素存在）
+- **文档**：`docs/done/GAP-72-cyberpunk-visual-refresh/`（spec + 手动验收 test-plan）
+
 
 ### GAP-3.3 命令面板 ⌘⇧P(2026-06-08)
 - nucleo-matcher 模糊搜索,Actions / Profiles 双模式

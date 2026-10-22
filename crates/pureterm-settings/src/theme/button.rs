@@ -1,17 +1,16 @@
 use iced::widget::button;
 use iced::{Background, Border, Color, Shadow, Theme};
 
-use super::{
-    ACCENT, ACCENT_HOVER, BACKGROUND, CORNER_RADIUS, DANGER, SURFACE, SURFACE_HOVER,
-    TEXT_PRIMARY, TEXT_SECONDARY, darken, lighten,
-};
+use super::tokens;
+use super::{CORNER_RADIUS, darken, lighten};
 
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let _ = theme;
+    let t = tokens();
     match status {
         button::Status::Active => button::Style {
-            background: Some(Background::Color(ACCENT)),
-            text_color: BACKGROUND,
+            background: Some(Background::Color(t.accent)),
+            text_color: t.bg,
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -20,8 +19,8 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
             snap: false,
         },
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(ACCENT_HOVER)),
-            text_color: BACKGROUND,
+            background: Some(Background::Color(t.accent_hover)),
+            text_color: t.bg,
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -30,8 +29,8 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
             snap: false,
         },
         button::Status::Pressed => button::Style {
-            background: Some(Background::Color(darken(ACCENT, 0.05))),
-            text_color: BACKGROUND,
+            background: Some(Background::Color(darken(t.accent, 0.05))),
+            text_color: t.bg,
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -40,8 +39,8 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
             snap: false,
         },
         button::Status::Disabled => button::Style {
-            background: Some(Background::Color(ACCENT.scale_alpha(0.3))),
-            text_color: BACKGROUND.scale_alpha(0.5),
+            background: Some(Background::Color(t.accent.scale_alpha(0.3))),
+            text_color: t.bg.scale_alpha(0.5),
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -54,10 +53,11 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
 
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let _ = theme;
+    let t = tokens();
     match status {
         button::Status::Active => button::Style {
-            background: Some(Background::Color(SURFACE)),
-            text_color: TEXT_PRIMARY,
+            background: Some(Background::Color(t.surface)),
+            text_color: t.text_primary,
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -66,8 +66,8 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
             snap: false,
         },
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(SURFACE_HOVER)),
-            text_color: lighten(TEXT_PRIMARY, 0.1),
+            background: Some(Background::Color(t.surface_hover)),
+            text_color: lighten(t.text_primary, 0.1),
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -76,8 +76,8 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
             snap: false,
         },
         button::Status::Pressed => button::Style {
-            background: Some(Background::Color(SURFACE)),
-            text_color: darken(TEXT_PRIMARY, 0.1),
+            background: Some(Background::Color(t.surface)),
+            text_color: darken(t.text_primary, 0.1),
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -86,8 +86,8 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
             snap: false,
         },
         button::Status::Disabled => button::Style {
-            background: Some(Background::Color(SURFACE.scale_alpha(0.5))),
-            text_color: TEXT_SECONDARY.scale_alpha(0.5),
+            background: Some(Background::Color(t.surface.scale_alpha(0.5))),
+            text_color: t.text_secondary.scale_alpha(0.5),
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -99,13 +99,14 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
 }
 
 pub fn sidebar_item(_theme: &Theme, status: button::Status, selected: bool) -> button::Style {
-    let bg = if selected { SURFACE_HOVER } else { Color::TRANSPARENT };
-    let left_border = if selected { ACCENT } else { Color::TRANSPARENT };
+    let t = tokens();
+    let bg = if selected { t.surface_hover } else { Color::TRANSPARENT };
+    let left_border = if selected { t.accent } else { Color::TRANSPARENT };
 
     match status {
         button::Status::Active => button::Style {
             background: Some(Background::Color(bg)),
-            text_color: if selected { TEXT_PRIMARY } else { TEXT_SECONDARY },
+            text_color: if selected { t.text_primary } else { t.text_secondary },
             border: Border {
                 color: left_border,
                 width: if selected { 2.0 } else { 0.0 },
@@ -115,10 +116,10 @@ pub fn sidebar_item(_theme: &Theme, status: button::Status, selected: bool) -> b
             snap: false,
         },
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(SURFACE_HOVER)),
-            text_color: TEXT_PRIMARY,
+            background: Some(Background::Color(t.surface_hover)),
+            text_color: t.text_primary,
             border: Border {
-                color: if selected { ACCENT } else { Color::TRANSPARENT },
+                color: if selected { t.accent } else { Color::TRANSPARENT },
                 width: if selected { 2.0 } else { 0.0 },
                 radius: CORNER_RADIUS.into(),
             },
@@ -127,7 +128,7 @@ pub fn sidebar_item(_theme: &Theme, status: button::Status, selected: bool) -> b
         },
         _ => button::Style {
             background: Some(Background::Color(bg)),
-            text_color: TEXT_SECONDARY,
+            text_color: t.text_secondary,
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -140,10 +141,11 @@ pub fn sidebar_item(_theme: &Theme, status: button::Status, selected: bool) -> b
 
 pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
     let _ = theme;
+    let t = tokens();
     match status {
         button::Status::Active => button::Style {
-            background: Some(Background::Color(DANGER)),
-            text_color: TEXT_PRIMARY,
+            background: Some(Background::Color(t.danger)),
+            text_color: t.text_primary,
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -152,8 +154,8 @@ pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
             snap: false,
         },
         button::Status::Hovered => button::Style {
-            background: Some(Background::Color(lighten(DANGER, 0.1))),
-            text_color: TEXT_PRIMARY,
+            background: Some(Background::Color(lighten(t.danger, 0.1))),
+            text_color: t.text_primary,
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()
@@ -162,8 +164,8 @@ pub fn danger(theme: &Theme, status: button::Status) -> button::Style {
             snap: false,
         },
         _ => button::Style {
-            background: Some(Background::Color(DANGER.scale_alpha(0.5))),
-            text_color: TEXT_PRIMARY.scale_alpha(0.5),
+            background: Some(Background::Color(t.danger.scale_alpha(0.5))),
+            text_color: t.text_primary.scale_alpha(0.5),
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 ..Border::default()

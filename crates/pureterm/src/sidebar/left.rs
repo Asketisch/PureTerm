@@ -3,6 +3,8 @@
 use iced::widget::{button, column, container, row, scrollable, space, text};
 use iced::{Background, Border, Color, Element, Length, Shadow, Theme};
 
+use pureterm_settings::theme::palette::ShellTokens;
+
 use crate::iced_app::{Message, WorkspaceId};
 
 /// 左侧边栏中一个工作区行的快照。
@@ -22,14 +24,15 @@ pub struct GitSummary<'a> {
 }
 
 pub fn view<'a>(
+    tokens: ShellTokens,
     workspaces: &[WorkspaceRow],
     git: GitSummary<'a>,
     dsl_items: &[(String, String)],
     width: f32,
     height: f32,
 ) -> Element<'a, Message, Theme, iced::Renderer> {
-    let dim = Color::from_rgba(0.55, 0.55, 0.55, 1.0);
-    let accent = Color::from_rgba(0.35, 0.75, 0.65, 1.0);
+    let dim = tokens.text_secondary;
+    let accent = tokens.accent;
 
     let mut list = column![].spacing(2).padding([4, 6]);
     list = list.push(text("Workspaces").size(12).color(dim));
@@ -41,7 +44,7 @@ pub fn view<'a>(
         for ws in workspaces {
             let label = format!("{}  ({})", ws.name, ws.tab_count);
             let bg = if ws.active {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.10)
+                tokens.highlight_faint
             } else {
                 Color::TRANSPARENT
             };
@@ -53,11 +56,7 @@ pub fn view<'a>(
                 .padding([4, 6])
                 .style(move |_theme: &Theme, _status: button::Status| button::Style {
                     background: Some(Background::Color(bg)),
-                    text_color: if active {
-                        accent
-                    } else {
-                        Color::WHITE
-                    },
+                    text_color: if active { accent } else { tokens.text_primary },
                     border: Border {
                         radius: 4.0.into(),
                         ..Default::default()
@@ -118,15 +117,17 @@ pub fn view<'a>(
         .width(Length::Fixed(width))
         .height(Length::Fixed(height));
 
+    let panel_bg = tokens.surface;
+    let panel_border = tokens.hairline;
     container(panel)
         .width(Length::Fixed(width))
         .height(Length::Fixed(height))
-        .style(|_| container::Style {
-            background: Some(Background::Color(Color::from_rgba(0.10, 0.10, 0.12, 1.0))),
+        .style(move |_| container::Style {
+            background: Some(Background::Color(panel_bg)),
             text_color: None,
             snap: false,
             border: Border {
-                color: Color::from_rgba(0.25, 0.25, 0.28, 1.0),
+                color: panel_border,
                 width: 1.0,
                 radius: 0.0.into(),
             },

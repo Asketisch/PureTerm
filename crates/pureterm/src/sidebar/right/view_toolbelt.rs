@@ -2,14 +2,17 @@ use iced::widget::{button, column, container, row, scrollable, space, text, text
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
 
 use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
+use pureterm_settings::theme::palette::ShellTokens;
+
 use crate::iced_app::Message;
 use crate::sidebar::RightMode;
 
 pub(crate) fn view_toolbelt<'a>(
+    tokens: ShellTokens,
     data: ToolbeltTabData<'a>,
     _width: f32,
 ) -> Element<'a, Message, Theme, iced::Renderer> {
-    let dim = Color::from_rgba(0.55, 0.55, 0.55, 1.0);
+    let dim = tokens.text_secondary;
     let mut col = column![].spacing(6);
 
     col = col.push(text("Command history").size(12).color(dim));

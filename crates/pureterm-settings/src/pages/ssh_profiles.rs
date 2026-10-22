@@ -3,7 +3,7 @@ use iced::{Element, Length, Padding};
 
 use crate::app::Message;
 use crate::i18n::I18n;
-use crate::theme::{self, PADDING, SPACING, TEXT_SECONDARY};
+use crate::theme::{self, PADDING, SPACING};
 
 #[derive(Debug, Clone)]
 pub enum SshMsg {
@@ -244,7 +244,7 @@ pub fn view(state: &SshState, i18n: &I18n) -> Element<'static, Message> {
             button(
                 column![
                     text(label).size(theme::FONT_SIZE),
-                    text(subtitle).size(11.0).color(TEXT_SECONDARY),
+                    text(subtitle).size(11.0).color(theme::tokens().text_secondary),
                 ]
                 .spacing(2),
             )
@@ -352,7 +352,7 @@ fn placeholder(msg: String) -> Element<'static, Message> {
     container(
         text(msg)
             .size(theme::FONT_SIZE)
-            .color(TEXT_SECONDARY),
+            .color(theme::tokens().text_secondary),
     )
     .width(Length::Fill)
     .height(Length::Fill)
@@ -365,7 +365,7 @@ fn labeled_row<'a>(label: String, widget: Element<'a, Message>) -> Element<'a, M
     row![
         text(label)
             .size(theme::FONT_SIZE)
-            .color(TEXT_SECONDARY)
+            .color(theme::tokens().text_secondary)
             .width(100),
         widget,
     ]

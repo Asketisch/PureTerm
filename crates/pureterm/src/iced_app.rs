@@ -33,6 +33,8 @@ use crate::split_tree::{
 };
 use crate::terminal_context::{TerminalContext, TerminalEvent};
 use crate::terminal_shader::{GlyphState, TerminalProgram};
+use pureterm_settings::theme::titlebar::TitleBarStyle;
+use crate::ui_theme::{ShellTokens, ThemePreset, UiPalette};
 #[cfg(unix)]
 use crate::ssh::config::{SshProfile, SshProfileRegistry, SshSettings};
 #[cfg(unix)]
@@ -365,6 +367,15 @@ pub struct PureTermApp {
     /// `None` 表示已取走。
     daemon_prefetch: Option<std::sync::mpsc::Receiver<bool>>,
     config: AppConfig,
+    /// GAP-72:界面调色板(外壳 + 终端)。启动时由 `[appearance].preset`
+    /// 决定,运行期不变(避免半途换肤的视觉撕裂)。
+    palette: UiPalette,
+    /// GAP-72:当前外观预设。
+    preset: ThemePreset,
+    /// GAP-73:标题栏样式(overlay = 红绿灯融入界面顶栏)。
+    titlebar_style: TitleBarStyle,
+    /// GAP-72:终端配色接线结果(ANSI 16 色 / 叠加层 / 前后景色)。
+    term_wiring: crate::ui_theme::TerminalWiring,
     config_path: PathBuf,
     keymap: Keymap,
     /// GAP-6.4:用户自定义的 `[[commands]]`。可在命令
@@ -462,6 +473,10 @@ pub struct PureTermApp {
     sidebar_drag: Option<crate::sidebar::SidebarSide>,
     /// 文本选择拖动状态：按下时开启，松手时清。`term.selection` 本身保留。
     selection_drag: Option<SelectionDragState>,
+    /// GAP-74:`unified` 标题栏的窗口拖动状态。
+    titlebar_drag: Option<TitleBarDragState>,
+    /// GAP-74:上次给系统标题栏上色(Windows)的时刻,用于节流。
+    last_caption_theme_at: Option<Instant>,
     /// 多击连击跟踪（单击 = Simple, 双击 = Semantic, 三击 = Lines）。
     click_tracker: Option<ClickTracker>,
     /// 本进程最近一次写入 `config_path` 的 mtime(经
@@ -857,10 +872,15 @@ fn sidebar_content_height(viewport_height: f32, status_bar_height: f32) -> f32 {
 /// 无 agent 但别处有排队审批时单独显示。`(sleep)` 文本后缀
 /// 取代了原本的 `❄` 字形——雪花会被读作“窗格冻结”而非
 /// “agent 会话休眠”。
-fn agent_indicator(kind: &str, hibernated: bool, feed_pending: usize) -> Option<(String, Color)> {
-    let amber = Color::from_rgba(0.85, 0.65, 0.3, 1.0);
-    let cool = Color::from_rgba(0.45, 0.6, 0.85, 1.0);
-    let warn = Color::from_rgba(0.95, 0.75, 0.3, 1.0);
+fn agent_indicator(
+    kind: &str,
+    hibernated: bool,
+    feed_pending: usize,
+    tokens: &ShellTokens,
+) -> Option<(String, Color)> {
+    let amber = tokens.agent_active;
+    let cool = tokens.agent_sleep;
+    let warn = tokens.agent_pending;
     let pending_badge = if feed_pending > 0 {
         format!("  \u{23f3} {feed_pending}") // ⏳
     } else {
@@ -896,6 +916,26 @@ pub struct DragState {
     pub usable_size: f32,
     /// 拖拽起始时的 ratio。
     pub start_ratio: f32,
+}
+
+/// `unified` 标题栏的窗口拖动状态。
+///
+/// 拖动自己算:按下时记下窗口左上角与光标位置,之后每次全局光标移动
+/// 都把增量加到窗口位置上(`iced::window::move_to`)。
+#[derive(Debug, Clone)]
+pub struct TitleBarDragState {
+    /// 被拖动的窗口。
+    pub window_id: window::Id,
+    /// 拖动开始时窗口左上角的位置(屏幕逻辑像素)。
+    pub start_window_pos: Point,
+    /// 拖动开始时的**屏幕**光标位置。
+    ///
+    /// 必须用屏幕坐标而不是窗口内容坐标:窗口一动,内容坐标就跟着漂,
+    /// 用内容坐标算增量会得到「窗口追不上鼠标」的经典抖动(实测只走
+    /// 40% 位移)。屏幕坐标不受窗口自身移动影响。
+    pub start_screen_pos: Point,
+    /// 窗口**当前**位置(每次移动后更新)。
+    pub window_pos: Point,
 }
 
 /// 文本选择拖动状态。仅在 Simple 选区下激活；Semantic/Lines 选区点击即终态。
@@ -936,6 +976,14 @@ pub enum Message {
     /// 处理器把 `active_window_id` 指向它,使按键/IME 落进
     /// 该窗口的活动终端(detached 窗口不再无输入)。
     WindowFocused(window::Id),
+    /// GAP-74:`unified` 标题栏 —— 按下拖动区(异步取窗口位置后开始拖)。
+    TitleBarDragStart(window::Id),
+    /// GAP-74:`unified` 标题栏 —— 窗口位置查到了,正式进入拖动状态。
+    TitleBarDragReady(window::Id, Option<Point>),
+    /// GAP-74:`unified` 标题栏 —— 最小化 / 最大化 / 关闭。
+    TitleBarMinimize(window::Id),
+    TitleBarMaximize(window::Id),
+    TitleBarClose(window::Id),
     /// GAP-09:某个 PureTerm 窗口失去 OS 焦点——翻转 `app_focused`,
     /// 使桌面通知门控(`should_toast`)放行通知。
     WindowUnfocused(window::Id),
@@ -1964,6 +2012,8 @@ impl PureTermApp {
         pureterm_daemon::shell_integration::sweep_stale_temp_dirs();
         let config_path = AppConfig::config_path();
         let config = AppConfig::load(&config_path);
+        // GAP-73:标题栏样式(macOS 默认 overlay —— 红绿灯浮在界面顶栏上)。
+        let titlebar_style = AppConfig::load_titlebar(&config_path);
         // 在把 `config_path` move 进 `self` 之前从 `[[ssh.profiles]]`
         // 加载 SSH 配置档(PathBuf 不是 Copy)。
         #[cfg(unix)]
@@ -1982,6 +2032,28 @@ impl PureTermApp {
 
         // GAP-32:Git 集成配置(面板切换、PR 刷新、lazygit 命令)。
         let git_cfg = AppConfig::load_git(&config_path);
+
+        // GAP-72:界面外观预设。外壳 + 设置窗口 + 终端配色由它统辖。
+        let appearance_cfg = AppConfig::load_appearance(&config_path);
+        let preset = ThemePreset::parse(&appearance_cfg.preset);
+        let palette = UiPalette::for_preset(preset);
+        // 设置窗口(进程内嵌 + 独立进程)与主应用共用同一份外壳色。
+        pureterm_settings::theme::set_tokens(palette.settings);
+        // `terminal_palette = "user"` → 即便选了 cyberpunk 也保留用户
+        // 自己的 `[colors.*]`(只换外壳)。
+        let keep_user_terminal_colors = appearance_cfg.terminal_palette.trim() == "user";
+        let term_wiring = crate::ui_theme::terminal_wiring(
+            palette,
+            preset,
+            keep_user_terminal_colors,
+            config.background_color,
+            config.foreground_color,
+        );
+        if preset == ThemePreset::Cyberpunk && !keep_user_terminal_colors {
+            log::info!(
+                "[appearance].preset=\"cyberpunk\" 覆盖了 [colors.*];改回 preset=\"classic\" 可恢复"
+            );
+        }
 
         // GAP-19:双栏侧边栏配置(宽度、默认开启)——主窗口
         // 每窗口侧边栏状态的启动默认。
@@ -2092,10 +2164,12 @@ impl PureTermApp {
 
         let settings = window::Settings {
             size: win_size,
-            decorations: true,
+            // GAP-74:`unified` 模式隐藏系统标题栏,由应用自绘。
+            decorations: !titlebar_style.draws_own_titlebar(),
             resizable: true,
             closeable: true,
             transparent: true,
+            platform_specific: titlebar_style.platform_specific(),
             ..Default::default()
         };
 
@@ -2125,6 +2199,10 @@ impl PureTermApp {
             glyph_state,
             daemon_prefetch: Some(daemon_prefetch),
             config,
+            palette,
+            preset,
+            titlebar_style,
+            term_wiring,
             config_path,
             keymap: {
                 let mut km = Keymap::from_defaults();
@@ -2191,6 +2269,8 @@ impl PureTermApp {
             color_picker_tab: None,
             tab_list: None,
             drag_state: None,
+            titlebar_drag: None,
+            last_caption_theme_at: None,
             selection_drag: None,
             sidebar_drag: None,
             click_tracker: None,
@@ -3178,10 +3258,11 @@ impl PureTermApp {
     fn open_new_window(&mut self) -> Task<Message> {
         let settings = window::Settings {
             size: Size::new(1024.0, 768.0),
-            decorations: true,
+            decorations: !self.titlebar_style.draws_own_titlebar(),
             resizable: true,
             closeable: true,
             transparent: true,
+            platform_specific: self.titlebar_style.platform_specific(),
             ..Default::default()
         };
         let (win_id, task) = window::open(settings);
@@ -4715,6 +4796,30 @@ impl PureTermApp {
             return Task::none();
         }
         match message {
+            Message::TitleBarDragStart(id) => {
+                // GAP-74:`unified` 标题栏拖动 —— 先拿到窗口位置,
+                // 之后靠全局光标增量自己算位移(见 GlobalCursorMoved)。
+                return window::position(id).map(move |pos| Message::TitleBarDragReady(id, pos))
+            }
+            Message::TitleBarDragReady(id, pos) => {
+                if let Some(pos) = pos {
+                    // `pos` 是窗口左上角的屏幕位置;光标位置是**内容**
+                    // 坐标 → 两者相加得到屏幕光标位置。
+                    let cursor_screen = Point::new(
+                        pos.x + self.last_global_cursor_pos.x,
+                        pos.y + self.last_global_cursor_pos.y,
+                    );
+                    self.titlebar_drag = Some(TitleBarDragState {
+                        window_id: id,
+                        start_window_pos: pos,
+                        start_screen_pos: cursor_screen,
+                        window_pos: pos,
+                    });
+                }
+            }
+            Message::TitleBarMinimize(id) => return window::minimize(id, true),
+            Message::TitleBarMaximize(id) => return window::toggle_maximize(id),
+            Message::TitleBarClose(id) => return window::close(id),
             Message::MainWindowOpened(id) => {
                 crate::startup_trace::mark_delta("window_opened");
                 self.main_window = Some(id);
@@ -4846,6 +4951,17 @@ impl PureTermApp {
                 return Task::none();
             }
             Message::TerminalWakeup => {
+                // GAP-74:Windows —— 把**原生标题栏**染成应用主题色
+                // (标题栏底色 = 顶栏底色,两者连成一条)。节流 2 秒一次
+                // 足够覆盖后创建的窗口;非 Windows 平台是空操作。
+                let now = Instant::now();
+                if self
+                    .last_caption_theme_at
+                    .map_or(true, |t| now.duration_since(t).as_secs_f32() > 2.0)
+                {
+                    self.last_caption_theme_at = Some(now);
+                    pureterm_settings::theme::caption::apply_caption_theme(self.palette.app);
+                }
                 // GAP-56:鼠标跟随聚焦 tick——悬停计时
                 // 到期就把焦点切到悬停的窗格。
                 if self.focus_follows_mouse_cfg.enabled {
@@ -4909,10 +5025,11 @@ impl PureTermApp {
                     {
                         let settings = window::Settings {
                             size: Size::new(1024.0, 768.0),
-                            decorations: true,
+                            decorations: !self.titlebar_style.draws_own_titlebar(),
                             resizable: true,
                             closeable: true,
                             transparent: true,
+                            platform_specific: self.titlebar_style.platform_specific(),
                             ..Default::default()
                         };
                         let (id, task) = window::open(settings);
@@ -6836,9 +6953,14 @@ impl PureTermApp {
                 self.settings_state = Some(SettingsState::new(self.config_path.clone()));
                 let settings = window::Settings {
                     size: Size::new(850.0, 620.0),
+                    // 设置窗口是**工具型**窗口:保留系统边框(自带关闭按钮)。
+                    // `unified` 的自绘标题栏只作用于主终端窗口 —— 设置窗口
+                    // 没有画那条自绘条,若在这里把系统装饰关掉,窗口就既没有
+                    // 系统标题栏也没有关闭按钮了。
                     decorations: true,
                     resizable: true,
                     closeable: true,
+                    platform_specific: self.titlebar_style.platform_specific(),
                     ..Default::default()
                 };
                 let (id, task) = window::open(settings);
@@ -8054,10 +8176,11 @@ impl PureTermApp {
                                 .t_fmt("tab.title.format", &[("n", &"1".to_string())]);
                             let settings = window::Settings {
                                 size: Size::new(1024.0, 768.0),
-                                decorations: true,
+                                decorations: !self.titlebar_style.draws_own_titlebar(),
                                 resizable: true,
                                 closeable: true,
                                 transparent: true,
+                                platform_specific: self.titlebar_style.platform_specific(),
                                 ..Default::default()
                             };
                             let (win_id, task) = window::open(settings);
@@ -8268,10 +8391,11 @@ impl PureTermApp {
                     };
                     let settings = window::Settings {
                         size: Size::new(1024.0, 768.0),
-                        decorations: true,
+                        decorations: !self.titlebar_style.draws_own_titlebar(),
                         resizable: true,
                         closeable: true,
                         transparent: true,
+                        platform_specific: self.titlebar_style.platform_specific(),
                         ..Default::default()
                     };
                     let (win_id, task) = window::open(settings);
@@ -8892,6 +9016,18 @@ impl PureTermApp {
                 // 这里 `self.last_cursor_pos = pos` 会让选区 anchor 整体偏低约一个
                 // tab bar 高度（≈ TAB_BAR_HEIGHT / cell_height 行）。
                 self.last_global_cursor_pos = pos;
+                // GAP-74:`unified` 标题栏拖动 —— 增量自己算。
+                if let Some(ref mut drag) = self.titlebar_drag {
+                    // 当前屏幕光标位置 = 窗口当前位置 + 内容坐标。
+                    let screen_now = Point::new(
+                        drag.window_pos.x + pos.x,
+                        drag.window_pos.y + pos.y,
+                    );
+                    let delta = screen_now - drag.start_screen_pos;
+                    let new_pos = drag.start_window_pos + delta;
+                    drag.window_pos = new_pos;
+                    return window::move_to(drag.window_id, new_pos);
+                }
                 if let Some(ref drag) = self.drag_state {
                     let current_pos = match drag.direction {
                         SplitDirection::Horizontal => pos.x,
@@ -8957,6 +9093,8 @@ impl PureTermApp {
             Message::GlobalMouseRelease => {
                 // 结束选区拖动:清掉 drag 标志,但保留 term.selection 让 Cmd+C 仍能拷。
                 self.selection_drag = None;
+                // GAP-74:结束 `unified` 标题栏的窗口拖动。
+                self.titlebar_drag = None;
                 // GAP-19:结束侧边栏分隔条拖拽(若有)。
                 self.sidebar_drag = None;
                 if let Some(drag) = self.drag_state.take() {
@@ -12048,8 +12186,44 @@ impl PureTermApp {
         }
     }
 
-    fn view_top_bar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
+    /// GAP-73:overlay 样式下,**没有标签栏**的窗口用这条主题色顶条
+    /// 承载 macOS 红绿灯(内容不再被系统标题栏挤下去)。
+    /// native 样式 → `None`(系统标题栏已经占了这块空间)。
+    fn view_titlebar_strip(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
+        if !self.titlebar_style.needs_traffic_light_inset() {
+            return None;
+        }
+        let bar_bg = crate::status_bar::bar_bg(&self.palette.status_bar);
+        let strip = container(
+            row![space().width(Length::Fixed(pureterm_settings::theme::titlebar::TRAFFIC_LIGHT_INSET))]
+                .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(pureterm_settings::theme::titlebar::TITLE_BAR_HEIGHT))
+        .style(move |_| container::Style {
+            background: Some(Background::Color(bar_bg)),
+            text_color: None,
+            snap: false,
+            border: Border::default(),
+            shadow: Shadow::default(),
+        });
+        // 不挂 on_press:透明标题栏下,**系统自己**就会在顶部 28px
+        // 区域拖动窗口(实测拖动位移与鼠标位移完全一致),而这一区域
+        // 的点击又能正常送达应用(实测点标签能切换)。自己再挂一套
+        // 拖动只会抢走系统的事件、造成「按了没反应」的死区。
+        Some(strip.into())
+    }
+
+    fn view_top_bar(&self, id: window::Id) -> Element<'_, Message, Theme, iced::Renderer> {
         let mut bar = row![].spacing(2).align_y(iced::Alignment::Center);
+
+        // GAP-73:overlay 样式下红绿灯浮在顶栏之上 —— 左侧留出它们的位置,
+        // 顶栏底色是主题色,红绿灯因此与主题「融为一体」。
+        if self.titlebar_style.needs_traffic_light_inset() {
+            bar = bar.push(space().width(Length::Fixed(
+                pureterm_settings::theme::titlebar::TRAFFIC_LIGHT_INSET,
+            )));
+        }
 
         for (i, tab) in self.tabs().iter().enumerate() {
             let is_active = tab.id == self.active_tab_id();
@@ -12078,19 +12252,61 @@ impl PureTermApp {
             };
             let hint = text(hint_text)
                 .size(10)
-                .color(Color::from_rgba(1.0, 1.0, 1.0, 0.35));
+                .color(self.palette.app.text_faint);
 
-            let tab_content = row![left, center, hint]
+            let tab_row = row![left, center, hint]
                 .align_y(iced::Alignment::Center)
                 .width(Length::Fill);
 
+            // GAP-72:激活标签底部 2px 霓虹条(带外发光)—— 这是
+            // 「当前在哪个标签」的主要视觉锚点,也是 cyberpunk 预设
+            // 唯一会渲染出**纯强调色**的地方(其余强调色都是
+            // 半透明混合,像素断言用不上)。
+            let neon_tab = self.palette.app.neon_active_tab;
+            let tab_content: Element<'_, Message, Theme, iced::Renderer> = if is_active && neon_tab {
+                let neon_color = self.palette.app.accent;
+                let neon_glow = self.palette.app.glow;
+                let neon_bar: Element<'_, Message, Theme, iced::Renderer> = container(
+                    space().height(2).width(Length::Fill),
+                )
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(neon_color)),
+                    text_color: None,
+                    snap: false,
+                    border: Border::default(),
+                    shadow: Shadow {
+                        color: neon_glow,
+                        offset: Vector::ZERO,
+                        blur_radius: 8.0,
+                    },
+                })
+                .into();
+                // 用 `Stack` 叠加而不是 `column`:霓虹条**不占高度**,
+                // 标签行高度与 classic 完全一致(避免把标签文字挤扁)。
+                iced::widget::Stack::with_children([
+                    Element::from(tab_row),
+                    Element::from(
+                        container(neon_bar)
+                            .width(Length::Fill)
+                            .height(Length::Fill)
+                            .align_y(iced::alignment::Vertical::Bottom),
+                    ),
+                ])
+                .width(Length::Fill)
+                .into()
+            } else {
+                tab_row.into()
+            };
+
             let bg = if is_active {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+                self.palette.app.highlight
             } else if is_hovered {
-                Color::from_rgba(1.0, 1.0, 1.0, 0.06)
+                self.palette.app.highlight_soft
             } else {
                 Color::TRANSPARENT
             };
+            let tab_fg = self.palette.app.text_primary;
+            let tab_accent = self.palette.app.accent;
 
             let tab_btn = button(tab_content)
                 .on_press(Message::ActivateTab(tab.id))
@@ -12098,7 +12314,7 @@ impl PureTermApp {
                 .width(Length::Fill)
                 .style(move |_theme: &Theme, _status: button::Status| button::Style {
                     background: Some(Background::Color(bg)),
-                    text_color: Color::WHITE,
+                    text_color: if is_active && neon_tab { tab_accent } else { tab_fg },
                     border: Border {
                         radius: 4.0.into(),
                         ..Default::default()
@@ -12158,7 +12374,7 @@ impl PureTermApp {
                 // 主题切换下保持视觉同步(今天两者在 `Theme::Dark`
                 // 下都解析为约 rgb(34,34,39))。
                 background: Some(Background::Color(
-                    crate::status_bar::bar_bg(&Theme::Dark),
+                    crate::status_bar::bar_bg(&self.palette.status_bar),
                 )),
                 text_color: None,
                 snap: false,
@@ -12166,6 +12382,9 @@ impl PureTermApp {
                 shadow: Shadow::default(),
             });
 
+        // 注意:这里**不**挂 `on_press(StartWindowDrag)` —— 标签按钮是
+        // `Length::Fill`,铺满整条顶栏;若整条都能拖,点标签时窗口会
+        // 跟着手抖跑掉。拖动只由右侧的 `⠿` 手柄负责(见上)。
         mouse_area(bar_container)
             .on_move(|p| Message::CursorMoved(p))
             .into()
@@ -12206,17 +12425,15 @@ impl PureTermApp {
             .and_then(|s| s.get("hibernated").and_then(|v| v.as_bool()))
             .unwrap_or(false);
         let pending = self.feed_panel.pending_count();
-        agent_indicator(kind, hibernated, pending)
+        agent_indicator(kind, hibernated, pending, &self.palette.app)
     }
 
     fn view_bottom_bar(&self) -> Element<'_, Message, Theme, iced::Renderer> {
         use iced::widget::{button, container, row, space};
         use iced::{Background, Border, Length, Shadow};
 
-        // 每帧解析一次活动主题,使每个芯片都能从
-        // `iced::Theme::Palette` 读颜色。今天只有 `Theme::Dark`,
-        // 但辅助路径已为未来的浅色/System 切换接线。
-        let theme = Theme::Dark;
+        // GAP-72:芯片颜色改由调色板提供(`StatusBarTokens`),不再从
+        // `iced::Theme::Palette` 派生 —— 预设切换即刻生效。
 
         // GAP-24:把每窗格/每帧的活动值预计算进可移植的
         // `BarData` 快照(cfg 门控的 SSH/Vi/agent 格式化留在这里、
@@ -12237,27 +12454,27 @@ impl PureTermApp {
                                     } else {
                                         "  SSH".to_string()
                                     },
-                                    Color::from_rgba(0.9, 0.5, 0.5, 1.0),
+                                    self.palette.app.danger,
                                 ),
                                 SshStateSnapshot::Reconnecting { attempt } => (
                                     format!("  SSH ↻ {}", attempt),
-                                    Color::from_rgba(0.95, 0.75, 0.3, 1.0),
+                                    self.palette.app.warning,
                                 ),
                                 SshStateSnapshot::Authenticating => (
                                     "  SSH 🔑".to_string(),
-                                    Color::from_rgba(0.95, 0.75, 0.3, 1.0),
+                                    self.palette.app.warning,
                                 ),
                                 SshStateSnapshot::Failed { .. } => (
                                     "  SSH ✗".to_string(),
-                                    Color::from_rgba(0.6, 0.6, 0.6, 1.0),
+                                    self.palette.app.muted,
                                 ),
                                 SshStateSnapshot::Disconnected => (
                                     "  SSH ⏻".to_string(),
-                                    Color::from_rgba(0.6, 0.6, 0.6, 1.0),
+                                    self.palette.app.muted,
                                 ),
                                 SshStateSnapshot::Connecting => (
                                     "  SSH …".to_string(),
-                                    Color::from_rgba(0.9, 0.5, 0.5, 1.0),
+                                    self.palette.app.danger,
                                 ),
                             });
                         }
@@ -12271,7 +12488,7 @@ impl PureTermApp {
                         if pane.terminal_ctx.is_ssh() {
                             break 'ssh Some((
                                 "  SSH".to_string(),
-                                Color::from_rgba(0.9, 0.5, 0.5, 1.0),
+                                self.palette.app.danger,
                             ));
                         }
                     }
@@ -12328,7 +12545,7 @@ impl PureTermApp {
                 }
             }),
             clock_cfg: &clock_cfg,
-            theme_for_view: &theme,
+            status_tokens: self.palette.status_bar,
         };
 
         // ── 分组渲染 ─────────────────────────────────────────────────────────
@@ -12394,9 +12611,9 @@ impl PureTermApp {
             // ⌘⇧P 键绑定(无新动作/消息——复用
             // Message::OpenCommandPalette,使既有键位表接线
             // 不变)。
-            let meta_bg = crate::status_bar::chip_bg(&theme, BarGroup::Meta);
-            let meta_fg = crate::status_bar::chip_text(&theme, BarGroup::Meta);
-            let meta_border = crate::status_bar::chip_border(&theme);
+            let meta_bg = crate::status_bar::chip_bg(BarGroup::Meta, &self.palette.status_bar);
+            let meta_fg = crate::status_bar::chip_text(&self.palette.status_bar);
+            let meta_border = crate::status_bar::chip_border(&self.palette.status_bar);
             let cmd_k_btn = button(
                 container(text("⌘K").size(11))
                     .padding([2, 6])
@@ -12433,8 +12650,8 @@ impl PureTermApp {
         // 状态栏背景与底栏边框取自活动调色板
         //(目前是 `Theme::Dark`,但路径已为任何未来的
         // 主题切换接线)。
-        let bg = crate::status_bar::bar_bg(&theme);
-        let footer = crate::status_bar::bar_border(&theme);
+        let bg = crate::status_bar::bar_bg(&self.palette.status_bar);
+        let footer = crate::status_bar::bar_border(&self.palette.status_bar);
         container(bar.width(Length::Fill))
             .width(Length::Fill)
             .height(self.status_bar_cfg.effective_height())
@@ -12470,13 +12687,14 @@ impl PureTermApp {
                     .and_then(|m| m.hovered_item)
                     == Some(item);
                 let bg = if is_hovered {
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.12)
+                    self.palette.app.highlight
                 } else {
                     Color::TRANSPARENT
                 };
+                let item_fg = self.palette.app.text_primary;
 
                 mouse_area(
-                    container(text(item.label(&self.i18n)).size(12).color(Color::WHITE))
+                    container(text(item.label(&self.i18n)).size(12).color(item_fg))
                         .padding([6, 16])
                         .width(200)
                         .style(move |_| container::Style {
@@ -12496,18 +12714,16 @@ impl PureTermApp {
 
         let menu_col = container(column(items))
             .style(|_| container::Style {
-                background: Some(Background::Color(
-                    Color::from_rgba(0.18, 0.18, 0.20, 0.97),
-                )),
+                background: Some(Background::Color(self.palette.app.overlay_bg)),
                 text_color: None,
                 snap: false,
                 border: Border {
-                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
+                    color: self.palette.app.overlay_border,
                     width: 1.0,
                     radius: 6.0.into(),
                 },
                 shadow: Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+                    color: self.palette.app.shadow,
                     offset: Vector::new(2.0, 4.0),
                     blur_radius: 8.0,
                 },
@@ -12546,13 +12762,11 @@ impl PureTermApp {
         let container_input = container(input)
             .padding(4)
             .style(|_| container::Style {
-                background: Some(Background::Color(
-                    Color::from_rgba(0.2, 0.2, 0.22, 1.0),
-                )),
+                background: Some(Background::Color(self.palette.app.input_bg)),
                 text_color: None,
                 snap: false,
                 border: Border {
-                    color: Color::from_rgba(0.3, 0.6, 1.0, 1.0),
+                    color: self.palette.app.info,
                     width: 1.0,
                     radius: 4.0.into(),
                 },
@@ -12570,23 +12784,11 @@ impl PureTermApp {
     fn view_color_picker(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
         let tab_id = self.color_picker_tab?;
 
-        const PRESET_COLORS: [(Color, &str); 12] = [
-            (Color::from_rgb(0.90, 0.30, 0.30), "红"),
-            (Color::from_rgb(1.00, 0.60, 0.20), "橙"),
-            (Color::from_rgb(0.95, 0.85, 0.25), "黄"),
-            (Color::from_rgb(0.40, 0.80, 0.30), "绿"),
-            (Color::from_rgb(0.20, 0.75, 0.75), "青"),
-            (Color::from_rgb(0.30, 0.50, 0.95), "蓝"),
-            (Color::from_rgb(0.60, 0.30, 0.85), "紫"),
-            (Color::from_rgb(0.95, 0.45, 0.70), "粉"),
-            (Color::from_rgb(0.70, 0.45, 0.20), "棕"),
-            (Color::from_rgb(0.55, 0.55, 0.55), "灰"),
-            (Color::from_rgb(0.20, 0.65, 0.90), "浅蓝"),
-            (Color::from_rgb(0.85, 0.85, 0.85), "白"),
-        ];
+        // 预置色来自调色板(与 HTML 视觉稿同源)。
+        let preset_colors = pureterm_settings::theme::palette::PICKER_SWATCHES;
 
         let mut color_row = row![].spacing(4);
-        for (color, _name) in PRESET_COLORS {
+        for (color, _name) in preset_colors {
             let swatch = mouse_area(
                 container(space().width(24).height(24))
                     .style(move |_| container::Style {
@@ -12618,18 +12820,16 @@ impl PureTermApp {
         let picker_container = container(content)
             .padding(8)
             .style(|_| container::Style {
-                background: Some(Background::Color(
-                    Color::from_rgba(0.18, 0.18, 0.20, 0.97),
-                )),
+                background: Some(Background::Color(self.palette.app.overlay_bg)),
                 text_color: None,
                 snap: false,
                 border: Border {
-                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.1),
+                    color: self.palette.app.overlay_border,
                     width: 1.0,
                     radius: 6.0.into(),
                 },
                 shadow: Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+                    color: self.palette.app.shadow,
                     offset: Vector::new(2.0, 4.0),
                     blur_radius: 8.0,
                 },
@@ -12714,18 +12914,16 @@ impl PureTermApp {
             let err_box = container(
                 text(err)
                     .size(13)
-                    .color(Color::from_rgb(1.0, 0.55, 0.55)),
+                    .color(self.palette.app.alert_text),
             )
             .padding(8)
             .width(Length::Fill)
             .style(|_| container::Style {
-                background: Some(Background::Color(
-                    Color::from_rgba(0.4, 0.12, 0.12, 0.55),
-                )),
+                background: Some(Background::Color(self.palette.app.error_bg)),
                 text_color: None,
                 snap: false,
                 border: Border {
-                    color: Color::from_rgba(0.8, 0.3, 0.3, 0.7),
+                    color: self.palette.app.error_border,
                     width: 1.0,
                     radius: 4.0.into(),
                 },
@@ -13181,8 +13379,8 @@ impl PureTermApp {
         ]
         .spacing(4));
 
-        let amber = iced::Color::from_rgba(0.95, 0.75, 0.3, 1.0);
-        let dim = iced::Color::from_rgba(0.55, 0.55, 0.55, 1.0);
+        let amber = self.palette.app.warning;
+        let dim = self.palette.app.text_secondary;
 
         // 分支 / 上游 / 前后差 / 操作 / 计数。
         if let Some(g) = self.git_panel.status.as_ref() {
@@ -13232,11 +13430,11 @@ impl PureTermApp {
             if let Some(pr) = &self.git_panel.pr {
                 let ci = &pr.checks;
                 let color = match pr.state.as_str() {
-                    "MERGED" => iced::Color::from_rgba(0.65, 0.45, 0.85, 1.0),
-                    "CLOSED" => iced::Color::from_rgba(0.9, 0.45, 0.45, 1.0),
-                    _ if ci.failure > 0 => iced::Color::from_rgba(0.9, 0.45, 0.45, 1.0),
+                    "MERGED" => self.palette.app.merged,
+                    "CLOSED" => self.palette.app.error_text,
+                    _ if ci.failure > 0 => self.palette.app.error_text,
                     _ if ci.pending > 0 => amber,
-                    _ => iced::Color::from_rgba(0.5, 0.8, 0.55, 1.0),
+                    _ => self.palette.app.success,
                 };
                 body = body.push(
                     text(format!(
@@ -13332,7 +13530,7 @@ impl PureTermApp {
                 space().width(Length::Fill),
                 text(format!("{} unread", summary.total_unread))
                     .size(11)
-                    .color(Color::from_rgba(0.95, 0.75, 0.3, 1.0)),
+                    .color(self.palette.app.warning),
                 button(text("Clear").size(11))
                     .on_press(Message::DismissAllNotifications)
                     .padding([2, 6])
@@ -13349,7 +13547,9 @@ impl PureTermApp {
         let history = self.notification_store.history();
         if history.is_empty() {
             body = body.push(
-                text("No notifications yet").size(12).color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)),
+                text("No notifications yet")
+                    .size(12)
+                    .color(self.palette.app.text_primary.scale_alpha(0.4)),
             );
         } else {
             // 按时间倒序。
@@ -13367,10 +13567,12 @@ impl PureTermApp {
                 let pane_id = entry.pane_id;
                 let entry_col = column![
                     text(title).size(12),
-                    text(body_text).size(11).color(Color::from_rgba(1.0, 1.0, 1.0, 0.7)),
+                    text(body_text)
+                        .size(11)
+                        .color(self.palette.app.text_primary.scale_alpha(0.7)),
                     text(format!("pane {} · {}", pane_id.0, source))
                         .size(9)
-                        .color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)),
+                        .color(self.palette.app.text_primary.scale_alpha(0.4)),
                 ]
                 .spacing(1);
                 body = body.push(
@@ -13408,7 +13610,7 @@ impl PureTermApp {
                 space().width(Length::Fill),
                 text(format!("{} / {}", self.ai_chat_cfg.provider, self.ai_chat_cfg.model))
                     .size(9)
-                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.45)),
+                    .color(self.palette.app.text_primary.scale_alpha(0.45)),
                 if self.ai_chat_panel.is_streaming() {
                     button(text("Stop").size(11))
                         .on_press(Message::AiChatStop)
@@ -13430,19 +13632,13 @@ impl PureTermApp {
             messages_col = messages_col.push(
                 text("Ask about commands, errors, or code. Active pane context is attached on send.")
                     .size(11)
-                    .color(Color::from_rgba(1.0, 1.0, 1.0, 0.45)),
+                    .color(self.palette.app.text_primary.scale_alpha(0.45)),
             );
         } else {
             for msg in &self.ai_chat_panel.messages {
                 let (label, color) = match msg.role {
-                    ChatRole::User => (
-                        "You",
-                        Color::from_rgba(0.55, 0.75, 1.0, 1.0),
-                    ),
-                    ChatRole::Assistant => (
-                        "Assistant",
-                        Color::from_rgba(0.75, 0.9, 0.75, 1.0),
-                    ),
+                    ChatRole::User => ("You", self.palette.app.soft_blue),
+                    ChatRole::Assistant => ("Assistant", self.palette.app.soft_green),
                 };
                 let is_streaming_placeholder = msg.content.is_empty()
                     && msg.role == ChatRole::Assistant
@@ -13505,7 +13701,7 @@ impl PureTermApp {
         use iced::{font, Font};
 
         const MONO: Font = Font::MONOSPACE;
-        const CODE_COLOR: Color = Color::from_rgba(0.95, 0.85, 0.55, 1.0);
+        let code_color = self.palette.app.code_text;
 
         let blocks = markdown::parse(content);
         let mut col = column![].spacing(4);
@@ -13532,7 +13728,7 @@ impl PureTermApp {
                                     style: font::Style::Italic,
                                     ..Font::default()
                                 }),
-                                SpanStyle::Code => sp.font(MONO).color(CODE_COLOR),
+                                SpanStyle::Code => sp.font(MONO).color(code_color),
                                 SpanStyle::Normal => sp,
                             }
                         })
@@ -13543,7 +13739,11 @@ impl PureTermApp {
                     let mut inner = column![].spacing(2);
                     if let Some(l) = lang.as_deref().filter(|l| !l.is_empty()) {
                         inner = inner
-                            .push(text(l.to_string()).size(9).color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)));
+                            .push(
+                                text(l.to_string())
+                                    .size(9)
+                                    .color(self.palette.app.text_primary.scale_alpha(0.4)),
+                            );
                     }
                     inner = inner.push(text(code.trim_end().to_string()).font(MONO).size(11));
                     col = col.push(container(inner).padding(6).style(container::bordered_box));
@@ -13951,21 +14151,20 @@ impl PureTermApp {
         };
         let display_text = format!("{}{}", prompt, search.query);
 
-        let bar = container(
-            text(display_text)
-                .size(13)
-                .color(Color::from_rgba(0.9, 0.9, 0.9, 1.0))
-        )
-        .padding([4, 10])
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgba(0.15, 0.15, 0.18, 0.92))),
-            border: Border {
-                color: Color::from_rgba(0.2, 0.8, 0.7, 0.6),
-                width: 1.0,
-                radius: 4.0.into(),
-            },
-            ..Default::default()
-        });
+        let vi_fg = self.palette.app.text_body;
+        let vi_bg = self.palette.app.overlay_bg;
+        let vi_border = self.palette.app.teal;
+        let bar = container(text(display_text).size(13).color(vi_fg))
+            .padding([4, 10])
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(Background::Color(vi_bg)),
+                border: Border {
+                    color: vi_border,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            });
 
         // 钉在终端区域的底部中央
         let terminal_h = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
@@ -14014,6 +14213,8 @@ impl PureTermApp {
         .spacing(4);
 
         let close = button(text("×").size(14)).on_press(Message::SurfaceSearchClose);
+        let search_bar_bg = self.palette.app.overlay_bg;
+        let search_bar_border = self.palette.app.teal;
 
         let bar = container(
             row![input, toggles, close]
@@ -14022,10 +14223,10 @@ impl PureTermApp {
         )
         .padding([6, 10])
         .width(Length::Fixed(520.0))
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgba(0.15, 0.15, 0.18, 0.95))),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(search_bar_bg)),
             border: Border {
-                color: Color::from_rgba(0.2, 0.8, 0.7, 0.6),
+                color: search_bar_border,
                 width: 1.0,
                 radius: 6.0.into(),
             },
@@ -14057,6 +14258,8 @@ impl PureTermApp {
             .width(Length::Fill);
 
         let close = button(text("×").size(14)).on_press(Message::AddressBarClose);
+        let address_bar_bg = self.palette.app.overlay_bg;
+        let address_bar_border = self.palette.app.info.scale_alpha(0.6);
 
         let bar = container(
             row![input, close]
@@ -14065,10 +14268,10 @@ impl PureTermApp {
         )
         .padding([6, 10])
         .width(Length::Fixed(560.0))
-        .style(|_theme: &Theme| container::Style {
-            background: Some(Background::Color(Color::from_rgba(0.15, 0.15, 0.18, 0.95))),
+        .style(move |_theme: &Theme| container::Style {
+            background: Some(Background::Color(address_bar_bg)),
             border: Border {
-                color: Color::from_rgba(0.3, 0.6, 1.0, 0.6),
+                color: address_bar_border,
                 width: 1.0,
                 radius: 6.0.into(),
             },
@@ -14108,7 +14311,11 @@ impl PureTermApp {
             body = body.push(text("searching…").size(12));
         }
         if let Some(ref err) = s.error {
-            body = body.push(text(err).size(12).color(Color::from_rgb(0.9, 0.5, 0.4)));
+            body = body.push(
+                text(err)
+                    .size(12)
+                    .color(self.palette.app.error_text_soft),
+            );
         }
 
         if !s.results.is_empty() {
@@ -14127,13 +14334,15 @@ impl PureTermApp {
         let close = button(text("×").size(14)).on_press(Message::DirSearchClose);
         body = body.push(close);
 
+        let dir_search_bg = self.palette.app.overlay_bg;
+        let dir_search_border = self.palette.app.teal;
         let dialog = container(body)
             .width(Length::Fixed(640.0))
             .height(Length::Fixed(420.0))
-            .style(|_theme: &Theme| container::Style {
-                background: Some(Background::Color(Color::from_rgba(0.12, 0.12, 0.15, 0.97))),
+            .style(move |_theme: &Theme| container::Style {
+                background: Some(Background::Color(dir_search_bg)),
                 border: Border {
-                    color: Color::from_rgba(0.2, 0.8, 0.7, 0.6),
+                    color: dir_search_border,
                     width: 1.0,
                     radius: 6.0.into(),
                 },
@@ -14175,12 +14384,13 @@ impl PureTermApp {
                 let is_active = *id == self.active_tab_id();
                 let label = format!("{}. {}", idx + 1, title);
                 let bg = if is_active {
-                    Color::from_rgba(1.0, 1.0, 1.0, 0.08)
+                    self.palette.app.text_primary.scale_alpha(0.08)
                 } else {
                     Color::TRANSPARENT
                 };
+                let item_fg = self.palette.app.text_primary;
                 mouse_area(
-                    container(text(label).size(12).color(Color::WHITE))
+                    container(text(label).size(12).color(item_fg))
                         .padding([6, 12])
                         .width(Length::Fill)
                         .style(move |_| container::Style {
@@ -14201,7 +14411,11 @@ impl PureTermApp {
             .collect();
 
         let list_content: Element<'_, Message, Theme, iced::Renderer> = if list_items.is_empty() {
-            container(text(self.i18n.t("tab.no_match")).size(12).color(Color::from_rgba(1.0, 1.0, 1.0, 0.4)))
+            container(
+                text(self.i18n.t("tab.no_match"))
+                    .size(12)
+                    .color(self.palette.app.text_primary.scale_alpha(0.4)),
+            )
                 .padding(12)
                 .width(Length::Fill)
                 .align_x(iced::alignment::Horizontal::Center)
@@ -14216,18 +14430,16 @@ impl PureTermApp {
         let panel = container(column![search, list_content].spacing(4).width(360))
             .padding(8)
             .style(|_| container::Style {
-                background: Some(Background::Color(
-                    Color::from_rgba(0.16, 0.16, 0.18, 0.98),
-                )),
+                background: Some(Background::Color(self.palette.app.overlay_bg)),
                 text_color: None,
                 snap: false,
                 border: Border {
-                    color: Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+                    color: self.palette.app.overlay_border,
                     width: 1.0,
                     radius: 8.0.into(),
                 },
                 shadow: Shadow {
-                    color: Color::from_rgba(0.0, 0.0, 0.0, 0.6),
+                    color: self.palette.app.shadow_strong,
                     offset: Vector::new(0.0, 8.0),
                     blur_radius: 16.0,
                 },
@@ -14270,7 +14482,7 @@ impl PureTermApp {
             container(body)
                 .width(Length::Fill)
                 .style(|_| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(0.08, 0.08, 0.10, 0.95))),
+                    background: Some(Background::Color(self.palette.app.overlay_bg)),
                     ..Default::default()
                 })
                 .into(),
@@ -14318,8 +14530,20 @@ impl PureTermApp {
             .iter()
             .map(|i| (i.icon.clone(), i.text.clone()))
             .collect();
-        let panel = crate::sidebar::left::view(&rows, git, &dsl_items, width, height);
-        Some(Self::sidebar_with_divider(crate::sidebar::SidebarSide::Left, panel, height))
+        let panel = crate::sidebar::left::view(
+            self.palette.app,
+            &rows,
+            git,
+            &dsl_items,
+            width,
+            height,
+        );
+        Some(Self::sidebar_with_divider(
+            crate::sidebar::SidebarSide::Left,
+            panel,
+            height,
+            self.palette.app.hairline,
+        ))
     }
 
     /// GAP-19:把可拖拽的分隔条手柄挂到侧边栏面板的一条边
@@ -14330,15 +14554,14 @@ impl PureTermApp {
         side: crate::sidebar::SidebarSide,
         panel: Element<'_, Message, Theme, iced::Renderer>,
         height: f32,
+        hairline: Color,
     ) -> Element<'_, Message, Theme, iced::Renderer> {
         let handle = mouse_area(
             container(space())
                 .width(Length::Fixed(5.0))
                 .height(Length::Fixed(height))
-                .style(|_| container::Style {
-                    background: Some(Background::Color(Color::from_rgba(
-                        0.25, 0.25, 0.28, 1.0,
-                    ))),
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(hairline)),
                     text_color: None,
                     snap: false,
                     border: Border::default(),
@@ -14449,6 +14672,7 @@ impl PureTermApp {
             let feed_tool = feed_req.and_then(|r| r.tool_name.clone());
             let feed_reason = feed_req.map(|r| r.reason.clone());
             let panel = crate::sidebar::right::view(
+                self.palette.app,
                 right_mode,
                 width,
                 height,
@@ -14473,11 +14697,13 @@ impl PureTermApp {
                 crate::sidebar::SidebarSide::Right,
                 panel,
                 height,
+                self.palette.app.hairline,
             ))
         }
         #[cfg(not(unix))]
         {
             let panel = crate::sidebar::right::view(
+                self.palette.app,
                 right_mode,
                 width,
                 height,
@@ -14494,6 +14720,7 @@ impl PureTermApp {
                 crate::sidebar::SidebarSide::Right,
                 panel,
                 height,
+                self.palette.app.hairline,
             ))
         }
     }
@@ -14511,7 +14738,12 @@ impl PureTermApp {
 
         if let Some(ref state) = self.settings_state {
             if state.owns_window(id) {
-                return state.view(id).map(Message::Settings);
+                let content = state.view(id).map(Message::Settings);
+                let mut col = column![].width(Length::Fill).height(Length::Fill);
+                if let Some(strip) = self.view_titlebar_strip() {
+                    col = col.push(strip);
+                }
+                return col.push(content).into();
             }
         }
 
@@ -14519,11 +14751,18 @@ impl PureTermApp {
         // 立即绘制;首个终端在 DaemonReady 创建。
         // 引导期不存在非主窗口,直接向下贯穿。
         if !self.booted && Some(id) == self.main_window {
-            return container("Starting PureTerm…")
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
+            let mut col = column![].width(Length::Fill).height(Length::Fill);
+            if let Some(strip) = self.view_titlebar_strip() {
+                col = col.push(strip);
+            }
+            return col
+                .push(
+                    container("Starting PureTerm…")
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .align_x(iced::alignment::Horizontal::Center)
+                        .align_y(iced::alignment::Vertical::Center),
+                )
                 .into();
         }
 
@@ -14541,9 +14780,11 @@ impl PureTermApp {
                         let shader = Shader::new(TerminalProgram {
                             ctx,
                             glyph_state: self.glyph_state.clone(),
-                            background_color: self.config.background_color,
-                            foreground_color: self.config.foreground_color,
+                            background_color: self.term_wiring.background,
+                            foreground_color: self.term_wiring.foreground,
                             opacity: self.config.opacity,
+                            ansi_palette: self.term_wiring.ansi,
+                            term_overrides: Some(self.term_wiring.overrides),
                             viewport_scale_factor: self.viewport_scale_factor.clone(),
                             vi_search_pattern: self.vi_search_pattern.clone(),
                             cached_search: self.cached_search.clone(),
@@ -14560,13 +14801,24 @@ impl PureTermApp {
                         .width(Length::Fill)
                         .height(Length::Fill);
 
-                        return crate::ime_widget::ImeWrapper::new(
-                            mouse_area(shader)
-                                .on_scroll(Message::MouseScroll)
-                                .on_move(Message::CursorMoved)
-                                .into(),
-                        )
-                        .into();
+                        let mut col = column![].width(Length::Fill).height(Length::Fill);
+                        if let Some(strip) = self.view_titlebar_strip() {
+                            col = col.push(strip);
+                        }
+                        return col
+                            .push(
+                                container(
+                                    crate::ime_widget::ImeWrapper::new(
+                                        mouse_area(shader)
+                                            .on_scroll(Message::MouseScroll)
+                                            .on_move(Message::CursorMoved)
+                                            .into(),
+                                    ),
+                                )
+                                .width(Length::Fill)
+                                .height(Length::Fill),
+                            )
+                            .into();
                     }
                 }
             }
@@ -14613,11 +14865,36 @@ impl PureTermApp {
             middle = middle.push(right);
         }
 
+        // GAP-74:`unified` 模式 —— 系统标题栏已隐藏,由应用自绘一条
+        // 同色标题栏(标题 + 窗口按钮 + 拖动区)。
+        let top_bar = self.view_top_bar(id);
         let base: Element<'_, Message, Theme, iced::Renderer> =
-            column![self.view_top_bar(), middle, self.view_bottom_bar()]
+            if self.titlebar_style.draws_own_titlebar() {
+                let title = self.title(id);
+                column![
+                    pureterm_settings::theme::titlebar_view::view(
+                        self.palette.app,
+                        &title,
+                        pureterm_settings::theme::titlebar_view::TitleBarMessages {
+                            drag: Message::TitleBarDragStart(id),
+                            minimize: Message::TitleBarMinimize(id),
+                            maximize: Message::TitleBarMaximize(id),
+                            close: Message::TitleBarClose(id),
+                        },
+                    ),
+                    top_bar,
+                    middle,
+                    self.view_bottom_bar(),
+                ]
                 .width(Length::Fill)
                 .height(Length::Fill)
-                .into();
+                .into()
+            } else {
+                column![top_bar, middle, self.view_bottom_bar()]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            };
 
         let has_overlay = self.context_menu.is_some()
             || self.renaming_tab.is_some()
@@ -14878,7 +15155,7 @@ impl PureTermApp {
                     .height(Length::Fill)
                     .style(move |_| container::Style {
                         border: Border {
-                            color: Color::from_rgba(0.3, 0.6, 1.0, 0.3),
+                            color: self.palette.app.info.scale_alpha(0.3),
                             width: 1.0,
                             radius: 0.0.into(),
                         },
@@ -14925,9 +15202,11 @@ impl PureTermApp {
         let shader = Shader::new(TerminalProgram {
             ctx,
             glyph_state: self.glyph_state.clone(),
-            background_color: self.config.background_color,
-            foreground_color: self.config.foreground_color,
+            background_color: self.term_wiring.background,
+            foreground_color: self.term_wiring.foreground,
             opacity: self.config.opacity,
+            ansi_palette: self.term_wiring.ansi,
+            term_overrides: Some(self.term_wiring.overrides),
             viewport_scale_factor: self.viewport_scale_factor.clone(),
             vi_search_pattern: self.vi_search_pattern.clone(),
             cached_search: self.cached_search.clone(),
@@ -14968,9 +15247,9 @@ impl PureTermApp {
                 .style(move |_| container::Style {
                     border: Border {
                         color: if is_active {
-                            Color::from_rgba(0.3, 0.6, 1.0, 0.3)
+                            self.palette.app.info.scale_alpha(0.3)
                         } else {
-                            Color::from_rgba(1.0, 0.7, 0.2, 0.6)
+                            self.palette.app.amber_bright.scale_alpha(0.6)
                         },
                         width: if is_active { 1.0 } else { 1.5 },
                         radius: 0.0.into(),
@@ -14996,7 +15275,7 @@ impl PureTermApp {
         ratio: f32,
         tab_id: TabId,
     ) -> Element<'_, Message, Theme, iced::Renderer> {
-        let visual_color = Color::from_rgba(0.45, 0.45, 0.50, 1.0);
+        let visual_color = self.palette.app.neutral;
 
         // 设置鼠标光标为"可调整大小"
         let interaction = match direction {
@@ -15231,7 +15510,8 @@ impl PureTermApp {
         if Some(id) == self.settings_window {
             return pureterm_settings::theme::pureterm_theme();
         }
-        Theme::Dark
+        // GAP-72:外壳主题由调色板派生(不再硬编码 `Theme::Dark`)。
+        self.palette.app.to_iced_theme()
     }
 }
 
@@ -15272,13 +15552,14 @@ pub fn run() -> iced::Result {
             Color::TRANSPARENT
         } else {
             // opacity = 1.0 时使用与终端背景匹配的不透明颜色
+            // (GAP-72:预设接管终端配色时,底色跟着预设走)
             Color::from_rgb(
-                state.config.background_color[0],
-                state.config.background_color[1],
-                state.config.background_color[2],
+                state.term_wiring.background[0],
+                state.term_wiring.background[1],
+                state.term_wiring.background[2],
             )
         },
-        text_color: Color::WHITE,
+        text_color: state.palette.app.text_primary,
     })
     .run()
 }
@@ -15340,6 +15621,8 @@ mod tests {
     // 用户已能看到相关表面时被抑制。
     use alacritty_terminal::event::NotifyOccasion;
 
+    use crate::ui_theme::{ShellTokens, ThemePreset, UiPalette};
+
     #[test]
     fn gap09_should_toast_always_only_when_pane_not_visible() {
         use NotifyOccasion::{Always, Invisible, Unfocused};
@@ -15362,9 +15645,15 @@ mod tests {
         assert!(super::should_toast(Unfocused, false, false));
     }
 
+    /// agent 指示器测试用的调色板(classic 预设)。
+    fn agent_test_tokens() -> ShellTokens {
+        UiPalette::for_preset(ThemePreset::Classic).app
+    }
+
     #[test]
     fn agent_indicator_active_shows_bolt() {
-        let (label, _) = super::agent_indicator("claude-code", false, 0).unwrap();
+        let (label, _) =
+            super::agent_indicator("claude-code", false, 0, &agent_test_tokens()).unwrap();
         assert!(label.contains("claude-code"));
         assert!(label.contains('\u{26a1}')); // ⚡
         assert!(!label.contains("(sleep)"));
@@ -15374,7 +15663,8 @@ mod tests {
 
     #[test]
     fn agent_indicator_hibernated_shows_sleep_suffix() {
-        let (label, _) = super::agent_indicator("codex", true, 0).unwrap();
+        let (label, _) =
+            super::agent_indicator("codex", true, 0, &agent_test_tokens()).unwrap();
         assert!(label.contains("codex"));
         assert!(label.contains("(sleep)"));
         assert!(label.contains('\u{1f4a4}')); // 💤
@@ -15383,18 +15673,20 @@ mod tests {
 
     #[test]
     fn agent_indicator_pending_badge() {
-        let (label, _) = super::agent_indicator("claude-code", false, 3).unwrap();
+        let (label, _) =
+            super::agent_indicator("claude-code", false, 3, &agent_test_tokens()).unwrap();
         assert!(label.contains('\u{23f3}')); // ⏳
         assert!(label.contains('3'));
         // 窗格无 agent 但别处有 pending → 徽标仍显示。
-        let (label2, _) = super::agent_indicator("", false, 1).unwrap();
+        let (label2, _) =
+            super::agent_indicator("", false, 1, &agent_test_tokens()).unwrap();
         assert!(label2.contains('\u{23f3}'));
         assert!(!label2.contains('\u{26a1}'));
     }
 
     #[test]
     fn agent_indicator_none_when_empty_and_no_pending() {
-        assert!(super::agent_indicator("", false, 0).is_none());
+        assert!(super::agent_indicator("", false, 0, &agent_test_tokens()).is_none());
     }
 
     // ── GAP-3.5:地址栏 URL 规范化 ─────────────────────────────────

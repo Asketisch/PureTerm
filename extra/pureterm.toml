@@ -6,6 +6,11 @@ TERM = "xterm-256color"
 
 [window]
 dimensions = { columns = 120, lines = 36 }
+# GAP-73/74:标题栏样式:
+#   overlay = 红绿灯融入界面顶栏(仅 macOS 有效,macOS 默认)
+#   native  = 系统原生标题栏(Windows 上会被染成主题色)
+#   unified = 应用自绘标题栏(跨平台;Linux 上获得同款观感的唯一途径)
+titlebar = "overlay"
 padding = { x = 6, y = 6 }
 decorations = "Full"
 startup_mode = "Windowed"
@@ -33,6 +38,14 @@ hide_when_typing = true
 
 [selection]
 save_to_clipboard = true
+
+# GAP-72:界面外观预设。
+# classic   = 经典深色(默认,行为与旧版完全一致)
+# cyberpunk = 霓虹赛博朋克(外壳 + 终端 ANSI 16 色 + 终端主色)
+# terminal_palette: follow(默认,跟随 preset) | user(保留自己的 [colors.*])
+[appearance]
+preset = "classic"
+terminal_palette = "follow"
 
 [colors.primary]
 background = "#1e1e2e"

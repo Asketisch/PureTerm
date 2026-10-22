@@ -4,7 +4,7 @@ use std::time::SystemTime;
 use iced::widget::{
     button, column, container, image, row, rule, scrollable, space, stack, text,
 };
-use iced::{Color, window, ContentFit, Element, Length, Padding, Task};
+use iced::{Background, Border, Color, Shadow, window, ContentFit, Element, Length, Padding, Task};
 
 use crate::config_io;
 use crate::i18n::I18n;
@@ -41,6 +41,8 @@ pub struct SettingsState {
     ssh: SshState,
     keybindings: KeybindingsState,
     pub main_window: Option<window::Id>,
+    /// GAP-73:标题栏样式(overlay = 红绿灯融入顶条)。
+    pub titlebar_style: theme::TitleBarStyle,
     color_picker_window: Option<window::Id>,
     pending_color_target: Option<ColorPickerTarget>,
     /// 打开取色器时的颜色值(用于取消时恢复)。
@@ -89,8 +91,26 @@ impl SettingsState {
             .unwrap_or_else(|| "en".to_string());
         i18n.set_locale(&locale);
 
+        // GAP-73:标题栏样式(与主应用读同一个 `[window].titlebar`)。
+        // 缺省 → 平台默认(macOS = overlay),与主应用保持一致。
+        let titlebar_style = match config_io::get_string(&document, &["window"], "titlebar") {
+            Some(v) if !v.trim().is_empty() => theme::TitleBarStyle::parse(&v),
+            _ => theme::TitleBarStyle::platform_default(),
+        };
+
         let general = GeneralState::load(&document);
         let appearance = AppearanceState::load(&document);
+
+        // GAP-72:按配置里的外观预设设置进程级外壳色 —— 设置窗口
+        // (以及主应用内嵌的设置窗口)立刻呈现对应观感。
+        theme::set_tokens(
+            theme::palette::UiPalette::for_preset(appearance.preset).settings,
+        );
+        // GAP-74:Windows —— 把**原生标题栏**染成应用主题色(设置窗口是
+        // 独立进程,得自己染一次);非 Windows 平台是空操作。
+        theme::caption::apply_caption_theme(
+            theme::palette::UiPalette::for_preset(appearance.preset).settings,
+        );
         let colors = ColorsState::load(&document);
         let terminal = TerminalState::load(&document);
         let ssh = SshState::load(&document);
@@ -110,6 +130,7 @@ impl SettingsState {
             ssh,
             keybindings,
             main_window: None,
+            titlebar_style,
             color_picker_window: None,
             pending_color_target: None,
             picker_original_hex: None,
@@ -241,6 +262,8 @@ impl SettingsState {
                     self.picker_preview_hex = Some(current_hex);
                     let settings = window::Settings {
                         size: iced::Size::new(320.0, 450.0),
+                        // 取色器是工具型弹窗:始终保留系统边框(有系统关闭
+                        // 按钮),Windows 上其标题栏会被染成主题色。
                         decorations: true,
                         resizable: false,
                         closeable: true,
@@ -411,7 +434,7 @@ impl SettingsState {
 
         let page_header = text(self.current_page.title(&self.i18n))
             .size(theme::FONT_SIZE + 4.0)
-            .color(theme::TEXT_PRIMARY);
+            .color(theme::tokens().text_primary);
 
         let mut save_btn = button(text(self.i18n.t("footer.save")).size(theme::FONT_SIZE))
             .padding(Padding::from([6, 20]))
@@ -428,30 +451,30 @@ impl SettingsState {
         let status = match &self.status_msg {
             Some(StatusMessage::Saved) => text(self.i18n.t("footer.saved"))
                 .size(12.0)
-                .color(theme::SUCCESS),
+                .color(theme::tokens().success),
             Some(StatusMessage::Reverted) => text(self.i18n.t("footer.reverted"))
                 .size(12.0)
-                .color(theme::SUCCESS),
+                .color(theme::tokens().success),
             Some(StatusMessage::SaveFailed(e)) => {
                 text(format!("{}{e}", self.i18n.t("footer.save_failed")))
                     .size(12.0)
-                    .color(theme::DANGER)
+                    .color(theme::tokens().danger)
             }
             Some(StatusMessage::RevertFailed(e)) => {
                 text(format!("{}{e}", self.i18n.t("footer.revert_failed")))
                     .size(12.0)
-                    .color(theme::DANGER)
+                    .color(theme::tokens().danger)
             }
             None if self.dirty => text(self.i18n.t("footer.unsaved_changes"))
                 .size(12.0)
-                .color(theme::WARNING),
+                .color(theme::tokens().warning),
             None => text(String::new()).size(12.0),
         };
 
         let footer = row![
             text(self.config_path.display().to_string())
                 .size(11.0)
-                .color(theme::TEXT_SECONDARY),
+                .color(theme::tokens().text_secondary),
             space::horizontal(),
             status,
             revert_btn,
@@ -477,6 +500,32 @@ impl SettingsState {
             content_area,
         ]
         .height(Length::Fill);
+
+        // GAP-73:overlay 样式下,顶条承载 macOS 红绿灯(与主题同色)。
+        let layout: Element<Message> = if self.titlebar_style.needs_traffic_light_inset() {
+            let bar_bg = theme::tokens().bg;
+            let strip = container(
+                row![space().width(Length::Fixed(theme::TRAFFIC_LIGHT_INSET))]
+                    .width(Length::Fill),
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(theme::TITLE_BAR_HEIGHT))
+            .style(move |_| container::Style {
+                background: Some(Background::Color(bar_bg)),
+                text_color: None,
+                snap: false,
+                border: Border::default(),
+                shadow: Shadow::default(),
+            });
+            // 不挂自定义拖动:透明标题栏下**系统自己**就会在顶部区域
+            // 拖动窗口(顶栏的点击也照常送达应用)。
+            column![strip, layout]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        } else {
+            layout.into()
+        };
 
         // PureTerm: 如果用户配置了背景图，把它放在 layout 下面作为底图。
         // 用 `stack!` 把图片与原 page 容器叠加（图片在底层）。无图时退回
@@ -524,6 +573,8 @@ pub fn run(config_path: PathBuf) -> iced::Result {
             let state = SettingsState::new(config_path);
             let settings = window::Settings {
                 size: iced::Size::new(850.0, 620.0),
+                // 设置窗口是工具型窗口:保留系统边框(自带的关闭按钮),
+                // Windows 上其标题栏会被染成主题色。
                 decorations: true,
                 resizable: true,
                 closeable: true,
@@ -533,6 +584,7 @@ pub fn run(config_path: PathBuf) -> iced::Result {
                 // `blur` 由 Appearance 页的「Settings Window Blur」控件决定。
                 transparent: true,
                 blur: state.appearance.settings_window_blur,
+                platform_specific: state.titlebar_style.platform_specific(),
                 ..Default::default()
             };
             let app = Self { state };

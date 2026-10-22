@@ -10,9 +10,10 @@
 | 类别 | 数量 | P0 | P1 | P2 | P3 | P4 |
 |------|------|----|----|----|----|----|
 | 终端交互 | 1 | 1 | — | — | — | — |
+| UI/外壳 | 2 | — | 2 | — | — | — |
 | 平台 | 1 | — | — | — | — | 1 |
 | 集成 | 5 | — | — | — | — | 5 |
-| **合计** | **7** | **1** | **—** | **—** | **—** | **6** |
+| **合计** | **9** | **1** | **2** | **—** | **—** | **6** |
 
 ---
 
@@ -21,6 +22,14 @@
 | GAP | 简述 | 详情 |
 |-----|------|------|
 | t-core-gap-closure | 终端模拟核心层差距补齐（graphics / shaper / tmux-CC / 多 shell / ConPTY / plugin runtime），6 个子组件 v1→v2→v3 全部闭环：GPU quad shader + 后台 PNG 解码；rustybuzz shaper + cluster_byte_to_cell 反查 + ime_widget cluster_demo；tmux-cc E2E；fish/nu/pwsh/elvish shell integration E2E；Windows CI runner + conpty_smoke；wasmtime 插件运行时 + scan_plugin_osc parser hook + 2 示例插件 + authoring.md | [spec](done/t-core-gap-closure/spec.md) · [checklist](done/t-core-gap-closure/checklist.md) |
+
+## UI/外壳
+
+| GAP | 简述 | 详情 |
+|-----|------|------|
+| GAP-74 | 跨平台标题栏适配：`[window].titlebar` 扩成三态（native / overlay / unified，`effective()` 做平台门控，非 macOS 的 overlay 静默退化）+ Windows 用 DWM 把**原生标题栏染成主题色**（裸 FFI，`DWMWA_CAPTION_COLOR`/`TEXT_COLOR`/`BORDER_COLOR`/`USE_IMMERSIVE_DARK_MODE`/`SYSTEMBACKDROP_TYPE`，保住原生 resize/snap）+ 跨平台**应用自绘标题栏**（`titlebar_view` 泛型组件，左标题 + `─ □ ✕` + 拖动区；拖动按屏幕坐标自算位移，1:1 跟随）+ 工具型窗口保留系统边框 + Appearance 页标题栏下拉 | [spec](done/GAP-74-crossplatform-titlebar/spec.md) · [test-plan](done/GAP-74-crossplatform-titlebar/test-plan.md) |
+| GAP-73 | macOS 标题栏融合：`[window].titlebar = "overlay"`（默认，macOS）→ 窗口内容铺满标题栏、系统红绿灯直接落在**主题色**顶栏上（`titlebar_transparent` + `fullsize_content_view` + `title_hidden`）；顶栏左侧留 78px 红绿灯位；系统标题栏不再负责拖动 → `Message::StartWindowDrag` → `iced::window::drag` 接管；无标签栏窗口（detached / 设置窗口）补 28px 主题色顶条 | [spec](done/GAP-73-macos-titlebar-overlay/spec.md) · [test-plan](done/GAP-73-macos-titlebar-overlay/test-plan.md) |
+| GAP-72 | 赛博朋克视觉改版：`[appearance].preset`（classic 默认 / cyberpunk 选配）+ 语义化调色板单一真源（`pureterm-settings::theme::palette`，主应用与设置进程共用）+ 终端 ANSI 16 色注入 `Colors` 0..15 槽位（具名色与 `38;5;N` 同时生效，零新增 GPU 通道）+ 外壳 128 处硬编码色归零 + 状态栏四组 chip 着色 + 浮层统一化 + 自包含 HTML 视觉稿 | [spec](done/GAP-72-cyberpunk-visual-refresh/spec.md) · [test-plan](done/GAP-72-cyberpunk-visual-refresh/test-plan.md) |
 
 ## 平台
 

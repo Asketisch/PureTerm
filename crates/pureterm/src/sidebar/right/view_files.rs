@@ -2,11 +2,16 @@ use iced::widget::{button, column, container, row, scrollable, space, text, text
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
 
 use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
+use pureterm_settings::theme::palette::ShellTokens;
+
 use crate::iced_app::Message;
 use crate::sidebar::RightMode;
 
-pub(crate) fn view_files<'a>(files: RemoteFilesTabData<'a>) -> Element<'a, Message, Theme, iced::Renderer> {
-    let dim = Color::from_rgba(0.55, 0.55, 0.55, 1.0);
+pub(crate) fn view_files<'a>(
+    tokens: ShellTokens,
+    files: RemoteFilesTabData<'a>,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    let dim = tokens.text_secondary;
     let mut col = column![].spacing(4);
 
     col = col.push(
@@ -47,7 +52,7 @@ pub(crate) fn view_files<'a>(files: RemoteFilesTabData<'a>) -> Element<'a, Messa
     if files.find_loading {
         col = col.push(text("Searching…").size(10).color(dim));
     } else if let Some(err) = files.find_error {
-        col = col.push(text(err).size(10).color(Color::from_rgb(1.0, 0.45, 0.45)));
+        col = col.push(text(err).size(10).color(tokens.error_text));
     } else {
         for m in files.find_results.iter().take(20) {
             let icon = if m.is_dir { "📁" } else { "📄" };
@@ -70,7 +75,7 @@ pub(crate) fn view_files<'a>(files: RemoteFilesTabData<'a>) -> Element<'a, Messa
     }
 
     if let Some(err) = files.error {
-        col = col.push(text(err).size(10).color(Color::from_rgb(1.0, 0.45, 0.45)));
+        col = col.push(text(err).size(10).color(tokens.error_text));
         return col.into();
     }
 
@@ -107,7 +112,7 @@ pub(crate) fn view_files<'a>(files: RemoteFilesTabData<'a>) -> Element<'a, Messa
         if files.preview_loading {
             col = col.push(text("Loading…").size(10).color(dim));
         } else if let Some(err) = files.preview_error {
-            col = col.push(text(err).size(10).color(Color::from_rgb(1.0, 0.45, 0.45)));
+            col = col.push(text(err).size(10).color(tokens.error_text));
         } else if let Some(read) = files.preview {
             if read.truncated {
                 col = col.push(
@@ -117,7 +122,7 @@ pub(crate) fn view_files<'a>(files: RemoteFilesTabData<'a>) -> Element<'a, Messa
                 );
             }
             let preview: String = read.content.chars().take(4000).collect();
-            col = col.push(text(preview).size(9).color(Color::from_rgba(0.85, 0.85, 0.85, 1.0)));
+            col = col.push(text(preview).size(9).color(tokens.text_body));
             if files.preview_path.is_some() {
                 col = col.push(
                     button(text("Save preview").size(10))

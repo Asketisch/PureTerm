@@ -27,9 +27,9 @@ pub use structs_core::{
     ResumeBinding, UrlSchemeConfig, VaultAgentEntry,
 };
 pub use structs_ui::{
-    AiChatConfig, BlockOutputConfig, ErrorRecoveryConfig, GitConfig, NaturalLanguageConfig,
-    NotificationConfig, PortScannerConfig, SemanticHistoryConfig, ShellIntegrationConfig,
-    SidebarConfig, SoulConfig, StatusBarConfig,
+    AiChatConfig, AppearanceConfig, BlockOutputConfig, ErrorRecoveryConfig, GitConfig,
+    NaturalLanguageConfig, NotificationConfig, PortScannerConfig, SemanticHistoryConfig,
+    ShellIntegrationConfig, SidebarConfig, SoulConfig, StatusBarConfig,
 };
 
 // parse_helpers 的函数仅在 app_config 模块树内部使用,不对外 re-export。

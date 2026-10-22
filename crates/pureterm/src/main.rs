@@ -139,6 +139,7 @@ mod annotations;
 /// GAP-25：多窗口跨进程 IPC（workspace.switch 扇出）。
 mod multi_window_ipc;
 mod status_bar;
+mod ui_theme;
 mod surface_snapshot;
 #[cfg(target_os = "macos")]
 mod macos_menu;

@@ -8,6 +8,8 @@ use iced::widget::{button, column, row, space, text, text_input};
 use iced::{Color, Element, Length, Theme};
 
 use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
+use pureterm_settings::theme::palette::ShellTokens;
+
 use crate::iced_app::Message;
 use crate::output_blocks::{BlockFilter, OutputBlock};
 use crate::sidebar::RightMode;
@@ -17,8 +19,11 @@ use crate::sidebar::RightMode;
 /// 约 6 页密集活动,之后最早的块会被丢弃。
 pub(crate) const PAGE_SIZE: usize = 50;
 
-pub(crate) fn view_blocks<'a>(blocks: BlocksTabData<'a>) -> Element<'a, Message, Theme, iced::Renderer> {
-    let dim = Color::from_rgba(0.55, 0.55, 0.55, 1.0);
+pub(crate) fn view_blocks<'a>(
+    tokens: ShellTokens,
+    blocks: BlocksTabData<'a>,
+) -> Element<'a, Message, Theme, iced::Renderer> {
+    let dim = tokens.text_secondary;
     let mut col = column![].spacing(4);
 
     col = col.push(
@@ -124,9 +129,9 @@ pub(crate) fn view_blocks<'a>(blocks: BlocksTabData<'a>) -> Element<'a, Message,
             .map(|ms| format!("{ms}ms"))
             .unwrap_or_default();
         let exit_color = if block.failed() {
-            Color::from_rgb(1.0, 0.45, 0.45)
+            tokens.error_text
         } else {
-            Color::from_rgba(0.55, 0.85, 0.65, 1.0)
+            tokens.ok_soft
         };
         let label = format!("exit {exit}  {dur}");
         col = col.push(

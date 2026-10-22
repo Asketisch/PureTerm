@@ -14,7 +14,7 @@ pub fn view<'a, Message: 'a>(color: iced::Color, size: f32) -> Element<'a, Messa
             border: Border {
                 radius: CORNER_RADIUS.into(),
                 width: 1.0,
-                color: crate::theme::BORDER,
+                color: crate::theme::tokens().hairline,
             },
             ..container::Style::default()
         })
