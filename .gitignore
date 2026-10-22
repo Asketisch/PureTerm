@@ -49,3 +49,8 @@ graphify-out/.graphify_uncached.txt
 .superpowers/
 .reflect/
 .zcode/
+
+# Python 测试缓存
+__pycache__/
+*.pyc
+.pytest_cache/
