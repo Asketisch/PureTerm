@@ -17,6 +17,10 @@ pub fn run() -> std::io::Result<()> {
 
     // 单实例:若其它 puretermd 持锁,安静退出(GUI
     // 的按需拉起随后会连上既有实例)。
+    // 清扫上一次运行(崩溃 / 被杀 / 正常退出)留下的临时目录。
+    // 只在启动时做一次 —— 扫描临时目录不该出现在热路径上。
+    crate::shell_integration::sweep_stale_temp_dirs();
+
     let _lock = match discovery::acquire_instance_lock()? {
         Some(file) => file,
         None => {

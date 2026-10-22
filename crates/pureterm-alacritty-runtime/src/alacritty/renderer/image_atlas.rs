@@ -113,11 +113,30 @@ impl ImageAtlas {
             return None;
         }
 
-        // 已缓存?只刷新 LRU。
+        // 已缓存?
+        //
+        // 回归背景:这里原本**只刷新 LRU 就返回旧位置**,新像素从未
+        // 被 blit —— 于是「同一个 id 重传」永远显示第一次的旧图。
+        // kitty 客户端用同一个 id 重传很常见(动画、重新渲染、
+        // 同一路径的图片重新加载),这条路径必须真正更新像素。
+        //
+        // 尺寸变了则装不下 —— 逐出旧条目,按新尺寸重新分配。
         if let Some(&placement) = self.cache.get(&id) {
-            self.cache.shift_remove(&id);
-            self.cache.insert(id, placement);
-            return Some(placement);
+            if placement.width == width && placement.height == height {
+                let x = (placement.u * ATLAS_SIZE as f32).round() as u32;
+                let y = (placement.v * ATLAS_SIZE as f32).round() as u32;
+                self.blit_rgba(x, y, width, height, &rgba);
+                self.pixels.insert(id, Arc::clone(&rgba));
+                self.dims.insert(id, (width, height));
+                // 标脏 —— 渲染线程据此把新像素上传到 GPU。
+                self.dirty = true;
+                // 刷新 LRU 顺序。
+                self.cache.shift_remove(&id);
+                self.cache.insert(id, placement);
+                return Some(placement);
+            }
+            // 尺寸变了:逐出,走下面的分配路径。
+            self.remove(id);
         }
 
         // LRU 逐出:达到容量时丢弃最旧条目。
@@ -335,16 +354,38 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_insert_refreshes_lru_no_dirty() {
+    fn duplicate_insert_updates_pixels_and_marks_dirty() {
         let mut atlas = ImageAtlas::new();
         let _ = atlas.insert(1, solid_image(255, 0, 0, 255), 16, 16).unwrap();
         assert!(atlas.is_dirty());
         atlas.take_dirty_data();
         assert!(!atlas.is_dirty());
 
-        let placement = atlas.insert(1, solid_image(255, 0, 0, 255), 16, 16).unwrap();
+        // 同 id 重传:必须更新像素并标脏(否则屏幕永远显示旧图)。
+        let placement = atlas.insert(1, solid_image(0, 255, 0, 255), 16, 16).unwrap();
         assert_eq!(placement.width, 16);
-        assert!(!atlas.is_dirty());
+        assert!(atlas.is_dirty(), "同 id 重传必须标脏,否则新像素不会上传到 GPU");
+
+        // 位置不变(复用原矩形),但内容已经是新的绿色。
+        let dirty = atlas.take_dirty_data().expect("dirty data");
+        let rect = dirty.regions.first().copied().expect("至少一个脏区域");
+        let stride = (ATLAS_SIZE * 4) as usize;
+        let start = (rect.y as usize * stride) + (rect.x as usize * 4);
+        assert_eq!(&dirty.data[start..start + 4], &[0, 255, 0, 255], "图集里应已是新像素");
+    }
+
+    /// 同 id 但**尺寸变了** → 旧的矩形装不下,必须重新分配。
+    #[test]
+    fn duplicate_insert_with_new_size_reallocates() {
+        let mut atlas = ImageAtlas::new();
+        let first = atlas.insert(1, solid_image(255, 0, 0, 255), 16, 16).unwrap();
+        atlas.take_dirty_data();
+
+        let big = Arc::new(vec![0u8, 255, 0, 255].repeat(32 * 32));
+        let second = atlas.insert(1, big, 32, 32).unwrap();
+        assert_eq!(second.width, 32);
+        assert_eq!(second.height, 32);
+        assert!(atlas.is_dirty());
     }
 
     #[test]

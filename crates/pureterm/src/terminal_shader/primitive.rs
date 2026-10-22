@@ -32,6 +32,10 @@ use super::vertices::{BgVertex, ScreenUniforms, TextVertex};
 pub struct TerminalPrimitive {
     pub(in crate::terminal_shader) bg_vertices: Vec<BgVertex>,
     pub(in crate::terminal_shader) bg_indices: Vec<u32>,
+    /// bg 通道里「全屏底色 quad」的索引条数(= 6)。其余索引属于
+    /// 单元格底色 / 选区 / 触发器高亮。绘制时按 base / 其余两段
+    /// 分开画,中间插入背景图 —— 否则不透明的全屏底色会把背景图盖住。
+    pub(in crate::terminal_shader) bg_base_index_count: u32,
     pub(in crate::terminal_shader) text_vertices: Vec<TextVertex>,
     pub(in crate::terminal_shader) text_indices: Vec<u32>,
     // 部分上传的脏 atlas(Fix 2):保存脏矩形列表 + 一个 Arc 共享的完整
@@ -131,6 +135,7 @@ impl Primitive for TerminalPrimitive {
             bg_mode: 0,
             bg_img_width: 0.0,
             bg_img_height: 0.0,
+            _padding: 0.0,
         };
 
         let mut gpu = self.gpu.lock().unwrap();
@@ -165,8 +170,39 @@ impl Primitive for TerminalPrimitive {
     ) -> bool {
         let gpu = self.gpu.lock().unwrap();
 
-        // GAP-54:先绘制背景图片(位于最下层)。复用同一组 ScreenUniforms(slot 0),
-        // 并绑定每面板的图片+采样器(slot 1)。
+        // 绘制顺序(从下到上):
+        //   1. 全屏底色(bg 通道的第 0..base 段)
+        //   2. 背景图(可选;带 alpha,叠在底色之上)
+        //   3. 单元格底色 / 选区 / 触发器高亮(bg 通道的 base..count 段)
+        //   4. 图像四边形(Sixel / 内联图像)
+        //   5. 文本
+        //
+        // 回归背景:早先把背景图排在最前,随后被**不透明**的全屏底色
+        // 整个盖住 —— 背景图功能等于没有。现在把 bg 通道拆成两段,
+        // 中间插入背景图。
+        let bg_color_ready = gpu.bg_index_count > 0
+            && gpu.bg_vertex_buffer.is_some()
+            && gpu.bg_index_buffer.is_some()
+            && gpu.bg_bind_group.is_some();
+
+        // 1) 全屏底色
+        if bg_color_ready {
+            let (vb, ib, bg) = (
+                gpu.bg_vertex_buffer.as_ref().unwrap(),
+                gpu.bg_index_buffer.as_ref().unwrap(),
+                gpu.bg_bind_group.as_ref().unwrap(),
+            );
+            // 夹一下索引区间:wgpu 的校验错误默认是**致命**的
+            // (会 abort 整个应用),越界的 draw 区间绝不能发出去。
+            let base = gpu.bg_base_index_count.min(gpu.bg_index_count);
+            render_pass.set_pipeline(&pipeline.bg_color_pipeline);
+            render_pass.set_bind_group(0, bg, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..base, 0, 0..1);
+        }
+
+        // 2) 背景图
         if gpu.bg_image_index_count > 0 {
             if let (Some(vb), Some(ib), Some(img_bg), Some(uniform_bg)) = (
                 &gpu.bg_image_vertex_buffer,
@@ -174,7 +210,10 @@ impl Primitive for TerminalPrimitive {
                 &gpu.bg_image_bind_group,
                 &gpu.bg_image_uniform_bind_group,
             ) {
-                render_pass.set_pipeline(&pipeline.bg_image_pipeline);
+                // 背景图管线按需创建(首次绘制时才编译 shader)。
+                render_pass.set_pipeline(
+                    pipeline.bg_image_pipeline.get(&pipeline.device, pipeline.format),
+                );
                 render_pass.set_bind_group(0, uniform_bg, &[]);
                 render_pass.set_bind_group(1, img_bg, &[]);
                 render_pass.set_vertex_buffer(0, vb.slice(..));
@@ -183,15 +222,22 @@ impl Primitive for TerminalPrimitive {
             }
         }
 
-        // 绘制背景色通道
-        if gpu.bg_index_count > 0 {
-            if let (Some(vb), Some(ib), Some(bg)) = (&gpu.bg_vertex_buffer, &gpu.bg_index_buffer, &gpu.bg_bind_group) {
-                render_pass.set_pipeline(&pipeline.bg_color_pipeline);
-                render_pass.set_bind_group(0, bg, &[]);
-                render_pass.set_vertex_buffer(0, vb.slice(..));
-                render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.draw_indexed(0..gpu.bg_index_count, 0, 0..1);
-            }
+        // 3) 单元格底色 / 选区 / 触发器高亮
+        if bg_color_ready && gpu.bg_index_count > gpu.bg_base_index_count {
+            let (vb, ib, bg) = (
+                gpu.bg_vertex_buffer.as_ref().unwrap(),
+                gpu.bg_index_buffer.as_ref().unwrap(),
+                gpu.bg_bind_group.as_ref().unwrap(),
+            );
+            render_pass.set_pipeline(&pipeline.bg_color_pipeline);
+            render_pass.set_bind_group(0, bg, &[]);
+            render_pass.set_vertex_buffer(0, vb.slice(..));
+            render_pass.set_index_buffer(ib.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(
+                gpu.bg_base_index_count..gpu.bg_index_count,
+                0,
+                0..1,
+            );
         }
 
         // T-core-graphics v3:image quad 通道。绘制在 bg_color 与 cell_text 之间,
@@ -204,7 +250,10 @@ impl Primitive for TerminalPrimitive {
                 &pipeline.image_atlas_bind_group,
                 &gpu.image_quad_uniform_bind_group,
             ) {
-                render_pass.set_pipeline(&pipeline.image_quad_pipeline);
+                // 图像四边形管线按需创建(首次绘制时才编译 shader)。
+                render_pass.set_pipeline(
+                    pipeline.image_quad_pipeline.get(&pipeline.device, pipeline.format),
+                );
                 render_pass.set_bind_group(0, uniform_bg, &[]);
                 render_pass.set_bind_group(1, atlas_bg, &[]);
                 render_pass.set_vertex_buffer(0, vb.slice(..));

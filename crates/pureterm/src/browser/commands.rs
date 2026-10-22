@@ -128,10 +128,15 @@ impl BrowserOp {
 
     /// `wait` 的有效截止时间（毫秒）（调用方覆盖或默认 5 秒）。
     fn wait_deadline_ms(&self) -> u64 {
+        wait_deadline_ms(self.wait_timeout_ms())
+    }
+
+    /// `wait` 的调用方指定超时(毫秒);非 `wait` 操作为 `None`。
+    pub fn wait_timeout_ms(&self) -> Option<u64> {
         if let BrowserOp::Wait { timeout_ms, .. } = self {
-            timeout_ms.unwrap_or(5_000)
+            *timeout_ms
         } else {
-            5_000
+            None
         }
     }
 
@@ -156,7 +161,9 @@ impl BrowserOp {
             BrowserOp::Type { selector, text } => js_type(selector, text),
             BrowserOp::Extract { selector, attribute } => js_extract(selector, attribute.as_deref()),
             BrowserOp::Scroll { x, y, selector } => js_scroll(x.unwrap_or(0), y.unwrap_or(0), selector.as_deref()),
-            BrowserOp::Wait { selector, .. } => js_wait(selector, self.wait_deadline_ms()),
+            // `wait` 由 `browser::wait` 的轮询状态机驱动(每次一次非阻塞
+            // 探测),不走这里 —— 这里只是兜底,保证 JS 里没有忙等。
+            BrowserOp::Wait { selector, .. } => super::wait::wait_probe_js(selector),
             BrowserOp::GetUrl => "(function(){try{return {ok:true,url:location.href};}catch(e){return {ok:false,error:String(e&&e.message||e)};}})()".to_string(),
             BrowserOp::GetTitle => "(function(){try{return {ok:true,title:document.title};}catch(e){return {ok:false,error:String(e&&e.message||e)};}})()".to_string(),
             // navigate/screenshot 从不进入 build_js（在 Rust 中处理）；保留一个
@@ -203,6 +210,15 @@ pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<Browser
                 ));
             }
         }
+        // `wait` 由 `browser::wait` 的**轮询状态机**驱动(iced 主循环
+        // 按 tick 重新求值),不能走这里的一次性 JS 求值路径 ——
+        // WKWebView 的 `evaluateJavaScript` 不 await Promise,而同步
+        // 忙等会占住页面的 JS 线程,让动态出现的元素永远出不来。
+        BrowserOp::Wait { .. } => {
+            let _ = tx.send(BrowserReply::Error(
+                "browser.wait must be driven by the app's polling loop".into(),
+            ));
+        },
         other => {
             if !ctx.is_realized() {
                 let _ = tx.send(BrowserReply::Error(
@@ -225,6 +241,14 @@ pub fn execute(ctx: &BrowserContext, op: &BrowserOp, tx: oneshot::Sender<Browser
             });
         }
     }
+}
+
+/// `wait` 的默认等待上限（毫秒）——调用方未指定 `timeout_ms` 时使用。
+pub const WAIT_DEFAULT_TIMEOUT_MS: u64 = 5_000;
+
+/// `wait` 的有效截止时间（毫秒）：调用方覆盖,否则用默认值。
+pub fn wait_deadline_ms(timeout_ms: Option<u64>) -> u64 {
+    timeout_ms.unwrap_or(WAIT_DEFAULT_TIMEOUT_MS)
 }
 
 /// GAP-7.8（macOS）：启动 WKWebView `takeSnapshotWithConfiguration:
@@ -466,15 +490,6 @@ fn js_scroll(x: i64, y: i64, selector: Option<&str>) -> String {
     )
 }
 
-/// `wait` 返回一个 **Promise**；WKWebView 的 `evaluateJavaScript` 会等待它，
-/// 并在结算时触发 wry 回调——因此 Rust 侧无需轮询就能得到恰好一次
-/// 解析（找到 / 超时）。
-fn js_wait(selector: &str, timeout_ms: u64) -> String {
-    let sel = js_str(selector);
-    format!(
-        "(function(sel,timeoutMs){{return new Promise(function(resolve){{var start=Date.now();function check(){{if(document.querySelector(sel)){{resolve({{ok:true,found:true,selector:sel}});return;}}if(Date.now()-start>=timeoutMs){{resolve({{ok:false,error:'timeout',selector:sel,timeout_ms:timeoutMs}});return;}}setTimeout(check,80);}}check();}});}})({sel},{timeout_ms})"
-    )
-}
 
 /// 敏感度闸门用的尽力而为的 origin（`scheme://host[:port]`）。去掉
 /// 路径/查询/用户信息。同源的两个 URL 不算“敏感”。
@@ -602,6 +617,30 @@ mod tests {
         // 原始引号/反斜杠绝不能未转义地漏进 IIFE 参数列表
         // （它位于 JSON 引号包裹的 JS 字符串内）。合理性检查：括号平衡。
         assert_eq!(js.matches('(').count(), js.matches(')').count());
+    }
+
+    /// 回归：`wait` 的 JS 绝不能是**同步忙等**。
+    ///
+    /// 忙等会占住页面的 JS 线程 —— 页面自己用 `setTimeout` / `fetch`
+    /// 回调插入的元素永远出不来，于是 `browser wait` 对动态元素必然
+    /// 超时。现在 `wait` 走 `browser::wait` 的轮询状态机,JS 只做
+    /// 一次 `querySelector`。
+    #[test]
+    fn wait_js_is_not_a_busy_loop() {
+        let op = BrowserOp::Wait {
+            selector: "#marker".into(),
+            timeout_ms: Some(1_000),
+        };
+        let js = op.build_js();
+        assert!(js.contains("querySelector"));
+        assert!(!js.contains("while"), "wait 的 JS 不能忙等: {js}");
+        assert!(!js.contains("for("), "wait 的 JS 不能忙等: {js}");
+    }
+
+    #[test]
+    fn wait_deadline_uses_override_or_default() {
+        assert_eq!(wait_deadline_ms(Some(1234)), 1234);
+        assert_eq!(wait_deadline_ms(None), WAIT_DEFAULT_TIMEOUT_MS);
     }
 
     #[test]

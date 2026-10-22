@@ -14,16 +14,73 @@ impl SocketRouter {
     /// 注册 config.* / ssh.* / debug.* 方法(SSH 在非 unix 平台注册为 noop)。
     pub(super) fn register_config(&mut self) {
         // ── config.* 命名空间(4 个方法) ──────────────────────────────────────────────
-        self.register("config.get", |params, _snap| {
+        self.register("config.get", |params, snap| {
             let key = params
                 .as_ref()
                 .and_then(|p| p.get("key"))
                 .and_then(|v| v.as_str());
             match key {
-                Some(k) => (
-                    Ok(serde_json::json!({"key": k, "note": "config.get: key-level reading not yet implemented; use config.list for known keys"})),
-                    None,
-                ),
+                Some(k) => {
+                    // **真读**:按点分键路径从配置文件里取值。早前这里
+                    // 只回一句「not yet implemented」却带**成功**状态 ——
+                    // 调用方(agent / MCP)会以为读到了。
+                    let Some((table, field)) = crate::config_set::split_dotted_key(k) else {
+                        return (
+                            Err(JsonRpcError {
+                                code: ERROR_INVALID_PARAMS,
+                                message: format!("invalid config key {k:?}"),
+                                data: None,
+                            }),
+                            None,
+                        );
+                    };
+                    let path = snap.config_path.clone().map(std::path::PathBuf::from);
+                    let Some(path) = path else {
+                        return (
+                            Err(JsonRpcError {
+                                code: ERROR_INVALID_PARAMS,
+                                message: "config path unknown".into(),
+                                data: None,
+                            }),
+                            None,
+                        );
+                    };
+                    let text = match std::fs::read_to_string(&path) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            return (
+                                Err(JsonRpcError {
+                                    code: ERROR_INVALID_PARAMS,
+                                    message: format!("cannot read {}: {e}", path.display()),
+                                    data: None,
+                                }),
+                                None,
+                            );
+                        },
+                    };
+                    let doc: toml_edit::DocumentMut = match text.parse() {
+                        Ok(d) => d,
+                        Err(e) => {
+                            return (
+                                Err(JsonRpcError {
+                                    code: ERROR_INVALID_PARAMS,
+                                    message: format!("config is not valid TOML: {e}"),
+                                    data: None,
+                                }),
+                                None,
+                            );
+                        },
+                    };
+                    let value = crate::config_set::read_value(&doc, &table, &field);
+                    (
+                        Ok(serde_json::json!({
+                            "key": k,
+                            "value": value,
+                            "exists": value.is_some(),
+                        })),
+                        None,
+                    )
+                },
                 None => (
                     Ok(serde_json::json!({
                         "keys": [
@@ -64,14 +121,45 @@ impl SocketRouter {
             )
         });
 
-        self.register("config.set", |_params, _snap| {
-            // 配置变更必须经 mutate_config,以保留 SSH 配置
-            // 等其他段落。经 IPC 直接按键值设置暂缓实现。
+        self.register("config.set", |params, _snap| {
+            // **真写**:主循环经 `mutate_config` 落盘(保留文件里其余
+            // 内容与格式),随后重载配置。早前这里只回一句
+            // 「not yet supported」却带**成功**状态 —— 调用方会以为
+            // 改成功了。
+            let key = params
+                .as_ref()
+                .and_then(|p| p.get("key"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            if crate::config_set::split_dotted_key(&key).is_none() {
+                return (
+                    Err(JsonRpcError {
+                        code: ERROR_INVALID_PARAMS,
+                        message: format!("invalid config key {key:?} (expected dotted path like font.size)"),
+                        data: None,
+                    }),
+                    None,
+                );
+            }
+            let value = params
+                .as_ref()
+                .and_then(|p| p.get("value"))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            if value.is_null() {
+                return (
+                    Err(JsonRpcError {
+                        code: ERROR_INVALID_PARAMS,
+                        message: "config.set needs a 'value'".into(),
+                        data: None,
+                    }),
+                    None,
+                );
+            }
             (
-                Ok(serde_json::json!({
-                    "note": "config.set: not yet supported via IPC; use pureterm-settings or edit toml"
-                })),
-                None,
+                Ok(serde_json::json!({"key": key, "value": value, "writing": true})),
+                Some(IpcSideEffect::SetConfig { key, value }),
             )
         });
 
@@ -107,6 +195,40 @@ impl SocketRouter {
                 (
                     Ok(serde_json::json!({"connecting": true, "profile": name, "index": idx})),
                     Some(IpcSideEffect::SshConnect { profile_index: idx }),
+                )
+            });
+
+            // T-core-tmux-cc：打开一个 `tmux -CC` 控制模式标签页。
+            self.register("tmux.attach", |params, _snap| {
+                let session = params
+                    .as_ref()
+                    .and_then(|p| p.get("session"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                let new_window = params
+                    .as_ref()
+                    .and_then(|p| p.get("new_window"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                // tmux socket 命名空间(`tmux -L <name>`)。指定它即连接到
+                // **独立**的 tmux 服务器(不碰用户默认的那个)。
+                let socket = params
+                    .as_ref()
+                    .and_then(|p| p.get("socket"))
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string);
+                (
+                    Ok(serde_json::json!({
+                        "attaching": true,
+                        "session": session,
+                        "new_window": new_window,
+                        "socket": socket,
+                    })),
+                    Some(IpcSideEffect::TmuxAttach { session, new_window, socket }),
                 )
             });
 

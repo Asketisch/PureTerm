@@ -93,6 +93,7 @@ pub fn capture(
     visible_only: bool,
     lines_cap: Option<usize>,
     ipc_id: u64,
+    cell_size: (f32, f32),
 ) -> JsonRpcResponse {
     let term = term_arc.lock();
     let start = if visible_only {
@@ -120,6 +121,10 @@ pub fn capture(
             "text": text,
             "lines": lines,
             "truncated": truncated,
+            // 单元格像素尺寸 —— 消费方(如 `capture export --format svg`)
+            // 需要它才能把终端重建成尺寸正确的图像。
+            "cell_width": cell_size.0,
+            "cell_height": cell_size.1,
         }),
     )
 }
@@ -199,6 +204,10 @@ mod tests {
     use crossbeam_channel::bounded;
     use std::sync::Arc;
 
+    /// 捕获时使用的单元格尺寸（像素）。`capture()` 用它把字符数换算成
+    /// 像素宽度，供 SVG 导出使用。
+    const CELL: (f32, f32) = (8.0, 16.0);
+
     /// 构建一个写入 `text` 的 `Term<ChannelEventListener>` 网格
     ///（CR-LF 换行，与 PTY 投递字节的方式一致），供 `capture()` 使用。
     /// 通过一次性 channel 使用 `ChannelEventListener`——我们从不读取事件；
@@ -256,7 +265,7 @@ mod tests {
     #[test]
     fn capture_returns_text_written_into_grid() {
         let term = term_with("hello\r\nworld\r\n");
-        let resp = capture(term, false, None, 1);
+        let resp = capture(term, false, None, 1, CELL);
         let v = resp.result.expect("ok response");
         let text = v["text"].as_str().expect("text field");
         assert!(text.contains("hello"), "missing hello: {text:?}");
@@ -270,7 +279,7 @@ mod tests {
         // 仍包含刚写入的末尾，因此捕获必须包含它（保护可见-only 分支，并确保
         // 不返回空/垃圾区间）。
         let term = term_with("fresh\r\nline\r\n");
-        let resp = capture(term, true, None, 2);
+        let resp = capture(term, true, None, 2, CELL);
         let v = resp.result.expect("ok response");
         let text = v["text"].as_str().expect("text field");
         assert!(text.contains("fresh") || text.contains("line"), "visible capture: {text:?}");
@@ -282,13 +291,13 @@ mod tests {
         // 完整捕获横跨整个视口（5 条写入行加末尾空行），因此会超过上限。
         // `tail_lines` 具体保留哪些行由 `tail_lines` 单元测试覆盖；
         // 这里只证明 `capture` 端到端接通了 `lines_cap`。
-        let full = capture(Arc::clone(&term), false, None, 1);
+        let full = capture(Arc::clone(&term), false, None, 1, CELL);
         let full_text = full.result.unwrap()["text"].as_str().unwrap().to_string();
         let full_lines = full_text.lines().count();
         assert!(full_lines >= 5, "full capture must hold the ≥5 written lines: {full_lines}");
 
         // 上限 2 ⇒ 标记为截断且最多保留 2 行。
-        let capped = capture(term, false, Some(2), 2);
+        let capped = capture(term, false, Some(2), 2, CELL);
         let v = capped.result.unwrap();
         assert_eq!(v["truncated"], true, "capping a >2-line grid must truncate");
         assert!(v["text"].as_str().unwrap().lines().count() <= 2, "capped should have ≤2 lines");

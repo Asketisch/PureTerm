@@ -4,9 +4,36 @@
 [env]
 TERM = "xterm-256color"
 
+[font]
+# 终端字号。**注意**:`size` 在 `[font]` 下,不在 `[font.normal]` 下 ——
+# 加载器(`app_config.rs`)与设置 UI 都读 `[font].size`。
+size = 14.0
+
+[font.normal]
+# 终端主字体族。`monospace` 是跨平台泛型名,macOS / Windows 上会被
+# 解析为 Menlo / Consolas;也可以直接写具体族名(如 "JetBrains Mono")。
+family = "monospace"
+
+[colors.primary]
+background = "#1C1C1E"
+foreground = "#D4D6CF"
+
 [window]
 padding = { x = 2, y = 0 }
 dynamic_title = true
+#
+# GAP-20 / GAP-55:窗口玻璃 + 透明度/模糊(`[window]` 嵌套表)。
+# [window.glass]
+# enabled = false
+# style = "vibrancy"
+# [window.border]
+# enabled = false
+# width = 2.0
+# active_color = "#007AFF"
+# [window.effects]
+# enabled = false
+# opacity = 0.92
+# blur = false
 
 [scrolling]
 history = 10000
@@ -273,21 +300,6 @@ fallback_chain = [
     { name = "Emoji",     path = "", script = "emoji" },
     { name = "Serif",     path = "", script = "serif" },
 ]
-#
-# GAP-20 / GAP-55:窗口玻璃 + 透明度/模糊(`[window]` 嵌套表)。
-[window]
-# [window.glass]
-# enabled = false
-# style = "vibrancy"
-# [window.border]
-# enabled = false
-# width = 2.0
-# active_color = "#007AFF"
-# [window.effects]
-# enabled = false
-# opacity = 0.92
-# blur = false
-#
 # GAP-22:Touch Bar(macOS 触控栏)。
 [touch_bar]
 enabled = false

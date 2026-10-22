@@ -44,6 +44,68 @@ use crate::ssh::pty::SshPty;
 use crate::ssh::reconnect::SshState;
 
 impl TerminalContext {
+    /// T-core-tmux-cc:创建一个 `tmux -CC` 控制模式的终端上下文。
+    ///
+    /// `session` 为 `Some(name)` 时附加到已有会话,否则新建一个名为
+    /// `pureterm-<pid>` 的会话。返回一个**已经连上**的上下文 ——
+    /// `tmux -CC` 子进程在构造时就已拉起,`%output` 信封由
+    /// [`crate::tmux_cc::pump`] 泵进网格。
+    ///
+    /// 失败(tmux 不存在 / 会话不存在)时返回带 tmux stderr 的错误,
+    /// 让调用方能把真实原因告诉用户,而不是静默失败。
+    #[cfg(unix)]
+    pub fn new_tmux(
+        session: Option<&str>,
+        cols: u16,
+        rows: u16,
+        new_window: bool,
+        socket_label: Option<&str>,
+    ) -> io::Result<Self> {
+        use crate::tmux_cc::pty::{TmuxChild, TmuxSpawnArgs};
+
+        let mut args = match session {
+            Some(name) if new_window => TmuxSpawnArgs::attach_new_window(name.to_string()),
+            Some(name) => TmuxSpawnArgs::attach(name.to_string()),
+            None => TmuxSpawnArgs::new_session(&format!("pureterm-{}", std::process::id()), cols, rows),
+        };
+        // tmux socket 命名空间(`tmux -L <name>`)。指定它即连接到**独立**
+        // 的 tmux 服务器 —— 测试用它来隔离,用户也可以用它连接并行的
+        // tmux 实例。
+        args.socket_label = socket_label.map(str::to_string);
+        let mut child = TmuxChild::spawn(&args).map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, format!("failed to spawn `tmux -CC`: {e}"))
+        })?;
+
+        let (event_tx, event_rx) = bounded(64);
+        let event_listener = ChannelEventListener::new(event_tx);
+        let size = TermSize::new(cols.max(1) as usize, rows.max(1) as usize);
+        let terminal = Term::new(TermConfig::default(), &size, event_listener.clone());
+        let terminal = Arc::new(FairMutex::new(terminal));
+
+        // 信封接收端的克隆交给泵线程 —— 它阻塞在这里,不持有 child 的锁,
+        // 因此用户按键(`%input`)永远不会被堵住。
+        let envelopes = child.envelope_rx();
+        let writer = child.writer();
+        let pane_id = child.pane_id_handle();
+        let session_name = session.map(|s| s.to_string());
+        crate::tmux_cc::pump::spawn_pump(
+            Arc::clone(&terminal),
+            envelopes,
+            event_listener,
+            writer,
+            pane_id,
+        );
+
+        Ok(TerminalContext::Tmux(super::internal::TmuxCtx {
+            terminal,
+            event_rx,
+            size,
+            child: Arc::new(Mutex::new(child)),
+            session_id: None,
+            session_name,
+        }))
+    }
+
     /// 创建新的本地 PTY 终端上下文。等价于 P2 之前的 `TerminalContext::new()`。
     ///
     /// `cwd` 为 `Some` 时成为 shell 的启动目录，使新 Tab/面板能继承

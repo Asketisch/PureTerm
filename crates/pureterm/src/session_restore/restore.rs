@@ -38,7 +38,7 @@ pub fn restore(
         Ok(list) => list
             .into_iter()
             .filter_map(|v| {
-                let id = v.get("id")?.as_str()?.to_string();
+                let id = v.get("session_id")?.as_str()?.to_string();
                 let kind = v.get("kind")?.as_str()?.to_string();
                 Some((id, kind))
             })

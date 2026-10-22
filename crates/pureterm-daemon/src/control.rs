@@ -192,12 +192,31 @@ async fn handle_connection(stream: tokio::net::UnixStream, state: Arc<ControlSta
     // 这里(先于同步 `dispatch`),因为阻塞需要 await。
     // 每条连接是独立的 tokio 任务,因此驻留的等待者只阻塞
     // 自己,不影响 accept 循环或其它调用方。
+    let is_shutdown = request.method == "daemon.shutdown";
     let response = if request.method.starts_with("wait_for.") {
         crate::wait_for::handle(&request, &state).await
     } else {
         dispatch(&request, &state)
     };
     let _ = write_half.write_all(response.to_line().as_bytes()).await;
+    if is_shutdown {
+        shutdown_and_exit(&state).await;
+    }
+}
+
+/// `daemon.shutdown` 的实际执行:杀掉全部会话、清掉控制 socket、退出进程。
+///
+/// 应答**先**写出去(调用方要看到 `{"ok": true}`),所以这里先等一小会儿
+/// 让 socket 把数据刷出去,再收工。
+async fn shutdown_and_exit(state: &ControlState) {
+    // 给应答一点时间刷出去。
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    for info in state.manager.list() {
+        state.manager.kill(&info.id);
+    }
+    // 清理控制 socket —— 下次启动会重建它。
+    let _ = std::fs::remove_file(crate::discovery::socket_path());
+    std::process::exit(0);
 }
 
 /// 把 JSON-RPC 请求路由到其处理器。
@@ -205,6 +224,16 @@ pub fn dispatch(request: &JsonRpcRequest, state: &ControlState) -> JsonRpcRespon
     let id = request.id;
     let result: Result<serde_json::Value, JsonRpcError> = match request.method.as_str() {
         "daemon.ping" => Ok(serde_json::json!({"ok": true})),
+        // 优雅关闭:回完应答后杀掉全部会话并退出进程。
+        //
+        // 为什么要它:守护进程**故意**在 GUI 退出后继续存活(会话要扛过
+        // GUI 重启),但它**没有**任何自停手段 —— 用户既没法回收它,
+        // 自动化测试也会每个用例泄漏一个(几百个 `puretermd` 足以把
+        // 机器拖垮:E2E 套件耗时从 85s 涨到 345s,大量用例超时)。
+        "daemon.shutdown" => {
+            let sessions = state.manager.list().len();
+            Ok(serde_json::json!({"ok": true, "sessions": sessions}))
+        },
         "daemon.status" => Ok(serde_json::json!({
             "pid": std::process::id(),
             "uptime_s": state.started.elapsed().as_secs(),
@@ -540,6 +569,19 @@ mod tests {
         let resp = dispatch(&req, &state());
         assert!(resp.result.is_some());
         assert_eq!(resp.result.unwrap()["ok"], true);
+    }
+
+    /// `daemon.shutdown` 必须回一个成功应答(调用方据此确认「已收到,
+    /// 马上退出」)。真正的退出在 `handle_connection` 里做 —— 这里只
+    /// 覆盖分发的部分(否则单测会把自己杀掉)。
+    #[test]
+    fn shutdown_acks_with_session_count() {
+        let req = JsonRpcRequest::new(11, "daemon.shutdown");
+        let resp = dispatch(&req, &state());
+        assert!(resp.error.is_none(), "shutdown 应被接受: {:?}", resp.error);
+        let result = resp.result.unwrap();
+        assert_eq!(result["ok"], true);
+        assert_eq!(result["sessions"], 0);
     }
 
     #[test]

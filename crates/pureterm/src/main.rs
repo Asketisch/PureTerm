@@ -1,3 +1,5 @@
+/// `config.get` / `config.set` 的点分键路径核心(见模块文档)。
+mod config_set;
 mod automation;
 mod script_cli;
 // `macos_url_scheme` 自带 `#[cfg(not(target_os = "macos"))]` 空实现
@@ -244,9 +246,22 @@ mod accessibility;
 mod p4_cli;
 /// 供 iced_app 使用的 P4 GAP 运行时包。
 mod p4_runtime;
+/// 启动耗时追踪(PURETERM_TRACE_STARTUP=1 时输出里程碑)。
+mod startup_trace;
+/// 字体族名平台化解析(泛型名 → 真实族名)。
+mod font_family;
 
 fn main() -> iced::Result {
-    env_logger::init();
+    // 计时起点必须早于任何其它工作——它代表「用户按下回车到
+    // 应用开始干活」的时刻。放在 `env_logger::init()` 之前,
+    // 以免日志初始化本身被算进启动耗时。
+    startup_trace::init();
+    startup_trace::mark("main_enter");
+    // 毫秒级时间戳:启动排查需要看清「哪一步花了 200ms」,
+    // 秒级精度不够用。格式与 env_logger 默认一致,仅细化时间精度。
+    env_logger::Builder::from_default_env()
+        .format_timestamp_millis()
+        .init();
 
     // GAP-6.2：结构化 CLI 命令分组（clap derive）。裸运行 `pureterm`（无参数）
     // 启动 GUI；任何参数都会派发到 CLI。
@@ -256,6 +271,7 @@ fn main() -> iced::Result {
     }
 
     ensure_default_config();
+    startup_trace::mark_delta("config_bootstrap");
     iced_app::run()
 }
 

@@ -40,16 +40,19 @@ pub fn create_invite(cfg: &SharedSessionConfig, host: &str) -> Result<ShareInvit
     })
 }
 
-/// 占位服务端入口——记录日志后立即返回。
+/// 占位服务端入口 —— **尚未实现**,总是返回错误。
+///
+/// 回归背景:早前这里打印一句 “would listen on …” 然后返回 `Ok`,
+/// 于是 `pureterm share serve` 以**退出码 0** 结束,脚本会以为共享
+/// 会话服务已经起来了。桩就应该以失败告终。
 pub fn serve_stub(cfg: &SharedSessionConfig) -> Result<(), String> {
     if !cfg.enabled {
         return Err("shared_session disabled".into());
     }
-    eprintln!(
-        "GAP-44 stub: would listen on 0.0.0.0:{} (WebRTC/WebSocket deferred)",
+    Err(format!(
+        "共享会话服务端尚未实现(计划监听 0.0.0.0:{};WebRTC/WebSocket 延后)",
         cfg.port
-    );
-    Ok(())
+    ))
 }
 
 fn simple_hash(s: &str) -> u64 {

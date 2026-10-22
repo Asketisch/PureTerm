@@ -1117,3 +1117,59 @@ bar_height = 5
         let _ = std::fs::remove_file(&path_low);
         assert_eq!(cfg.bar_height, 18);
     }
+
+/// 随二进制发布的默认配置必须是**合法 TOML**。
+///
+/// 回归背景:默认配置里 `[window]` 表被重复定义了两遍,TOML 规范
+/// 禁止同名表重复出现,于是整份文件解析失败。后果是静默且广泛的:
+/// `load_ssh_profiles` / `load_custom_commands` / `load_triggers`
+/// 三个加载器各自打印一条 WARN 后回退到默认值,用户写入的
+/// `[[ssh.profiles]]`、`[[commands]]`、`[[triggers]]` 全部失效,
+/// 而应用照常启动 —— 没有任何报错提示。
+#[test]
+fn default_config_is_valid_toml() {
+    let contents = include_str!("../../default-config.toml");
+    match toml::from_str::<toml::Value>(contents) {
+        Ok(value) => {
+            // 额外确认关键段确实解析到了(而非被静默跳过)。
+            assert!(value.get("window").is_some(), "默认配置缺少 [window] 段");
+            assert!(value.get("terminal").is_some(), "默认配置缺少 [terminal] 段");
+            assert!(value.get("font").is_some(), "默认配置缺少 [font] 段");
+            // 字体族必须能被解析为非空值。
+            let family = value
+                .get("font")
+                .and_then(|f| f.get("normal"))
+                .and_then(|n| n.get("family"))
+                .and_then(|v| v.as_str());
+            assert_eq!(family, Some("monospace"), "默认配置的字体族应存在且为 monospace");
+        }
+        Err(e) => panic!("默认配置不是合法 TOML: {e}"),
+    }
+}
+
+/// 默认配置里的每个顶层表只允许出现一次。
+///
+/// TOML 解析器本身就会拒绝重复表,但这条测试给出更直白的失败信息,
+/// 便于定位是哪个段写重了。
+#[test]
+fn default_config_has_no_duplicate_tables() {
+    let contents = include_str!("../../default-config.toml");
+    let mut seen: Vec<String> = Vec::new();
+    for (idx, line) in contents.lines().enumerate() {
+        let trimmed = line.trim();
+        // 只看真正的表头 `[name]`,跳过 `[[array]]` 与注释。
+        if !trimmed.starts_with('[') || trimmed.starts_with("[[") || trimmed.starts_with('#') {
+            continue;
+        }
+        let name = trimmed.trim_start_matches('[').trim_end_matches(']').trim();
+        if name.is_empty() {
+            continue;
+        }
+        assert!(
+            !seen.iter().any(|s| s == name),
+            "默认配置第 {} 行重复定义了表 [{name}]",
+            idx + 1
+        );
+        seen.push(name.to_string());
+    }
+}

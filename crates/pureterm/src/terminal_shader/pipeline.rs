@@ -19,6 +19,12 @@ pub struct TerminalPipeline {
     pub(super) bg_color_pipeline: wgpu::RenderPipeline,
     pub(super) text_pipeline: wgpu::RenderPipeline,
 
+    /// 设备句柄 —— 供 [`LazyPipeline`] 在首次真正需要时创建管线。
+    /// `wgpu::Device` 内部是 `Arc`,克隆很廉价。
+    pub(super) device: wgpu::Device,
+    /// 管线目标格式(与创建时一致)。
+    pub(super) format: wgpu::TextureFormat,
+
     // 共享的绑定组布局(bind group layout)
     pub(super) uniform_bgl: wgpu::BindGroupLayout,
     pub(super) text_atlas_bgl: wgpu::BindGroupLayout,
@@ -43,7 +49,12 @@ pub struct TerminalPipeline {
     pub(super) text_atlas_bind_group: Option<wgpu::BindGroup>,
 
     // GAP-54:背景图像管线 + 绑定组布局。
-    pub(super) bg_image_pipeline: wgpu::RenderPipeline,
+    //
+    // 管线本身**按需创建**(见 [`LazyPipeline`]):Metal 上每创建一个
+    // shader module 都要跑一次 `newLibraryWithSource:`,实测约
+    // 25-45ms。背景图是可选特性,大多数会话根本不用,没必要让
+    // 每次启动都先付这份编译代价。
+    pub(super) bg_image_pipeline: LazyPipeline,
     pub(super) bg_image_bgl: wgpu::BindGroupLayout,
     pub(super) bg_image_sampler: wgpu::Sampler,
 
@@ -54,14 +65,62 @@ pub struct TerminalPipeline {
     // 由 `ImageAtlas` 的行步长分配器打包放置。
     // CPU 每帧上传脏子矩形;本结构持有
     // 常驻的 GPU 纹理 + 视图 + 绑定组,避免无新内容时
-    // 重复重建。
-    pub(super) image_quad_pipeline: wgpu::RenderPipeline,
+    // 重复重建。管线同样按需创建(见 [`LazyPipeline`]。
+    pub(super) image_quad_pipeline: LazyPipeline,
     pub(super) image_atlas_bgl: wgpu::BindGroupLayout,
     pub(super) image_atlas_sampler: wgpu::Sampler,
     pub(super) image_atlas_texture: Option<wgpu::Texture>,
     pub(super) image_atlas_view: Option<wgpu::TextureView>,
     pub(super) image_atlas_size: (u32, u32),
     pub(super) image_atlas_bind_group: Option<wgpu::BindGroup>,
+}
+
+/// 按需创建的渲染管线。
+///
+/// 背景图与图像四边形(Sixel)两条通道在绝大多数会话里根本不会产生
+/// 绘制调用,但它们各自的 WGSL module 在 Metal 上要花 25-45ms 编译
+/// (实测:每次 `create_shader_module` 都会触发一次
+/// `-[MTLDevice newLibraryWithSource:]`)。把管线推迟到第一次真正
+/// 需要时创建,启动就能省掉这笔开销;真用到时(例如用户配置了背景图)
+/// 再付一次,渲染语义完全不变。
+///
+/// 用 `OnceLock` 而非 `Mutex<Option<…>>`:创建只发生一次,快路径
+/// 只是一次原子读。
+pub struct LazyPipeline {
+    inner: std::sync::OnceLock<wgpu::RenderPipeline>,
+    factory: Box<dyn Fn(&wgpu::Device, wgpu::TextureFormat) -> wgpu::RenderPipeline + Send + Sync>,
+}
+
+impl LazyPipeline {
+    /// 创建一个惰性管线。`factory` 在首次 [`LazyPipeline::get`] 时被调用一次。
+    pub fn new<F>(factory: F) -> Self
+    where
+        F: Fn(&wgpu::Device, wgpu::TextureFormat) -> wgpu::RenderPipeline + Send + Sync + 'static,
+    {
+        Self { inner: std::sync::OnceLock::new(), factory: Box::new(factory) }
+    }
+
+    /// 取管线;尚未创建则当场创建。
+    ///
+    /// 首次调用会阻塞当前线程(通常是渲染线程)直到 shader 编译完成,
+    /// 这与「启动时一次性编译」相比只是把成本挪到了真正需要的那一刻。
+    pub fn get(
+        &self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        if let Some(existing) = self.inner.get() {
+            return existing;
+        }
+        let pipeline = (self.factory)(device, format);
+        self.inner.get_or_init(|| pipeline)
+    }
+}
+
+impl fmt::Debug for LazyPipeline {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LazyPipeline").field("created", &self.inner.get().is_some()).finish()
+    }
 }
 
 /// 每个 `TerminalPrimitive` 实例拥有的逐帧 GPU 资源。
@@ -71,6 +130,8 @@ pub(in crate::terminal_shader) struct GpuResources {
     pub(in crate::terminal_shader) bg_index_buffer: Option<wgpu::Buffer>,
     pub(in crate::terminal_shader) bg_bind_group: Option<wgpu::BindGroup>,
     pub(in crate::terminal_shader) bg_index_count: u32,
+    /// bg 通道里「全屏底色 quad」的索引条数;其余是单元格底色等。
+    pub(in crate::terminal_shader) bg_base_index_count: u32,
 
     pub(in crate::terminal_shader) text_vertex_buffer: Option<wgpu::Buffer>,
     pub(in crate::terminal_shader) text_index_buffer: Option<wgpu::Buffer>,
@@ -115,6 +176,7 @@ impl Default for GpuResources {
             bg_index_buffer: None,
             bg_bind_group: None,
             bg_index_count: 0,
+            bg_base_index_count: 0,
             text_vertex_buffer: None,
             text_index_buffer: None,
             text_uniform_bind_group: None,
@@ -141,6 +203,7 @@ impl Pipeline for TerminalPipeline {
         _queue: &wgpu::Queue,
         format: wgpu::TextureFormat,
     ) -> Self {
+        crate::startup_trace::mark_delta("gpu_pipeline_enter");
         // --- 共享的 uniform 绑定组布局 ---
         let uniform_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Terminal Uniform BGL"),
@@ -164,6 +227,7 @@ impl Pipeline for TerminalPipeline {
             label: Some("BgColor Shader"),
             source: wgpu::ShaderSource::Wgsl(bg_shader_src.into()),
         });
+        crate::startup_trace::mark_delta("wgsl_bg_color");
         let bg_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("BgColor Layout"),
             bind_group_layouts: &[&uniform_bgl],
@@ -231,6 +295,7 @@ impl Pipeline for TerminalPipeline {
             label: Some("CellText Shader"),
             source: wgpu::ShaderSource::Wgsl(text_shader_src.into()),
         });
+        crate::startup_trace::mark_delta("wgsl_cell_text");
         let text_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("CellText Layout"),
             bind_group_layouts: &[&text_atlas_bgl, &text_uniform_bgl],
@@ -268,26 +333,33 @@ impl Pipeline for TerminalPipeline {
             address_mode_v: wgpu::AddressMode::Repeat,
             ..Default::default()
         });
-        let bg_image_shader_src = include_str!(
+        // 背景图管线按需创建(见 `LazyPipeline`)。
+        let bg_image_shader_src: &'static str = include_str!(
             "../../../pureterm-alacritty-runtime/src/alacritty/renderer/shaders/bg_image.wgsl"
         );
-        let bg_image_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("BgImage Shader"),
-            source: wgpu::ShaderSource::Wgsl(bg_image_shader_src.into()),
-        });
         let bg_image_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("BgImage Layout"),
             bind_group_layouts: &[&uniform_bgl, &bg_image_bgl],
             push_constant_ranges: &[],
         });
-        let bg_image_pipeline = create_pipeline(
-            device,
-            "BgImage",
-            &bg_image_shader,
-            &bg_image_layout,
-            BgImageVertex::desc(),
-            format,
-        );
+        let bg_image_pipeline = {
+            let layout = bg_image_layout.clone();
+            LazyPipeline::new(move |device, format| {
+                crate::startup_trace::mark_delta("wgsl_bg_image_lazy");
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("BgImage Shader"),
+                    source: wgpu::ShaderSource::Wgsl(bg_image_shader_src.into()),
+                });
+                create_pipeline(
+                    device,
+                    "BgImage",
+                    &shader,
+                    &layout,
+                    BgImageVertex::desc(),
+                    format,
+                )
+            })
+        };
 
         // --- T-core-graphics v3:图像四边形管线 ---
         let image_atlas_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -319,26 +391,33 @@ impl Pipeline for TerminalPipeline {
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             ..Default::default()
         });
-        let image_quad_shader_src = include_str!(
+        // 图像四边形(Sixel)管线按需创建(见 `LazyPipeline`)。
+        let image_quad_shader_src: &'static str = include_str!(
             "../../../pureterm-alacritty-runtime/src/alacritty/renderer/shaders/image_quad.wgsl"
         );
-        let image_quad_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ImageQuad Shader"),
-            source: wgpu::ShaderSource::Wgsl(image_quad_shader_src.into()),
-        });
         let image_quad_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ImageQuad Layout"),
             bind_group_layouts: &[&uniform_bgl, &image_atlas_bgl],
             push_constant_ranges: &[],
         });
-        let image_quad_pipeline = create_pipeline(
-            device,
-            "ImageQuad",
-            &image_quad_shader,
-            &image_quad_layout,
-            ImageQuadVertex::desc(),
-            format,
-        );
+        let image_quad_pipeline = {
+            let layout = image_quad_layout.clone();
+            LazyPipeline::new(move |device, format| {
+                crate::startup_trace::mark_delta("wgsl_image_quad_lazy");
+                let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("ImageQuad Shader"),
+                    source: wgpu::ShaderSource::Wgsl(image_quad_shader_src.into()),
+                });
+                create_pipeline(
+                    device,
+                    "ImageQuad",
+                    &shader,
+                    &layout,
+                    ImageQuadVertex::desc(),
+                    format,
+                )
+            })
+        };
 
         let nearest_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Text Sampler"),
@@ -349,8 +428,11 @@ impl Pipeline for TerminalPipeline {
             ..Default::default()
         });
 
+        crate::startup_trace::mark_delta("gpu_pipelines_built");
         Self {
             bg_color_pipeline,
+            device: device.clone(),
+            format,
             uniform_bgl,
             text_pipeline,
             text_atlas_bgl,

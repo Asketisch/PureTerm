@@ -23,18 +23,22 @@ use std::collections::HashMap;
 /// 一条已解析的 tmux 控制模式通知。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TmuxEnvelope {
-    /// `%begin %<pane_id> <ts> <W> x <H>` —— 帧头；载荷持续到匹配的
+    /// `%begin <timestamp> <version> <flags>` —— 帧头；载荷持续到匹配的
     /// `%end`。
+    ///
+    /// 注意 tmux 的 `%begin` **不带 pane id** —— 它是一次全局的帧边界,
+    /// 帧内可以包含多个 pane 的 `%output`。早前这里臆造了一个
+    /// `pane_id` 字段并按 `%0 <ts> <W> x <H>` 解析,结果永远解析失败,
+    /// 帧边界对 GUI 完全不可见。
     Begin {
-        pane_id: u32,
         timestamp: u32,
-        cols: u16,
-        rows: u16,
+        version: u32,
+        flags: u32,
     },
     /// `%end` —— 关闭最近的 `%begin`。
     End,
     /// `%output %<pane_id> <bytes>` —— 喂给终端模拟器的原始 PTY 字节。
-    /// 字节是 base64 编码的；我们在这里解码。
+    /// 字节是 tmux 的 `\ooo` 八进制转义形式（见 [`decode_tmux_escapes`]）。
     Output { pane_id: u32, bytes: Vec<u8> },
     /// `%input %<pane_id> <bytes>` —— 服务器捕获的回显输入
     /// （信息性；GUI 无需对其采取行动）。
@@ -54,6 +58,38 @@ pub enum TmuxEnvelope {
     SubscriptionChanged {
         name: String,
         value: String,
+        flags: Option<String>,
+    },
+    /// `%window-add @<id>` —— 新窗口加入当前会话。
+    WindowAdd { window_id: String },
+    /// `%unlinked-window-add @<id>` —— 新窗口加入(未链接到任何会话)。
+    UnlinkedWindowAdd { window_id: String },
+    /// `%unlinked-window-close @<id>` —— 未链接窗口关闭。
+    UnlinkedWindowClose { window_id: String },
+    /// `%sessions-changed` —— 会话集合发生变化。
+    SessionsChanged,
+    /// `%client-session-changed <tty> $<sid> <name>` —— 客户端的会话绑定变化。
+    ClientSessionChanged {
+        tty: String,
+        session_id: String,
+        name: String,
+    },
+    /// `%layout-change @<id> <layout> <visible_layout> <flags>` —— 窗口布局变化。
+    LayoutChange {
+        window_id: String,
+        layout: String,
+        visible_layout: String,
+        flags: String,
+    },
+    /// `%refresh-client [-C <width>x<height>] [flags]` —— **客户端 →
+    /// 服务端**方向:告诉 tmux 客户端窗口的尺寸变了。
+    ///
+    /// 控制模式没有 PTY 的 `TIOCSWINSZ` 通道,尺寸只能这样传。
+    /// `size` 为 `None` 表示不带 `-C` 参数。
+    RefreshClient {
+        /// `Some((cols, rows))` → `-C <cols>x<rows>`。
+        size: Option<(u16, u16)>,
+        /// 可选标志(如 `-f`)。
         flags: Option<String>,
     },
     /// 其他任何内容——未来的 tmux 版本添加的。以原始文本转发，便于调用方
@@ -108,8 +144,8 @@ impl TmuxEnvelope {
                 s.push('\n');
                 s
             },
-            Self::Begin { pane_id, timestamp, cols, rows } => {
-                format!("%begin %{pane_id} {timestamp} {cols} x {rows}\n")
+            Self::Begin { timestamp, version, flags } => {
+                format!("%begin {timestamp} {version} {flags}\n")
             },
             Self::End => "%end\n".to_string(),
             Self::Pause => "%pause\n".to_string(),
@@ -126,6 +162,34 @@ impl TmuxEnvelope {
                     format!("%subscription-changed {name} {value}\n")
                 }
             },
+            // 这些通知是**服务端 → 客户端**方向的;客户端不需要主动发送。
+            // 原样序列化回去(带换行)可让它们往返解析器而不丢信息。
+            Self::WindowAdd { window_id } => format!("%window-add {window_id}\n"),
+            Self::UnlinkedWindowAdd { window_id } => {
+                format!("%unlinked-window-add {window_id}\n")
+            },
+            Self::UnlinkedWindowClose { window_id } => {
+                format!("%unlinked-window-close {window_id}\n")
+            },
+            Self::SessionsChanged => "%sessions-changed\n".to_string(),
+            Self::ClientSessionChanged { tty, session_id, name } => {
+                format!("%client-session-changed {tty} {session_id} {name}\n")
+            },
+            Self::LayoutChange { window_id, layout, visible_layout, flags } => {
+                format!("%layout-change {window_id} {layout} {visible_layout} {flags}\n")
+            },
+            Self::RefreshClient { size, flags } => {
+                let mut s = String::from("%refresh-client");
+                if let Some((cols, rows)) = size {
+                    s.push_str(&format!(" -C {cols}x{rows}"));
+                }
+                if let Some(flags) = flags {
+                    s.push(' ');
+                    s.push_str(flags);
+                }
+                s.push('\n');
+                s
+            },
             Self::Unknown(s) => format!("{s}\n"),
         }
     }
@@ -137,9 +201,20 @@ impl TmuxEnvelope {
 /// 来自 tmux 的字节流是 UTF-8（我们按此处理）；`%output` 载荷是
 /// base64——我们在这里解码。
 pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
-    let trimmed = line.trim_end_matches(['\r', '\n']);
+    let mut trimmed = line.trim_end_matches(['\r', '\n']);
     if !trimmed.starts_with('%') {
-        return Some(TmuxEnvelope::Unknown(trimmed.to_string()));
+        // tmux 启动时会先发一条终端能力查询(`ESC P 1000 p`,即
+        // XTGETTCAP),它**没有终止符**就紧接着第一条信封 —— 于是第一条
+        // 信封被这串转义序列污染,整条被当成 `Unknown` 丢掉。
+        //
+        // 处理:从第一个 `%` 起重新解析(纯噪声行仍然原样返回 Unknown)。
+        if let Some(pos) = trimmed.find('%') {
+            if pos > 0 {
+                trimmed = &trimmed[pos..];
+            }
+        } else {
+            return Some(TmuxEnvelope::Unknown(trimmed.to_string()));
+        }
     }
     let mut it = trimmed.splitn(3, ' ');
     let head = it.next()?;
@@ -149,29 +224,22 @@ pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
 
     match head {
         "begin" => {
-            // 帧头形如 “%begin %0 1700000000 200 x 50”
-            // 面板 id 可以是 “%N” 或 “pane_id:…”；我们取原始 token。
-            let pane_id = arg1.trim_start_matches('%').parse().ok()?;
-            let mut rest_it = rest.split_whitespace();
-            let ts = rest_it.next()?.parse().ok()?;
-            let w = rest_it.next()?.parse().ok()?;
-            rest_it.next()?; // 'x'
-            let h = rest_it.next()?.parse().ok()?;
-            Some(TmuxEnvelope::Begin {
-                pane_id,
-                timestamp: ts,
-                cols: w,
-                rows: h,
-            })
+            // tmux 真实格式:`%begin <timestamp> <version> <flags>`。
+            // 没有 pane id —— 帧边界是全局的。
+            let mut it = trimmed.split_whitespace();
+            it.next()?; // "%begin"
+            let timestamp = it.next()?.parse().ok()?;
+            let version = it.next()?.parse().ok()?;
+            let flags = it.next()?.parse().ok()?;
+            Some(TmuxEnvelope::Begin { timestamp, version, flags })
         },
         "end" => Some(TmuxEnvelope::End),
         "output" => {
-            // "%output %0 <base64>"（示例格式）
+            // "%output %<pane_id> <payload>"
             let pane_id = arg1.trim_start_matches('%').parse().ok()?;
-            // 载荷是第一个空格之后的所有内容；base64 很长时 tmux 会
-            // 把它拆成多条 "%output" 行。我们接受整个剩余部分（分块在
-            // 成帧层处理；GUI 会把同一 pane_id 的连续 Output 信封重新组装）。
-            let bytes = base64_decode(rest.as_bytes())?;
+            // 载荷是第一个空格之后的所有内容;tmux 会把长输出拆成多条
+            // "%output" 行(GUI 会把同一 pane_id 的连续 Output 信封重新组装)。
+            let bytes = decode_tmux_escapes(rest.as_bytes());
             Some(TmuxEnvelope::Output { pane_id, bytes })
         },
         "input" => {
@@ -204,6 +272,37 @@ pub fn parse_envelope(line: &str) -> Option<TmuxEnvelope> {
         },
         "pause" => Some(TmuxEnvelope::Pause),
         "continue" => Some(TmuxEnvelope::Continue),
+        "window-add" => {
+            Some(TmuxEnvelope::WindowAdd { window_id: arg1.to_string() })
+        },
+        "unlinked-window-add" => {
+            Some(TmuxEnvelope::UnlinkedWindowAdd { window_id: arg1.to_string() })
+        },
+        "unlinked-window-close" => {
+            Some(TmuxEnvelope::UnlinkedWindowClose { window_id: arg1.to_string() })
+        },
+        "sessions-changed" => Some(TmuxEnvelope::SessionsChanged),
+        "client-session-changed" => {
+            // `%client-session-changed <tty> $<sid> <name>`
+            let tty = arg1.to_string();
+            let mut it = rest.split_whitespace();
+            let session_id = it.next().unwrap_or("").to_string();
+            let name = it.collect::<Vec<_>>().join(" ");
+            Some(TmuxEnvelope::ClientSessionChanged { tty, session_id, name })
+        },
+        "layout-change" => {
+            // `%layout-change @<id> <layout> <visible_layout> <flags>`
+            let mut it = rest.split_whitespace();
+            let layout = it.next().unwrap_or("").to_string();
+            let visible_layout = it.next().unwrap_or("").to_string();
+            let flags = it.collect::<Vec<_>>().join(" ");
+            Some(TmuxEnvelope::LayoutChange {
+                window_id: arg1.to_string(),
+                layout,
+                visible_layout,
+                flags,
+            })
+        },
         "subscription-changed" | "subscription_changed" => {
             // "%subscription-changed <name> <value> [<flags>]"（示例格式）
             let name = arg1.to_string();
@@ -309,6 +408,38 @@ fn base64_encode(input: &[u8]) -> String {
 /// RFC 4648 base64 解码器。长度无效、填充位置错误或非字母表字节时
 /// 返回 `None`。镜像 `alacritty_terminal::event_loop` 中的那个
 /// （在那里保持私有，以避免仅为 base64 引入跨 crate 依赖）。
+/// 解码 tmux 控制模式对不可打印字符的转义。
+///
+/// tmux 的 `control_write_string` 把**非**可打印 ASCII(以及反斜杠
+/// 本身)编码成 `\ooo` —— 三位八进制;其余字符原样输出。例如
+/// ESC(0x1b) → `\033`、反斜杠 → `\134`。
+///
+/// 回归背景:早前这里按 **base64** 解码,于是每一帧终端输出都解码失败
+/// → 信封被整条丢弃(返回 `None`)—— 控制模式后端因此永远显示不出
+/// 任何终端内容。base64 只是**客户端发给服务端**时用的格式
+/// (`%input %<id> <base64>`),服务端回传用的是八进制转义。
+fn decode_tmux_escapes(input: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(input.len());
+    let mut i = 0;
+    while i < input.len() {
+        if input[i] == b'\\' && i + 4 <= input.len() {
+            let digits = &input[i + 1..i + 4];
+            if digits.iter().all(|b| (b'0'..=b'7').contains(b)) {
+                if let Ok(text) = std::str::from_utf8(digits) {
+                    if let Ok(value) = u8::from_str_radix(text, 8) {
+                        out.push(value);
+                        i += 4;
+                        continue;
+                    }
+                }
+            }
+        }
+        out.push(input[i]);
+        i += 1;
+    }
+    out
+}
+
 fn base64_decode(input: &[u8]) -> Option<Vec<u8>> {
     fn val(b: u8) -> Option<u8> {
         match b {
@@ -361,18 +492,21 @@ pub fn iter_envelopes(buf: &str) -> impl Iterator<Item = TmuxEnvelope> + '_ {
 /// 返回拼接后重放载荷的 `pane_id → Vec<u8>` 映射。
 pub fn collect_replay_payloads(buf: &str) -> HashMap<u32, Vec<u8>> {
     let mut out: HashMap<u32, Vec<u8>> = HashMap::new();
-    let mut current: Option<u32> = None;
+    // tmux 的 `%begin` / `%end` 是**全局**帧边界(帧内可含多个 pane 的
+    // `%output`),不带 pane id。因此「当前面板」只能由 `%output` 行
+    // 自己的 `%<pane_id>` 决定 —— 这里只跟踪「是否处在帧内」。
+    let mut in_frame = false;
     for line in buf.lines() {
         if let Some(env) = parse_envelope(line) {
             match env {
-                TmuxEnvelope::Begin { pane_id, .. } => {
-                    current = Some(pane_id);
+                TmuxEnvelope::Begin { .. } => {
+                    in_frame = true;
                 },
                 TmuxEnvelope::End => {
-                    current = None;
+                    in_frame = false;
                 },
                 TmuxEnvelope::Output { pane_id, bytes } => {
-                    if current == Some(pane_id) {
+                    if in_frame {
                         out.entry(pane_id).or_default().extend(bytes);
                     }
                 },
@@ -387,17 +521,14 @@ pub fn collect_replay_payloads(buf: &str) -> HashMap<u32, Vec<u8>> {
 mod tests {
     use super::*;
 
+    /// tmux 真实的 `%begin` 格式:`%begin <timestamp> <version> <flags>`,
+    /// **不带 pane id**(早前的实现臆造了 pane id,导致帧边界永远解析不出来)。
     #[test]
     fn parse_begin_end_envelope() {
-        let env = parse_envelope("%begin %0 1700000000 200 x 50").unwrap();
+        let env = parse_envelope("%begin 1700000000 318 0").unwrap();
         assert_eq!(
             env,
-            TmuxEnvelope::Begin {
-                pane_id: 0,
-                timestamp: 1700000000,
-                cols: 200,
-                rows: 50
-            }
+            TmuxEnvelope::Begin { timestamp: 1700000000, version: 318, flags: 0 }
         );
     }
 
@@ -407,10 +538,30 @@ mod tests {
     }
 
     #[test]
-    fn parse_output_envelope_decodes_base64() {
-        // “hello” 的 base64 = “aGVsbG8=”
-        let env = parse_envelope("%output %0 aGVsbG8=").unwrap();
-        assert_eq!(env, TmuxEnvelope::Output { pane_id: 0, bytes: b"hello".to_vec() });
+    fn parse_output_envelope_decodes_octal_escapes() {
+        // tmux 的 `%output` 载荷是 `\ooo` 八进制转义(不是 base64):
+        // ESC(0x1b) → `\033`、反斜杠 → `\134`。
+        let env = parse_envelope("%output %0 hello\\134world").unwrap();
+        assert_eq!(
+            env,
+            TmuxEnvelope::Output { pane_id: 0, bytes: b"hello\\world".to_vec() }
+        );
+
+        // 真实抓包里的一条输出(ESC[1m …)。
+        let env = parse_envelope("%output %7 \\033[1m\\033[0m").unwrap();
+        assert_eq!(
+            env,
+            TmuxEnvelope::Output { pane_id: 7, bytes: vec![0x1b, b'[', b'1', b'm', 0x1b, b'[', b'0', b'm'] }
+        );
+    }
+
+    /// base64 是**客户端 → 服务端**方向的格式(`%input %<id> <base64>`),
+    /// 服务端回传一律用八进制转义。早前把两者搞混,导致每一帧终端
+    /// 输出都被整条丢弃。
+    #[test]
+    fn input_envelope_still_uses_base64() {
+        let env = parse_envelope("%input %0 bHMK").unwrap();
+        assert_eq!(env, TmuxEnvelope::Input { pane_id: 0, bytes: b"ls\n".to_vec() });
     }
 
     #[test]
@@ -485,9 +636,9 @@ mod tests {
 
     #[test]
     fn nested_begin_end_groups_replay_payloads() {
-        // 两个 `Begin…End` 帧；第一个为面板 0 持有 “foo”，第二个为
-        // 面板 1 持有 “bar”。
-        let buf = "%begin %0 1 80 x 24\n%output %0 Zm9v\n%end\n%begin %1 1 80 x 24\n%output %1 YmFy\n%end\n";
+        // 两个 `Begin…End` 帧。tmux 的 `%begin` 是**全局**帧边界
+        // (`%begin <ts> <ver> <flags>`),帧内可以含多个 pane 的 `%output`。
+        let buf = "%begin 1 318 0\n%output %0 foo\n%end\n%begin 2 318 0\n%output %1 bar\n%end\n";
         let payloads = collect_replay_payloads(buf);
         assert_eq!(payloads.get(&0), Some(&b"foo".to_vec()));
         assert_eq!(payloads.get(&1), Some(&b"bar".to_vec()));
@@ -495,7 +646,7 @@ mod tests {
 
     #[test]
     fn iter_envelopes_yields_each_line() {
-        let buf = "%begin %0 1 80 x 24\n%end\n";
+        let buf = "%begin 1 318 0\n%end\n";
         let envs: Vec<_> = iter_envelopes(buf).collect();
         assert_eq!(envs.len(), 2);
         assert!(matches!(envs[0], TmuxEnvelope::Begin { .. }));

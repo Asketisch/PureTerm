@@ -12,11 +12,21 @@ use pureterm_lsp::{LspClient, LspClientConfig};
 
 /// 定位与本测试二进制一同构建的 `mock-lsp-server` 二进制。
 ///
-/// Cargo 把测试可执行文件放在 `<target>/<profile>/deps/<name>-<hash>`,
-/// 而包的二进制在 `<target>/<profile>/<bin>`,因此从测试
-/// 可执行文件向上走两级即到 profile 目录。(手动完成,因为本 workspace
-/// 不注入 `CARGO_BIN_EXE_*`。)
+/// 首选 Cargo 为集成测试注入的 `CARGO_BIN_EXE_mock_lsp_server`
+/// (bin target 名中的 `-` 会被替换成 `_`)。它始终指向**本次构建**
+/// 产出的二进制;早先用「从 `current_exe` 向上走两级猜 `target/<profile>`」
+/// 的启发式,会在 `target/` 里残留旧版本二进制时静默拿到过期文件 ——
+/// mock server 源码改动后测试仍连到旧二进制,表现为 initialize 握手
+/// 超时,而服务端本身并无问题。
+///
+/// 回退到路径启发式仅用于没有该环境变量的场景(例如直接 `rustc` 编译)。
 fn mock_exe() -> PathBuf {
+    if let Ok(path) = std::env::var("CARGO_BIN_EXE_mock_lsp_server") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return path;
+        }
+    }
     let exe = std::env::current_exe().expect("current_exe");
     let profile_dir = exe
         .parent()

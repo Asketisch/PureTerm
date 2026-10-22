@@ -426,6 +426,9 @@ impl SessionManager {
                 libc::kill(handle.lock().unwrap().child_pid as i32, libc::SIGHUP);
             }
             // `handle` 在此丢弃 → join 泵 + 移除数据 socket。
+            // 会话没了,它注入 shell 的引导脚本目录也没用了 —— 删掉,
+            // 否则系统临时目录里会越堆越多 `.pureterm-*` 垃圾目录。
+            crate::shell_integration::cleanup_temp_dirs(id);
             true
         } else {
             false

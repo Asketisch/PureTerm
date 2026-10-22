@@ -56,10 +56,11 @@ fn sixel_smoke_img2sixel() {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    assert!(
-        found,
-        "img2sixel not on $PATH — install with `brew install libsixel` or skip"
-    );
+    if !found {
+        // 缺外部工具时优雅跳过 —— 否则 CI(没装 libsixel)会一直红。
+        eprintln!("跳过:img2sixel 不在 $PATH 上(brew install libsixel 可启用本用例)");
+        return;
+    }
     let _ = wait_for(Duration::from_secs(1), || false);
 }
 
@@ -74,15 +75,14 @@ fn chunked_graphics_smoke() {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false);
-    assert!(
-        found,
-        "reference graphics emitter `kitty` not on $PATH — install with `brew install kitty` or skip"
-    );
+    if !found {
+        eprintln!("跳过:kitty 不在 $PATH 上(brew install kitty 可启用本用例)");
+        return;
+    }
     let _ = wait_for(Duration::from_secs(1), || false);
 }
 
 #[test]
-#[ignore]
 fn oversized_image_rejected_by_atlas() {
     // 验证思路:
     //   1. 合成 4096×4096 的 RGBA 缓冲(64 MiB,超过 `ATLAS_SIZE`)。

@@ -397,6 +397,84 @@ pub(crate) fn temp_pwsh_dir(tag: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!(".pureterm-pwsh-{tag}"))
 }
 
+/// 每种 shell 的临时目录种类。清理与残留清扫都按这份清单走。
+const TEMP_KINDS: &[&str] = &["zdotdir", "fish", "nu", "elv", "pwsh"];
+
+/// 某个 tag 对应的全部临时目录。
+fn temp_dirs_for_tag(tag: &str) -> Vec<std::path::PathBuf> {
+    TEMP_KINDS.iter().map(|kind| {
+        std::env::temp_dir().join(format!(".pureterm-{kind}-{tag}"))
+    }).collect()
+}
+
+/// 删除某个 tag 的全部临时目录(会话结束 / 窗格关闭时调用)。
+///
+/// 这些目录里放着注入 shell 的引导脚本(`.zshenv`、fish 的
+/// `conf.d/`、nushell 的 `env.nu` 等)。它们由进程按需创建,早前
+/// **从不删除** —— 每次启动都往系统临时目录里丢 5 个目录,长期使用
+/// 会累积成百上千个垃圾目录。
+///
+/// 失败一律忽略:清理临时目录不是关键路径,不该因此影响会话。
+pub fn cleanup_temp_dirs(tag: &str) {
+    for dir in temp_dirs_for_tag(tag) {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// 清扫**已失效进程**留下的临时目录。
+///
+/// 崩溃 / 被强杀 / 正常退出都会留下残留(进程没了,目录还在)。
+/// 这里按 tag 里的 pid 判断宿主进程是否还活着:活着就跳过(可能是
+/// 另一个正在运行的 PureTerm 实例的),死了就删掉。
+///
+/// 只在启动时调用一次 —— 扫描临时目录不适合放进热路径。
+pub fn sweep_stale_temp_dirs() {
+    let tmp = std::env::temp_dir();
+    let Ok(entries) = std::fs::read_dir(&tmp) else {
+        return;
+    };
+    for entry in entries.filter_map(|e| e.ok()) {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let mut tag: Option<&str> = None;
+        for kind in TEMP_KINDS {
+            let prefix = format!(".pureterm-{kind}-");
+            if let Some(rest) = name.strip_prefix(prefix.as_str()) {
+                tag = Some(rest);
+                break;
+            }
+        }
+        let Some(tag) = tag else { continue };
+        if !tag_is_stale(tag) {
+            continue;
+        }
+        if std::fs::remove_dir_all(entry.path()).is_err() {
+            log::debug!("sweep_stale_temp_dirs: 无法删除 {}", entry.path().display());
+        }
+    }
+}
+
+/// tag 形如 `<pid>` 或 `<pid>-<counter>`。pid 进程已不存在 → 残留。
+fn tag_is_stale(tag: &str) -> bool {
+    let pid_str = tag.split('-').next().unwrap_or("");
+    let Ok(pid) = pid_str.parse::<i32>() else {
+        // 认不出来的 tag 一律不动 —— 宁可留下垃圾,也不误删别人的目录。
+        return false;
+    };
+    if pid <= 0 {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // kill(pid, 0) == 0 → 进程存在。EPERM(进程存在但属别人)也算存在。
+        unsafe { libc::kill(pid, 0) == -1 }
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// 构建把 OSC 7 cwd 上报*与* OSC 133
 /// shell 集成标记注入新拉起本地 shell 的环境变量集。
 ///
@@ -523,6 +601,48 @@ mod tests {
         ] {
             let _ = std::fs::remove_dir_all(&p);
         }
+    }
+
+    /// 回归测试:shell 集成的临时目录曾**从不删除** —— 每次启动往系统
+    /// 临时目录里丢 5 个目录,长期使用会累积成百上千个垃圾目录。
+    #[test]
+    fn cleanup_temp_dirs_removes_every_kind() {
+        let tag = "unit-cleanup-tag";
+        let _ = prepare_shell_env(tag, ShellIntegrationOpts::all_on());
+        assert!(temp_zdotdir(tag).exists(), "准备阶段应创建 zdotdir");
+
+        cleanup_temp_dirs(tag);
+
+        for dir in temp_dirs_for_tag(tag) {
+            assert!(!dir.exists(), "{} 未被清理", dir.display());
+        }
+    }
+
+    /// 清扫必须删掉「宿主进程已死」的残留目录。
+    #[test]
+    fn sweep_removes_dirs_of_dead_processes() {
+        // 这个 pid 几乎不可能还活着 → 判定为残留。
+        let tag = "4294967-dead";
+        let dir = temp_zdotdir(tag);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        assert!(dir.exists());
+
+        sweep_stale_temp_dirs();
+
+        assert!(!dir.exists(), "失效进程的残留目录应被清扫");
+    }
+
+    /// 清扫**不能**删掉还活着的进程留下的目录。
+    #[test]
+    fn sweep_keeps_dirs_of_live_processes() {
+        let tag = &std::process::id().to_string();
+        let dir = temp_zdotdir(tag);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+
+        sweep_stale_temp_dirs();
+
+        assert!(dir.exists(), "存活进程的目录不应被清扫");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

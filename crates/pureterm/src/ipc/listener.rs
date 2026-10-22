@@ -205,10 +205,36 @@ pub fn socket_prefix() -> String {
 }
 
 /// 生成当前实例的 socket 路径(含 PID 以保证唯一)。
+///
+/// Unix socket 的路径长度有硬上限(`sockaddr_un::sun_path`,macOS /
+/// Linux 上是 104 字节)。超过时 `bind()` 失败,IPC 监听器起不来 ——
+/// 应用照常显示窗口,但所有 CLI / IPC 功能全部失效。
+///
+/// `TMPDIR` 稍长就会触发(macOS 的 per-user 临时目录本身就接近 50
+/// 字节),因此这里在路径放不下时回退到短目录
+/// (`/tmp/pureterm-<uid>`),客户端按同一顺序搜索。
 pub fn default_socket_path() -> PathBuf {
-    let mut path = socket_dir();
-    path.push(format!("{}-{}.sock", socket_prefix(), std::process::id()));
-    path
+    let file = format!("{}-{}.sock", socket_prefix(), std::process::id());
+    for dir in socket_search_dirs() {
+        let candidate = dir.join(&file);
+        if pureterm_daemon::discovery::fits_sock_path(&candidate) {
+            return candidate;
+        }
+    }
+    pureterm_daemon::discovery::short_socket_dir().join(file)
+}
+
+/// 搜索 socket 的候选目录,按优先级排列。
+///
+/// 与 [`default_socket_path`] 用同一套规则 —— 服务端落在哪个目录,
+/// 客户端就去哪些目录找。
+pub fn socket_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![socket_dir()];
+    let short = pureterm_daemon::discovery::short_socket_dir();
+    if !dirs.contains(&short) {
+        dirs.push(short);
+    }
+    dirs
 }
 
 /// 查找正在运行的 PureTerm 实例的 socket。供 CLI 客户端使用。
@@ -230,25 +256,31 @@ pub fn find_socket(socket_path: Option<PathBuf>) -> std::io::Result<crate::local
         }
     }
 
-    // 搜索 socket 文件。
+    // 搜索 socket 文件。服务端可能在路径过长时回退到短目录,
+    // 因此按同样的候选顺序逐个搜索。
     let prefix = socket_prefix();
-    for entry in std::fs::read_dir(socket_dir())?.filter_map(|e| e.ok()) {
-        let path = entry.path();
-        let name_matches = path
-            .file_name()
-            .and_then(OsStr::to_str)
-            .filter(|name| name.starts_with(&prefix) && name.ends_with(".sock"))
-            .is_some();
-        if !name_matches {
+    for dir in socket_search_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
-        }
-        match crate::local_socket::connect(&path) {
-            Ok(stream) => return Ok(stream),
-            Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
-                // 已死实例遗留的孤儿 socket;清理之。
-                let _ = std::fs::remove_file(&path);
+        };
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            let name_matches = path
+                .file_name()
+                .and_then(OsStr::to_str)
+                .filter(|name| name.starts_with(&prefix) && name.ends_with(".sock"))
+                .is_some();
+            if !name_matches {
+                continue;
             }
-            _ => {}
+            match crate::local_socket::connect(&path) {
+                Ok(stream) => return Ok(stream),
+                Err(e) if e.kind() == ErrorKind::ConnectionRefused => {
+                    // 已死实例遗留的孤儿 socket;清理之。
+                    let _ = std::fs::remove_file(&path);
+                }
+                _ => {}
+            }
         }
     }
 

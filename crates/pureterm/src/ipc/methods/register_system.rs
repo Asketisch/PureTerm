@@ -51,11 +51,15 @@ impl SocketRouter {
 
         // ── window.* 方法(4 个) ──────────────────────────────────────────────────
         self.register("window.list", |_params, snap| {
+            // 每窗口报**它自己的**标签页数。早前这里对所有窗口都报
+            // 活动窗口的标签页数(`snap.tab_titles` 只含活动窗口的)——
+            // 于是多窗口场景下 `window.list` 完全是错的。
             let windows = (0..snap.window_count)
                 .map(|i| {
                     serde_json::json!({
                         "id": i,
-                        "tabs": snap.tab_titles.len(),
+                        "tabs": snap.window_tab_counts.get(i).copied().unwrap_or(0),
+                        "active": i == snap.active_window_index,
                     })
                 })
                 .collect::<Vec<_>>();
@@ -75,11 +79,37 @@ impl SocketRouter {
             (Ok(serde_json::json!({"closed": true, "tab_index": idx})), Some(IpcSideEffect::CloseTab { index: idx }))
         });
 
-        self.register("window.focus", |_params, snap| {
+        self.register("window.focus", |params, snap| {
             if snap.window_count == 0 {
                 return (Err(JsonRpcError { code: ERROR_INVALID_PARAMS, message: "No window open".into(), data: None }), None);
             }
-            (Ok(serde_json::json!({"focused": true})), None)
+            // 目标窗口序号(缺省 = 第一个非活动窗口)。
+            let index = params
+                .as_ref()
+                .and_then(|p| p.get("index"))
+                .and_then(|v| v.as_u64())
+                .map(|i| i as usize);
+            if let Some(i) = index {
+                if i >= snap.window_count {
+                    return (
+                        Err(JsonRpcError {
+                            code: ERROR_INVALID_PARAMS,
+                            message: format!(
+                                "window index {i} out of range ({} windows open)",
+                                snap.window_count
+                            ),
+                            data: None,
+                        }),
+                        None,
+                    );
+                }
+            }
+            // 早前这里**没有任何副作用**,却回 `{"focused": true}` ——
+            // 调用方以为窗口被聚焦了,实际什么都没发生。
+            (
+                Ok(serde_json::json!({"focused": true, "index": index})),
+                Some(IpcSideEffect::FocusWindow { index }),
+            )
         });
 
         // ── tab.* 方法(4 个) ─────────────────────────────────────────────────────
@@ -176,6 +206,34 @@ impl SocketRouter {
                         Err(JsonRpcError {
                             code: ERROR_INVALID_PARAMS,
                             message: format!("workspace index {i} out of range"),
+                            data: None,
+                        }),
+                        None,
+                    );
+                }
+            }
+            // 目标 id / name 必须真的存在。早前只校验了 `index`,于是
+            // `workspace.switch {"id": 999999}` 回的是**成功**
+            // ("switching": true),主循环却什么也没做 —— 调用方
+            // (agent / MCP)会以为工作区切过去了。
+            if let Some(i) = id {
+                if !snap.workspace_ids.contains(&i) {
+                    return (
+                        Err(JsonRpcError {
+                            code: ERROR_INVALID_PARAMS,
+                            message: format!("unknown workspace id {i}"),
+                            data: None,
+                        }),
+                        None,
+                    );
+                }
+            }
+            if let Some(n) = name.as_deref().filter(|n| !n.is_empty()) {
+                if !snap.workspace_names.iter().any(|x| x == n) {
+                    return (
+                        Err(JsonRpcError {
+                            code: ERROR_INVALID_PARAMS,
+                            message: format!("unknown workspace name {n:?}"),
                             data: None,
                         }),
                         None,

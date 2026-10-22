@@ -205,7 +205,30 @@ where
             // ImageStore 重组。
             let cursor_row = terminal.grid().cursor.point.line.0 as usize;
             let cursor_col = terminal.grid().cursor.point.column.0 as u16;
-            for raw in scan_graphics(&buf[..unprocessed]) {
+            // 图形序列可能跨读取边界 → 把上次的尾巴接到本次数据前面。
+            // 尾巴为空时直接扫原缓冲(热路径不额外拷贝)。
+            let (graphics, consumed) = if state.graphics_tail.is_empty() {
+                scan_graphics(&buf[..unprocessed])
+            } else {
+                let mut joined =
+                    Vec::with_capacity(state.graphics_tail.len() + unprocessed);
+                joined.extend_from_slice(&state.graphics_tail);
+                joined.extend_from_slice(&buf[..unprocessed]);
+                let (graphics, consumed) = scan_graphics(&joined);
+                // 尾巴上限:避免一条永不终止的序列把内存吃光。
+                if joined.len() - consumed <= MAX_GRAPHICS_TAIL {
+                    state.graphics_tail.clear();
+                    state.graphics_tail.extend_from_slice(&joined[consumed..]);
+                }
+                (graphics, consumed)
+            };
+            if state.graphics_tail.is_empty() {
+                // 无尾巴时:未被消费的部分(不完整序列)也要留存。
+                if consumed < unprocessed {
+                    state.graphics_tail.extend_from_slice(&buf[consumed..]);
+                }
+            }
+            for raw in graphics {
                 // 协议未指定单元格坐标时,默认放置为“光标之下、
                 // 与图像等大”。
                 let mut placement = raw.placement.clone();
@@ -487,6 +510,12 @@ pub struct State {
     write_list: VecDeque<Cow<'static, [u8]>>,
     writing: Option<Writing>,
     parser: ansi::Processor,
+    /// 跨读取边界的不完整图形序列尾巴(等下一次读取接上)。
+    ///
+    /// PTY 的一次 `read()` 不保证返回全部字节。Sixel / Kitty 的图像
+    /// 载荷动辄几 KB,几乎必然跨读取边界 —— 早前每次读都把缓冲区
+    /// 清零重扫,于是**任何超过一个读块的图像都被整条丢弃**。
+    graphics_tail: Vec<u8>,
 }
 
 impl State {
@@ -1178,9 +1207,21 @@ struct RawGraphics {
 ///(在 `pureterm` crate 内)是完整 Kitty 分块跨读
 /// 重组点。
 /// 分块。
-fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
+///
+/// 返回 `(解析出的图像, 已消费的字节数)`。**已消费字节数之后的内容是
+/// 一条不完整的图形序列**(缺少 ST 终止符),必须留给下一次读取接上 ——
+/// 否则跨读取边界的图像会被整条丢弃(PTY 的一次 `read()` 不保证返回
+/// 全部字节,2KB 以上的图像载荷几乎必然跨边界)。
+/// 不完整图形序列尾巴的字节上限(16 MiB)。
+///
+/// 超过它就丢弃尾巴 —— 一条永不终止的转义序列不应该无限占用内存。
+const MAX_GRAPHICS_TAIL: usize = 16 * 1024 * 1024;
+
+fn scan_graphics(buf: &[u8]) -> (SmallVec<[RawGraphics; 2]>, usize) {
     let mut out: SmallVec<[RawGraphics; 2]> = SmallVec::new();
     let mut i = 0usize;
+    // 默认「全部消费」;只有遇到不完整序列时才回退。
+    let mut consumed = buf.len();
 
     while i < buf.len() {
         // 找下一个 ESC。
@@ -1217,6 +1258,8 @@ fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
                 continue;
             }
             let _ = rest; // keep variable used for clarity
+            // 不完整的 Sixel 序列 → 保留尾部,等下一次读取接上。
+            consumed = start;
             break;
         }
 
@@ -1233,6 +1276,8 @@ fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
                 i = end_offset + 2;
                 continue;
             }
+            // 不完整的 Kitty 序列 → 保留尾部。
+            consumed = start;
             break;
         }
 
@@ -1250,13 +1295,15 @@ fn scan_graphics(buf: &[u8]) -> SmallVec<[RawGraphics; 2]> {
                 }
                 continue;
             }
+            // 不完整的 iTerm2 内联图像 → 保留尾部。
+            consumed = start;
             break;
         }
 
         i = start + 1;
     }
 
-    out
+    (out, consumed)
 }
 
 /// 在 `start` 处或之后找下一个 ST(`\x1b\\`)。返回该 `\x1b`
@@ -1330,10 +1377,29 @@ fn parse_kitty_graphics(body: &[u8]) -> Option<RawGraphics> {
     }
     let payload_b64 = parts.next()?;
     let decoded = base64_decode(payload_b64.as_bytes())?;
+    // 像素尺寸。
+    //
+    // 回归背景:这里原本直接用 `c`/`r` 当像素尺寸 —— 但按 kitty 规范,
+    // `c`/`r` 是图像占用的**字符单元格**数,不是像素数。于是「2x2 像素
+    // 的图像铺在 20x20 单元格里」这种(合法的)传输会被当成 20x20 像素,
+    // 与实际载荷(16 字节)对不上 → 解码 worker / GPU 图集按 20x20 的
+    // 行跨度去解释 16 字节,图片直接被丢弃,屏幕上什么都不出现。
+    //
+    // 现在:载荷长度才是像素数的可靠来源。`c*r` 恰好等于像素数时用
+    // `c×r`;否则按 kitty 单块传输的常规形态(方形)推导。
     let (w, h) = match format {
-        GraphicsFormat::Rgba => (cols as u32, rows as u32),
-        GraphicsFormat::Rgb => (cols as u32, rows as u32),
         GraphicsFormat::Png => png_dimensions(&decoded).unwrap_or((0, 0)),
+        GraphicsFormat::Rgba | GraphicsFormat::Rgb => {
+            let bytes_per_pixel = if format == GraphicsFormat::Rgba { 4 } else { 3 };
+            let total = (decoded.len() / bytes_per_pixel) as u32;
+            let declared = (cols as u32).saturating_mul(rows as u32);
+            if total > 0 && declared == total {
+                (cols as u32, rows as u32)
+            } else {
+                let side = (total as f64).sqrt().floor() as u32;
+                (side, side)
+            }
+        },
     };
     // 规范:`pixels` 为 `Some`(RGBA / RGB 已内联解码)时 `encoded` 为空;仅 `format = Png` 保留编码的载荷。
     let (pixels, encoded) = match format {
@@ -2118,10 +2184,101 @@ mod tests_graphics {
     use super::*;
 
     fn g(buf: &[u8]) -> Vec<RawGraphics> {
-        scan_graphics(buf).into_iter().collect()
+        scan_graphics(buf).0.into_iter().collect()
     }
 
     // ---- Sixel(6 比图像)----
+
+    /// 用**真实尺寸**(24x24)的 Kitty 序列验证解析器。
+    ///
+    /// 回归背景:E2E 里 24x24 的 Kitty 图像始终不出现。单元测试此前
+    /// 只用过 2x2 的小载荷,恰好绕过了真正的问题。
+    /// 跨读取边界的图像必须能拼回来。
+    ///
+    /// 回归背景:PTY 的一次 `read()` 不保证返回全部字节,2KB 以上的
+    /// 图像载荷几乎必然跨边界。早前扫描器每次只扫本次读到的字节、
+    /// 遇到不完整序列就丢弃,于是**大图永远不显示**。
+    /// `c`/`r` 是**单元格**数,不是像素数 —— 像素尺寸必须由载荷长度
+    /// 推导。回归背景:早前直接用 `c`/`r` 当像素尺寸,导致「2x2 像素
+    /// 铺在 20x20 单元格」的合法传输被当成 20x20 像素,与 16 字节的
+    /// 实际载荷对不上,图片被整条丢弃。
+    #[test]
+    fn kitty_pixel_size_comes_from_payload_not_cells() {
+        // 2x2 像素,显示占 20x20 单元格。
+        let pixels = vec![255u8, 0, 255, 255].repeat(2 * 2);
+        let payload = base64_encode(&pixels);
+        let seq = format!("\x1b_Ga=T,f=32,i=1,c=20,r=20;{payload}\x1b\\");
+        let r = g(seq.as_bytes());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].width, 2, "像素宽度应来自载荷长度,而不是单元格数");
+        assert_eq!(r[0].height, 2);
+        // 但**显示**占位仍是 20x20 单元格。
+        assert_eq!(r[0].placement.cols, 20);
+        assert_eq!(r[0].placement.rows, 20);
+    }
+
+    /// 当客户端把 `c`/`r` 直接当像素尺寸用时(总像素数吻合),
+    /// 按 `c×r` 解释。
+    #[test]
+    fn kitty_pixel_size_uses_declared_when_consistent() {
+        let pixels = vec![255u8, 0, 255, 255].repeat(2 * 2);
+        let payload = base64_encode(&pixels);
+        let seq = format!("\x1b_Ga=T,f=32,i=1,c=2,r=2;{payload}\x1b\\");
+        let r = g(seq.as_bytes());
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].width, 2);
+        assert_eq!(r[0].height, 2);
+    }
+
+    #[test]
+    fn kitty_split_across_reads_is_reassembled() {
+        let pixels = vec![255u8, 0, 255, 255].repeat(24 * 24);
+        let payload = base64_encode(&pixels);
+        let seq = format!("\x1b_Ga=T,f=32,i=1,c=24,r=24;{payload}\x1b\\");
+        let bytes = seq.as_bytes();
+        let split = bytes.len() / 2;
+
+        // 第一段:序列不完整 → 解析不出图像,且**一个字节都不能消费**
+        // (否则尾巴就丢了)。
+        let (r1, consumed1) = scan_graphics(&bytes[..split]);
+        assert!(r1.is_empty(), "不完整序列不应产出图像");
+        assert_eq!(consumed1, 0, "不完整序列的已消费字节数应为 0(整段留作尾巴)");
+
+        // 第二段:把尾巴接上 → 图像完整解析出来。
+        let mut joined = bytes[..split].to_vec();
+        joined.extend_from_slice(&bytes[split..]);
+        let (r2, _) = scan_graphics(&joined);
+        assert_eq!(r2.len(), 1, "拼回后应解析出 1 张图像");
+        assert_eq!(r2[0].width, 24);
+        assert_eq!(r2[0].height, 24);
+        assert_eq!(r2[0].pixels.as_ref().map(|p| p.len()), Some(2304));
+    }
+
+    #[test]
+    fn kitty_24x24_rgba_parses() {
+        // 24*24*4 = 2304 字节 RGBA(纯品红)。
+        let pixels = vec![255u8, 0, 255, 255].repeat(24 * 24);
+        let payload = base64_encode(&pixels);
+        let seq = format!(
+            "\x1b_Ga=T,f=32,i=1,c=24,r=24;{payload}\x1b\\"
+        );
+        let r = g(seq.as_bytes());
+        assert_eq!(r.len(), 1, "应解析出 1 张图像,实际 {r:?}");
+        assert_eq!(r[0].protocol, GraphicsProtocol::Kitty);
+        assert_eq!(r[0].format, GraphicsFormat::Rgba);
+        assert_eq!(r[0].width, 24);
+        assert_eq!(r[0].height, 24);
+        assert_eq!(r[0].pixels.as_ref().map(|p| p.len()), Some(2304));
+    }
+
+    /// 参数里出现**没有 `=` 的**片段时,整个解析必须失败而不是 panic。
+    #[test]
+    fn kitty_param_without_equals_is_rejected() {
+        let payload = base64_encode(&[255u8, 0, 255, 255]);
+        let seq = format!("\x1b_Ga=T,f=32,broken,i=1;{payload}\x1b\\");
+        let r = g(seq.as_bytes());
+        assert!(r.is_empty(), "畸形参数应被拒绝,实际 {r:?}");
+    }
 
     #[test]
     fn sixel_raw_payload_preserved() {
@@ -2148,9 +2305,13 @@ mod tests_graphics {
 
     #[test]
     fn kitty_transmit_and_use_rgba() {
-        // 2x2 RGBA,全不透明红色。以下像素数组的 Base64:
-        //   [255, 0, 0, 255, 255, 0, 0, 255] = "/wAA//8AAP8="
-        let payload = "/wAA//8AAP8=";
+        // 2x2 RGBA,全不透明红色(4 个像素 = 16 字节):
+        //   [255,0,0,255] × 4 = "/wAA//8AAP//AAD//wAA/w=="
+        //
+        // 回归背景:早前的载荷只有 8 字节(2 个像素)却声称 2x2 —— 断言的
+        // 正是「按 c/r 硬报像素尺寸」这个 bug 本身。像素尺寸必须与载荷
+        // 长度一致,否则下游解码 / GPU 图集会按错误的行跨度解释数据。
+        let payload = "/wAA//8AAP//AAD//wAA/w==";
         let buf = format!("\x1b_Ga=T,f=32,i=1,c=2,r=2;{}\x1b\\", payload);
         let r = g(buf.as_bytes());
         assert_eq!(r.len(), 1);
@@ -2162,7 +2323,7 @@ mod tests_graphics {
         assert_eq!(r[0].placement.cols, 2);
         assert_eq!(r[0].placement.rows, 2);
         let px = r[0].pixels.as_ref().expect("RGBA decoded");
-        assert_eq!(px, &vec![255, 0, 0, 255, 255, 0, 0, 255]);
+        assert_eq!(px, &vec![255, 0, 0, 255].repeat(4));
         assert!(r[0].encoded.is_empty());
     }
 

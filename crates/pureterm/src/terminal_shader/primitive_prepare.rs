@@ -50,8 +50,10 @@ pub(super) fn prepare_bg_color_pass(
         gpu.bg_index_buffer = Some(ib);
         gpu.bg_bind_group = Some(bg);
         gpu.bg_index_count = prim.bg_indices.len() as u32;
+        gpu.bg_base_index_count = prim.bg_base_index_count;
     } else {
         gpu.bg_index_count = 0;
+        gpu.bg_base_index_count = 0;
     }
 }
 
@@ -122,6 +124,7 @@ pub(super) fn prepare_bg_image_pass(
             },
             bg_img_width: iw,
             bg_img_height: ih,
+            _padding: 0.0,
         };
         let ub = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("BgImage UB"),
@@ -142,7 +145,20 @@ pub(super) fn prepare_bg_image_pass(
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+
+                // 纹理格式用**非 sRGB**(`Rgba8Unorm`)而非 `Rgba8UnormSrgb`。
+                //
+                // iced 默认启用 `web-colors` 特性,此时
+                // `iced_graphics::color::GAMMA_CORRECTION == false`:交换链是
+                // 非 sRGB(`Bgra8Unorm`),整条渲染管线工作在「原始字节空间」
+                // —— 配置里的颜色值原样写入目标,不做线性化。
+                //
+                // 若这里用 sRGB 纹理,采样器会把像素**解码成线性**再送进
+                // 非 sRGB 的交换链,画面整体偏色(实测背景图 220,30,90 被
+                // 渲染成 168,36,36)。用非 sRGB 纹理,采样器原样返回字节,
+                // 图片才能按「所见即所得」显示。
+                //
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             }, wgpu::util::TextureDataOrder::LayerMajor, &img.data);
@@ -250,7 +266,20 @@ pub(super) fn prepare_atlas_textures(
                 size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
                 mip_level_count: 1, sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+
+                // 纹理格式用**非 sRGB**(`Rgba8Unorm`)而非 `Rgba8UnormSrgb`。
+                //
+                // iced 默认启用 `web-colors` 特性,此时
+                // `iced_graphics::color::GAMMA_CORRECTION == false`:交换链是
+                // 非 sRGB(`Bgra8Unorm`),整条渲染管线工作在「原始字节空间」
+                // —— 配置里的颜色值原样写入目标,不做线性化。
+                //
+                // 若这里用 sRGB 纹理,采样器会把像素**解码成线性**再送进
+                // 非 sRGB 的交换链,画面整体偏色(实测背景图 220,30,90 被
+                // 渲染成 168,36,36)。用非 sRGB 纹理,采样器原样返回字节,
+                // 图片才能按「所见即所得」显示。
+                //
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             }, wgpu::util::TextureDataOrder::LayerMajor, &atlas.data);
@@ -269,7 +298,20 @@ pub(super) fn prepare_atlas_textures(
             size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
             mip_level_count: 1, sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+
+            // 纹理格式用**非 sRGB**(`Rgba8Unorm`)而非 `Rgba8UnormSrgb`。
+            //
+            // iced 默认启用 `web-colors` 特性,此时
+            // `iced_graphics::color::GAMMA_CORRECTION == false`:交换链是
+            // 非 sRGB(`Bgra8Unorm`),整条渲染管线工作在「原始字节空间」
+            // —— 配置里的颜色值原样写入目标,不做线性化。
+            //
+            // 若这里用 sRGB 纹理,采样器会把像素**解码成线性**再送进
+            // 非 sRGB 的交换链,画面整体偏色(实测背景图 220,30,90 被
+            // 渲染成 168,36,36)。用非 sRGB 纹理,采样器原样返回字节,
+            // 图片才能按「所见即所得」显示。
+            //
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         }, wgpu::util::TextureDataOrder::LayerMajor, PLACEHOLDER_COLOR);
@@ -344,7 +386,7 @@ fn write_atlas_regions_rgba(queue: &wgpu::Queue, tex: &wgpu::Texture, atlas: &At
             &atlas.data[byte_offset..],
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(w * 4), // Rgba8UnormSrgb = 每像素 4 字节
+                bytes_per_row: Some(w * 4), // Rgba8Unorm = 每像素 4 字节
                 rows_per_image: Some(region.h),
             },
             wgpu::Extent3d {

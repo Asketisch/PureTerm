@@ -110,8 +110,9 @@ pub enum CaptureSub {
     Export {
         #[arg(long)]
         output: PathBuf,
-        #[arg(long, default_value = "txt")]
-        format: String,
+        /// 导出格式(txt / svg / png)。省略时用 `[pane_capture].default_format`。
+        #[arg(long)]
+        format: Option<String>,
         #[arg(long)]
         pane_id: Option<u64>,
     },
@@ -413,19 +414,67 @@ fn short_cell_repr(cell: &crate::notebooks::NotebookCell) -> String {
 }
 
 pub fn dispatch_capture(cmd: CaptureSub, socket: &Option<PathBuf>, json: bool) {
-    let _cfg = AppConfig::load_pane_capture(&AppConfig::config_path());
+    let cfg = AppConfig::load_pane_capture(&AppConfig::config_path());
     match cmd {
         CaptureSub::Export {
             output,
             format,
             pane_id,
         } => {
+            // `[pane_capture].enabled` 之前被读出来就扔了(`_cfg`),于是
+            // 用户把功能关掉后 `capture export` 照样能用 —— 开关形同
+            // 虚设。现在真的拦它。
+            if !cfg.enabled {
+                eprintln!("capture export: 面板导出已被 [pane_capture].enabled = false 关闭");
+                std::process::exit(1);
+            }
+            // 格式优先级:命令行 `--format` > 配置 `default_format` > txt。
+            let format = format.unwrap_or_else(|| cfg.default_format.clone());
             let params = serde_json::json!({ "pane_id": pane_id });
-            crate::cli::send(socket, json, ("surface.snapshot", Some(params)));
-            eprintln!(
-                "GAP-60: snapshot RPC sent; save to {} (format={format}) wiring deferred",
-                output.display()
-            );
+            let snapshot =
+                crate::cli::send_value(socket, json, ("surface.snapshot", Some(params)));
+            // 回归背景:早前这里只发 RPC、打印快照,随后打印一句
+            // “wiring deferred” 就返回 —— **文件根本没有被写出来**,
+            // 而命令看上去是成功的。用户拿到一句成功提示 + 一个
+            // 不存在的文件。
+            let Some(snapshot) = snapshot else {
+                eprintln!("capture export: 没有拿到面板快照");
+                std::process::exit(1);
+            };
+            let text = snapshot.get("text").and_then(|t| t.as_str()).unwrap_or("");
+            let fmt = format.to_ascii_lowercase();
+            let result = match fmt.as_str() {
+                "txt" | "text" => {
+                    crate::pane_capture::export_text_snapshot(text, &output)
+                },
+                "svg" => {
+                    // SVG 桩按快照带回来的单元格尺寸把终端重建成文本。
+                    let cw = snapshot
+                        .get("cell_width")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(7.0)
+                        .max(1.0) as u32;
+                    let ch = snapshot
+                        .get("cell_height")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(14.0)
+                        .max(1.0) as u32;
+                    crate::pane_capture::export_svg_stub(text, cw, ch, &output)
+                },
+                "png" => Err(
+                    "PNG 导出需要 GPU 帧缓冲快照(尚未接线);先用 --format txt 或 svg".into(),
+                ),
+                other => Err(format!("未知格式 {other}(支持 txt / svg / png)")),
+            };
+            match result {
+                Ok(()) => {
+                    eprintln!("已导出到 {}", output.display());
+                },
+                Err(e) => {
+                    eprintln!("capture export 失败: {e}");
+                    std::process::exit(1);
+                },
+            }
         }
     }
 }

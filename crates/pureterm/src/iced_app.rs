@@ -361,6 +361,9 @@ pub struct PureTermApp {
     recent_workspace_ids: Vec<WorkspaceId>,
     hovered_tab: Option<TabId>,
     glyph_state: Arc<RefCell<GlyphState>>,
+    /// 守护进程预热结果(应用构造阶段就在后台拉起守护进程)。
+    /// `None` 表示已取走。
+    daemon_prefetch: Option<std::sync::mpsc::Receiver<bool>>,
     config: AppConfig,
     config_path: PathBuf,
     keymap: Keymap,
@@ -518,6 +521,10 @@ pub struct PureTermApp {
     trigger_folds: std::sync::Arc<std::sync::Mutex<Vec<crate::triggers::FoldRegion>>>,
     /// GAP-10:全局触发器命中计数(状态栏 `trigger_count`)。
     trigger_hit_total: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// GAP-7.8:进行中的 `browser.wait`(按 wait id 索引)。
+    browser_waits: HashMap<u64, crate::browser::WaitHandle>,
+    /// GAP-7.8:`browser.wait` 的 id 分配器。
+    next_browser_wait_id: u64,
     /// GAP-54:终端 shader 共享的已解码背景图(RGBA8)。
     /// `signature` 是调用方侧的内容哈希;仅当它变化时渲染器
     /// 才重传 GPU 纹理。`mode` 与 `opacity`
@@ -1279,6 +1286,10 @@ pub enum Message {
     DirSearchClose,
     // GAP-2.3 Socket API 的 IPC 通道
     Ipc(crate::ipc::IpcRequest),
+    // GAP-7.8:`browser.wait` 的轮询 tick。携带等待 id —— 主循环据此
+    // 再发起一次**非阻塞**探测。轮询而非 JS 忙等:忙等会占住页面的
+    // JS 线程,页面靠 JS 插入的元素永远出不来。
+    BrowserWaitPoll(u64),
     // GAP-7.8:某个 `browser.*` 操作完成(JS 回调或超时解决)。
     // 携带延迟的 JSON-RPC 应答 + 要发出的 EventBus 载荷。
     BrowserOpResolved(crate::browser::BrowserResolved),
@@ -1560,21 +1571,60 @@ fn spawn_ripgrep(
 /// 终端随后在 `DaemonReady` 时于 GUI 线程创建(热路径,毫秒级
 /// RPC)。仿照 `spawn_ripgrep`。
 fn spawn_daemon_ready() -> Task<Message> {
+    spawn_daemon_ready_with(None)
+}
+
+/// 带「预热结果」的守护进程引导。
+///
+/// `prefetch` 是应用构造阶段就已经在后台线程里跑起来的
+/// `ensure_daemon()` 的结果通道。守护进程从「拉起到可 ping」要
+/// ~20ms(进程 exec + tokio runtime + socket 绑定),而窗口创建要
+/// ~100ms —— 两者完全可以并行:预热线程在窗口创建期间就把守护进程
+/// 拉起来了,窗口一开就能立刻挂上,不必再等那 20ms。
+fn spawn_daemon_ready_with(
+    prefetch: Option<std::sync::mpsc::Receiver<bool>>,
+) -> Task<Message> {
     Task::perform(
         async move {
             #[cfg(unix)]
             {
-                tokio::task::spawn_blocking(|| crate::daemon_client::ensure_daemon().is_ok())
+                match prefetch {
+                    // 已在后台跑起来了 —— 等它出结果(通常早就好了)。
+                    Some(rx) => tokio::task::spawn_blocking(move || {
+                        rx.recv().unwrap_or(false)
+                    })
                     .await
-                    .unwrap_or(false)
+                    .unwrap_or(false),
+                    None => tokio::task::spawn_blocking(|| {
+                        crate::daemon_client::ensure_daemon().is_ok()
+                    })
+                    .await
+                    .unwrap_or(false),
+                }
             }
             #[cfg(not(unix))]
             {
+                let _ = prefetch;
                 true
             }
         },
         Message::DaemonReady,
     )
+}
+
+/// 在后台线程里预热守护进程,返回结果通道。
+///
+/// 尽早调用 —— 目的是让守护进程的启动与窗口创建并行。
+fn prefetch_daemon() -> std::sync::mpsc::Receiver<bool> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("pureterm-daemon-prefetch".into())
+        .spawn(move || {
+            let ok = crate::daemon_client::ensure_daemon().is_ok();
+            let _ = tx.send(ok);
+        })
+        .ok();
+    rx
 }
 
 fn spawn_hover_preview_fetch(
@@ -1905,6 +1955,13 @@ fn events_stream_builder(key: &EventsKey) -> impl iced::futures::Stream<Item = M
 
 impl PureTermApp {
     pub fn new() -> (Self, Task<Message>) {
+        crate::startup_trace::mark_delta("app_new_enter");
+        // 尽早开始预热守护进程:它的启动(~20ms)可以和窗口创建
+        // (~100ms)并行,窗口一开就能立刻挂上。
+        let daemon_prefetch = prefetch_daemon();
+        // 清扫上一次运行留下的 shell 集成临时目录(崩溃 / 被杀 / 正常
+        // 退出都会留下)。只做一次,不在热路径上。
+        pureterm_daemon::shell_integration::sweep_stale_temp_dirs();
         let config_path = AppConfig::config_path();
         let config = AppConfig::load(&config_path);
         // 在把 `config_path` move 进 `self` 之前从 `[[ssh.profiles]]`
@@ -1959,6 +2016,7 @@ impl PureTermApp {
             &std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         );
         let lsp = crate::lsp::LspState::try_spawn(&lsp_cfg, lsp_workspace.clone());
+        crate::startup_trace::mark_delta("lsp_spawn");
         let semantic_history_cfg = AppConfig::load_semantic_history(&config_path);
         let file_preview_cfg = AppConfig::load_file_preview(&config_path);
         let block_output_cfg = AppConfig::load_block_output(&config_path);
@@ -1976,6 +2034,7 @@ impl PureTermApp {
         // GAP-56:同时快照鼠标跟随聚焦配置。
         let ffm_cfg_snapshot = p4.focus_follows_cfg.clone();
         p4.apply_platform_effects();
+        crate::startup_trace::mark_delta("config_loads");
 
         // GAP-54:加载并解码配置的背景图。失败
         // 仅记录日志、绝不致命——无效路径只是让背景
@@ -1994,6 +2053,7 @@ impl PureTermApp {
         } else {
             0
         };
+        crate::startup_trace::mark_delta("bg_image");
         let sidebar_dsl = crate::sidebar_dsl::SidebarDslState::load_from_dir(
             &crate::sidebar_dsl::sidebars_config_dir(),
         );
@@ -2044,6 +2104,7 @@ impl PureTermApp {
         let glyph_state = Arc::new(RefCell::new(
             GlyphState::new_with_config(&config.font_family, config.font_size, 1.0),
         ));
+        crate::startup_trace::mark_delta("glyph_atlas");
 
         let locale = config.locale.clone();
         let mut i18n = I18n::new();
@@ -2062,6 +2123,7 @@ impl PureTermApp {
             recent_workspace_ids: vec![WorkspaceId(0)],
             hovered_tab: None,
             glyph_state,
+            daemon_prefetch: Some(daemon_prefetch),
             config,
             config_path,
             keymap: {
@@ -2159,6 +2221,8 @@ impl PureTermApp {
             soul_cfg,
             soul_prompt,
             hover_preview: crate::hover_preview::HoverPreviewState::new(),
+            browser_waits: HashMap::new(),
+            next_browser_wait_id: 1,
             semantic_history_cfg,
             file_preview_cfg,
             block_output_cfg,
@@ -2258,6 +2322,7 @@ impl PureTermApp {
         // 跑 ensure_daemon),守护就绪后 `DaemonReady` 在 GUI
         // 线程创建标签页/终端。期间窗口立即绘制
         // 占位符(见 `view` + update 中的 `booted` 闸门)。
+        crate::startup_trace::mark_delta("app_new_exit");
         (app, task.map(Message::MainWindowOpened))
     }
 
@@ -3938,6 +4003,117 @@ impl PureTermApp {
         self.show_ssh_error(error_msg);
     }
 
+    /// T-core-tmux-cc:打开一个 `tmux -CC` 控制模式标签页。
+    ///
+    /// `session` 为 `Some(name)` 时附加到该会话,否则新建一个会话。
+    /// 拉起失败(tmux 不存在 / 会话不存在)时把真实错误显示给用户 ——
+    /// 绝不静默失败(否则用户面对一个空标签页,完全无从判断原因)。
+    #[cfg(unix)]
+    fn open_tmux_tab(
+        &mut self,
+        session: Option<String>,
+        new_window: bool,
+        socket: Option<String>,
+    ) {
+        // 用当前视口的行列数作为 tmux 会话的初始尺寸。
+        let (cols, rows) = {
+            let gs = self.glyph_state.borrow();
+            let terminal_height = terminal_content_height(
+                self.viewport_size.height,
+                self.status_bar_cfg.effective_height(),
+            );
+            let cols = (self.terminal_viewport_width() / gs.cell_width).floor().max(1.0) as u16;
+            let rows = (terminal_height / gs.cell_height).floor().max(1.0) as u16;
+            (cols, rows)
+        };
+
+        let ctx = match TerminalContext::new_tmux(
+            session.as_deref(),
+            cols,
+            rows,
+            new_window,
+            socket.as_deref(),
+        ) {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                // 用 toast(而不是 SSH 对话框)呈现 —— 这是 tmux 的错误,
+                // 不是 SSH 的;复用 SSH 对话框会误导用户。
+                log::warn!("tmux-cc: attach failed: {e}");
+                self.toast = Some((format!("tmux attach failed: {e}"), Instant::now()));
+                return;
+            },
+        };
+        let label = session.clone().unwrap_or_else(|| "tmux".to_string());
+        let id = self.push_tmux_tab(label, ctx);
+        self.set_active_tab(id);
+        self.events.emit(
+            crate::events::Category::Surface,
+            "tab.created",
+            None,
+            serde_json::json!({ "tab_id": id.0 }),
+        );
+        self.events.emit(
+            crate::events::Category::Session,
+            "session.spawned",
+            None,
+            serde_json::json!({ "kind": "tmux", "tab_id": id.0, "session": session }),
+        );
+    }
+
+    /// T-core-tmux-cc:把已构造好的 tmux 上下文包成新标签页。
+    #[cfg(unix)]
+    fn push_tmux_tab(&mut self, label: String, ctx: TerminalContext) -> TabId {
+        let id = TabId(self.next_tab_id);
+        self.next_tab_id += 1;
+        let pane_id = PaneId::next();
+        let terminal_ctx = Arc::new(ctx);
+
+        // 应用初始尺寸(同时把尺寸发给 tmux)。
+        {
+            let gs = self.glyph_state.borrow();
+            let terminal_height = terminal_content_height(
+                self.viewport_size.height,
+                self.status_bar_cfg.effective_height(),
+            );
+            let cols = (self.terminal_viewport_width() / gs.cell_width).floor().max(1.0) as usize;
+            let rows = (terminal_height / gs.cell_height).floor().max(1.0) as usize;
+            terminal_ctx.resize(cols, rows, gs.cell_width as u16, gs.cell_height as u16);
+        }
+
+        let mut panes = HashMap::new();
+        panes.insert(
+            pane_id,
+            Pane {
+                id: pane_id,
+                content: Surface::Terminal(terminal_ctx),
+                title: format!("tmux: {label}"),
+            },
+        );
+
+        let tab = Tab {
+            id,
+            title: format!("tmux: {label}"),
+            panes,
+            split_tree: SplitNode::single(pane_id),
+            active_pane: pane_id,
+            tab_color: None,
+            created_at: Instant::now(),
+            zoom_state: None,
+            vi_sub_mode: None,
+            vi_registers: Default::default(),
+            vi_pending_register: None,
+        };
+        let aw = self.active_window_id;
+        self.windows
+            .iter_mut()
+            .find(|w| w.window_id == aw)
+            .and_then(|w| w.active_workspace_mut())
+            .expect("active workspace missing")
+            .push_tab(tab);
+        self.mark_layout_dirty();
+        id
+    }
+
     /// P3:创建包装已构造好的 SSH 上下文的新标签页。
     #[cfg(unix)]
     fn push_ssh_tab(&mut self, profile_name: String, ctx: TerminalContext) -> TabId {
@@ -4002,6 +4178,45 @@ impl PureTermApp {
             .push_tab(tab);
         self.mark_layout_dirty();
         id
+    }
+
+    /// `config.set` 的落地:经 `mutate_config` 写盘 + 重载配置。
+    ///
+    /// 写盘必须走 `mutate_config`(而不是 `fs::write`):它取配置文件的
+    /// 排他建议锁、锁内重载最新文档、原子替换 —— 因此**只**改我们指定
+    /// 的那一个键,其余内容(含 SSH 档案、注释、格式)原样保留。
+    ///
+    /// 数值类型沿用该键**原有**的种类(整数还是浮点):`font.size` 在
+    /// TOML 里是浮点,写成整数会让 alacritty 的反序列化失败 ——
+    /// 配置加载失败 → 应用起不来。详见 [`crate::config_set`]。
+    fn apply_config_set(&mut self, key: &str, value: &serde_json::Value) {
+        use pureterm_settings::config_io;
+
+        let Some((table, field)) = crate::config_set::split_dotted_key(key) else {
+            log::warn!("config.set: 非法键 {key:?}");
+            return;
+        };
+        let path = self.config_path.clone();
+        let result = config_io::mutate_config(&path, |doc| {
+            let existing = crate::config_set::existing_number_kind(doc, &table, &field);
+            crate::config_set::write_value(doc, &table, &field, value, existing)
+                // `ConfigError` 没有通用消息变体;用 `Io` 变体承载
+                // 「值类型不受支持」这类语义错误。
+                .map_err(|e| {
+                    pureterm_settings::config_io::ConfigError::Io(std::io::Error::other(e))
+                })
+        });
+        match result {
+            Ok(mtime) => {
+                self.last_self_write = Some(mtime);
+                // 立刻重载,让改动在下一帧生效。
+                self.apply_config_reload();
+                log::info!("config.set: wrote {key} = {value}");
+            },
+            Err(e) => {
+                log::warn!("config.set: 写入 {key} 失败: {e}");
+            },
+        }
     }
 
     /// P4:把当前 `ssh_profiles` 持久化到用户 toml 配置。
@@ -4492,12 +4707,16 @@ impl PureTermApp {
                     | Message::WindowResized(_, _)
                     | Message::WindowFocused(_)
                     | Message::WindowClosed(_)
+                    // `browser.wait` 的轮询 tick:丢掉一轮只会让等待
+                    // 多花一个轮询间隔(IPC 超时兜底仍在),但放行更正确。
+                    | Message::BrowserWaitPoll(_)
             )
         {
             return Task::none();
         }
         match message {
             Message::MainWindowOpened(id) => {
+                crate::startup_trace::mark_delta("window_opened");
                 self.main_window = Some(id);
                 // GAP-6.7:应用/窗口生命周期。
                 self.events.emit(
@@ -4552,9 +4771,12 @@ impl PureTermApp {
                 // 窗口保持响应。守护可达后 DaemonReady 在 GUI
                 // 线程完成首标签页创建。
                 let resize = window::set_resize_increments(id, Some(Size::new(cw, ch)));
-                return Task::batch([resize, spawn_daemon_ready()]);
+                // 守护进程已在构造阶段预热 —— 这里直接取结果。
+                let prefetch = self.daemon_prefetch.take();
+                return Task::batch([resize, spawn_daemon_ready_with(prefetch)]);
             }
             Message::DaemonReady(daemon_ok) => {
+                crate::startup_trace::mark_delta("daemon_ready");
                 // 守护已在线程外确保(或确认不可达)。现在
                 // 在 GUI 线程创建第一个终端——过去这些工作
                 // 阻塞 `new()`、拖住窗口绘制。失败时
@@ -4620,6 +4842,7 @@ impl PureTermApp {
                 // 总是翻转启动闸门——即使上面的恢复路径
                 // panic 了——“Starting PureTerm…”绝不能卡在屏幕上。
                 self.booted = true;
+                crate::startup_trace::mark_delta("terminal_ready");
                 return Task::none();
             }
             Message::TerminalWakeup => {
@@ -7209,7 +7432,23 @@ impl PureTermApp {
                 }
                 // 从活动应用状态构建丰富快照。
                 let snap = crate::ipc::methods::AppSnapshot {
-                    window_count: if self.main_window.is_some() { 1 } else { 0 },
+                    // 窗口数取自 `self.windows` —— 早前取自 `main_window`
+                    // (恒 ≤1),多窗口对 API 完全不可见。
+                    window_count: self.windows.len(),
+                    window_tab_counts: self
+                        .windows
+                        .iter()
+                        .map(|w| {
+                            w.active_workspace()
+                                .map(|ws| ws.tabs.len())
+                                .unwrap_or(0)
+                        })
+                        .collect(),
+                    active_window_index: self
+                        .windows
+                        .iter()
+                        .position(|w| w.window_id == self.active_window_id)
+                        .unwrap_or(0),
                     tab_titles: self.tabs().iter().map(|t| self.tab_display_title(t)).collect(),
                     tab_ids: self.tabs().iter().map(|t| t.id.0).collect(),
                     pane_counts: self.tabs().iter().map(|t| t.panes.len()).collect(),
@@ -7555,6 +7794,11 @@ impl PureTermApp {
                     }
                 }
             }
+            // GAP-7.8:`browser.wait` 的轮询 tick。读上一轮探测结果,
+            // 再发起一次非阻塞探测,并排下一次定时器。
+            Message::BrowserWaitPoll(wait_id) => {
+                return self.browser_wait_probe(wait_id);
+            },
             // GAP-7.8:某 `browser.*` 操作完成(JS 回调或超时
             // 解决)。发送延迟的 JSON-RPC 应答(经 Mutex-take 的
             // 先到先得),随后把结果作为 `browser.<verb>` 事件发出。
@@ -10059,6 +10303,12 @@ impl PureTermApp {
                 }
                 Task::none()
             }
+            // T-core-tmux-cc:打开 `tmux -CC` 控制模式标签页。
+            #[cfg(unix)]
+            Fx::TmuxAttach { session, new_window, socket } => {
+                self.open_tmux_tab(session, new_window, socket);
+                Task::none()
+            }
             #[cfg(unix)]
             Fx::SshDisconnect { pane_id } => {
                 // GAP-5.6:在写入 exit\r **之前**给窗格打上用户主动关闭
@@ -10144,6 +10394,36 @@ impl PureTermApp {
                 Task::none()
             }
             Fx::NewWindow => self.open_new_window(),
+            // `config.set`:把一个点分键路径的值写进配置文件并重载。
+            Fx::SetConfig { key, value } => {
+                self.apply_config_set(&key, &value);
+                Task::none()
+            }
+            // `window.focus`:把焦点切到目标窗口。早前这个方法**没有
+            // 任何副作用**,却回 `{"focused": true}` —— 调用方以为窗口
+            // 被聚焦了,实际什么都没发生。
+            Fx::FocusWindow { index } => {
+                let target = match index {
+                    Some(i) => self.windows.get(i).map(|w| w.window_id),
+                    // 缺省:切到第一个**非活动**窗口(没有就保持原样)。
+                    None => self
+                        .windows
+                        .iter()
+                        .find(|w| w.window_id != self.active_window_id)
+                        .map(|w| w.window_id),
+                };
+                match target {
+                    Some(id) => {
+                        self.active_window_id = id;
+                        // 让 OS 把该窗口提到前面(iced 的窗口 API)。
+                        window::gain_focus(id)
+                    },
+                    None => {
+                        log::warn!("window.focus: 没有可聚焦的窗口");
+                        Task::none()
+                    },
+                }
+            }
             // GAP-09:`pureterm notify` / 外部 IPC → 向活动或指定
             // 窗格发布一条通知(来源 Cli)。
             Fx::ShowNotification { title, body, pane_id } => {
@@ -10473,6 +10753,84 @@ impl PureTermApp {
         }
     }
 
+    /// GAP-7.8:找出某个浏览器上下文所属的窗格 id。`browser.wait` 的
+    /// 轮询需要它(每轮重新取窗格的 webview —— 窗格可能被关掉)。
+    fn pane_id_of_browser_ctx(&self, ctx: &Arc<crate::browser::BrowserContext>) -> u64 {
+        self.tabs()
+            .iter()
+            .find_map(|tab| {
+                tab.panes.iter().find_map(|(id, p)| {
+                    p.web().as_ref().filter(|c| c.id == ctx.id).map(|_| id.0)
+                })
+            })
+            .unwrap_or(0)
+    }
+
+    /// GAP-7.8:驱动一次 `browser.wait` 探测,并排下一次定时器。
+    ///
+    /// 返回的 Task 在 [`crate::browser::wait::POLL_INTERVAL`] 之后触发
+    /// [`Message::BrowserWaitPoll`] —— 那一轮再读探测结果、再发一次探测。
+    /// 找到 / 超时 / 窗格消失时,等待被解决并从表中移除。
+    fn browser_wait_probe(&mut self, wait_id: u64) -> Task<Message> {
+        // 先把需要的字段取出来 —— 后面要从 `self.browser_waits` 里
+        // 摘掉这一项,不能同时持有不可变借用。
+        let (pane_id, selector, settled) = {
+            let Some(handle) = self.browser_waits.get(&wait_id) else {
+                return Task::none();
+            };
+            let pane_id = handle.pane_id;
+            let selector = handle.selector.clone();
+            let settled = if handle.is_found() {
+                Some(handle.found_reply())
+            } else if handle.is_expired() {
+                Some(handle.timeout_reply())
+            } else {
+                None
+            };
+            (pane_id, selector, settled)
+        };
+
+        // 找到 / 超时 → 结束等待(解决 oneshot,由既有的超时任务转成应答)。
+        if let Some(reply) = settled {
+            if let Some(handle) = self.browser_waits.get(&wait_id) {
+                handle.resolve(reply);
+            }
+            self.browser_waits.retain(|k, _| *k != wait_id);
+            return Task::none();
+        }
+
+        // 发起新一轮探测(webview 没了 / 窗格被关 → 终止等待)。
+        let ctx = self.pane_browser_ctx(PaneId(pane_id));
+        let alive = match &ctx {
+            Some(c) => self
+                .browser_waits
+                .get(&wait_id)
+                .map(|h| h.probe_once(c))
+                .unwrap_or(false),
+            None => false,
+        };
+        if !alive {
+            let reason = if ctx.is_some() {
+                "webview is no longer available".to_string()
+            } else {
+                format!("pane {pane_id} was closed while waiting for {selector:?}")
+            };
+            let reply = crate::browser::BrowserReply::Error(reason);
+            if let Some(handle) = self.browser_waits.get(&wait_id) {
+                handle.resolve(reply);
+            }
+            self.browser_waits.retain(|k, _| *k != wait_id);
+            return Task::none();
+        }
+
+        Task::perform(
+            async move {
+                tokio::time::sleep(crate::browser::wait::POLL_INTERVAL).await;
+            },
+            move |_| Message::BrowserWaitPoll(wait_id),
+        )
+    }
+
     /// GAP-7.8:针对 web 窗格分派 `browser.*` 请求。
     ///
     /// 异步操作(navigate/click/type/extract/scroll/wait/get_url/get_title/
@@ -10598,8 +10956,59 @@ impl PureTermApp {
         }
 
         // 启动操作;oneshot 由 wry JS 回调(或 navigate /
-        // screenshot / 尚未实现的同步路径)解决。
+        // screenshot)解决。
         let (tx, rx) = tokio::sync::oneshot::channel::<BrowserReply>();
+
+        // `wait` 特判:它需要**轮询**(每次一次非阻塞探测),不能走
+        // 一次性 JS 求值。WKWebView 的 `evaluateJavaScript` 不 await
+        // Promise,而 JS 里同步忙等会占住页面的 JS 线程 —— 页面靠 JS
+        // 插入的元素因此永远出不来。轮询由 iced 定时器驱动(必须回到
+        // 主线程才能求值),状态见 `browser::wait`。
+        if let crate::browser::BrowserOp::Wait { selector, timeout_ms } = &op {
+            let timeout_ms = browser_cmd::wait_deadline_ms(*timeout_ms);
+            // 目标窗格:显式 `pane_id` 优先,否则反查解析出来的 ctx 属于哪个窗格。
+            let target_pane = pane_id
+                .map(|id| id.0)
+                .unwrap_or_else(|| self.pane_id_of_browser_ctx(&ctx));
+            let wait_id = self.next_browser_wait_id;
+            self.next_browser_wait_id += 1;
+            let handle = crate::browser::WaitHandle::new(
+                target_pane,
+                selector.clone(),
+                timeout_ms,
+                tx,
+            );
+            self.browser_waits.insert(wait_id, handle);
+            let ev_kind = format!("browser.{}", op.verb());
+            let ev_payload = op.event_payload();
+            let verb = op.verb().to_string();
+            let timeout = op.timeout();
+            let reply_tx2 = reply_tx.clone();
+            let timeout_task = Task::perform(
+                async move {
+                    let reply = match tokio::time::timeout(timeout, rx).await {
+                        Ok(Ok(r)) => r,
+                        Ok(Err(_)) => BrowserReply::Error("browser op channel closed".into()),
+                        Err(_) => BrowserReply::Error(format!(
+                            "browser.{verb} timed out after {} ms",
+                            timeout.as_millis()
+                        )),
+                    };
+                    BrowserResolved {
+                        ipc_id,
+                        reply_tx: reply_tx2,
+                        reply,
+                        ev_kind,
+                        ev_payload,
+                    }
+                },
+                Message::BrowserOpResolved,
+            );
+            // 立刻发起第一次探测,再排定时器。
+            let first = self.browser_wait_probe(wait_id);
+            return Task::batch([timeout_task, first]);
+        }
+
         browser_cmd::execute(&ctx, &op, tx);
 
         let ev_kind = format!("browser.{}", op.verb());
@@ -10668,11 +11077,17 @@ impl PureTermApp {
             .and_then(|v| v.as_u64())
             .map(|n| n as usize);
 
+        // 单元格像素尺寸(逻辑像素),供消费方重建图像。
+        let cell_size = {
+            let gs = self.glyph_state.borrow();
+            (gs.cell_width, gs.cell_height)
+        };
+
         Task::perform(
             async move {
                 let arc = term_arc;
                 match tokio::task::spawn_blocking(move || {
-                    capture(arc, visible_only, lines, ipc_id)
+                    capture(arc, visible_only, lines, ipc_id, cell_size)
                 })
                 .await
                 {
@@ -11431,26 +11846,62 @@ impl PureTermApp {
     /// 会话;只有树成员关系与网格尺寸变化。
     fn apply_attach_pane(&mut self, src: PaneId, dst_tab_index: usize, direction: SplitDirection) {
         // 1. 把 src 从其源标签页脱离(记录索引供稍后重同步)。
-        let (src_tab_idx, pane) = {
+        //
+        //    `src` 可能是源标签页**唯一**的窗格 —— 典型场景是刚被
+        //    `pane.detach`(break-pane)拆出来的那个。此时源标签页会变空,
+        //    必须**一并删掉**它。
+        //
+        //    回归:早前这里有 `if tab.panes.len() <= 1 { break; }` ——
+        //    「最后一个窗格不许移走」。于是 detach 出来的窗格**永远
+        //    join 不回去**(detach → attach 往返不成立),而 RPC 还回
+        //    「attached: true」。
+        let (src_tab_idx, pane, src_tab_emptied) = {
             let mut found = None;
             for (i, tab) in self.tabs_mut().iter_mut().enumerate() {
                 if tab.panes.contains_key(&src) {
-                    if tab.panes.len() <= 1 {
-                        break; // can't move the last pane out
-                    }
                     tab.restore_zoom_if_any();
-                    if let Some(new_first) = tab.split_tree.remove(src) {
+                    // 树里移除。返回 None = 它就是树里唯一的叶子
+                    // (树随即为空)。
+                    let remaining = tab.split_tree.remove(src);
+                    if let Some(new_first) = remaining {
                         tab.active_pane = new_first;
-                        found = Some((i, tab.panes.remove(&src)));
                     }
+                    let pane = tab.panes.remove(&src);
+                    let emptied = tab.panes.is_empty();
+                    found = Some((i, pane, emptied));
                     break;
                 }
             }
             match found {
-                Some((i, Some(p))) => (i, p),
+                Some((i, Some(p), emptied)) => (i, p, emptied),
                 _ => return,
             }
         };
+
+        // 1b. 源标签页空了 → 删掉它(否则会留一个空标签页)。
+        //     目标标签页序号要相应调整:源标签页在目标**之前**时,
+        //     删掉它会让目标序号前移一位。
+        let mut dst_tab_index = dst_tab_index;
+        if src_tab_emptied {
+            let removed_id = {
+                let tabs = self.tabs_mut();
+                match tabs.get(src_tab_idx) {
+                    Some(t) => t.id,
+                    None => return,
+                }
+            };
+            self.tabs_mut().retain(|t| t.id != removed_id);
+            // 活动标签页不能指向被删掉的标签页。
+            if self.active_tab_id() == removed_id {
+                let first = self.tabs().first().map(|t| t.id);
+                if let Some(f) = first {
+                    self.set_active_tab(f);
+                }
+            }
+            if src_tab_idx < dst_tab_index {
+                dst_tab_index -= 1;
+            }
+        }
         // 2. 作为目标标签页活动窗格的兄弟插入。
         let (cw, ch) = {
             let gs = self.glyph_state.borrow();
@@ -11751,7 +12202,7 @@ impl PureTermApp {
         let hibernated = self
             .last_session_list
             .iter()
-            .find(|s| s.get("id").and_then(|v| v.as_str()) == Some(session_id))
+            .find(|s| s.get("session_id").and_then(|v| v.as_str()) == Some(session_id))
             .and_then(|s| s.get("hibernated").and_then(|v| v.as_bool()))
             .unwrap_or(false);
         let pending = self.feed_panel.pending_count();
@@ -14048,6 +14499,16 @@ impl PureTermApp {
     }
 
     pub fn view(&self, id: window::Id) -> Element<'_, Message, Theme, iced::Renderer> {
+        // 首帧标记:第一次 `view()` 说明窗口已开始产出内容。
+        // 与「窗口已创建」(`MainWindowOpened`)不同,它更接近用户
+        // 真正看到画面的时刻。
+        static FIRST_FRAME: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if crate::startup_trace::enabled()
+            && !FIRST_FRAME.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            crate::startup_trace::mark("first_frame");
+        }
+
         if let Some(ref state) = self.settings_state {
             if state.owns_window(id) {
                 return state.view(id).map(Message::Settings);
@@ -14797,6 +15258,7 @@ fn set_metal_presents_with_transaction() {
 }
 
 pub fn run() -> iced::Result {
+    crate::startup_trace::mark_delta("pre_run");
     iced::daemon(
         PureTermApp::new,
         PureTermApp::update,

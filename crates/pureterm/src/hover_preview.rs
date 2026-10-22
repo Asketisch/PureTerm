@@ -24,6 +24,11 @@ fn semantic_path_pattern() -> &'static Regex {
 }
 
 /// 需要显示悬停预览 + 语义上下文菜单的智能选中规则。
+/// 网页部分(HTML 解析 / favicon / 抓取)——见 [`html`]。
+pub mod html;
+
+pub use html::{favicon_url_for, fetch_url_preview, parse_html_title};
+
 pub fn is_previewable_rule(rule_id: &str) -> bool {
     matches!(rule_id, "url" | "ssh-url" | "file-path")
 }
@@ -414,106 +419,6 @@ pub fn path_preview(path: &Path) -> PreviewContent {
     }
 }
 
-pub fn parse_html_title(html: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
-    let start = lower.find("<title")?;
-    let after_tag = &html[start..];
-    let gt = after_tag.find('>')?;
-    let inner = &after_tag[gt + 1..];
-    let end = inner.to_ascii_lowercase().find("</title>")?;
-    let title = inner[..end].trim();
-    if title.is_empty() {
-        None
-    } else {
-        Some(title.to_string())
-    }
-}
-
-pub fn favicon_url_for(page_url: &str, html: &str) -> Option<String> {
-    let lower = html.to_ascii_lowercase();
-    for needle in ["rel=\"icon\"", "rel='icon'", "rel=\"shortcut icon\"", "rel='shortcut icon'"] {
-        if let Some(rel_pos) = lower.find(needle) {
-            let end = rel_pos.saturating_add(240).min(html.len());
-            let chunk = &html[rel_pos..end];
-            if let Some(href) = extract_href(chunk) {
-                return Some(resolve_url(page_url, &href));
-            }
-        }
-    }
-    origin_of(page_url).map(|o| format!("{o}/favicon.ico"))
-}
-
-fn extract_href(chunk: &str) -> Option<String> {
-    let lower = chunk.to_ascii_lowercase();
-    let href_pos = lower.find("href=")?;
-    let rest = &chunk[href_pos + 5..];
-    let quote = rest.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let value = &rest[1..];
-    let end = value.find(quote)?;
-    Some(value[..end].to_string())
-}
-
-fn origin_of(url: &str) -> Option<String> {
-    let (scheme, rest) = url.split_once("://")?;
-    let host = rest.split('/').next()?.split('?').next()?;
-    if host.is_empty() {
-        None
-    } else {
-        Some(format!("{scheme}://{host}"))
-    }
-}
-
-fn resolve_url(base: &str, href: &str) -> String {
-    if href.starts_with("http://") || href.starts_with("https://") {
-        href.to_string()
-    } else if href.starts_with("//") {
-        if let Some(scheme) = base.split("://").next() {
-            format!("{scheme}:{href}")
-        } else {
-            href.to_string()
-        }
-    } else if let Some(origin) = origin_of(base) {
-        if href.starts_with('/') {
-            format!("{origin}{href}")
-        } else {
-            format!("{origin}/{href}")
-        }
-    } else {
-        href.to_string()
-    }
-}
-
-pub async fn fetch_url_preview(url: &str) -> PreviewContent {
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(4))
-        .user_agent("PureTerm/0.1 hover-preview")
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => return PreviewContent::Error(e.to_string()),
-    };
-    let resp = match client.get(url).send().await {
-        Ok(r) => r,
-        Err(e) => return PreviewContent::Error(e.to_string()),
-    };
-    if !resp.status().is_success() {
-        return PreviewContent::Error(format!("HTTP {}", resp.status()));
-    }
-    let html = match resp.text().await {
-        Ok(t) => t,
-        Err(e) => return PreviewContent::Error(e.to_string()),
-    };
-    let title = parse_html_title(&html);
-    let favicon_url = favicon_url_for(url, &html);
-    PreviewContent::Url {
-        title,
-        favicon_url,
-    }
-}
-
 pub async fn fetch_preview(target: &HoverTarget, cwd: Option<&Path>) -> PreviewContent {
     match target.rule_id.as_str() {
         "url" | "ssh-url" => fetch_url_preview(&target.text).await,
@@ -693,6 +598,44 @@ mod tests {
         assert_eq!(
             favicon_url_for("https://ex.com/x", "<html></html>").as_deref(),
             Some("https://ex.com/favicon.ico")
+        );
+    }
+
+    /// 回归：`<link rel="icon">` 之后 240 字节内出现多字节字符时，
+    /// 字节切片会切在字符边界之外直接 panic —— 而这里的 HTML 来自
+    /// **远程页面**，一个中文标题就足以触发。
+    #[test]
+    fn favicon_with_multibyte_chars_in_window_does_not_panic() {
+        let prefix = r#"<link rel="icon" href="/f.ico">"#;
+        // 切片右端点固定在 `rel_pos + 240`（字节）。让一个 3 字节的
+        // 汉字**正好跨过**这个下标，切片就会切在字符内部 → panic。
+        let rel_pos = prefix.find("rel=").expect("rel=");
+        let cut = rel_pos + 240;
+        let filler = "a".repeat(cut - prefix.len() - 1);
+        let html = format!("{prefix}{filler}构完成");
+        assert!(
+            !html.is_char_boundary(cut),
+            "测试构造失效：cut 落在字符边界上，触发不了 panic"
+        );
+        // 不 panic 即可；favicon 仍应被正确解析出来。
+        assert_eq!(
+            favicon_url_for("https://ex.com/x", &html).as_deref(),
+            Some("https://ex.com/f.ico")
+        );
+    }
+
+    /// 回归：emoji（4 字节）落在窗口边界上同样不能 panic。
+    #[test]
+    fn favicon_with_emoji_in_window_does_not_panic() {
+        let prefix = r#"<link rel="icon" href="/f.ico">"#;
+        let rel_pos = prefix.find("rel=").expect("rel=");
+        let cut = rel_pos + 240;
+        let filler = "a".repeat(cut - prefix.len() - 2);
+        let html = format!("{prefix}{filler}✅");
+        assert!(!html.is_char_boundary(cut), "测试构造失效");
+        assert_eq!(
+            favicon_url_for("https://ex.com/x", &html).as_deref(),
+            Some("https://ex.com/f.ico")
         );
     }
 

@@ -8,6 +8,8 @@
 use super::internal::LocalCtx;
 #[cfg(unix)]
 use super::internal::SshCtx;
+#[cfg(unix)]
+use super::internal::TmuxCtx;
 
 /// GAP-5.7/5.8/5.9 的第二阶段:TerminalContext 改为拥有两个变体的枚举。
 /// 公共 API 表面保持不变,因此 `iced_app.rs` 与
@@ -18,4 +20,11 @@ pub enum TerminalContext {
     Local(LocalCtx),
     #[cfg(unix)]
     Ssh(SshCtx),
+    /// T-core-tmux-cc:`tmux -CC` 控制模式会话。
+    ///
+    /// 终端内容经 `%output` 信封送入(由 `tmux_cc::pump` 泵进网格),
+    /// 键盘输入经 `%input` 信封送回。它**不能**像本地/SSH 会话那样
+    /// 持久化到守护进程 —— tmux 自己就是会话的持久层。
+    #[cfg(unix)]
+    Tmux(TmuxCtx),
 }

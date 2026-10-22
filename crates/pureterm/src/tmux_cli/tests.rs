@@ -151,6 +151,8 @@ mod round_trip {
     fn tmux_snap() -> AppSnapshot {
         AppSnapshot {
             window_count: 1,
+            window_tab_counts: vec![1],
+            active_window_index: 0,
             tab_titles: vec!["a".into(), "b".into()],
             tab_ids: vec![1, 2],
             pane_counts: vec![2, 1],
@@ -176,30 +178,59 @@ mod round_trip {
     /// 请求,因此 `read_to_string` 恰好返回一个请求)。
     /// 采用非阻塞轮询,以便 `run()` 返回后停止该测试线程。
     #[allow(clippy::type_complexity)]
+    /// 启动假 GUI。返回 `(记录, 停止标志, **就绪信号**, 线程句柄)`。
+    ///
+    /// 就绪信号在监听器**真的绑定成功之后**才发出 —— 早前这里靠一个
+    /// 固定的 `sleep(60ms)` 等绑定,在高负载(1513 个测试 / 18 个
+    /// worker 并行)下 60ms 经常不够,于是客户端连不上,用例随机失败。
+    /// 信号是确定性的:绑定成功就发,绑定失败就发一个「失败」标记。
     fn spawn_fake_gui(
         path: PathBuf,
         snap: AppSnapshot,
     ) -> (
         Arc<Mutex<Recorded>>,
         Arc<AtomicBool>,
+        Arc<(Mutex<bool>, std::sync::Condvar)>,
         thread::JoinHandle<()>,
     ) {
         let rec = Arc::new(Mutex::new(Recorded::default()));
         let stop = Arc::new(AtomicBool::new(false));
+        let ready = Arc::new((Mutex::new(false), std::sync::Condvar::new()));
         let (rec_cl, stop_cl) = (Arc::clone(&rec), Arc::clone(&stop));
+        let ready_cl = Arc::clone(&ready);
         let handle = thread::spawn(move || {
             let listener = match UnixListener::bind(&path) {
                 Ok(l) => l,
                 Err(e) => {
                     eprintln!("fake_gui bind failed: {e}");
+                    // 绑定失败也要唤醒等待者,免得它干等。
+                    let (lock, cvar) = &*ready_cl;
+                    *lock.lock().unwrap() = true;
+                    cvar.notify_all();
                     return;
                 }
             };
+            // 监听器就绪 —— 唤醒等待者。
+            {
+                let (lock, cvar) = &*ready_cl;
+                *lock.lock().unwrap() = true;
+                cvar.notify_all();
+            }
             let _ = listener.set_nonblocking(true);
             let router = SocketRouter::new();
             while !stop_cl.load(Ordering::Relaxed) {
                 match listener.accept() {
                     Ok((mut stream, _)) => {
+                        // **关键**:macOS / BSD 上 `accept()` 返回的流会
+                        // **继承**监听器的 O_NONBLOCK(Linux 不会)。于是
+                        // 客户端还没把请求写过来,`read_to_string` 就先撞上
+                        // EAGAIN("Resource temporarily unavailable")→
+                        // 连接被丢弃 → 客户端的 write 收到 EPIPE。
+                        //
+                        // 早前这里靠调用方固定 `sleep(60ms)` 让请求先落在
+                        // 缓冲区里才碰巧不炸 —— 那是竞态,不是同步。
+                        // 正确做法:把接受的流恢复为阻塞。
+                        let _ = stream.set_nonblocking(false);
                         let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
                         let mut buf = String::new();
                         if Read::read_to_string(&mut stream, &mut buf).is_err() {
@@ -236,7 +267,22 @@ mod round_trip {
                 }
             }
         });
-        (rec, stop, handle)
+        (rec, stop, ready, handle)
+    }
+
+    /// 等假 GUI 的监听器绑定完成(确定性,不用固定 sleep)。
+    fn wait_ready(ready: &Arc<(Mutex<bool>, std::sync::Condvar)>) {
+        let (lock, cvar) = &**ready;
+        let mut done = lock.lock().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !*done {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let (guard, _timeout) = cvar.wait_timeout(done, remaining).expect("condvar");
+            done = guard;
+        }
     }
 
     /// `capture-pane -p`(不带 `--lines`)默认 `lines=50`(DoD 要求)并
@@ -244,8 +290,8 @@ mod round_trip {
     #[test]
     fn capture_pane_round_trip_marshals_snapshot_with_lines_default() {
         let path = unique_socket_path("cap");
-        let (rec, stop, handle) = spawn_fake_gui(path.clone(), tmux_snap());
-        thread::sleep(Duration::from_millis(60)); // 等待监听器绑定
+        let (rec, stop, ready, handle) = spawn_fake_gui(path.clone(), tmux_snap());
+        wait_ready(&ready);
         let cmd = TmuxSub::CapturePane {
             target: Some("%0".into()),
             print: true,
@@ -272,8 +318,8 @@ mod round_trip {
     #[test]
     fn send_keys_round_trip_marshals_target_and_text() {
         let path = unique_socket_path("sk");
-        let (rec, stop, handle) = spawn_fake_gui(path.clone(), tmux_snap());
-        thread::sleep(Duration::from_millis(60));
+        let (rec, stop, ready, handle) = spawn_fake_gui(path.clone(), tmux_snap());
+        wait_ready(&ready);
         let cmd = TmuxSub::SendKeys { target: Some("%0".into()), keys: vec!["ping".into()] };
         let res = run(cmd, &Some(path));
         stop.store(true, Ordering::Relaxed);
@@ -294,8 +340,8 @@ mod round_trip {
     #[test]
     fn join_pane_round_trip_emits_attach_pane_effect() {
         let path = unique_socket_path("jp");
-        let (rec, stop, handle) = spawn_fake_gui(path.clone(), tmux_snap());
-        thread::sleep(Duration::from_millis(60));
+        let (rec, stop, ready, handle) = spawn_fake_gui(path.clone(), tmux_snap());
+        wait_ready(&ready);
         let cmd = TmuxSub::JoinPane {
             source: Some("%0".into()),
             target: Some("1".into()),

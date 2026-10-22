@@ -123,6 +123,10 @@ pub struct SessionManager {
 /// 可序列化的会话描述符(供 `session.list`)。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SessionInfo {
+    /// 会话 id。字段名与其余守护进程 RPC 一致(`session.create` /
+    /// `session.attach` / `session.kill` 都用 `session_id`);早前这里
+    /// 叫 `id`,同一套 API 里出现了两种叫法,调用方得同时认两个键。
+    #[serde(rename = "session_id")]
     pub id: String,
     pub kind: String,
     pub child_pid: u32,

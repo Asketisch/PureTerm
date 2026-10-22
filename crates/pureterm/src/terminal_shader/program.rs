@@ -174,8 +174,12 @@ impl<M> shader::Program<M> for TerminalProgram {
         let mut text_vertices: Vec<TextVertex> = Vec::new();
         let mut text_indices: Vec<u32> = Vec::new();
 
-        // 全屏背景
+        // 全屏背景。它是 bg 通道里的**第一个** quad,单独记下它的索引
+        // 条数(6):绘制时要先画它,再画背景图,最后画单元格底色 ——
+        // 否则不透明的全屏底色会把背景图整个盖住(背景图功能形同
+        // 虚设)。
         push_bg_quad(&mut bg_vertices, &mut bg_indices, 0.0, 0.0, screen_w, screen_h, bg_color);
+        let bg_base_index_count = bg_indices.len() as u32;
 
         // 选区高亮颜色(半透明蓝)。
         // alacritty kernel 的 Colors 数组没有 selection 槽,色彩配置不通过它走;
@@ -406,6 +410,7 @@ impl<M> shader::Program<M> for TerminalProgram {
         TerminalPrimitive {
             bg_vertices,
             bg_indices,
+            bg_base_index_count,
             text_vertices,
             text_indices,
             grayscale_atlas,

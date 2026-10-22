@@ -8,6 +8,8 @@ use super::super::protocol::ERROR_METHOD_NOT_FOUND;
 fn test_snap() -> AppSnapshot {
     AppSnapshot {
         window_count: 1,
+        window_tab_counts: vec![1],
+        active_window_index: 0,
         tab_titles: vec!["bash".into(), "ssh://prod".into()],
         tab_ids: vec![1, 2],
         pane_counts: vec![2, 1],
@@ -501,8 +503,15 @@ fn config_get_no_key() {
 
 #[test]
 fn config_get_with_key() {
+    // 真读需要一个**真的存在**的配置文件(读不到就报错,而不是
+    // 假装成功)。
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("pureterm.toml");
+    std::fs::write(&path, "[font]\nsize = 14.0\n").expect("write config");
+
     let router = SocketRouter::new();
-    let snap = test_snap();
+    let mut snap = test_snap();
+    snap.config_path = Some(path.to_string_lossy().into_owned());
     let (resp, _) = router.dispatch(
         27,
         "config.get",
@@ -511,6 +520,24 @@ fn config_get_with_key() {
     );
     let r = resp.result.unwrap();
     assert_eq!(r["key"], "font.size");
+    // 真读:必须带 `value` 字段(此前只回 key,没有值)。
+    assert!(r.get("value").is_some(), "config.get 必须返回 value: {r}");
+    assert_eq!(r["exists"], true, "font.size 必须存在: {r}");
+    assert_eq!(r["value"], 14.0, "读到的值不对: {r}");
+}
+
+#[test]
+fn config_get_rejects_malformed_key() {
+    let router = SocketRouter::new();
+    let snap = test_snap();
+    let (resp, _) = router.dispatch(
+        271,
+        "config.get",
+        Some(serde_json::json!({"key": "a..b"})),
+        &snap,
+    );
+    // 畸形键必须报错,而不是静默回一个「看起来成功」的结果。
+    assert!(resp.error.is_some(), "畸形键不该成功");
 }
 
 #[test]
@@ -534,8 +561,40 @@ fn config_reload() {
 fn config_set() {
     let router = SocketRouter::new();
     let snap = test_snap();
-    let (resp, _) = router.dispatch(30, "config.set", None, &snap);
-    assert!(resp.result.is_some()); // 返回 note,无错误
+    let (resp, fx) = router.dispatch(
+        30,
+        "config.set",
+        Some(serde_json::json!({"key": "font.size", "value": 15.0})),
+        &snap,
+    );
+    let r = resp.result.unwrap();
+    assert_eq!(r["key"], "font.size");
+    // 真写:必须产生一个落盘副作用(此前只是回一句 note,什么都没做)。
+    assert!(fx.is_some(), "config.set 必须产生落盘副作用");
+}
+
+#[test]
+fn config_set_rejects_malformed_key_and_missing_value() {
+    let router = SocketRouter::new();
+    let snap = test_snap();
+    // 畸形键。
+    let (resp, fx) = router.dispatch(
+        301,
+        "config.set",
+        Some(serde_json::json!({"key": "a..b", "value": 1})),
+        &snap,
+    );
+    assert!(resp.error.is_some(), "畸形键不该成功");
+    assert!(fx.is_none(), "畸形键不该产生副作用");
+    // 缺 value。
+    let (resp, fx) = router.dispatch(
+        302,
+        "config.set",
+        Some(serde_json::json!({"key": "font.size"})),
+        &snap,
+    );
+    assert!(resp.error.is_some(), "缺 value 不该成功");
+    assert!(fx.is_none(), "缺 value 不该产生副作用");
 }
 
 // ── ssh.* 命名空间 ────────────────────────────────────────────────────

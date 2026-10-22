@@ -39,6 +39,8 @@ impl TerminalContext {
             TerminalContext::Local(ctx) => &ctx.terminal,
             #[cfg(unix)]
             TerminalContext::Ssh(ctx) => &ctx.terminal,
+            #[cfg(unix)]
+            TerminalContext::Tmux(ctx) => &ctx.terminal,
         }
     }
 
@@ -48,6 +50,18 @@ impl TerminalContext {
             TerminalContext::Local(ctx) => ctx.notifier.notify(bytes.to_vec()),
             #[cfg(unix)]
             TerminalContext::Ssh(ctx) => ctx.runtime.borrow().notifier.notify(bytes.to_vec()),
+            // tmux 控制模式:键盘输入经 `%input` 信封送回 tmux。
+            // 锁只持有到字节写进 pty master 为止(泵线程不碰这把锁)。
+            #[cfg(unix)]
+            TerminalContext::Tmux(ctx) => {
+                let mut child = match ctx.child.lock() {
+                    Ok(g) => g,
+                    Err(_) => return,
+                };
+                if let Err(e) = child.send_input(bytes) {
+                    log::warn!("tmux-cc: send_input failed: {e}");
+                }
+            },
         }
     }
 
@@ -58,6 +72,9 @@ impl TerminalContext {
             TerminalContext::Local(ctx) => Some(ctx.notifier.clone()),
             #[cfg(unix)]
             TerminalContext::Ssh(ctx) => Some(ctx.runtime.borrow().notifier.clone()),
+            // tmux 控制模式没有 PTY notifier(输入走 `%input` 信封)。
+            #[cfg(unix)]
+            TerminalContext::Tmux(_) => None,
         }
     }
 
@@ -100,6 +117,26 @@ impl TerminalContext {
                 };
                 let _ = ctx.runtime.borrow().notifier.0.send(Msg::Resize(window_size));
             },
+            #[cfg(unix)]
+            TerminalContext::Tmux(ctx) => {
+                ctx.terminal.lock_unfair().resize(size);
+                // tmux 控制模式的尺寸变更走 `refresh-client -C` 信封。
+                let window_size = WindowSize {
+                    num_cols: cols as u16,
+                    num_lines: rows as u16,
+                    cell_width: cell_w,
+                    cell_height: cell_h,
+                };
+                if let Ok(mut child) = ctx.child.lock() {
+                    let env = crate::tmux_cc::envelope::TmuxEnvelope::RefreshClient {
+                        size: Some((window_size.num_cols, window_size.num_lines)),
+                        flags: None,
+                    };
+                    if let Err(e) = child.send_envelope(&env) {
+                        log::warn!("tmux-cc: refresh-client failed: {e}");
+                    }
+                }
+            },
         }
     }
 
@@ -111,6 +148,8 @@ impl TerminalContext {
             TerminalContext::Local(ctx) => ctx.event_rx.try_recv().ok(),
             #[cfg(unix)]
             TerminalContext::Ssh(ctx) => ctx.runtime.borrow().event_rx.try_recv().ok(),
+            #[cfg(unix)]
+            TerminalContext::Tmux(ctx) => ctx.event_rx.try_recv().ok(),
         }
     }
 
@@ -120,6 +159,8 @@ impl TerminalContext {
             TerminalContext::Local(_) => false,
             #[cfg(unix)]
             TerminalContext::Ssh(_) => true,
+            #[cfg(unix)]
+            TerminalContext::Tmux(_) => false,
         }
     }
 
@@ -129,6 +170,8 @@ impl TerminalContext {
             TerminalContext::Local(ctx) => Some(ctx.child_pid),
             #[cfg(unix)]
             TerminalContext::Ssh(_) => None,
+            #[cfg(unix)]
+            TerminalContext::Tmux(_) => None,
         }
     }
 
@@ -140,6 +183,8 @@ impl TerminalContext {
             TerminalContext::Local(ctx) => ctx.session_id.as_deref(),
             #[cfg(unix)]
             TerminalContext::Ssh(ctx) => ctx.session_id.as_deref(),
+            #[cfg(unix)]
+            TerminalContext::Tmux(ctx) => ctx.session_id.as_deref(),
         }
     }
 
@@ -158,6 +203,9 @@ impl TerminalContext {
             TerminalContext::Local(_) => None,
             #[cfg(unix)]
             TerminalContext::Ssh(ctx) => Some(&ctx.profile_display),
+            // tmux 会话用会话名做标题。
+            #[cfg(unix)]
+            TerminalContext::Tmux(ctx) => ctx.session_name.as_deref(),
         }
     }
 
@@ -172,6 +220,8 @@ impl TerminalContext {
                 ctx.ssh_user.as_deref(),
                 ctx.ssh_port,
             )),
+            // tmux 会话不走 SSH 连接池。
+            TerminalContext::Tmux(_) => None,
         }
     }
 
@@ -200,6 +250,16 @@ impl TerminalContext {
                 }
                 Some(String::from_utf8_lossy(&accumulated).into_owned())
             },
+            // tmux 的 stderr 由 `TmuxChild` 持有,单独读取。
+            TerminalContext::Tmux(ctx) => {
+                let mut child = ctx.child.lock().ok()?;
+                let text = child.stderr_text().ok()?;
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(text)
+                }
+            },
         }
     }
 
@@ -213,6 +273,8 @@ impl TerminalContext {
             TerminalContext::Ssh(ctx) => {
                 Some(SshStateSnapshot::from(&*ctx.reconnect_state.lock().unwrap()))
             },
+            // tmux 会话没有 SSH 重连状态机。
+            TerminalContext::Tmux(_) => None,
         }
     }
 
@@ -242,6 +304,7 @@ impl TerminalContext {
         match self {
             TerminalContext::Local(_) => false,
             TerminalContext::Ssh(ctx) => ctx.user_initiated_close.load(Ordering::SeqCst),
+            TerminalContext::Tmux(_) => false,
         }
     }
 
@@ -261,6 +324,8 @@ impl TerminalContext {
                 forwards: ctx.ssh_forwards.clone(),
                 jump_hosts: ctx.ssh_jump_hosts.clone(),
             }),
+            // tmux 会话不重连。
+            TerminalContext::Tmux(_) => None,
         }
     }
 

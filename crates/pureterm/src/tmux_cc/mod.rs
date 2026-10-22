@@ -27,6 +27,8 @@ pub mod envelope;
 pub mod pty;
 pub mod backend;
 pub mod mirror;
+#[cfg(unix)]
+pub mod pump;
 
 pub use envelope::{parse_envelope, parse_envelopes, TmuxCommand, TmuxEnvelope};
 pub use backend::{SurfaceBackend, TmuxControlPty};

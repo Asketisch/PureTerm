@@ -175,8 +175,17 @@ pub enum Command {
     /// v1 只提供 CLI 入口；真正的消费者是 GUI。
     TmuxAttach {
         /// 要附加的会话名（省略则新建一个）。
-        #[arg(short = 't', long = "target")]
+        ///
+        /// `--target` 是别名（tmux 习惯用 `-t` 指目标）。
+        #[arg(short = 't', long = "session", visible_alias = "target")]
         session: Option<String>,
+        /// tmux socket 命名空间（`tmux -L <name>`）。省略 = 默认服务器。
+        ///
+        /// 叫 `--tmux-socket` 而不是 `--socket`:顶层已有一个**全局**
+        /// `--socket`(PureTerm 自己的 IPC socket 路径)。同名会让 clap
+        /// 在**解析时 panic**(definition/access 不匹配),命令行直接崩。
+        #[arg(long = "tmux-socket")]
+        tmux_socket: Option<String>,
         /// 附加后打开一个新的分离窗口。
         #[arg(long = "new-window")]
         new_window: bool,

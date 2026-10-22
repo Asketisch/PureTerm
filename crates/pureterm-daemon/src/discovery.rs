@@ -24,9 +24,79 @@ fn runtime_dir() -> PathBuf {
     }
 }
 
+/// Unix socket 路径长度上限(`sockaddr_un::sun_path` 的字节数)。
+///
+/// 超过它 `bind()` 会失败,报错信息还相当难懂:
+/// `path must be shorter than SUN_LEN`。macOS / Linux 都是 104。
+pub const SOCK_PATH_MAX: usize = 104;
+
+/// 路径能否用作 Unix socket 路径。
+///
+/// 留 1 字节余量给结尾的 NUL,避免正好卡在边界上。
+pub fn fits_sock_path(path: &std::path::Path) -> bool {
+    path.as_os_str().len() + 1 <= SOCK_PATH_MAX
+}
+
+/// 短路径回退目录:`/tmp/pureterm-<uid>`(0700,仅本用户可访问)。
+///
+/// 为什么需要它:macOS 的 per-user 临时目录本身就接近 50 字节
+/// (`/var/folders/<xx>/<hash>/T/`),再叠加应用自己的子目录就很容易
+/// 越过 104 字节上限。此时 socket **根本无法创建** —— 表现为
+/// 「IPC 监听器启动失败」「守护进程 bind 失败」,而应用照常启动,
+/// 只是所有 CLI / IPC 功能静默失效(用户在终端里敲 `pureterm tab list`
+/// 只得到一句 `Cannot connect to PureTerm`)。
+pub fn short_socket_dir() -> PathBuf {
+    #[cfg(unix)]
+    {
+        let uid = unsafe { libc::getuid() };
+        let dir = PathBuf::from("/tmp").join(format!("pureterm-{uid}"));
+        let _ = std::fs::create_dir_all(&dir);
+        // 目录必须只对本用户可见 —— socket 自身的权限位挡不住目录遍历。
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+        dir
+    }
+    #[cfg(not(unix))]
+    {
+        std::env::temp_dir()
+    }
+}
+
+/// 候选 socket 目录,按优先级排列。
+///
+/// 第一个能容纳目标文件名的目录即被采用;客户端按同一顺序搜索。
+pub fn socket_dirs() -> Vec<PathBuf> {
+    let mut dirs = vec![runtime_dir()];
+    let short = short_socket_dir();
+    if !dirs.contains(&short) {
+        dirs.push(short);
+    }
+    dirs
+}
+
+/// 守护进程 socket 路径的环境变量名(显式覆盖发现规则)。
+pub const DAEMON_SOCKET_ENV: &str = "PURETERM_DAEMON_SOCKET";
+
 /// 固定(不带 pid 后缀)的守护进程控制 socket 路径。
 pub fn socket_path() -> PathBuf {
-    runtime_dir().join("puretermd.sock")
+    const FILE: &str = "puretermd.sock";
+    // 显式覆盖优先 —— 测试与「多实例并行」场景需要指定位置。
+    if let Some(dir) = std::env::var_os(DAEMON_SOCKET_ENV) {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
+    for dir in socket_dirs() {
+        let candidate = dir.join(FILE);
+        if fits_sock_path(&candidate) {
+            return candidate;
+        }
+    }
+    // 连回退目录都放不下 —— 用最短的可能路径(此时 bind 仍可能失败,
+    // 但至少路径本身是合法的)。
+    short_socket_dir().join(FILE)
 }
 
 /// 守护进程的持久数据目录:清单、会话环等。
@@ -151,6 +221,48 @@ impl Drop for IsolatedDataDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 回归测试:Unix socket 的路径长度有硬上限。`TMPDIR` 稍长
+    /// (macOS 的 per-user 临时目录本身就接近 50 字节)就会越界,
+    /// 此时 `bind()` 失败 → IPC 监听器起不来 → 整个 Socket API 失效,
+    /// 而应用照常启动(用户只看到 `Cannot connect to PureTerm`)。
+    #[test]
+    fn socket_path_never_exceeds_sun_path_limit() {
+        let path = socket_path();
+        assert!(
+            fits_sock_path(&path),
+            "守护进程 socket 路径过长({} 字节 > {}):{}",
+            path.as_os_str().len(),
+            SOCK_PATH_MAX,
+            path.display()
+        );
+    }
+
+    /// 短路径回退目录必须够短,且是每用户独立的。
+    #[test]
+    fn short_socket_dir_is_short_and_per_user() {
+        let dir = short_socket_dir();
+        assert!(
+            dir.as_os_str().len() + "puretermd.sock".len() + 1 <= SOCK_PATH_MAX,
+            "回退目录仍然太长:{}",
+            dir.display()
+        );
+        // 带 pid 的 GUI socket 名更长,也要放得下。
+        assert!(
+            dir.as_os_str().len() + "PureTerm-4294967295.sock".len() + 1 <= SOCK_PATH_MAX,
+            "回退目录放不下 GUI socket:{}",
+            dir.display()
+        );
+    }
+
+    /// `fits_sock_path` 必须在边界上给出保守判断(留 NUL 余量)。
+    #[test]
+    fn fits_sock_path_respects_boundary() {
+        let exact = "a".repeat(SOCK_PATH_MAX - 1);
+        assert!(fits_sock_path(std::path::Path::new(&exact)));
+        let too_long = "a".repeat(SOCK_PATH_MAX);
+        assert!(!fits_sock_path(std::path::Path::new(&too_long)));
+    }
 
     #[test]
     fn socket_path_is_stable_and_has_no_pid() {

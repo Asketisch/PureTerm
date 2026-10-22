@@ -35,9 +35,13 @@ impl GlyphState {
         let mut rasterizer = Rasterizer::new().expect("Failed to create rasterizer");
         let font_size = Size::new(size_pt);
         let scaled_font_size = font_size.scale(scale_factor);
-        let font_desc = FontDesc::new(font_family, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
+        // 泛型名(如 "monospace")在 macOS / Windows 上不是真实族名,
+        // 交给 crossfont 会触发「回退到 Menlo」的 WARN。先按平台解析。
+        let resolved = crate::font_family::resolve(font_family);
+        let font_desc = FontDesc::new(&resolved, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
         let font_key = rasterizer.load_font(&font_desc, scaled_font_size).unwrap_or_else(|_| {
-            let fallback = FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal });
+            let fallback_name = crate::font_family::platform_default_monospace();
+            let fallback = FontDesc::new(fallback_name, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
             rasterizer.load_font(&fallback, scaled_font_size).expect("Failed to load fallback font")
         });
         let metrics = rasterizer.metrics(font_key, scaled_font_size).expect("Failed to get metrics");
@@ -85,9 +89,11 @@ impl GlyphState {
         self.size_pt = size_pt;
         let font_size = Size::new(size_pt);
         let scaled_font_size = font_size.scale(scale_factor);
-        let font_desc = FontDesc::new(font_family, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
+        let resolved = crate::font_family::resolve(font_family);
+        let font_desc = FontDesc::new(&resolved, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
         let font_key = self.rasterizer.load_font(&font_desc, scaled_font_size).unwrap_or_else(|_| {
-            let fallback = FontDesc::new("monospace", Style::Description { slant: Slant::Normal, weight: Weight::Normal });
+            let fallback_name = crate::font_family::platform_default_monospace();
+            let fallback = FontDesc::new(fallback_name, Style::Description { slant: Slant::Normal, weight: Weight::Normal });
             self.rasterizer.load_font(&fallback, scaled_font_size).expect("Failed to load fallback font")
         });
         let metrics = self.rasterizer.metrics(font_key, scaled_font_size).expect("Failed to get metrics");

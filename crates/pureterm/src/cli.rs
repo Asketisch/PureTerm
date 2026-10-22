@@ -10,7 +10,7 @@ mod dispatch;
 mod subs;
 mod top;
 
-pub use dispatch::{run, send};
+pub use dispatch::{run, send, send_value};
 pub use subs::{
     AgentSub, AgentsSub, BrowserSub, ConfigSub, DaemonSub, DebugSub, EventsSub, FeedSub, McpSub,
     PaneSub, ReplaySub, ResumeSub, ShortcutsSub, SshSub, SurfaceSub, SystemSub, TabSub, WindowSub,

@@ -180,29 +180,34 @@ pub struct TemplateContext<'a> {
 /// - `$1`..`$9`、`{1}`..`{9}`——捕获组（缺失 → 空串）
 /// - `${var:NAME}`、`{var:NAME}`——每 pane 用户变量
 /// - `\n`、`\r`、`\t`、`\xNN`——字面控制 / 十六进制字节
+///
+/// **UTF-8 安全**：模板按 `char`（而非字节）扫描。早期实现按字节切片，
+/// 一旦模板里出现非 ASCII 字符（如中文标题「构建完成」）就会切在字符
+/// 边界之外直接 panic —— 而触发器是在 GUI 主线程里求值的，panic 会
+/// 连带把整个应用 abort 掉。现按字符推进，任意 Unicode 都能原样透传。
 pub fn expand_trigger_template(template: &str, ctx: &TemplateContext<'_>) -> String {
+    let chars: Vec<char> = template.chars().collect();
     let mut out = String::new();
-    let bytes = template.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if template[i..].starts_with("{match}") {
+    let mut i = 0usize;
+    while i < chars.len() {
+        if chars_at(&chars, i, "{match}") {
             out.push_str(ctx.matched_text);
             i += 7;
             continue;
         }
-        if template[i..].starts_with("{var:") {
-            if let Some(end) = template[i + 5..].find('}') {
-                let name = &template[i + 5..i + 5 + end];
-                if let Some(v) = ctx.variables.get(name) {
+        if chars_at(&chars, i, "{var:") {
+            if let Some(end) = find_char(&chars, i + 5, '}') {
+                let name: String = chars[i + 5..i + 5 + end].iter().collect();
+                if let Some(v) = ctx.variables.get(&name) {
                     out.push_str(v);
                 }
                 i += 5 + end + 1;
                 continue;
             }
         }
-        if i + 2 < bytes.len() && bytes[i] == b'{' && bytes[i + 2] == b'}' && bytes[i + 1].is_ascii_digit()
+        if i + 2 < chars.len() && chars[i] == '{' && chars[i + 2] == '}' && chars[i + 1].is_ascii_digit()
         {
-            let d = bytes[i + 1] - b'0';
+            let d = chars[i + 1] as u8 - b'0';
             if d >= 1 && d <= 9 {
                 if let Some(c) = ctx.captures.get(d as usize - 1) {
                     out.push_str(c);
@@ -211,20 +216,20 @@ pub fn expand_trigger_template(template: &str, ctx: &TemplateContext<'_>) -> Str
                 continue;
             }
         }
-        if bytes[i] == b'$' && i + 1 < bytes.len() {
-            if template[i..].starts_with("${var:") {
-                if let Some(end) = template[i + 6..].find('}') {
-                    let name = &template[i + 6..i + 6 + end];
-                    if let Some(v) = ctx.variables.get(name) {
+        if chars[i] == '$' && i + 1 < chars.len() {
+            if chars_at(&chars, i, "${var:") {
+                if let Some(end) = find_char(&chars, i + 6, '}') {
+                    let name: String = chars[i + 6..i + 6 + end].iter().collect();
+                    if let Some(v) = ctx.variables.get(&name) {
                         out.push_str(v);
                     }
                     i += 6 + end + 1;
                     continue;
                 }
             }
-            let next = bytes[i + 1];
+            let next = chars[i + 1];
             if next.is_ascii_digit() {
-                let d = next - b'0';
+                let d = next as u8 - b'0';
                 if d == 0 {
                     out.push_str(ctx.matched_text);
                 } else if d <= 9 {
@@ -236,59 +241,72 @@ pub fn expand_trigger_template(template: &str, ctx: &TemplateContext<'_>) -> Str
                 continue;
             }
         }
-        if bytes[i] == b'\\' && i + 1 < bytes.len() {
-            match bytes[i + 1] {
-                b'0' => {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                '0' => {
                     out.push_str(ctx.matched_text);
                     i += 2;
                     continue;
-                }
-                b'1'..=b'9' => {
-                    let d = bytes[i + 1] - b'0';
+                },
+                '1'..='9' => {
+                    let d = chars[i + 1] as u8 - b'0';
                     if let Some(c) = ctx.captures.get(d as usize - 1) {
                         out.push_str(c);
                     }
                     i += 2;
                     continue;
-                }
-                b'n' => {
+                },
+                'n' => {
                     out.push('\n');
                     i += 2;
                     continue;
-                }
-                b'r' => {
+                },
+                'r' => {
                     out.push('\r');
                     i += 2;
                     continue;
-                }
-                b't' => {
+                },
+                't' => {
                     out.push('\t');
                     i += 2;
                     continue;
-                }
-                b'x' if i + 3 < bytes.len() => {
-                    let hi = hex_digit(bytes[i + 2]);
-                    let lo = hex_digit(bytes[i + 3]);
+                },
+                'x' if i + 3 < chars.len() => {
+                    let hi = hex_digit(chars[i + 2]);
+                    let lo = hex_digit(chars[i + 3]);
                     if let (Some(h), Some(l)) = (hi, lo) {
                         out.push(char::from((h << 4) | l));
                         i += 4;
                         continue;
                     }
-                }
+                },
                 _ => {}
             }
         }
-        out.push(char::from(bytes[i]));
+        out.push(chars[i]);
         i += 1;
     }
     out
 }
 
-fn hex_digit(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        b'A'..=b'F' => Some(b - b'A' + 10),
+/// `chars` 从 `i` 起是否以 `pat` 开头（按字符比较）。
+fn chars_at(chars: &[char], i: usize, pat: &str) -> bool {
+    pat.chars().enumerate().all(|(k, c)| chars.get(i + k) == Some(&c))
+}
+
+/// 从 `from` 起找第一个 `target` 的下标（相对 `from`）。
+fn find_char(chars: &[char], from: usize, target: char) -> Option<usize> {
+    if from > chars.len() {
+        return None;
+    }
+    chars[from..].iter().position(|&c| c == target)
+}
+
+fn hex_digit(c: char) -> Option<u8> {
+    match c {
+        '0'..='9' => Some(c as u8 - b'0'),
+        'a'..='f' => Some(c as u8 - b'a' + 10),
+        'A'..='F' => Some(c as u8 - b'A' + 10),
         _ => None,
     }
 }
@@ -528,6 +546,38 @@ mod tests {
         let ctx = tpl_ctx("a", &[], &vars);
         assert_eq!(expand_trigger_template("hi\\nthere", &ctx), "hi\nthere");
         assert_eq!(expand_trigger_template("\\x41", &ctx), "A");
+    }
+
+    /// 回归：模板含非 ASCII 字符时**不得 panic**（曾经的字节切片 panic
+    /// 会连带 abort 整个 GUI —— 触发器在主线程求值）。
+    #[test]
+    fn expand_non_ascii_template_does_not_panic() {
+        let vars = HashMap::new();
+        let captures = vec!["值".into()];
+        let ctx = tpl_ctx("匹配", &captures, &vars);
+        // 中文标题（用户最常见的写法）
+        assert_eq!(expand_trigger_template("构建完成", &ctx), "构建完成");
+        // 中英混排 + 占位符
+        assert_eq!(expand_trigger_template("完成 $1！", &ctx), "完成 值！");
+        assert_eq!(expand_trigger_template("完成 {1}！", &ctx), "完成 值！");
+        assert_eq!(expand_trigger_template("{match} 完成", &ctx), "匹配 完成");
+        // 多字节字符紧邻转义 / 占位符（边界最容易切错）
+        assert_eq!(expand_trigger_template("构\\n建", &ctx), "构\n建");
+        assert_eq!(expand_trigger_template("构\\x41建", &ctx), "构A建");
+        assert_eq!(expand_trigger_template("构{1}建", &ctx), "构值建");
+    }
+
+    /// 回归：非 ASCII 模板里的转义/占位符仍要正确识别，且不能把
+    /// 多字节字符拆成 Latin-1 乱码。
+    #[test]
+    fn expand_non_ascii_preserves_unicode() {
+        let mut vars = HashMap::new();
+        vars.insert("名".into(), "值".into());
+        let ctx = tpl_ctx("m", &[], &vars);
+        assert_eq!(expand_trigger_template("{var:名}", &ctx), "值");
+        assert_eq!(expand_trigger_template("${var:名}", &ctx), "值");
+        // emoji（4 字节）不应被拆坏
+        assert_eq!(expand_trigger_template("✅ {match}", &ctx), "✅ m");
     }
 
     #[test]

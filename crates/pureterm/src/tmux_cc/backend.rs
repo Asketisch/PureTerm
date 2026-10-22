@@ -80,8 +80,10 @@ impl TmuxControlPty {
             TmuxEnvelope::Output { pane_id, bytes } if *pane_id == self.pane_id => {
                 self.replay.lock().extend_from_slice(bytes);
             },
-            TmuxEnvelope::Begin { pane_id, .. } if *pane_id == self.pane_id => {
-                // 开始新的回放块;清空缓冲区。
+            TmuxEnvelope::Begin { .. } => {
+                // 新的回放块开始;清空缓冲区。
+                // tmux 的 `%begin` 是**全局**帧边界(帧内可含多个 pane
+                // 的 `%output`),不带 pane id —— 因此不能按 pane 过滤。
                 self.replay.lock().clear();
             },
             TmuxEnvelope::End => {

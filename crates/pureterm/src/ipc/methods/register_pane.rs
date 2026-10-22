@@ -127,9 +127,24 @@ impl SocketRouter {
                     Ok(serde_json::json!({"focused": direction})),
                     Some(IpcSideEffect::FocusGeometric { pane_id, direction: SplitDirection::Vertical }),
                 ),
-                _ => {
-                    (Ok(serde_json::json!({"focused": "next"})), Some(IpcSideEffect::FocusNextPane))
-                }
+                "next" => (
+                    Ok(serde_json::json!({"focused": "next"})),
+                    Some(IpcSideEffect::FocusNextPane),
+                ),
+                // 未知方向必须报错,而不是悄悄退化成 "next" ——
+                // 否则一次方向拼写错误会把焦点落到**另一个**窗格上,
+                // 而调用方收到的是一个「成功」响应,无从察觉。
+                _ => (
+                    Err(JsonRpcError {
+                        code: ERROR_INVALID_PARAMS,
+                        message: format!(
+                            "invalid pane.focus direction: {direction:?} \
+                             (expected next / prev / left / right / up / down)"
+                        ),
+                        data: None,
+                    }),
+                    None,
+                ),
             }
         });
 

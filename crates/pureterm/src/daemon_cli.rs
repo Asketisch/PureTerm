@@ -23,6 +23,29 @@ pub fn dispatch(cmd: DaemonSub) {
             println!("  socket              : {}", socket.display());
             std::process::exit(if running { 0 } else { 1 });
         }
+        DaemonSub::Stop => {
+            let socket = pureterm_daemon::socket_path();
+            if !crate::daemon_client::ping(&socket) {
+                eprintln!(
+                    "puretermd is not running (socket {} unreachable)",
+                    socket.display()
+                );
+                std::process::exit(1);
+            }
+            match crate::daemon_client::rpc(&socket, "daemon.shutdown", None) {
+                Ok(resp) => {
+                    if let Some(err) = resp.error {
+                        eprintln!("stop failed: {}", err.message);
+                        std::process::exit(1);
+                    }
+                    println!("puretermd stopped");
+                },
+                Err(e) => {
+                    eprintln!("stop failed: {e}");
+                    std::process::exit(1);
+                },
+            }
+        }
         DaemonSub::Install => match autostart::install() {
             Ok(()) => println!(
                 "installed puretermd login autostart → {}",

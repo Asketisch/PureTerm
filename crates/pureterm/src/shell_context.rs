@@ -31,9 +31,13 @@ impl From<&FinishedCommand> for CommandSummary {
 #[derive(Clone, Debug, PartialEq, Eq, Default, serde::Serialize)]
 pub struct ShellContextSummary {
     pub integrated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // `cwd` / `last_command` **始终**出现在序列化结果里(没有时为
+    // `null`)。早前用 `skip_serializing_if` 把 None 的字段整个省略,
+    // 于是同一个接口的返回形状会随运行状态变化 —— 有时
+    // `{"cwd": ..., "last_command": ...}`,有时 `{"recent_commands": []}`。
+    // 对 MCP / AI agent 这类消费者来说,固定形状比省两个字节重要得多:
+    // 省略字段会被读成「键不存在」,与「值为 null」语义不同。
     pub cwd: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub last_command: Option<CommandSummary>,
     pub recent_commands: Vec<CommandSummary>,
 }

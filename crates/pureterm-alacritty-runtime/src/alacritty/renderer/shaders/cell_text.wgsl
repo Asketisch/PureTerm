@@ -11,6 +11,16 @@ struct ScreenUniforms {
     corner_radius: f32,
     screen_width: f32,
     screen_height: f32,
+    /// 背景图不透明度(0 = 无图像)。
+    opacity: f32,
+    /// 0 = 居中,1 = 平铺,2 = 拉伸。
+    mode: u32,
+    /// 图像原生像素尺寸(用于居中计算)。
+    img_width: f32,
+    img_height: f32,
+    /// 尾部填充:把结构体补到 32 字节,与 Rust 侧的
+    /// `ScreenUniforms` 逐字段一致。四个 shader 共用同一份
+    /// uniform 缓冲区,布局必须完全相同。
     _padding: f32,
 }
 

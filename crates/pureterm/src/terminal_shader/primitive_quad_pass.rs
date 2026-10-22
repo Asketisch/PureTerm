@@ -65,7 +65,20 @@ pub(super) fn prepare_image_atlas_texture(
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+
+                // 纹理格式用**非 sRGB**(`Rgba8Unorm`)而非 `Rgba8UnormSrgb`。
+                //
+                // iced 默认启用 `web-colors` 特性,此时
+                // `iced_graphics::color::GAMMA_CORRECTION == false`:交换链是
+                // 非 sRGB(`Bgra8Unorm`),整条渲染管线工作在「原始字节空间」
+                // —— 配置里的颜色值原样写入目标,不做线性化。
+                //
+                // 若这里用 sRGB 纹理,采样器会把像素**解码成线性**再送进
+                // 非 sRGB 的交换链,画面整体偏色(实测背景图 220,30,90 被
+                // 渲染成 168,36,36)。用非 sRGB 纹理,采样器原样返回字节,
+                // 图片才能按「所见即所得」显示。
+                //
+                format: wgpu::TextureFormat::Rgba8Unorm,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             }, wgpu::util::TextureDataOrder::LayerMajor, &atlas.data);
@@ -112,7 +125,20 @@ pub(super) fn prepare_image_atlas_texture(
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+
+            // 纹理格式用**非 sRGB**(`Rgba8Unorm`)而非 `Rgba8UnormSrgb`。
+            //
+            // iced 默认启用 `web-colors` 特性,此时
+            // `iced_graphics::color::GAMMA_CORRECTION == false`:交换链是
+            // 非 sRGB(`Bgra8Unorm`),整条渲染管线工作在「原始字节空间」
+            // —— 配置里的颜色值原样写入目标,不做线性化。
+            //
+            // 若这里用 sRGB 纹理,采样器会把像素**解码成线性**再送进
+            // 非 sRGB 的交换链,画面整体偏色(实测背景图 220,30,90 被
+            // 渲染成 168,36,36)。用非 sRGB 纹理,采样器原样返回字节,
+            // 图片才能按「所见即所得」显示。
+            //
+            format: wgpu::TextureFormat::Rgba8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         }, wgpu::util::TextureDataOrder::LayerMajor, &[0u8; 4]);

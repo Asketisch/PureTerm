@@ -82,6 +82,28 @@ pub(super) struct SshCtx {
     pub(super) ssh_jump_hosts: Vec<String>,
 }
 
+/// tmux 控制模式上下文:持有一个 `tmux -CC` 子进程。
+///
+/// 与 `LocalCtx` / `SshCtx` 的关键差异:
+/// - **没有 PTY** —— 终端内容以 `%output` 信封的形式从 tmux 送来,
+///   由 `tmux_cc::pump` 泵进网格(见 [`crate::tmux_cc::pump`]）。
+/// - **写侧不是 PTY** —— 键盘输入经 `%input` 信封送回 tmux。
+/// - 信封接收端是**克隆**出来的(crossbeam 的 `Receiver` 可克隆),
+///   泵线程阻塞在它上面而不持有 `child` 的锁 —— 否则用户按键会被堵住。
+#[cfg(unix)]
+pub(super) struct TmuxCtx {
+    pub(super) terminal: Arc<FairMutex<Term<ChannelEventListener>>>,
+    /// 终端事件通道(泵线程写入,GUI 轮询)。
+    pub(super) event_rx: Receiver<super::TerminalEvent>,
+    pub(super) size: TermSize,
+    /// `tmux -CC` 子进程(写侧:`%input` 信封;关闭时终止)。
+    pub(super) child: Arc<std::sync::Mutex<crate::tmux_cc::pty::TmuxChild>>,
+    /// tmux 会话 id(来自 `%session-changed`);未收到时为 `None`。
+    pub(super) session_id: Option<String>,
+    /// 会话名(用户请求附加 / 新建时指定的名字)。
+    pub(super) session_name: Option<String>,
+}
+
 /// [`SshCtx`] 内部可替换的每连接运行时。
 #[cfg(unix)]
 pub(super) struct SshRuntime {

@@ -90,10 +90,30 @@ pub enum IpcSideEffect {
     },
     /// GAP-25：打开一个带有 Tab 栏和工作区的全新独立窗口。
     NewWindow,
+    /// `config.set`：把一个点分键路径的值写进配置文件。
+    ///
+    /// 主循环负责落盘(`mutate_config`)+ 重载;IPC 层只做参数校验。
+    /// 写盘必须在主循环里做 —— 它要拿到 `self.config_path` 并在写后
+    /// 触发配置重载。
+    SetConfig { key: String, value: serde_json::Value },
+    /// `window.focus`：把焦点切到指定序号的窗口(缺省 = 第一个非活动窗口)。
+    FocusWindow { index: Option<usize> },
     /// GAP-47/48：从 `pureterm://ssh/…` 或 `pureterm script ssh` 打开一个
     /// 临时 SSH Tab。
     #[cfg(unix)]
     SshOpenTarget { target: String, port: Option<u16> },
+    /// T-core-tmux-cc：打开一个 `tmux -CC` 控制模式标签页。
+    ///
+    /// `session` 为 `Some(name)` 时附加到已有会话,否则新建会话。
+    /// 主循环负责拉起 `tmux -CC` 子进程并把 `%output` 信封泵进网格。
+    #[cfg(unix)]
+    TmuxAttach {
+        session: Option<String>,
+        /// 为 true 时在既有会话里**新开**一个窗口,而不是附加到当前窗口。
+        new_window: bool,
+        /// tmux socket 命名空间(`tmux -L <name>`);None = 默认服务器。
+        socket: Option<String>,
+    },
 }
 
 // ── AppSnapshot 快照 ───────────────────────────────────────────────────────
@@ -104,8 +124,15 @@ pub enum IpcSideEffect {
 /// Tab、面板、配置等一致的应用视图。
 #[derive(Debug, Clone)]
 pub struct AppSnapshot {
-    /// 打开的窗口数（当前恒为 0 或 1）。
+    /// 打开的窗口数。
+    ///
+    /// 早前这个值取自 `main_window`(恒为 0 或 1),**多窗口对 API 完全
+    /// 不可见** —— `window.create` 之后 `window.list` 仍然只列一个。
     pub window_count: usize,
+    /// 每个窗口**自己**的标签页数(与 `window_count` 等长)。
+    pub window_tab_counts: Vec<usize>,
+    /// 活动窗口在 `self.windows` 里的序号。
+    pub active_window_index: usize,
     /// Tab 标题。
     pub tab_titles: Vec<String>,
     /// 原始 `TabId.0` 值——Tab 操作的稳定标识符。
@@ -176,6 +203,8 @@ impl Default for AppSnapshot {
     fn default() -> Self {
         Self {
             window_count: 0,
+            window_tab_counts: Vec::new(),
+            active_window_index: 0,
             tab_titles: Vec::new(),
             tab_ids: Vec::new(),
             pane_counts: Vec::new(),

@@ -86,7 +86,19 @@ pub fn run(cli: Cli) {
             ShortcutsSub::Reset => crate::shortcuts_reset(),
         },
         Command::Msg { method, params } => {
-            let parsed = params.and_then(|s| serde_json::from_str(&s).ok());
+            // 参数 JSON 解析失败必须报错,而不是静默丢掉参数 ——
+            // 否则 `pureterm msg foo '{"typo":}'` 会以「无参数」的
+            // 形式发给服务端,调用方却以为参数已经传过去了。
+            let parsed = match params {
+                Some(raw) => match serde_json::from_str(&raw) {
+                    Ok(v) => Some(v),
+                    Err(e) => {
+                        eprintln!("pureterm msg: invalid JSON params: {e}");
+                        std::process::exit(2);
+                    },
+                },
+                None => None,
+            };
             send(&socket, json, (&method, parsed));
         }
         // GAP-09:`pureterm notify` 命令 → notification.post RPC。
@@ -221,39 +233,24 @@ pub fn run(cli: Cli) {
         // GAP-6.6:混合命令——tmux 命令在 `tmux_cli` 中分发(有些需要
         // 多步 RPC + 本地格式化,如 capture-pane / list-panes)。
         Command::Tmux { cmd } => crate::tmux_cli::dispatch(cmd, &socket, json),
-        // T-core-tmux-cc:`pureterm tmux-attach` — 打印 GUI 用来
-        // 附加到/创建会话的 `tmux -CC` 命令行。
-        // v1:GUI 运行实际的子进程;CLI 只是一个轻量探针,
-        // 便于运维验证 spawn 接线。
-        Command::TmuxAttach { session, new_window } => {
-            let tag = std::process::id();
-            let mut argv: Vec<String> = vec!["tmux".to_string(), "-CC".to_string()];
-            match (&session, new_window) {
-                (Some(name), false) => {
-                    argv.extend(["attach-session".to_string(), "-t".to_string(), name.clone()]);
-                },
-                (Some(name), true) => {
-                    argv.extend([
-                        "new-window".to_string(),
-                        "-a".to_string(),
-                        "-t".to_string(),
-                        name.clone(),
-                    ]);
-                },
-                (None, _) => {
-                    argv.extend([
-                        "new-session".to_string(),
-                        "-A".to_string(),
-                        "-s".to_string(),
-                        format!("pureterm-{tag}"),
-                        "-x".to_string(),
-                        "200".to_string(),
-                        "-y".to_string(),
-                        "50".to_string(),
-                    ]);
-                },
+        // T-core-tmux-cc:`pureterm tmux-attach` — 让**运行中的 GUI**
+        // 打开一个 `tmux -CC` 控制模式标签页。
+        //
+        // 早前这里只是打印一行 `tmux -CC …` 命令行就退出 0 ——
+        // 看起来「附加成功了」,实际上什么都没发生(与 `capture export`
+        // / `share serve` 同类的「桩在撒谎」问题)。现在它真的发 IPC。
+        Command::TmuxAttach { session, new_window, tmux_socket } => {
+            // `--new-window` 表示在既有会话里**新开一个窗口**,而不是
+            // 附加到该会话的当前窗口(`tmux -CC new-window -a -t <name>`)。
+            let mut params = match &session {
+                Some(s) => serde_json::json!({ "session": s, "new_window": new_window }),
+                None => serde_json::json!({ "new_window": false }),
+            };
+            if let Some(sock) = &tmux_socket {
+                params["socket"] = serde_json::json!(sock);
             }
-            println!("{}", argv.join(" "));
+            let params = Some(params);
+            send_value(&socket, json, ("tmux.attach", params));
         },
         Command::Script { cmd } => crate::script_cli::dispatch_script(cmd, &socket, json),
         Command::Url { cmd } => crate::script_cli::dispatch_url(cmd, &socket, json),
@@ -307,7 +304,7 @@ fn dispatch_agent(cmd: super::subs::AgentSub) {
                     println!("no sessions");
                 }
                 for s in sessions {
-                    let id = s.get("id").and_then(|v| v.as_str()).unwrap_or("?");
+                    let id = s.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
                     let kind = s.get("kind").and_then(|v| v.as_str()).unwrap_or("?");
                     let agent = s.get("agent_kind").and_then(|v| v.as_str()).unwrap_or("-");
                     let hib = s.get("hibernated").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -430,8 +427,40 @@ pub fn send(socket: &Option<PathBuf>, json: bool, (method, params): (&str, Optio
                     serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
                 );
             }
-        }
+        },
         Ok(None) => {}
+        Err(msg) => {
+            eprintln!("{msg}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// 与 [`send`] 相同,但**额外返回** RPC 的结果值。
+///
+/// 供那些「打印之外还要做事」的调用方使用 —— 例如 `capture export`
+/// 需要把快照**写进文件**,只打印等于什么都没做。
+pub fn send_value(
+    socket: &Option<PathBuf>,
+    json: bool,
+    (method, params): (&str, Option<Value>),
+) -> Option<Value> {
+    match crate::ipc::client::send_rpc(method, params, socket.clone()) {
+        Ok(Some(value)) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string(&value).unwrap_or_else(|_| value.to_string())
+                );
+            } else {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string())
+                );
+            }
+            Some(value)
+        },
+        Ok(None) => None,
         Err(msg) => {
             eprintln!("{msg}");
             std::process::exit(1);
