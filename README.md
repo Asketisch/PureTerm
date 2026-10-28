@@ -44,6 +44,8 @@ cargo build --release
 ./target/release/pureterm
 ```
 
+不想本地编译?每个 Release 附各平台预编译产物,见 [安装(预编译二进制)](#安装预编译二进制)。
+
 **配置文件路径**:
 - 默认:`~/.config/pureterm/alacritty.toml`
 - 回退:`~/.config/alacritty/alacritty.toml`(完全兼容标准 Alacritty TOML schema)
@@ -251,6 +253,30 @@ PureTerm 由 6 个 crate 组成的工作区:
 - macOS / Linux / Windows
 - 持续 CI 验证三平台
 - 统一 `./build.sh` 跨平台打包(.app + .dmg / .tar.gz / .zip)— 见 [构建与打包](#构建与打包)
+
+---
+
+## 安装(预编译二进制)
+
+推送 `v*` tag 后,CI 会自动构建并在 [GitHub Releases](../../releases)
+发布全平台产物(`.github/workflows/release.yml`),每个版本提供:
+
+| 平台 | 产物(dist/) | 安装方式 |
+|---|---|---|
+| macOS Apple Silicon | `PureTerm-<v>-arm64.dmg`(或 `.app.zip`) | 打开 .dmg,拖入「应用程序」 |
+| macOS Intel | `PureTerm-<v>-x64.dmg`(或 `.app.zip`) | 同上 |
+| Linux x86_64 | `pureterm-<v>-x64-gnu.tar.gz` | 解压,目录树含 `bin/` + `share/`,可整体放入 `/usr/local` |
+| Linux aarch64 | `pureterm-<v>-arm64-gnu.tar.gz` | 同上 |
+| Windows x86_64 | `pureterm-<v>-x64.zip` | 解压后将 `bin` 目录加入 `PATH` |
+
+产物包内含三个可执行文件:`pureterm`(主程序)、`pureterm-settings`
+(设置 UI)、`puretermd`(会话守护进程),三者需在同一目录。
+所有产物另附 `SHA256SUMS` 校验和。
+
+注意:Linux 产物在 Ubuntu 22.04(x86_64)/ Ubuntu 24.04(aarch64)的
+CI runner 上链接,依赖较新的 glibc;更老的发行版请走源码构建(下节)。
+tag 与 `crates/pureterm/Cargo.toml` 的版本号需一致(`v0.1.0` ↔ `0.1.0`),
+CI 会在构建前校验;带 `-rc`/`-beta` 后缀的 tag 自动标记为预发布。
 
 ---
 

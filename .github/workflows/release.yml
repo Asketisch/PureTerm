@@ -1,0 +1,164 @@
+# PureTerm Release — tag 推送自动构建 + 发布全平台产物。
+#
+# 触发:
+#   - push tag `v*`      → 5 个 target 全量构建,汇总后直接发布 GitHub Release
+#   - workflow_dispatch  → 只构建并上传 artifact,不发布(上线前试跑)
+#
+# 矩阵(自 build.sh 的 8-target 静态矩阵裁剪):
+#   - macos-14         × aarch64-apple-darwin
+#   - macos-14         × x86_64-apple-darwin(macOS 同 SDK 交叉编译,无需额外工具链)
+#   - ubuntu-22.04     × x86_64-unknown-linux-gnu(glibc 2.35,兼容更老发行版)
+#   - ubuntu-24.04-arm × aarch64-unknown-linux-gnu(公开仓库免费 ARM runner)
+#   - windows-2022     × x86_64-pc-windows-msvc
+#
+# 明确不做:musl ×2(wry 硬依赖 WebKitGTK,静态链接不可行)、
+# aarch64-pc-windows-msvc(用户极少且交叉编译链未验证)。
+#
+# 打包复用根目录 build.sh 的 `app` 模式(release profile:thin LTO +
+# strip),版本号唯一真源是 crates/pureterm/Cargo.toml
+# (build.sh extract_version);prepare job 校验 tag 名与之匹配,
+# 避免产物文件名与 tag 错位。`app` 模式不执行 cargo test —
+# 测试由 CI 工作流负责,release 构建不重复跑。
+#
+# 产物(以 v0.1.0 为例):
+#   macOS   PureTerm-0.1.0-aarch64.app.zip / .dmg
+#           PureTerm-0.1.0-x64.app.zip / .dmg
+#   Linux   pureterm-0.1.0-x64-gnu.tar.gz
+#           pureterm-0.1.0-arm64-gnu.tar.gz
+#   Windows pureterm-0.1.0-x64.zip
+#   另附 SHA256SUMS(全部产物的 sha256)。
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# release job 用 GITHUB_TOKEN 创建 Release,无需额外 secrets。
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Prepare (tag ↔ 版本校验)
+    runs-on: ubuntu-latest
+    outputs:
+      is-release: ${{ steps.meta.outputs.is-release }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          version="$(grep '^version' crates/pureterm/Cargo.toml | head -1 | sed 's/.*"\([^"]*\)".*/\1/')"
+          echo "crates/pureterm/Cargo.toml version: ${version}"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            tag_version="${GITHUB_REF_NAME#v}"
+            if [[ "${tag_version}" != "${version}" ]]; then
+              echo "::error::tag ${GITHUB_REF_NAME} 与 crates/pureterm/Cargo.toml 的版本 ${version} 不一致 — build.sh 以该版本命名产物,请对齐后重新打 tag"
+              exit 1
+            fi
+            echo "is-release=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "is-release=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  build:
+    name: Build (${{ matrix.os }} / ${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-14
+            target: x86_64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # 不传 toolchain → 自动读取 rust-toolchain.toml 钉住的版本。
+      # rustflags 置空:release 构建不叠加 -D warnings。
+      # 内置 Swatinem/rust-cache,经 cache-key 区分矩阵条目。
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+          rustflags: ""
+          cache-key: release-${{ matrix.os }}-${{ matrix.target }}
+
+      # wry(Linux)链接期需要 GTK3 + WebKitGTK 4.1;
+      # 其余为 crossfont(freetype/fontconfig)与 rustls 的常规依赖。
+      - name: Install Linux system deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libfreetype6-dev libfontconfig1-dev \
+            libssl-dev pkg-config \
+            libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Build + package
+        shell: bash
+        run: |
+          extra=()
+          # Linux 上只出 tar.gz:runner 有 zstd 时 build.sh 默认还会
+          # 产出 .tar.zst,发布页保持单一格式。
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            extra+=(--bundle tar)
+          fi
+          bash build.sh app --target "${{ matrix.target }}" "${extra[@]}"
+
+      # 只上传压缩包;dist/ 里还会残留打包暂存目录
+      # (pureterm-<v>-<arch>/、PureTerm.app/),一并上传纯属浪费。
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.dmg
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    if: needs.prepare.outputs.is-release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          sha256sum -- *.tar.gz *.zip *.dmg > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.dmg
+            dist/SHA256SUMS
+          generate_release_notes: true
+          # v0.1.0-rc1 之类带连字符的 tag 自动标为预发布。
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true

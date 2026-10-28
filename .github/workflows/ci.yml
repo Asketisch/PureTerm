@@ -53,10 +53,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 不传 toolchain → 读取 rust-toolchain.toml 钉住的版本。
+      # 不用 dtolnay/rust-toolchain@stable:它经 RUSTUP_TOOLCHAIN
+      # 环境变量覆盖 rust-toolchain.toml,CI 会跑在最新 stable 上,
+      # 与本地钉住的 1.93 脱节。
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          targets: ${{ matrix.target }}
+          target: ${{ matrix.target }}
 
       - name: Install Linux system deps
         if: runner.os == 'Linux'
@@ -65,7 +69,7 @@ jobs:
           sudo apt-get install -y \
             libfreetype6-dev libfontconfig1-dev \
             libssl-dev pkg-config \
-            cmux imagemagick
+            libgtk-3-dev libwebkit2gtk-4.1-dev
 
       - name: Cache cargo registry + build artifacts
         uses: Swatinem/rust-cache@v2
@@ -89,13 +93,15 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy
       - name: Install Linux system deps
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libfreetype6-dev libfontconfig1-dev libssl-dev pkg-config
+            libfreetype6-dev libfontconfig1-dev \
+            libssl-dev pkg-config \
+            libgtk-3-dev libwebkit2gtk-4.1-dev
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
