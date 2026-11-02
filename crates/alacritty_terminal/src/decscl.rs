@@ -60,7 +60,9 @@ fn parse_decscl(buf: &[u8]) -> Option<(u16, usize)> {
     let mut j = 2;
     let mut ps: u16 = 0;
     while j < buf.len() && buf[j].is_ascii_digit() {
-        ps = ps * 10 + (buf[j] - b'0') as u16;
+        // PTY 字节流不可信:超长数字串用 saturating 防止 u16 溢出
+        // (debug 构建下溢出即 panic)。
+        ps = ps.saturating_mul(10).saturating_add((buf[j] - b'0') as u16);
         j += 1;
     }
     if j + 2 > buf.len() || buf[j] != b'"' || buf[j + 1] != b'p' {

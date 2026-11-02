@@ -2,10 +2,10 @@
 //! JSON、评估、打印 Claude Code 协议决策、exit)及其辅助(evaluate_shim*/resolve/
 //! infer 等)。
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::time::Duration;
 
-use super::{evaluate, format_ask_output, format_decision_output, Decision, DecisionOutput, HookEvent, HookInput, HookRule};
+use super::{evaluate, format_decision_output, Decision, DecisionOutput, HookEvent, HookInput, HookRule};
 
 /// shim 纯核心(无 I/O、无格式化、无进程退出):解析 stdin → 评估规则 → 返回
 /// `(HookInput, Decision)`。供 `run_hook_shim` 在 `Ask` 时拦截做 Feed 往返,

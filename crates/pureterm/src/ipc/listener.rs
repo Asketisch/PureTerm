@@ -5,7 +5,7 @@
 //! 主 Iced 事件循环。主循环通过
 //! `SocketRouter` 分发方法,并把响应写回客户端。
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -107,7 +107,7 @@ async fn accept_loop(
 
 async fn handle_connection(
     stream: tokio::net::UnixStream,
-    router: Arc<SocketRouter>,
+    _router: Arc<SocketRouter>,
     tx: tokio::sync::mpsc::Sender<IpcRequest>,
 ) {
     // 从客户端读取一行 JSON。

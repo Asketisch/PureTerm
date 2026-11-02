@@ -64,7 +64,7 @@ pub fn add_open_urls_method() {
 
     let sel = objc2::sel!(application:openURLs:);
     let types = b"v@:@@\0";
-    let imp: Imp = unsafe { transmute(handle_open_urls as usize) };
+    let imp: Imp = unsafe { transmute(handle_open_urls as *const () as usize) };
 
     unsafe {
         let _ = ffi::class_addMethod(

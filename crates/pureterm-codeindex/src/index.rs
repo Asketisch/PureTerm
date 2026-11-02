@@ -307,7 +307,13 @@ fn normalize_requested_path(root: &Path, path: &str) -> Result<String, IndexErro
     if p.is_absolute() {
         rel_path(root, &p.canonicalize().map_err(IndexError::from)?)
     } else {
-        Ok(path.trim_start_matches("./").replace('\\', "/"))
+        let normalized = path.trim_start_matches("./").replace('\\', "/");
+        // 防御边界:当前返回路径只用于查 DB,但未来任何调用方
+        // 若拿它做磁盘读,`..` 段就是一次路径穿越。这里显式拒绝。
+        if normalized.split('/').any(|seg| seg == "..") {
+            return Err(IndexError::PathOutsideRoot(path.to_string()));
+        }
+        Ok(normalized)
     }
 }
 

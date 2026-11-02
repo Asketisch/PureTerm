@@ -1,11 +1,10 @@
-use iced::widget::{button, column, container, row, scrollable, space, text, text_input};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow, Theme};
+use iced::widget::{button, column, row, space, text, text_input};
+use iced::{Color, Element, Length, Theme};
 
-use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
+use super::data::{DirFindData, SurfaceFindData};
 use pureterm_settings::theme::palette::ShellTokens;
 
 use crate::iced_app::Message;
-use crate::sidebar::RightMode;
 
 pub(crate) fn view_find<'a>(
     tokens: ShellTokens,

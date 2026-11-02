@@ -269,7 +269,7 @@ impl SocketRouter {
         // 默认取活动窗格;遵循可选的 `recent` 上限。未知 /
         // 未集成的窗格(SSH/fish)返回 `integrated:false`。
         self.register("shell.context", |params, snap| {
-            use crate::shell_context::ShellContextSummary;
+            
             let pane_id = params
                 .as_ref()
                 .and_then(|p| p.get("pane_id"))

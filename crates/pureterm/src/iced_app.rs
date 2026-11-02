@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use iced::widget::{
-    button, column, container, mouse_area, opaque, pin, row, scrollable, space, stack, text,
+    button, column, container, mouse_area, pin, row, scrollable, space, stack, text,
     text_input, Id, Shader,
 };
 // `iced::advanced::widget` 再导出操作器系统与
@@ -28,7 +28,7 @@ use alacritty_terminal::term::TermMode;
 use crate::app_config::AppConfig;
 use crate::keymap::{Action, Keymap, ResolveResult};
 use crate::split_tree::{
-    DividerRect, Pane, Surface, PaneId, PaneRect, SplitDirection, SplitNode,
+    Pane, Surface, PaneId, SplitDirection, SplitNode,
     DIVIDER_HIT_WIDTH, DIVIDER_WIDTH, MAX_RATIO, MIN_RATIO,
 };
 use crate::terminal_context::{TerminalContext, TerminalEvent};
@@ -36,9 +36,7 @@ use crate::terminal_shader::{GlyphState, TerminalProgram};
 use pureterm_settings::theme::titlebar::TitleBarStyle;
 use crate::ui_theme::{ShellTokens, ThemePreset, UiPalette};
 #[cfg(unix)]
-use crate::ssh::config::{SshProfile, SshProfileRegistry, SshSettings};
-#[cfg(unix)]
-use crate::ssh::pty::SshPty;
+use crate::ssh::config::{SshProfile, SshSettings};
 #[cfg(unix)]
 use crate::ssh::session::SshSessionManager;
 use pureterm_settings::app::{Message as SettingsMessage, SettingsState};
@@ -403,6 +401,10 @@ pub struct PureTermApp {
     // 右键菜单
     context_menu: Option<ContextMenuState>,
     last_cursor_pos: Point,
+    /// 触控板滚动的跨事件像素余量(x, y)。触控板每次滚动事件
+    /// 通常只有几像素,不足一格;若无累加,`as usize` 截断会把
+    /// 小增量全部丢弃,轻扫触控板几乎无响应。余量恒小于一格。
+    scroll_accum: (f32, f32),
     /// 鼠标的绝对（窗口内容）坐标，来自全局 `Event::Mouse(CursorMoved)`。
     /// 与 `last_cursor_pos`（widget-local）严格区分：右键菜单按绝对坐标定位，
     /// 而选区起点 / 鼠标上报（MOUSE_MODE）按 widget-local 坐标使用。
@@ -2256,6 +2258,7 @@ impl PureTermApp {
             ssh_credential_store: None,
             context_menu: None,
             last_cursor_pos: Point::default(),
+            scroll_accum: (0.0, 0.0),
             last_global_cursor_pos: Point::default(),
             viewport_size: win_size,
             scale_factor: 1.0,
@@ -5702,6 +5705,14 @@ impl PureTermApp {
                                         }
                                     }
                                 }
+                                TerminalEvent::PtyWrite(text) => {
+                                    // GAP-65:终端查询响应(DA1/DA2、
+                                    // XTVERSION、XTGETTCAP 等)写回 PTY,
+                                    // 使等待响应的程序能收到。此前该
+                                    // 事件被静默丢弃,所有终端探测均
+                                    // 超时失败。
+                                    ctx.write_to_pty(text.as_bytes());
+                                }
                             }
                         }
                     }
@@ -7038,7 +7049,12 @@ impl PureTermApp {
             }
             Message::CloseTab(tab_id) => {
                 if self.tabs().len() <= 1 {
-                    if let Some(win_id) = self.main_window {
+                    // `tabs()` 基于活动窗口;最后一个 tab → 关闭的必须是
+                    // **活动窗口**。原实现固定关 main_window:聚焦
+                    // detached 窗口按 ⌘W 会错关主窗口,连带销毁主窗
+                    // 全部 tab 的会话。关 detached 窗时 WindowClosed
+                    // 会正确拆除其窗格并保留主窗。
+                    if let Some(win_id) = self.active_window().map(|w| w.window_id) {
                         return window::close(win_id);
                     }
                 } else {
@@ -8321,8 +8337,20 @@ impl PureTermApp {
                         // 当前在 zoom 中 → 恢复 saved 树
                         if saved.contains(tab.active_pane) {
                             tab.split_tree = saved;
+                        } else {
+                            // saved 不再含 active_pane(与 P1 修复前的
+                            // 退出清理错位叠加时可能出现)。写回 saved
+                            // 而非丢弃:丢弃会让树内其他窗格变成
+                            // panes map 里的孤儿(永不渲染也无法关闭)。
+                            log::warn!(
+                                "ToggleZoom: saved tree missing active pane; restoring anyway"
+                            );
+                            tab.split_tree = saved;
+                            // active_pane 若不在树里,回退到树中任一窗格。
+                            if !tab.split_tree.contains(tab.active_pane) {
+                                tab.active_pane = tab.split_tree.first_pane();
+                            }
                         }
-                        // else: saved 不再含 active_pane,保持 Leaf(兜底)
                     } else if tab.split_tree.pane_count() > 1 {
                         // 进入 zoom:把当前 split_tree 移入 zoom_state,
                         // split_tree 替换为 Leaf(active_pane)。
@@ -9155,9 +9183,18 @@ impl PureTermApp {
                         .and_then(|w| w.active_workspace_mut())
                         .and_then(|ws| ws.tabs.iter_mut().find(|t| t.id == tab_id))
                         .unwrap();
+                    // zoom 不变量:修改 split_tree 前先还原 saved 树,
+                    // 否则 saved 树里残留对已退出窗格的引用,退出 zoom
+                    // 后会出现指向已拆除窗格的永久幻影布局
+                    //(与 close_active_pane / detach 等入口一致)。
+                    tab.restore_zoom_if_any();
                     tab.split_tree.remove(pane_id)
                 };
-                if let Some(new_active) = new_active {
+                // 无论 remove 命中与否都要执行每窗格拆除:remove 返回
+                // None 只说明树结构无需改写(如 Leaf 自身即被移除窗格),
+                // 若因此跳过 panes.remove / teardown,SSH 池条目与全部
+                // 每窗格状态都会泄漏。
+                {
                     let terminal_w = self.terminal_viewport_width();
                     let terminal_height = terminal_content_height(self.viewport_size.height, self.status_bar_cfg.effective_height());
                     let tab = self
@@ -9203,7 +9240,19 @@ impl PureTermApp {
                             c.notify_one();
                         }
                     }
-                    tab.active_pane = new_active;
+                    // 校正活动窗格:优先用 remove 的结果;remove 未命中
+                    // (异常态)时取树中或存活窗格里的任意一个,避免
+                    // active_pane 指向已拆除窗格。
+                    let next = new_active
+                        .filter(|id| tab.panes.contains_key(id))
+                        .or_else(|| {
+                            let first = tab.split_tree.first_pane();
+                            tab.panes.contains_key(&first).then_some(first)
+                        })
+                        .or_else(|| tab.panes.keys().next().copied());
+                    if let Some(next) = next {
+                        tab.active_pane = next;
+                    }
                     // resize 剩余窗格
                     let layout = tab.split_tree.compute_layout(
                         0.0, 0.0, terminal_w, terminal_height,
@@ -9233,7 +9282,13 @@ impl PureTermApp {
         use iced::keyboard::key::Named;
 
         match event {
-            KEvent::KeyPressed { key: Key::Named(Named::Escape), .. } => {
+            KEvent::KeyPressed { key: Key::Named(Named::Escape), modifiers, .. } => {
+                // IME 组合期间 Escape 属于候选取消流程(iced 会同时派发
+                // Ime 事件与本按键),不得再向 PTY 发 \x1b(经典
+                // 「输入法取消后凭空进 normal 模式」)。Cmd 组合仍放行。
+                if self.ime_composing && !modifiers.command() {
+                    return Task::none();
+                }
                 if self.hover_preview.context_menu.is_some() {
                     self.hover_preview.dismiss();
                     return Task::none();
@@ -9391,6 +9446,12 @@ impl PureTermApp {
                 return Task::none();
             }
             KEvent::KeyPressed { key: Key::Named(Named::Enter), modifiers, .. } => {
+                // IME 组合期间 Enter 属于候选提交流程(iced 会同时派发
+                // Ime::Commit 与本按键);Commit 已写入文本,这里再发
+                // \r 会造成「提交后凭空换行/执行半截命令」。
+                if self.ime_composing && !modifiers.command() {
+                    return Task::none();
+                }
                 // GAP-2.2:⌘⇧Enter 触发 ToggleZoom。必须早返,否则会落到下方
                 // overlay/PTY 路径(发 \r 到当前 pane)。
                 if modifiers.command() && modifiers.shift() {
@@ -9423,12 +9484,46 @@ impl PureTermApp {
                     let selected = dialog.selected;
                     return Task::done(Message::SshConnect(selected));
                 }
+                // 其余浮层(搜索/地址栏/AI 聊天等)开着时,键盘订阅
+                // 仍会收到全局 Enter;它们的确认走 widget on_submit,
+                // 这里必须吞掉,否则确认的同时把 \r 写进终端,
+                // 执行掉 shell 里的半截命令。
+                if !modifiers.command()
+                    && (self.surface_search.is_some()
+                        || self.dir_search.is_some()
+                        || self.address_bar.is_some()
+                        || self.ai_chat_panel.open
+                        || self.ssh_settings.is_some()
+                        || self.tab_list.is_some()
+                        || self.color_picker_tab.is_some())
+                {
+                    return Task::none();
+                }
+                // vi(复制)模式:Enter 是 vi 光标移动(下一行行首),
+                // 绝不入 PTY——否则复制模式里按一下 Enter 就把
+                // shell 的半截命令执行掉。
+                if self.is_vi_mode_active() {
+                    return Task::none();
+                }
                 // 贯穿落下,把回车发给 PTY
                 if let Some(task) = self.try_natural_language_enter() {
                     return task;
                 }
                 if let Some(ctx) = self.active_terminal_ctx() {
-                    ctx.write_to_pty(b"\r");
+                    // GAP-63:kitty 协商模式下,带修饰的 Enter 发
+                    // CSI u(Shift+Enter = \x1b[13;2u,Claude Code 的
+                    // 换行/提交区分依赖它);裸 Enter 保持 legacy \r。
+                    let bytes = if self.active_kitty_keyboard_enabled() {
+                        crate::kitty_keyboard::encode_enter(
+                            modifiers.shift(),
+                            modifiers.alt(),
+                            modifiers.control(),
+                            modifiers.macos_command(),
+                        )
+                    } else {
+                        b"\r".to_vec()
+                    };
+                    ctx.write_to_pty(&bytes);
                 }
             }
             KEvent::KeyPressed { key, text, modifiers, .. } => {
@@ -9506,7 +9601,7 @@ impl PureTermApp {
                                     direction,
                                 });
                             }
-                            crate::vi_mode_handler::ViAction::SearchNavigate(forward) => {
+                            crate::vi_mode_handler::ViAction::SearchNavigate(_forward) => {
                                 // 跳到下一个/上一个搜索匹配(仅搜索激活时)
                                 if self.vi_search.is_some() {
                                     return Task::done(Message::ViSearchConfirm);
@@ -9531,7 +9626,13 @@ impl PureTermApp {
                         return Task::none();
                     }
                     ResolveResult::Passthrough => {
-                        // 无绑定命中——贯穿到 PTY 直通。
+                        // 无绑定命中。Cmd 是 UI 层修饰键:macOS 上
+                        // text_with_all_modifiers 对 Cmd 弦返回裸字符
+                        //(⌘K → "k"),未绑定的 Cmd 组合若直通 PTY 会
+                        // 凭空打出字符。UI 修饰键绝不进终端。
+                        if modifiers.command() {
+                            return Task::none();
+                        }
                     }
                 }
 
@@ -10022,9 +10123,72 @@ impl PureTermApp {
         use iced::keyboard::Key;
         use iced::keyboard::key::Named;
 
+        // GAP-63:活动窗格协商进了 kitty keyboard protocol(disambiguate
+        // 模式)时,按键改走 kitty 编码(见 kitty_keyboard 模块文档)。
+        let kitty = self.active_kitty_keyboard_enabled();
+        let (shift, alt, ctrl, super_key) = (
+            modifiers.shift(),
+            modifiers.alt(),
+            modifiers.control(),
+            modifiers.macos_command(),
+        );
+
         if let Key::Named(named) = key {
+            // Shift+Tab:legacy 与 kitty 语义一致(\x1b[Z 等价 \x1b[9;2u)。
             if modifiers.shift() && matches!(named, Named::Tab) {
                 return b"\x1b[Z".to_vec();
+            }
+            if kitty {
+                use crate::kitty_keyboard as kk;
+                use iced::keyboard::key::Named as N;
+                return match named {
+                    N::Enter => kk::encode_enter(shift, alt, ctrl, super_key),
+                    // kitty disambiguate:带修饰的 Tab/Backspace/Escape
+                    // 用 CSI u(legacy 无法表达修饰);Ctrl+Tab 若仍发
+                    // \t 会与裸 Tab 同字节,程序无法区分。
+                    N::Tab if ctrl || alt || super_key => {
+                        kk::encode_csi_u(9, kk::mods_param(shift, alt, ctrl, super_key))
+                    }
+                    N::Backspace if ctrl || alt || super_key || shift => {
+                        kk::encode_csi_u(127, kk::mods_param(shift, alt, ctrl, super_key))
+                    }
+                    N::Escape if ctrl || alt || super_key || shift => {
+                        kk::encode_csi_u(27, kk::mods_param(shift, alt, ctrl, super_key))
+                    }
+                    N::Backspace => b"\x7f".to_vec(),
+                    N::Tab => b"\t".to_vec(),
+                    N::Escape => b"\x1b".to_vec(),
+                    N::ArrowUp => kk::encode_navigation("A", shift, alt, ctrl, super_key),
+                    N::ArrowDown => kk::encode_navigation("B", shift, alt, ctrl, super_key),
+                    N::ArrowRight => kk::encode_navigation("C", shift, alt, ctrl, super_key),
+                    N::ArrowLeft => kk::encode_navigation("D", shift, alt, ctrl, super_key),
+                    N::Home => kk::encode_navigation("H", shift, alt, ctrl, super_key),
+                    N::End => kk::encode_navigation("F", shift, alt, ctrl, super_key),
+                    N::PageUp => kk::encode_tilde_key(5, shift, alt, ctrl, super_key),
+                    N::PageDown => kk::encode_tilde_key(6, shift, alt, ctrl, super_key),
+                    N::Delete => kk::encode_tilde_key(3, shift, alt, ctrl, super_key),
+                    N::Insert => kk::encode_tilde_key(2, shift, alt, ctrl, super_key),
+                    N::F1 => b"\x1bOP".to_vec(),
+                    N::F2 => b"\x1bOQ".to_vec(),
+                    N::F3 => b"\x1bOR".to_vec(),
+                    N::F4 => b"\x1bOS".to_vec(),
+                    N::F5 => kk::encode_tilde_key(15, shift, alt, ctrl, super_key),
+                    N::F6 => kk::encode_tilde_key(17, shift, alt, ctrl, super_key),
+                    N::F7 => kk::encode_tilde_key(18, shift, alt, ctrl, super_key),
+                    N::F8 => kk::encode_tilde_key(19, shift, alt, ctrl, super_key),
+                    N::F9 => kk::encode_tilde_key(20, shift, alt, ctrl, super_key),
+                    N::F10 => kk::encode_tilde_key(21, shift, alt, ctrl, super_key),
+                    N::F11 => kk::encode_tilde_key(23, shift, alt, ctrl, super_key),
+                    N::F12 => kk::encode_tilde_key(24, shift, alt, ctrl, super_key),
+                    _ => {
+                        if let Some(t) = text {
+                            if !t.is_empty() {
+                                return kk::encode_text_with_alt(t, alt);
+                            }
+                        }
+                        Vec::new()
+                    }
+                };
             }
             let escape = self.named_key_to_escape(*named);
             if !escape.is_empty() {
@@ -10033,10 +10197,32 @@ impl PureTermApp {
         }
         if let Some(t) = text {
             if !t.is_empty() {
+                if kitty && alt {
+                    return crate::kitty_keyboard::encode_text_with_alt(t, true);
+                }
                 return t.as_bytes().to_vec();
             }
         }
         Vec::new()
+    }
+
+    /// GAP-63:活动窗格是否处于 kitty keyboard protocol 模式。
+    /// 无活动窗格时为 false(保持 legacy)。
+    ///
+    /// 注意判定用 `DISAMBIGUATE_ESC_CODES` 单个 flag:主流程序
+    /// (Claude Code / kitty 默认)push 的是 `CSI > 1 u`,只置
+    /// disambiguate 一位;`KITTY_KEYBOARD_PROTOCOL` 是全部 5 个
+    /// kitty flag 的并集,`contains` 要求 5 位全置,用它判定会
+    /// 使本 gate 永远为 false。
+    fn active_kitty_keyboard_enabled(&self) -> bool {
+        self.active_terminal_ctx()
+            .map(|ctx| {
+                ctx.terminal()
+                    .lock_unfair()
+                    .mode()
+                    .contains(TermMode::DISAMBIGUATE_ESC_CODES)
+            })
+            .unwrap_or(false)
     }
 
     fn named_key_to_escape(&self, named: iced::keyboard::key::Named) -> Vec<u8> {
@@ -10097,11 +10283,19 @@ impl PureTermApp {
             iced::mouse::ScrollDelta::Pixels { x, y } => (x, y),
         };
 
-        let lines = (delta_y_px / cell_height).abs() as usize;
-        let columns = (delta_x_px / cell_width).abs() as usize;
+        // 跨事件累加像素余量,不足一格的增量不再被截断丢弃。
+        self.scroll_accum.0 += delta_x_px;
+        self.scroll_accum.1 += delta_y_px;
+        let lines = (self.scroll_accum.1 / cell_height).abs() as usize;
+        let columns = (self.scroll_accum.0 / cell_width).abs() as usize;
         if lines == 0 && columns == 0 {
             return;
         }
+        // 消费已取整的整格数,余量留给下一事件。
+        self.scroll_accum.1 -=
+            lines as f32 * cell_height * self.scroll_accum.1.signum();
+        self.scroll_accum.0 -=
+            columns as f32 * cell_width * self.scroll_accum.0.signum();
 
         let is_scroll_up = delta_y_px > 0.0;
         let is_scroll_left = delta_x_px > 0.0;
@@ -12128,11 +12322,19 @@ impl PureTermApp {
             iced::mouse::ScrollDelta::Pixels { x, y } => (x, y),
         };
 
-        let lines = (delta_y_px / cell_height).abs() as usize;
-        let columns = (delta_x_px / cell_width).abs() as usize;
+        // 跨事件累加像素余量,不足一格的增量不再被截断丢弃
+        //(与 handle_scroll 同一策略)。
+        self.scroll_accum.0 += delta_x_px;
+        self.scroll_accum.1 += delta_y_px;
+        let lines = (self.scroll_accum.1 / cell_height).abs() as usize;
+        let columns = (self.scroll_accum.0 / cell_width).abs() as usize;
         if lines == 0 && columns == 0 {
             return;
         }
+        self.scroll_accum.1 -=
+            lines as f32 * cell_height * self.scroll_accum.1.signum();
+        self.scroll_accum.0 -=
+            columns as f32 * cell_width * self.scroll_accum.0.signum();
 
         let is_scroll_up = delta_y_px > 0.0;
         let is_scroll_left = delta_x_px > 0.0;
@@ -12385,9 +12587,10 @@ impl PureTermApp {
         // 注意:这里**不**挂 `on_press(StartWindowDrag)` —— 标签按钮是
         // `Length::Fill`,铺满整条顶栏;若整条都能拖,点标签时窗口会
         // 跟着手抖跑掉。拖动只由右侧的 `⠿` 手柄负责(见上)。
-        mouse_area(bar_container)
-            .on_move(|p| Message::CursorMoved(p))
-            .into()
+        // 也不复用 Message::CursorMoved——那是终端区 widget-local 坐标
+        // 通道(选区/MOUSE_MODE 上报消费),顶栏的局部坐标写进同一字段
+        // 会把鼠标报告坐标污染成顶栏位置。
+        mouse_area(bar_container).into()
     }
 
     // ---- 状态栏(GAP-3.4)----
@@ -12782,7 +12985,7 @@ impl PureTermApp {
     }
 
     fn view_color_picker(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
-        let tab_id = self.color_picker_tab?;
+        let _tab_id = self.color_picker_tab?;
 
         // 预置色来自调色板(与 HTML 视觉稿同源)。
         let preset_colors = pureterm_settings::theme::palette::PICKER_SWATCHES;
@@ -12858,8 +13061,8 @@ impl PureTermApp {
     /// `Message::SshConnect` 启动 ssh 拉起。
     #[cfg(unix)]
     fn view_ssh_dialog(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
-        use iced::widget::{button, column, container, mouse_area, scrollable, space, text, text_input};
-        use iced::{Alignment, Length};
+        use iced::widget::{button, column, container, scrollable, text};
+        use iced::Length;
 
         let dialog = self.ssh_dialog.as_ref()?;
 
@@ -14024,7 +14227,7 @@ impl PureTermApp {
     /// - `Mode::Actions` —— 已注册动作的模糊搜索列表。
     /// - `Mode::Profiles` —— 已配置 SSH 配置档的直接列表。
     fn view_command_palette(&self) -> Option<Element<'_, Message, Theme, iced::Renderer>> {
-        use iced::widget::{button, column, container, mouse_area, row, scrollable, space, text, text_input};
+        use iced::widget::{button, column, container, scrollable, text, text_input};
         use iced::Length;
 
         let s = self.command_palette.as_ref()?;

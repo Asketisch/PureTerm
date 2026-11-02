@@ -206,8 +206,8 @@ impl WgpuGlyphAtlas {
     /// 把灰度字形插入 R8 图集。
     fn insert_grayscale(
         &mut self,
-        font_index: usize,
-        c: char,
+        _font_index: usize,
+        _c: char,
         glyph: &RasterizedGlyph,
     ) -> CachedGlyph {
         let (glyph_width, glyph_height, grayscale) = Self::extract_grayscale(glyph);
@@ -527,7 +527,7 @@ impl WgpuGlyphAtlas {
         self.color_skyline.insert(best_idx, new_seg);
 
         let right_edge = best_x + width;
-        let mut i = best_idx + 1;
+        let i = best_idx + 1;
         while i < self.color_skyline.len() {
             let seg_end = self.color_skyline[i].x + self.color_skyline[i].width;
             if self.color_skyline[i].x < right_edge {
@@ -619,7 +619,7 @@ impl WgpuGlyphAtlas {
 
         // 裁剪或移除被新矩形覆盖的段。
         let right_edge = best_x + width;
-        let mut i = best_idx + 1;
+        let i = best_idx + 1;
         while i < self.skyline.len() {
             let seg_end = self.skyline[i].x + self.skyline[i].width;
             if self.skyline[i].x < right_edge {

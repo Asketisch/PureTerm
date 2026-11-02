@@ -37,7 +37,13 @@ impl From<tempfile::PersistError> for ConfigError {
 }
 
 pub fn load_document(path: &Path) -> Result<DocumentMut, ConfigError> {
-    let content = fs::read_to_string(path).unwrap_or_default();
+    // 仅"文件不存在"回退为空文档;权限错误等必须向上传播,
+    // 否则 Revert 会把读不到的配置静默显示成默认值。
+    let content = match fs::read_to_string(path) {
+        Ok(s) => s,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(e.into()),
+    };
     let doc = content.parse::<DocumentMut>()?;
     Ok(doc)
 }
@@ -69,10 +75,12 @@ pub fn save_document(path: &Path, doc: &DocumentMut) -> Result<(), ConfigError> 
 /// 2. `mutate_config` 在每次保存时强制“重载 → 补丁 → 写入”,
 ///    使每个写入者只触碰其实际改动的节,其余
 ///    一切(含格式 / 注释 / 空行)保持原样。
-/// 3. 建议性锁(`fs2::FileExt::try_lock_exclusive`)确保
+/// 3. 建议性锁(`fs2::FileExt::lock_exclusive`)确保
 ///    重载-补丁-写入循环在所有经过此助手的进程间
-///    串行化。锁加在**配置文件本身**上,
-///    使并发写入者在此阻塞,而非在独立的哨兵文件上。
+///    串行化。锁加在**哨兵文件**(`<config>.lock`)上而
+///    非配置文件本身——持久化用的是 rename 替换,
+///    会把配置文件换成新 inode,加在旧 inode 上的锁
+///    对后续打开新 inode 的写入者无效。
 ///
 /// 返回新文件的 mtime,使调用方能记录“自己刚写过”
 /// 的窗口并抑制 notify 触发的自重载(见 PureTermApp
@@ -85,16 +93,15 @@ where
         fs::create_dir_all(parent)?;
     }
 
-    // 打开(或创建)文件,获得可加锁的句柄。以
-    // 读+写方式打开但从不经此句柄读——实际文档
-    // 加载由下面的 `load_document` 完成。缺失时创建,
-    // 意味着设置的首轮写入也能享受锁保护。
+    // 锁哨兵文件:永不 rename,inode 稳定,才能跨
+    // "persist = rename 替换" 真正互斥。
+    let lock_path = path.with_extension("toml.lock");
     let lock_file = fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(path)?;
+        .open(&lock_path)?;
 
     // 获取排他建议锁。`lock_exclusive` 阻塞直到
     // 锁可用;同进程内不同线程的调用仍会被串行化。
@@ -106,6 +113,9 @@ where
 
     let tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap_or(Path::new(".")))?;
     fs::write(tmp.path(), doc.to_string())?;
+    // rename(原子替换)不保证数据已落盘;掉电时可能出现
+    // "新名字 + 空/部分内容"。持久化前显式 fsync。
+    fs::File::open(tmp.path())?.sync_all()?;
     tmp.persist(path)?;
 
     // 回读 mtime,使 notify 触发监视器时调用方能识别自己的写入。
@@ -125,7 +135,13 @@ pub fn ensure_table<'a>(doc: &'a mut DocumentMut, path: &[&str]) -> &'a mut Tabl
         if !table.contains_key(key) {
             table.insert(key, Item::Table(Table::new()));
         }
-        table = table[key].as_table_mut().expect("expected table");
+        // 键可能存在但被标量占用(如手写 `font = "x"` 这类
+        // 合法 TOML)。此时用空表覆盖该标量,而不是 panic——
+        // 设置 UI 面对损坏配置应自愈。
+        if !table[key].is_table() {
+            table.insert(key, Item::Table(Table::new()));
+        }
+        table = table[key].as_table_mut().expect("just ensured table");
     }
     table
 }
@@ -280,5 +296,44 @@ shortcut = "Ctrl+1"
         );
         assert!(after.contains("# top comment"), "comments preserved");
         let _ = mtime; // smoke-test the returned mtime
+    }
+
+    #[test]
+    fn ensure_table_overwrites_scalar_at_section_path() {
+        // `font = "x"` 是合法 TOML;ensure_table 必须自愈为表而非 panic。
+        let mut doc = "font = \"x\"\n".parse::<DocumentMut>().unwrap();
+        set_float(&mut doc, &["font"], "size", 14.0);
+        assert_eq!(get_float(&doc, &["font"], "size"), Some(14.0));
+    }
+
+    #[test]
+    fn mutate_config_locks_via_sentinel_and_replaces_file() {
+        // persist 用 rename 替换 inode;锁若加在配置文件本身,
+        // 并发写者可各自持不同 inode 的锁造成 lost update。
+        // 哨兵锁文件必须被创建且配置内容正确落地。
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let path = tmp_dir.path().join("pureterm.toml");
+        fs::write(&path, "[font]\nsize = 12.0\n").unwrap();
+
+        mutate_config(&path, |doc| {
+            set_float(doc, &["font"], "size", 20.0);
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(path.with_extension("toml.lock").exists(), "sentinel lock file created");
+        assert!(fs::read_to_string(&path).unwrap().contains("size = 20.0"));
+    }
+
+    #[test]
+    fn load_document_propagates_io_errors_but_missing_file_is_empty() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let missing = tmp_dir.path().join("nope.toml");
+        assert!(load_document(&missing).unwrap().to_string().is_empty());
+
+        // 目录而非文件 → 读错误必须向上传播,不得静默变空文档。
+        let dir = tmp_dir.path().join("adir");
+        fs::create_dir(&dir).unwrap();
+        assert!(load_document(&dir).is_err());
     }
 }

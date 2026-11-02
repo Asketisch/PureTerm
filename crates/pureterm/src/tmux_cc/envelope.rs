@@ -105,7 +105,7 @@ impl TmuxEnvelope {
         match self {
             Self::Input { pane_id, bytes } => {
                 // tmux -CC 接受 `%input %<id> <base64-of-bytes>\n`。
-                use std::io::Write;
+                
                 let mut buf = Vec::with_capacity(bytes.len() * 4 / 3 + 16);
                 buf.extend_from_slice(format!("%input %{pane_id} ").as_bytes());
                 // 最小化的 base64 编码器（避免引入额外依赖）。

@@ -4,7 +4,7 @@
 //! 活动窗口的全部标签页。激活时状态栏显示 `BROADCAST`。
 
 use crate::iced_app::{Tab, TabId, Window};
-use crate::split_tree::{Pane, PaneId, Surface};
+use crate::split_tree::PaneId;
 
 /// `[broadcast_input]` 配置。
 #[derive(Clone, Debug, PartialEq, Eq)]

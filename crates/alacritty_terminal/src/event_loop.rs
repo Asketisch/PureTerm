@@ -183,6 +183,34 @@ where
                 self.event_proxy.send_event(Event::CwdChanged(cwd));
             }
 
+            // GAP-66:扫描 OSC 633(VSCode shell integration)——
+            // A/B/C/D 映射为 ShellMark(复用 133 消费链),P;Cwd=
+            // 映射为 cwd 上报。无内容时零开销跳过。
+            let scan633 = scan_osc633(&buf[..unprocessed], &mut state.osc633);
+            if !scan633.marks.is_empty() {
+                let cursor_row = terminal.grid().cursor.point.line.0 as usize;
+                for raw in scan633.marks {
+                    self.event_proxy.send_event(Event::ShellMark(ShellMark {
+                        kind: raw.kind,
+                        row: cursor_row,
+                        exit_code: raw.exit_code,
+                        duration_us: None,
+                        command: raw.command,
+                    }));
+                }
+            }
+            if let Some(cwd) = scan633.cwd {
+                self.event_proxy.send_event(Event::CwdChanged(cwd));
+            }
+
+            // GAP-65:扫描 XTVERSION / XTGETTCAP 自识别查询并把
+            // 响应写回 PTY(与 DA 响应同路径)。无查询时零分配。
+            for resp in scan_terminal_queries(&buf[..unprocessed]) {
+                self.event_proxy.send_event(Event::PtyWrite(Arc::new(
+                    String::from_utf8_lossy(&resp).into_owned(),
+                )));
+            }
+
             // GAP-09:扫描 OSC 9 / 99 / 777 桌面通知。跳过
             // 既无标题又无内容的载荷(规范:空通知无效)。
             for raw in scan_osc_notify(&buf[..unprocessed]) {
@@ -516,6 +544,10 @@ pub struct State {
     /// 载荷动辄几 KB,几乎必然跨读取边界 —— 早前每次读都把缓冲区
     /// 清零重扫,于是**任何超过一个读块的图像都被整条丢弃**。
     graphics_tail: Vec<u8>,
+    /// GAP-66:OSC 633 跨缓冲状态——E 标记(用户按回车)与其
+    /// 所属 B 分处不同 read chunk,命令文本必须暂存到这里,直到
+    /// 同命令周期的 C(OutputStart)到达时一并产出。
+    pub osc633: Osc633State,
 }
 
 impl State {
@@ -718,6 +750,270 @@ fn scan_osc133(buf: &[u8]) -> SmallVec<[RawMark; 4]> {
     marks
 }
 
+// ---------------------------------------------------------------------------
+// OSC 633(VSCode shell integration)扫描器 —— GAP-66
+// ---------------------------------------------------------------------------
+
+/// GAP-66:OSC 633 扫描器的跨缓冲状态。VSCode 的序列生命周期是
+/// A → B(prompt end)→ E(用户按回车,携带命令文本)→ C → D;
+/// B 与 E 之间隔着整个用户输入阶段,必然分处不同的 PTY read
+/// chunk,因此 E 的命令文本必须暂存,直到同命令周期的 C 到达。
+#[derive(Debug, Default)]
+pub struct Osc633State {
+    /// 最近一条 `E` 的命令文本,待 C(OutputStart)到达时随
+    /// CommandStart 一并产出;A/D(新提示符/命令结束)时清除。
+    pub pending_command: Option<String>,
+}
+
+/// 从 PTY 字节流提取的一条 OSC 633 语义标记。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Raw633Mark {
+    pub kind: ShellMarkKind,
+    /// `D` 标记的退出码(VSCode 传裸数字 `633;D;0`,亦兼容
+    /// `exit=0` 键值形式)。
+    pub exit_code: Option<i32>,
+    /// `E` 标记携带的命令文本(明文)。
+    pub command: Option<String>,
+}
+
+/// OSC 633 一次扫描的全部产出:语义标记 + 最新 cwd。
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Osc633Scan {
+    pub marks: SmallVec<[Raw633Mark; 2]>,
+    /// `P;Cwd=<path>` 上报的工作目录(语义等同 OSC 7)。
+    pub cwd: Option<String>,
+}
+
+/// 在原始字节中扫描 OSC 633 序列:`\x1b]633;<sub>[;params]\x07` 或
+/// `\x1b]633;...;\x1b\\`。
+///
+/// 识别的子命令(其余静默忽略,符合「未知 OSC 容忍」约定):
+/// - `A`/`B`/`C`/`D[;<exitcode>]` —— 映射到 [`ShellMarkKind`]
+///   (与 OSC 133 的 A/B/C/D 同语义),复用现有 ShellMark 消费链
+///   (prompt 跳转 / exit code / block 输出 / MCP get_shell_context)。
+/// - `E;<cmdline>[;<nonce>]` —— 命令文本暂存到 `state`,在随后
+///   的 `C`(OutputStart)处随一条带命令的 CommandStart 一并产出
+///   (B→E 跨读缓冲,见 [`Osc633State`])。仅当末段形如 nonce
+///   (≥8 位 hex)时才按「末段为 nonce」重组,避免截断本身含
+///   分号的第三方命令。
+/// - `P;Cwd=<path>[;IsWindows=..]` —— cwd 上报。
+pub fn scan_osc633(buf: &[u8], state: &mut Osc633State) -> Osc633Scan {
+    let mut out = Osc633Scan::default();
+    let prefix = b"\x1b]633;";
+    let mut i = 0;
+    while i + prefix.len() < buf.len() {
+        let Some(pos) = memchr::memchr(prefix[0], &buf[i..]) else { break };
+        let start = i + pos;
+        if !buf[start..].starts_with(prefix) {
+            i = start + 1;
+            continue;
+        }
+        let after = start + prefix.len();
+        if after >= buf.len() {
+            break;
+        }
+        // 扫描参数直到终止符(与 scan_osc133 相同的跨边界策略:
+        // 无终止符则视为跨缓冲,跳过该序列)。
+        let mut p = after;
+        let params_start = p;
+        let terminated = loop {
+            if p >= buf.len() {
+                break false;
+            }
+            match buf[p] {
+                0x07 => break true,
+                0x1b if p + 1 < buf.len() && buf[p + 1] == b'\\' => break true,
+                _ => p += 1,
+            }
+        };
+        if !terminated {
+            i = start + 1;
+            continue;
+        }
+        let params = String::from_utf8_lossy(&buf[params_start..p]).into_owned();
+        let mut parts = params.split(';');
+        let sub = parts.next().unwrap_or("").to_string();
+        match sub.as_str() {
+            "A" => {
+                // 新提示符:上一命令周期若未消费(异常序列),丢弃。
+                state.pending_command = None;
+                out.marks.push(Raw633Mark {
+                    kind: ShellMarkKind::PromptStart,
+                    exit_code: None,
+                    command: None,
+                });
+            },
+            "B" => {
+                out.marks.push(Raw633Mark {
+                    kind: ShellMarkKind::CommandStart,
+                    exit_code: None,
+                    command: None,
+                });
+            },
+            "C" => {
+                // 输出开始 = 命令文本确立点:把暂存的 E 命令随一条
+                // CommandStart 产出,保证消费方先见命令、再见输出。
+                if let Some(cmd) = state.pending_command.take() {
+                    out.marks.push(Raw633Mark {
+                        kind: ShellMarkKind::CommandStart,
+                        exit_code: None,
+                        command: Some(cmd),
+                    });
+                }
+                out.marks.push(Raw633Mark {
+                    kind: ShellMarkKind::OutputStart,
+                    exit_code: None,
+                    command: None,
+                });
+            },
+            "D" => {
+                // 命令周期结束:残留的 E(无 C 的异常序列)作废。
+                state.pending_command = None;
+                let exit_code = parts.next().and_then(|v| {
+                    v.strip_prefix("exit=").unwrap_or(v).parse().ok()
+                });
+                out.marks.push(Raw633Mark {
+                    kind: ShellMarkKind::OutputEnd,
+                    exit_code,
+                    command: None,
+                });
+            },
+            "E" => {
+                let segs: Vec<&str> = params.split(';').skip(1).collect();
+                // VSCode 总是带 nonce;第三方可能只发 [cmdline] 或
+                // [cmdline, ...] 。仅当末段形如 nonce(≥8 位 hex,
+                // VSCode nonce 为长 hex)时剥离,避免把本身含分号
+                // 的命令截断。
+                let cmdline = match segs.len() {
+                    0 => String::new(),
+                    1 => segs[0].to_string(),
+                    _ => {
+                        let last = segs[segs.len() - 1];
+                        let nonce_like = last.len() >= 8
+                            && !last.is_empty()
+                            && last.bytes().all(|b| b.is_ascii_hexdigit());
+                        if nonce_like {
+                            segs[..segs.len() - 1].join(";")
+                        } else {
+                            segs.join(";")
+                        }
+                    },
+                };
+                if !cmdline.is_empty() {
+                    state.pending_command = Some(cmdline);
+                }
+            },
+            "P" => {
+                for kv in parts {
+                    if let Some(path) = kv.strip_prefix("Cwd=") {
+                        out.cwd = Some(path.to_string());
+                    }
+                }
+            },
+            _ => {},
+        }
+        i = p + if buf[p] == 0x07 { 1 } else { 2 };
+    }
+
+    out
+}
+
+// ---------------------------------------------------------------------------
+// 终端自识别查询扫描器(XTVERSION / XTGETTCAP)—— GAP-65
+// ---------------------------------------------------------------------------
+
+/// XTGETTCAP 支持的 terminfo 布尔能力名 → 值。其余能力一律回
+/// "不支持"。vte 0.15 不路由 `CSI > 0 q` 与 `DCS + q`,故与
+/// DECSCL / OSC 扫描器一样在 PTY 字节流上识别。
+const XTGETTCAP_BOOLS: &[(&str, &str)] = &[("Tc", "1"), ("RGB", "1"), ("setrgbf", "1"), ("setrgbb", "1")];
+
+/// 十六进制小写编码(XTGETTCAP 的 key/value 均以 hex 传输)。
+fn hex_encode(s: &str) -> String {
+    s.bytes().map(|b| format!("{b:02x}")).collect()
+}
+
+/// 扫描 PTY 字节流中的终端自识别查询,返回应写回 PTY 的响应
+/// (经 `Event::PtyWrite`,与 DA 响应同路径):
+/// - XTVERSION(`CSI > 0 q`)→ `DCS >|PureTerm(版本) ST`,
+///   采用 xterm 的 `Name(version)` 惯例,Agent 侧解析器普遍支持。
+/// - XTGETTCAP(`DCS + q <hex-key>[;<hex-key>] ST`)→ 每个能力
+///   一条 `DCS 1+r <key>=<value> ST`(支持)或 `DCS 0+r <key> ST`
+///   (不支持)。
+pub fn scan_terminal_queries(buf: &[u8]) -> SmallVec<[Vec<u8>; 2]> {
+    let mut out: SmallVec<[Vec<u8>; 2]> = SmallVec::new();
+
+    // XTVERSION:`\x1b[>0q`(Ps=0;部分实现省略 0,一并接受
+    // `\x1b[>q`)。
+    for seq in [b"\x1b[>0q".as_slice(), b"\x1b[>q".as_slice()] {
+        if memchr::memmem::find(buf, seq).is_some() {
+            let mut resp = Vec::new();
+            resp.extend_from_slice(
+                format!("\x1bP>|PureTerm({})\x1b\\", crate::PURETERM_VERSION).as_bytes(),
+            );
+            out.push(resp);
+        }
+    }
+
+    // XTGETTCAP:`\x1bP+q<key>[;<key>]\x1b\\`(ST 终止;BEL 终止
+    // 不在规范内,不识别)。
+    let prefix = b"\x1bP+q";
+    let mut i = 0;
+    while i + prefix.len() < buf.len() {
+        let Some(pos) = memchr::memchr(prefix[0], &buf[i..]) else { break };
+        let start = i + pos;
+        if !buf[start..].starts_with(prefix) {
+            i = start + 1;
+            continue;
+        }
+        let payload_start = start + prefix.len();
+        // 找 ST 终止符。
+        let Some(end) = find_st(payload_start, buf) else { break };
+        let payload = &buf[payload_start..end];
+        if let Ok(payload_str) = std::str::from_utf8(payload) {
+            for hex_key in payload_str.split(';') {
+                // 解码 hex → 能力名;查表不区分大小写。
+                let decoded = decode_hex_str(hex_key).map(|s| s.to_ascii_uppercase());
+                let matched = decoded.as_deref().and_then(|name| {
+                    XTGETTCAP_BOOLS.iter().find(|(k, _)| k.eq_ignore_ascii_case(name))
+                });
+                let mut resp = Vec::with_capacity(16 + hex_key.len());
+                match matched {
+                    Some((name, value)) => {
+                        resp.extend_from_slice(
+                            format!("\x1bP1+r{}={}\x1b\\", hex_encode(name), hex_encode(value))
+                                .as_bytes(),
+                        );
+                    },
+                    None => {
+                        resp.extend_from_slice(
+                            format!("\x1bP0+r{}\x1b\\", hex_key).as_bytes(),
+                        );
+                    },
+                }
+                out.push(resp);
+            }
+        }
+        i = end + 2;
+    }
+
+    out
+}
+
+/// hex 字符串解码(奇数长度或含非 hex 字符返回 None)。
+fn decode_hex_str(s: &str) -> Option<String> {
+    let b = s.as_bytes();
+    if b.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(b.len() / 2);
+    for chunk in b.chunks(2) {
+        let hi = (chunk[0] as char).to_digit(16)?;
+        let lo = (chunk[1] as char).to_digit(16)?;
+        out.push((hi * 16 + lo) as u8);
+    }
+    String::from_utf8(out).ok()
+}
+
 #[cfg(test)]
 mod tests_osc133 {
     use super::*;
@@ -861,6 +1157,242 @@ mod tests_osc7 {
     fn scan_percent_encoded_path() {
         let buf = b"\x1b]7;file://host/home/user/My%20Docs\x1b\\";
         assert_eq!(scan_osc7(buf).as_deref(), Some("/home/user/My Docs"));
+    }
+
+    #[test]
+    fn scan_percent_encoded_utf8_path() {
+        // "中文" = %E4%B8%AD%E6%96%87;按字节重组后必须还原为
+        // 多字节字符,而非 6 个 mojibake char。
+        let encoded = b"\x1b]7;file://host/%E4%B8%AD%E6%96%87\x07";
+        assert_eq!(scan_osc7(encoded).as_deref(), Some("/中文"));
+    }
+}
+
+#[cfg(test)]
+mod tests_osc633 {
+    use super::*;
+
+    #[test]
+    fn scan_abcd_marks() {
+        let buf = b"\x1b]633;A\x07prompt\x1b]633;B\x07\x1b]633;C\x07out\x1b]633;D;0\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        let kinds: Vec<ShellMarkKind> = scan.marks.iter().map(|m| m.kind).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                ShellMarkKind::PromptStart,
+                ShellMarkKind::CommandStart,
+                ShellMarkKind::OutputStart,
+                ShellMarkKind::OutputEnd,
+            ]
+        );
+        assert_eq!(scan.marks[3].exit_code, Some(0));
+    }
+
+    #[test]
+    fn scan_st_terminated() {
+        let buf = b"\x1b]633;A\x1b\\";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        assert_eq!(scan.marks.len(), 1);
+        assert_eq!(scan.marks[0].kind, ShellMarkKind::PromptStart);
+    }
+
+    #[test]
+    fn scan_exit_code_nonzero() {
+        let buf = b"\x1b]633;D;127\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        assert_eq!(scan.marks[0].exit_code, Some(127));
+    }
+
+    #[test]
+    fn scan_exit_code_key_value_form() {
+        // 兼容 133 风格的 `exit=` 键值形式。
+        let buf = b"\x1b]633;D;exit=3\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        assert_eq!(scan.marks[0].exit_code, Some(3));
+    }
+
+    #[test]
+    fn scan_cwd_property() {
+        let buf = b"\x1b]633;P;Cwd=/Users/demo/my dir;IsWindows=0\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        assert_eq!(scan.cwd.as_deref(), Some("/Users/demo/my dir"));
+    }
+
+    #[test]
+    fn scan_cwd_bel_terminated() {
+        let buf = b"\x1b]633;P;Cwd=/tmp\x07";
+        let mut st = Osc633State::default();
+        assert_eq!(scan_osc633(buf, &mut st).cwd.as_deref(), Some("/tmp"));
+    }
+
+    #[test]
+    fn scan_e_command_attaches_to_command_start() {
+        // VSCode 的 nonce 为长 hex(≥8 位);短 hex 串视为命令一部分。
+        let buf =
+            b"\x1b]633;B\x07\x1b]633;E;cargo test --nocapture;abc12345\x07\x1b]633;C\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        let b = scan
+            .marks
+            .iter()
+            .find(|m| m.kind == ShellMarkKind::CommandStart && m.command.is_some())
+            .unwrap();
+        // 命令文本含分号:末段是 nonce,中间重组。
+        assert_eq!(b.command.as_deref(), Some("cargo test --nocapture"));
+    }
+
+    #[test]
+    fn scan_e_without_nonce() {
+        let buf = b"\x1b]633;B\x07\x1b]633;E;ls -la\x07\x1b]633;C\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        // 带命令的 CommandStart 是 E 确立时(C 处)产出的那条。
+        let with_cmd = scan
+            .marks
+            .iter()
+            .find(|m| m.kind == ShellMarkKind::CommandStart && m.command.is_some())
+            .unwrap();
+        assert_eq!(with_cmd.command.as_deref(), Some("ls -la"));
+    }
+
+    #[test]
+    fn scan_e_semicolon_command_without_nonce_not_truncated() {
+        // 第三方发射方常无 nonce;命令本身含分号不得被截断。
+        let buf = b"\x1b]633;E;echo a;b\x07\x1b]633;C\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        let b = scan
+            .marks
+            .iter()
+            .find(|m| m.kind == ShellMarkKind::CommandStart && m.command.is_some())
+            .unwrap();
+        assert_eq!(b.command.as_deref(), Some("echo a;b"));
+    }
+
+    #[test]
+    fn scan_b_e_across_buffers_command_arrives_at_output_start() {
+        // 真实生命周期:B 在提示符 chunk,E+C 在回车 chunk。E 的
+        // 命令文本在 C(OutputStart)到达时随一条带命令的
+        // CommandStart 产出;GUI 侧 ShellState::apply_mark 收到它
+        // 会覆盖 pending_b(时间戳更准)并补全命令文本——事件流
+        // 上第二条 command_started 携带命令文本,属「命令确立」
+        // 通知而非重复。
+        let mut st = Osc633State::default();
+        let scan1 = scan_osc633(b"\x1b]633;A\x07\x1b]633;B\x07", &mut st);
+        assert_eq!(scan1.marks.len(), 2);
+        assert!(scan1.marks.iter().all(|m| m.command.is_none()));
+        assert!(st.pending_command.is_none());
+
+        let scan2 = scan_osc633(b"\x1b]633;E;echo hi\x07\x1b]633;C\x07", &mut st);
+        let starts: Vec<Option<&str>> = scan2
+            .marks
+            .iter()
+            .filter(|m| m.kind == ShellMarkKind::CommandStart)
+            .map(|m| m.command.as_deref())
+            .collect();
+        assert_eq!(starts, vec![Some("echo hi")], "E+C chunk 产出一条带命令的 CommandStart");
+        assert_eq!(scan2.marks[0].kind, ShellMarkKind::CommandStart);
+        assert_eq!(scan2.marks[1].kind, ShellMarkKind::OutputStart);
+        assert!(st.pending_command.is_none());
+    }
+
+    #[test]
+    fn scan_d_clears_stale_pending() {
+        // 无 C 的异常序列:D 必须丢弃残留的 pending,防泄漏到下条命令。
+        let mut st = Osc633State::default();
+        scan_osc633(b"\x1b]633;E;orphan\x07", &mut st);
+        assert!(st.pending_command.is_some());
+        scan_osc633(b"\x1b]633;D;0\x07", &mut st);
+        assert!(st.pending_command.is_none());
+    }
+
+    #[test]
+    fn scan_unknown_subcommand_ignored() {
+        let buf = b"\x1b]633;X;mystery\x07\x1b]633;A\x07";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        assert_eq!(scan.marks.len(), 1);
+        assert_eq!(scan.marks[0].kind, ShellMarkKind::PromptStart);
+    }
+
+    #[test]
+    fn scan_incomplete_at_buffer_end_is_skipped() {
+        let buf = b"\x1b]633;A\x07ok\x1b]633;D;0";
+        let mut st = Osc633State::default();
+        let scan = scan_osc633(buf, &mut st);
+        assert_eq!(scan.marks.len(), 1, "跨缓冲的截断序列必须跳过");
+        assert_eq!(scan.marks[0].kind, ShellMarkKind::PromptStart);
+    }
+
+    #[test]
+    fn scan_no_osc633() {
+        let mut st = Osc633State::default();
+        assert!(scan_osc633(b"plain output\n", &mut st).marks.is_empty());
+        assert_eq!(scan_osc633(b"plain output\n", &mut st).cwd, None);
+    }
+}
+
+#[cfg(test)]
+mod tests_terminal_queries {
+    use super::*;
+
+    #[test]
+    fn xtversion_annotated_form() {
+        let buf = b"\x1b[>0q";
+        let resps = scan_terminal_queries(buf);
+        assert_eq!(resps.len(), 1);
+        let s = String::from_utf8(resps[0].clone()).unwrap();
+        assert_eq!(s, format!("\x1bP>|PureTerm({})\x1b\\", crate::PURETERM_VERSION));
+    }
+
+    #[test]
+    fn xtversion_short_form() {
+        // 部分实现省略 Ps=0。
+        let resps = scan_terminal_queries(b"\x1b[>q");
+        assert_eq!(resps.len(), 1);
+    }
+
+    #[test]
+    fn xtversion_absent() {
+        assert!(scan_terminal_queries(b"no query here").is_empty());
+    }
+
+    #[test]
+    fn xtgettcap_supported_and_unsupported() {
+        // "RGB" = 524742;"Nope" = 4E6F7065。
+        let buf = b"\x1bP+q524742;4E6F7065\x1b\\";
+        let resps = scan_terminal_queries(buf);
+        assert_eq!(resps.len(), 2);
+        assert_eq!(resps[0], b"\x1bP1+r524742=31\x1b\\".to_vec(), "RGB=1");
+        assert_eq!(resps[1], b"\x1bP0+r4E6F7065\x1b\\".to_vec(), "未知能力回不支持");
+    }
+
+    #[test]
+    fn xtgettcap_case_insensitive() {
+        // "rgb" 小写同样命中。
+        let resps = scan_terminal_queries(b"\x1bP+q726762\x1b\\");
+        assert_eq!(resps.len(), 1);
+        assert_eq!(resps[0], b"\x1bP1+r524742=31\x1b\\".to_vec());
+    }
+
+    #[test]
+    fn xtgettcap_incomplete_is_skipped() {
+        // 截断(无 ST)→ 无响应、不 panic。
+        assert!(scan_terminal_queries(b"\x1bP+q5247").is_empty());
+    }
+
+    #[test]
+    fn hex_encode_roundtrip() {
+        assert_eq!(hex_encode("RGB"), "524742");
+        assert_eq!(decode_hex_str("524742").as_deref(), Some("RGB"));
+        assert_eq!(decode_hex_str("5"), None, "奇数长度无效");
+        assert_eq!(decode_hex_str("zz"), None, "非 hex 字符无效");
     }
 }
 
@@ -1133,22 +1665,27 @@ fn extract_osc7_path(url: &[u8]) -> Option<String> {
 }
 
 /// URL 路径的简易百分号解码。
+///
+/// 按字节解码后再整体做 UTF-8 校验:百分号编码的 UTF-8 多字节字符
+/// (如中文目录 `%E4%B8%AD`)必须先重组字节序列,逐字节 `as char`
+/// 会产生 mojibake,导致 OSC 7 上报的 cwd 乱码。无效 UTF-8 用
+/// replacement char 降级而非丢弃整个路径。
 fn percent_decode(input: &str) -> String {
-    let mut result = String::with_capacity(input.len());
     let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
             if let (Some(hi), Some(lo)) = (hex_val(bytes[i + 1]), hex_val(bytes[i + 2])) {
-                result.push(((hi << 4) | lo) as char);
+                out.push((hi << 4) | lo);
                 i += 3;
                 continue;
             }
         }
-        result.push(bytes[i] as char);
+        out.push(bytes[i]);
         i += 1;
     }
-    result
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 fn hex_val(b: u8) -> Option<u8> {
@@ -1190,15 +1727,14 @@ struct RawGraphics {
 ///
 /// 受支持:
 /// - **Sixel**(`\x1bPq ... \x1b\\`)——DEC 六位像素流,每 DCS 一张图。
-/// v1 仅转发原始像素字节(解码 RGBA 留在
-/// 渲染器内)。
+///   v1 仅转发原始像素字节(解码 RGBA 留在渲染器内)。
 /// - **Kitty graphics**(`\x1b_G ... \x1b\\`)——`;` 分隔的 `key=value`
-/// 参数 + base64 载荷。v1 识别 `a=T`(发送并使用)、`a=A`
-///(发送并使用、分块)、`q=1`(静默)、`f=32`(RGBA)、`f=100`(PNG)、
-/// `c=`/`r=`(单元格列/行)、`i=`(图像 id)及分块标记
-/// `m=0`(还有更多块)/`m=1`(最终)。
+///   参数 + base64 载荷。v1 识别 `a=T`(发送并使用)、`a=A`
+///   (发送并使用、分块)、`q=1`(静默)、`f=32`(RGBA)、`f=100`(PNG)、
+///   `c=`/`r=`(单元格列/行)、`i=`(图像 id)及分块标记
+///   `m=0`(还有更多块)/`m=1`(最终)。
 /// - **iTerm2 inline**(`\x1b]1337;File=...`)——`;` 分隔的 `key=value`
-/// 参数 + base64 载荷。v1 仅识别 `inline=1`。
+///   参数 + base64 载荷。v1 仅识别 `inline=1`。
 ///
 /// v1 中扫描器刻意**跨 PTY 读无状态**(与 `scan_osc7`/`scan_osc133`
 /// 一致):跨读取边界的 Kitty 分块图像会被丢弃。单块图像总能
@@ -1537,10 +2073,6 @@ fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
 }
 
 /// GAP-09:从原始 PTY 缓冲扫描出的一条通知,在应用
-/// occasion/source 之前。共享同一 `i` 的 OSC 99 分块载荷会被
-/// 合并为一条(见 `scan_osc_notify`)。
-
-/// GAP-09:从原始 PTY 缓冲扫描出的一条通知,在应用
 /// occasion/source 默认值之前。共享同一 `i` 的 OSC 99 分块载荷会被
 /// 合并为一条(见 `scan_osc_notify`)。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1555,14 +2087,13 @@ struct RawNotification {
 /// GAP-09:扫描原始字节中的 OSC 9 / OSC 99 / OSC 777 通知序列。
 ///
 /// - OSC 9(iTerm2 遗留):`\x1b]9;<message>\x07|ST`——单一正文,**后写入胜出**
-///(镜像 `scan_osc7`)。
+///   (镜像 `scan_osc7`)。
 /// - OSC 99(kitty,分块):`\x1b]99;<metadata>;<payload>\x07|ST`——`:` 分隔的
-/// `key=value` 元数据。v1 解析 `p`(title|body)、`i`(id)、`d`(0=保留/1=冲刷)、
-/// `e`(1=base64)、`o`(occasion)。同一 `i` 块合并;`d=1` 时冲刷。未知
-/// 载荷类型(`icon`/`close`/`buttons`/`?`/`alive`)被优雅地空操作(规范前向
-/// 兼容)。跨缓冲分块(一次 PTY 读里 `d=0`、下一次里 `d=1`)在 v1 中
-/// 由 GUI 侧存储按 `id` 去重兜底。
-/// 兜底机制即按 `id` 去重。
+///   `key=value` 元数据。v1 解析 `p`(title|body)、`i`(id)、`d`(0=保留/1=冲刷)、
+///   `e`(1=base64)、`o`(occasion)。同一 `i` 块合并;`d=1` 时冲刷。未知
+///   载荷类型(`icon`/`close`/`buttons`/`?`/`alive`)被优雅地空操作(规范前向
+///   兼容)。跨缓冲分块(一次 PTY 读里 `d=0`、下一次里 `d=1`)在 v1 中
+///   由 GUI 侧存储按 `id` 去重兜底。
 /// - OSC 777(urxvt):`\x1b]777;notify;<title>;<body>\x07|ST`——无状态。
 ///
 /// 三种都同时接受 `\x07`(BEL)与 `\x1b\\`(ST)终止符(镜像
@@ -1570,7 +2101,7 @@ struct RawNotification {
 /// 字节不会跨读保留(读循环重置
 /// `unprocessed`),因此跨两次 PTY 读的通知会被丢弃。
 /// 这与 `scan_osc7`/`scan_osc133` 限制一致,实践中罕见
-///(通知都很小,一次 `write` 即可)。见
+/// (通知都很小,一次 `write` 即可)。见
 /// `split_across_reads_is_dropped`.
 fn scan_osc_notify(buf: &[u8]) -> SmallVec<[RawNotification; 2]> {
     let mut out: SmallVec<[RawNotification; 2]> = SmallVec::new();
@@ -2416,7 +2947,7 @@ mod tests_graphics {
     fn base64_encode(input: &[u8]) -> String {
         const ALPH: &[u8; 64] =
             b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+        let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
         let mut i = 0;
         while i + 3 <= input.len() {
             let n = ((input[i] as u32) << 16) | ((input[i + 1] as u32) << 8) | (input[i + 2] as u32);

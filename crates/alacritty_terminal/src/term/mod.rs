@@ -369,7 +369,12 @@ impl Default for Config {
             semantic_escape_chars: SEMANTIC_ESCAPE_CHARS.to_owned(),
             default_cursor_style: Default::default(),
             vi_mode_cursor_style: Default::default(),
-            kitty_keyboard: Default::default(),
+            // PureTerm(GAP-63):kitty 键盘协议默认开启。Agent CLI
+            // (Claude Code 的 Shift+Enter 换行、Codex 的 Alt 组合键)
+            // 依赖 disambiguate 模式区分换行与提交。协议由程序按需
+            // push/pop,不支持它的程序不受影响;仍可用
+            // `[terminal] kitty_keyboard = false` 关闭。
+            kitty_keyboard: true,
             osc52: Default::default(),
         }
     }
@@ -1286,7 +1291,12 @@ impl<T: EventListener> Handler for Term<T> {
             },
             Some('>') => {
                 trace!("Reporting secondary device attributes");
-                let version = version_number(env!("CARGO_PKG_VERSION"));
+                // PureTerm(GAP-65):DA2 版本号改报 PureTerm 版本
+                // 编码(version_number("0.1.0") = 100)。原样报告
+                // alacritty 内核版本会被 Agent 探测脚本误判为
+                // alacritty 宿主而启用其特有行为;主 DA1 `\x1b[?6c`
+                // 保持 xterm 兼容不变。
+                let version = version_number(crate::PURETERM_VERSION);
                 // PureTerm: 避免 format 机制的额外分配;响应
                 // 永远不超过 32 字节。
                 let mut text = String::with_capacity(32);

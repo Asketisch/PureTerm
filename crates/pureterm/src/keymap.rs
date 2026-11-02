@@ -23,7 +23,7 @@ pub use action::Action;
 pub use keymap_impl::Keymap;
 pub use maps::{action_from_context_menu, action_from_palette_id};
 pub use parse::{CustomCommand, RawBinding};
-pub use types::{key_to_binding_key, BindingKey, BindingNamedKey, ResolveResult};
+pub use types::{BindingKey, BindingNamedKey, ResolveResult};
 
 #[cfg(test)]
 #[path = "keymap/tests.rs"]

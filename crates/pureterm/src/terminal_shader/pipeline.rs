@@ -10,7 +10,6 @@
 use std::fmt;
 
 use iced_wgpu::primitive::Pipeline;
-use wgpu::util::DeviceExt;
 
 use super::vertices::{BgImageVertex, BgVertex, ImageQuadVertex, TextVertex};
 

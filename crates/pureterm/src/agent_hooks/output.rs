@@ -1,7 +1,6 @@
 //! Hook 决策输出格式化 —— `DecisionOutput` 结构 + `format_decision_output`/
 //! `format_ask_output`(Claude Code 协议 JSON),以及默认原因常量。
 
-use serde_json::{json, Value};
 
 use super::Decision;
 

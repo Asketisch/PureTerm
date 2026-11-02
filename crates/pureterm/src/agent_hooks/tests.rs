@@ -3,6 +3,7 @@
 use super::*;
 use super::command::{parse_stdout_decision, run_external_command};
 use super::evaluate::deny_subject;
+use super::output::format_ask_output;
 use super::shim::{evaluate_shim, infer_agent_kind};
 
     use super::*;

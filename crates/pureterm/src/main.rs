@@ -2,6 +2,8 @@
 mod config_set;
 mod automation;
 mod script_cli;
+/// GAP-63:kitty keyboard protocol CSI u 编码器(disambiguate 模式)。
+mod kitty_keyboard;
 // `macos_url_scheme` 自带 `#[cfg(not(target_os = "macos"))]` 空实现
 //（`register_default_handler` / `consume_pending_url` / `add_open_urls_method`
 // 均为 no-op），因此该模块可无条件包含。文件内部用 `#[cfg(target_os = "macos")]`
@@ -279,7 +281,7 @@ fn main() -> iced::Result {
 // ── 键盘快捷键辅助函数(由 cli.rs Shortcuts 组调用) ─────────────────────────────────────
 
 pub(crate) fn shortcuts_list() {
-    use iced::keyboard::Modifiers;
+    
 
     let km = keymap::Keymap::from_defaults();
     for (mods, bk, action) in km.list_bindings() {

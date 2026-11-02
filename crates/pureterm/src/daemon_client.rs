@@ -13,9 +13,9 @@ mod remote_ops;
 pub use remote_ops::{RemoteFileEntry, RemoteFileRead, RemoteFindMatch};
 pub use remote_ops::{remote_find, remote_listdir, remote_read, remote_write};
 pub use rpc::{ensure_daemon, ping, rpc};
-pub use pipes::{pipe_list, pipe_set};
+pub use pipes::pipe_set;
 pub use sessions::{
     attach_existing, create_local, create_ssh, hibernate_session, kill_session, list_sessions,
     resume_session,
 };
-pub use tunnels::{tunnel_list, tunnel_provide_auth, tunnel_start, tunnel_stop};
+pub use tunnels::{tunnel_list, tunnel_start, tunnel_stop};

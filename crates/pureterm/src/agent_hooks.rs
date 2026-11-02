@@ -22,9 +22,8 @@ mod evaluate;
 mod output;
 mod shim;
 
-pub use command::run_external_command;
-pub use evaluate::{deny_subject, evaluate};
-pub use output::{format_ask_output, format_decision_output, DecisionOutput};
+pub use evaluate::evaluate;
+pub use output::{format_decision_output, DecisionOutput};
 pub use shim::run_hook_shim;
 
 /// Claude Code hook 事件名(协议对齐).仅用于校验 + 判断是否使用 matcher.

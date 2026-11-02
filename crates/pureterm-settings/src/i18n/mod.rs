@@ -715,7 +715,7 @@ mod tests {
         // locale 回退代码路径的测试。
         let mut en = HashMap::new();
         en.insert("only_en_test".to_string(), "OnlyInEnglish".to_string());
-        let mut zh = HashMap::new();
+        let zh = HashMap::new();
         // 有意不在 zh 中放 "only_en_test"
         let mut translations = HashMap::new();
         translations.insert("en".to_string(), en);

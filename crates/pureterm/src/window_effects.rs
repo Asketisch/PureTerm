@@ -67,7 +67,7 @@ pub enum BlurApplyOutcome {
 pub fn apply_blur_macos(blending_behind: bool) -> BlurApplyOutcome {
     use objc2::ffi::NSInteger;
     use objc2::rc::Retained;
-    use objc2::{msg_send, ClassType};
+    use objc2::msg_send;
     use objc2::MainThreadMarker;
     use objc2_app_kit::{
         NSApplication, NSView, NSVisualEffectBlendingMode,

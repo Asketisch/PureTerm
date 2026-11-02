@@ -39,4 +39,6 @@ pub use image_quad::{ImageQuadDraw, ImageQuadState};
 pub use overrides::{rgb_from_rgba, TermColorOverrides};
 pub use primitive::TerminalPrimitive;
 pub use program::{TerminalProgram, TerminalState};
+// graphics_render_tests.rs 与外部消费者引用的顶点类型;拆分时
+// 漏掉了 re-export,导致 bin 目标编译通过而 test 目标破损。
 pub use vertices::{BgImageVertex, BgVertex, ImageQuadVertex, ScreenUniforms, TextVertex};

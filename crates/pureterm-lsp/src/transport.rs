@@ -11,9 +11,15 @@ pub enum TransportError {
     Io(#[from] io::Error),
     #[error("missing Content-Length header")]
     MissingLength,
+    #[error("Content-Length {0} exceeds limit")]
+    OversizedMessage(usize),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
 }
+
+/// 单条 LSP 消息体上限。失控/恶意服务器发送超大 Content-Length
+/// 时直接报错,防止 `vec![0u8; len]` 触发超大分配。
+pub const MAX_MESSAGE_SIZE: usize = 32 * 1024 * 1024;
 
 /// 把 JSON 值编码为 LSP 分帧消息(头 + 体)。
 pub fn encode_message(value: &Value) -> String {
@@ -44,6 +50,9 @@ pub fn read_message<R: BufRead>(reader: &mut R) -> Result<Value, TransportError>
         }
     }
     let len = content_length.ok_or(TransportError::MissingLength)?;
+    if len > MAX_MESSAGE_SIZE {
+        return Err(TransportError::OversizedMessage(len));
+    }
     let mut body = vec![0u8; len];
     reader.read_exact(&mut body)?;
     Ok(serde_json::from_slice(&body)?)

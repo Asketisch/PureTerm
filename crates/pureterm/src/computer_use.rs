@@ -3,7 +3,7 @@
 
 use base64::Engine;
 
-use crate::feed_client::{FeedChoice, FeedOutcome};
+use crate::feed_client::FeedOutcome;
 
 pub use pureterm_computer_use::{capture_screen_png, click, key_press, type_text};
 
@@ -33,6 +33,9 @@ pub fn approval_allows_screenshot(outcome: &FeedOutcome) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // FeedChoice 仅测试使用(bin 目标不引用),故在此导入
+    // 而非顶层,避免顶层 use 在非测试构建下报 unused。
+    use crate::feed_client::FeedChoice;
 
     #[test]
     fn data_url_round_trips_known_bytes() {

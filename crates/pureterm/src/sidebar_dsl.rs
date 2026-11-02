@@ -6,9 +6,8 @@
 
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
 
-use crate::events::{AppEvent, Category};
+use crate::events::AppEvent;
 
 /// 可编程侧边栏面板中的一行已渲染行。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -177,6 +176,10 @@ pub fn sidebars_config_dir() -> PathBuf {
 mod tests {
     use super::*;
     use serde_json::json;
+    // Category / Value 仅测试使用(bin 目标不引用),在此导入
+    // 而非顶层,避免非测试构建报 unused。
+    use crate::events::Category;
+    use serde_json::Value;
 
     #[test]
     fn parse_show_git_style_script() {

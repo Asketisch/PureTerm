@@ -15,12 +15,10 @@
 //! 凭据存储、ssh 配置读取器)在所有平台上编译。
 
 #[cfg(unix)]
-pub use pureterm_ssh::{command, pty, session};
+pub use pureterm_ssh::{pty, session};
 pub mod config;
 pub mod credential;
 #[cfg(unix)]
 pub mod reconnect;
 pub mod ssh_config_reader;
 
-#[cfg(unix)]
-pub use pureterm_ssh::session::SshSessionManager;

@@ -8,9 +8,8 @@
 use std::path::{Path, PathBuf};
 
 use super::{
-    AiChatConfig, AppearanceConfig, BlockOutputConfig, ErrorRecoveryConfig, GitConfig,
-    NaturalLanguageConfig, NotificationConfig, PortScannerConfig, SemanticHistoryConfig,
-    ShellIntegrationConfig, SidebarConfig, SoulConfig, StatusBarConfig,
+    AiChatConfig, AppearanceConfig, ErrorRecoveryConfig, GitConfig, NaturalLanguageConfig,
+    PortScannerConfig, ShellIntegrationConfig, SidebarConfig, SoulConfig, StatusBarConfig,
 };
 
 use super::AppConfig;
