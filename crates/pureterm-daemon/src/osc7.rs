@@ -14,6 +14,7 @@
 //! 恢复之前发生的无关拉起。
 
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 
 /// OSC 7 的 printf 主体:发出 `ESC ] 7 ; file://$HOST$PWD ST`,使
@@ -26,12 +27,12 @@ const OSC7_FUNC: &str = r#"_pt_osc7() { printf '\e]7;file://%s%s\e\\' "$HOST" "$
 /// 会浮出(调用方以 `let _ =` 吞掉,与此前行为一致)。
 pub(crate) fn write_private(path: &str, content: &str) -> std::io::Result<()> {
     use std::io::Write;
-    let mut f = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    // Windows 无 POSIX mode 位;用户目录 ACL 已提供隔离。
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut f = opts.open(path)?;
     f.write_all(content.as_bytes())?;
     Ok(())
 }
@@ -71,7 +72,14 @@ pub fn prepare_osc7_env(tag: &str) -> HashMap<String, String> {
     // ZDOTDIR/HOME 路径且会被 shell source,因此目录与文件都不得
     // 让他人可访问。0700 目录还能阻断共享主机上(可猜测的)
     // `/tmp` 路径的预填充竞态。(GAP-15 评审。)
-    let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&zdot_dir);
+    #[cfg(unix)]
+    {
+        let _ = std::fs::DirBuilder::new().recursive(true).mode(0o700).create(&zdot_dir);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = std::fs::create_dir_all(&zdot_dir);
+    }
     let zshenv_content = format!(
         r#"# PureTerm zsh bootstrap — restores original ZDOTDIR and loads OSC 7 hook.
 ZDOTDIR="{real_zdotdir}"

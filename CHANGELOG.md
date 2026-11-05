@@ -97,6 +97,15 @@
       `cargo test --workspace --exclude alacritty_terminal` +
       `cargo test -p alacritty_terminal --lib`,保留 1000+ 个
       lib 单测与其余 11 个 crate 的全部测试。
+    - **`pureterm-daemon` 的 Windows 平台边界**:守护进程的 PTY
+      核心(Unix 域 socket / `openpty` / `libc` 信号 / 裸 fd)
+      在 Windows 上整体不编译;GUI 依赖的路径 / 帧编解码 /
+      shell 集成层(`discovery` / `frame` / `autostart` / `osc7` /
+      `shell_integration`)对所有平台导出,内部 Unix 行用
+      `#[cfg]` 隔离。`discovery` 的 Windows 侧单实例锁用
+      `create_new` 原子创建替代 `flock`;`puretermd` 二进制仍
+      产出,但 `runtime::run()` 明确返回 Unsupported,提示
+      Windows 上会话由 GUI 直连(ConPTY)管理。
 
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。

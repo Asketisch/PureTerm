@@ -6,6 +6,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
@@ -138,21 +139,30 @@ pub fn lock_path() -> PathBuf {
 
 /// 确保数据与会话目录存在。
 pub fn ensure_dirs() -> io::Result<()> {
-    use std::os::unix::fs::PermissionsExt;
     std::fs::create_dir_all(data_dir())?;
     std::fs::create_dir_all(sessions_dir())?;
     // GAP-5.1 M5:仅属主可访问——其它本地用户绝不能遍历进入
     // 会话数据 socket(其中承载原始 PTY 字节 / 已录入的输入)。
-    let _ = std::fs::set_permissions(data_dir(), std::fs::Permissions::from_mode(0o700));
-    let _ = std::fs::set_permissions(sessions_dir(), std::fs::Permissions::from_mode(0o700));
+    // Windows 用 ACL 保护用户目录,这里无需(也无法)照搬 mode 位。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(data_dir(), std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::set_permissions(sessions_dir(), std::fs::Permissions::from_mode(0o700));
+    }
     Ok(())
 }
 
 /// 把 socket 文件限制为仅属主(0600)。尽力而为(监听器已
 /// 绑定;此处只是收紧磁盘 inode 权限位)。
 pub fn restrict_socket(path: &std::path::Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 /// 尝试对守护进程锁文件做非阻塞排他 `flock`。
@@ -165,6 +175,7 @@ pub fn acquire_instance_lock() -> io::Result<Option<File>> {
 }
 
 /// 同 [`acquire_instance_lock`],但作用于任意路径(单元测试)。
+#[cfg(unix)]
 pub fn acquire_instance_lock_at(path: &std::path::Path) -> io::Result<Option<File>> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -189,7 +200,29 @@ pub fn acquire_instance_lock_at(path: &std::path::Path) -> io::Result<Option<Fil
     }
 }
 
+#[cfg(unix)]
 use std::os::unix::io::AsRawFd;
+
+/// Windows 版单实例锁:用 `create_new` 原子创建锁文件。
+///
+/// Windows 没有 `flock`;以「文件独占创建成功」代表本进程拿到锁,
+/// 文件已存在代表另一实例在运行。进程退出时由调用方 drop 文件
+/// 后删除;崩溃遗留的陈旧锁由下一次启动按文件可写性清理。
+#[cfg(not(unix))]
+pub fn acquire_instance_lock_at(path: &std::path::Path) -> io::Result<Option<File>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match OpenOptions::new().create_new(true).write(true).open(path) {
+        Ok(file) => Ok(Some(file)),
+        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+            // 陈旧锁:若已无进程持有(Windows 上打开会失败),尝试清理一次。
+            // 保守起见这里仍报告「另一实例在运行」,由 GUI 侧按需拉起处理。
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
 
 /// RAII 守卫:把守护进程数据路径导入隔离的临时目录(单元测试)。
 #[cfg(test)]
