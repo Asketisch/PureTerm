@@ -1,9 +1,10 @@
 # Binary assets
-*.ttf binary
-*.ttc binary
 *.icns binary
 *.png binary
 *.jpg binary
+
+# 测试参考网格以 gzip 存储
+*.json.gz binary
 
 # Language detection
 *.wgsl linguist-language=GLSL

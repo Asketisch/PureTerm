@@ -6,6 +6,8 @@ use std::fs::{self, File};
 use std::io::Read;
 use std::path::Path;
 
+use flate2::read::GzDecoder;
+
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::{Dimensions, Grid};
 use alacritty_terminal::index::{Column, Line};
@@ -85,6 +87,21 @@ where
     res
 }
 
+/// 读取参考网格。
+///
+/// 参考网格是高度重复的结构化 JSON(压缩比约 0.4%),仓库里以 gzip 形式保存,
+/// 用 `tools/grid_json` 在明文与 gzip 之间转换。
+fn read_grid(dir: &Path) -> String {
+    let raw = read_u8(dir.join("grid.json.gz"));
+
+    let mut decoded = String::new();
+    GzDecoder::new(&raw[..])
+        .read_to_string(&mut decoded)
+        .unwrap_or_else(|err| panic!("{} 解压失败: {err}", dir.join("grid.json.gz").display()));
+
+    decoded
+}
+
 #[derive(Deserialize, Default)]
 struct RefConfig {
     history_size: u32,
@@ -100,7 +117,7 @@ impl EventListener for Mock {
 fn ref_test(dir: &Path) {
     let recording = read_u8(dir.join("alacritty.recording"));
     let serialized_size = fs::read_to_string(dir.join("size.json")).unwrap();
-    let serialized_grid = fs::read_to_string(dir.join("grid.json")).unwrap();
+    let serialized_grid = read_grid(dir);
     let serialized_cfg = fs::read_to_string(dir.join("config.json")).unwrap();
 
     let size: TermSize = json::from_str(&serialized_size).unwrap();
