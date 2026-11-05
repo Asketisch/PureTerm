@@ -48,6 +48,8 @@ windows-sys = { version = "0.59.0", features = [
 ]}
 
 [dev-dependencies]
+# 参考网格以 gzip 入库，测试运行时解压
+flate2 = "1.1"
 serde_json = "1.0.0"
 
 # vendored 上游源码不做无关改动;新版 clippy 对上游既有代码的

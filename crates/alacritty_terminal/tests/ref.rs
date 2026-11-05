@@ -85,6 +85,21 @@ where
     res
 }
 
+/// 参考网格以 gzip 入库（明文合计 45MB → 1.1MB），要看明文直接 `gunzip -k` 一份。
+fn read_grid<P>(dir: P) -> String
+where
+    P: AsRef<Path>,
+{
+    let path = dir.as_ref().join("grid.json.gz");
+    let raw = read_u8(&path);
+    let mut res = String::new();
+    flate2::read::GzDecoder::new(&raw[..])
+        .read_to_string(&mut res)
+        .unwrap_or_else(|err| panic!("failed to decompress {}: {err}", path.display()));
+
+    res
+}
+
 #[derive(Deserialize, Default)]
 struct RefConfig {
     history_size: u32,
@@ -100,7 +115,7 @@ impl EventListener for Mock {
 fn ref_test(dir: &Path) {
     let recording = read_u8(dir.join("alacritty.recording"));
     let serialized_size = fs::read_to_string(dir.join("size.json")).unwrap();
-    let serialized_grid = fs::read_to_string(dir.join("grid.json")).unwrap();
+    let serialized_grid = read_grid(dir);
     let serialized_cfg = fs::read_to_string(dir.join("config.json")).unwrap();
 
     let size: TermSize = json::from_str(&serialized_size).unwrap();

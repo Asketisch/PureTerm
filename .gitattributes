@@ -1,7 +1,6 @@
 # Binary assets
-*.ttf binary
-*.ttc binary
 *.icns binary
+*.json.gz binary
 *.png binary
 *.jpg binary
 

@@ -154,6 +154,7 @@ version = "0.26.1-dev"
 dependencies = [
  "base64",
  "bitflags 2.11.0",
+ "flate2",
  "home",
  "libc",
  "log",

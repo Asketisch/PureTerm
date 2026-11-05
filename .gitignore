@@ -22,8 +22,8 @@
 *.so
 *.dylib
 dist
-# Large assets (loaded at runtime, not embedded)
-crates/pureterm-gui/src/fonts/AppleColorEmoji.ttc
+# 测试参考网格以 gzip 入库，解压出来的明文不入库
+crates/alacritty_terminal/tests/ref/*/grid.json
 
 
 # graphify — 机器特定 & 可重新生成的文件
