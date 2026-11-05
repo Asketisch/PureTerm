@@ -92,12 +92,13 @@ where
 /// 参考网格是高度重复的结构化 JSON(压缩比约 0.4%),仓库里以 gzip 形式保存,
 /// 用 `tools/grid_json` 在明文与 gzip 之间转换。
 fn read_grid(dir: &Path) -> String {
-    let raw = read_u8(dir.join("grid.json.gz"));
+    let path = dir.join("grid.json.gz");
+    let raw = read_u8(&path);
 
     let mut decoded = String::new();
     GzDecoder::new(&raw[..])
         .read_to_string(&mut decoded)
-        .unwrap_or_else(|err| panic!("{} 解压失败: {err}", dir.join("grid.json.gz").display()));
+        .unwrap_or_else(|err| panic!("{} 解压失败: {err}", path.display()));
 
     decoded
 }
