@@ -66,6 +66,30 @@
     Windows x64)打包,新增产物齐全校验与 `nullglob` 安全的
     `SHA256SUMS`;汇总 job 改为总是运行,故 `workflow_dispatch`
     试跑也能取回校验和,只有 `push tag v*` 才创建 Release。
+  - **CI 首轮实跑暴露的跨平台编译错误一并修复**(旧 CI 因
+    `-D warnings` 早停,从未编译到这些路径):
+    - `pureterm-ssh` 的 `command` 模块(纯 `std` 的
+      `SshForwards` / `SshCommandBuilder`)改为全平台导出,
+      Unix-only 依赖移入 `[target.'cfg(unix)'.dependencies]`,
+      否则 Windows target 仍会编译 `rustix-openpty` 并因
+      `libc::termios` / `openpty` 缺失而失败。
+    - `base64` 从 macOS-only 依赖段移到通用段 ——
+      `computer_use.rs` 的 PNG → data URL 编码是跨平台纯逻辑,
+      此前 Linux/Windows 上报 `unresolved import base64`。
+    - `main.rs`:`xdg` 3.0 的 `get_config_home()` 返回
+      `Option<PathBuf>`,`unwrap_or_else` 的闭包改为无参。
+    - clippy job 的 `RUSTFLAGS` 必须是**非空**值:空串会被
+      Cargo 视为「未设置」,`.cargo/config.toml` 的
+      `-fuse-ld=mold` 仍生效并在 runner 上链接失败。
+    - clippy 不带 `--all-targets`:vendored `alacritty_terminal`
+      自带 `#![deny(clippy::all)]`,其 lib test 里的 `vec!`
+      会触发 `clippy::useless_vec` 硬报错。按维护规则不动
+      vendored 源码,故只检查交付代码(lib / bins)。
+    - **`build.sh` 的 Linux / Windows 打包路径**:`cd "$DIST_DIR"`
+      之后仍用 `./dist/xxx.tar.gz` 作为输出路径,会解析成
+      `dist/dist/xxx.tar.gz` 导致 tar/zip 失败(macOS 打包器
+      早已用 `basename` 修正)。此前 Linux/Windows 打包流程
+      从未被实跑过,故一直未暴露。
 
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。

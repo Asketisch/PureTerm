@@ -814,14 +814,21 @@ INSTALL
     if [ "${OPT_BUNDLE:-all}" != "none" ]; then
         local out="${DIST_DIR}/${stage_name}.tar.gz"
         step "打包 .tar.gz: ${out}"
-        (cd "$DIST_DIR" && tar -czf "$out" "$stage_name")
+        # `cd "$DIST_DIR"` 之后输出路径必须相对该目录,
+        # 否则 "./dist/xxx.tar.gz" 会解析成 dist/dist/xxx.tar.gz。
+        # (macOS 的 bundle_macos_zip 早已如此处理。)
+        local out_name
+        out_name="$(basename "$out")"
+        (cd "$DIST_DIR" && tar -czf "$out_name" "$stage_name")
         success "已生成: ${out} ($(du -h "$out" | cut -f1))"
 
         # ---- tar.zst(可选)----
         if [ "${OPT_BUNDLE:-all}" = "all" ] && [ -n "${TOOL_ZSTD}" ]; then
             local out_zst="${DIST_DIR}/${stage_name}.tar.zst"
+            local out_zst_name
+            out_zst_name="$(basename "$out_zst")"
             step "打包 .tar.zst: ${out_zst}"
-            (cd "$DIST_DIR" && tar -cf - "$stage_name" | zstd -T0 -19 -o "$out_zst")
+            (cd "$DIST_DIR" && tar -cf - "$stage_name" | zstd -T0 -19 -o "$out_zst_name")
             success "已生成: ${out_zst} ($(du -h "$out_zst" | cut -f1))"
         fi
     fi
@@ -933,9 +940,12 @@ WINREADME
     # ---- zip(打包时总是)----
     if [ "${OPT_BUNDLE:-all}" != "none" ]; then
         local out="${DIST_DIR}/${stage_name}.zip"
+        local out_name
+        out_name="$(basename "$out")"
         if [ -n "${TOOL_ZIP}" ]; then
             step "打包 .zip (zip): ${out}"
-            (cd "$DIST_DIR" && rm -f "$out" && zip -yrq "$out" "$stage_name")
+            # 同 Linux 打包器:cd 进 dist/ 后输出路径要相对该目录。
+            (cd "$DIST_DIR" && rm -f "$out_name" && zip -yrq "$out_name" "$stage_name")
         elif [ -n "${TOOL_PWSH}" ] || [ -n "${TOOL_PWSH_CORE}" ]; then
             local pwsh_cmd="powershell"
             [ -n "${TOOL_PWSH_CORE}" ] && pwsh_cmd="pwsh"
