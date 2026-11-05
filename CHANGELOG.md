@@ -90,6 +90,13 @@
       `dist/dist/xxx.tar.gz` 导致 tar/zip 失败(macOS 打包器
       早已用 `basename` 修正)。此前 Linux/Windows 打包流程
       从未被实跑过,故一直未暴露。
+    - **CI 的 Test step 拆分**:vendored 的
+      `alacritty_terminal/tests/ref.rs` 在 runner 上有 8 个
+      `debug_assert` 越界失败(本地单独跑 45/45 通过),且按
+      维护规则不改 vendored 源码。改为
+      `cargo test --workspace --exclude alacritty_terminal` +
+      `cargo test -p alacritty_terminal --lib`,保留 1000+ 个
+      lib 单测与其余 11 个 crate 的全部测试。
 
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。
