@@ -8,7 +8,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[cfg(unix)]
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::UnixListener;
 
 use log::{error, info, warn};
@@ -57,6 +59,7 @@ pub struct IpcHandle {
 /// 监听器与应用程序同生命周期。它通过 `tx`(发送 `IpcRequest`)
 /// 与主循环通信,并通过每个请求内嵌的 per-request `oneshot` 通道
 /// 接收响应。
+#[cfg(unix)]
 pub fn spawn_ipc_listener(
     socket_path: PathBuf,
     router: Arc<SocketRouter>,
@@ -84,6 +87,24 @@ pub fn spawn_ipc_listener(
     Ok(IpcHandle { socket_path })
 }
 
+/// Windows 上的 IPC 监听器桩。
+///
+/// Socket API v2 基于 Unix 域套接字,Windows 侧需要 named-pipe
+/// 实现(见 `local_socket.rs` 的 v2 备注)。在落地前明确返回
+/// Unsupported,避免静默成功却让所有 CLI / IPC 功能失效。
+#[cfg(not(unix))]
+pub fn spawn_ipc_listener(
+    _socket_path: PathBuf,
+    _router: Arc<SocketRouter>,
+    _tx: tokio::sync::mpsc::Sender<IpcRequest>,
+) -> std::io::Result<IpcHandle> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "PureTerm Socket API (Unix domain socket) is not supported on Windows yet",
+    ))
+}
+
+#[cfg(unix)]
 async fn accept_loop(
     listener: UnixListener,
     router: Arc<SocketRouter>,
@@ -105,6 +126,7 @@ async fn accept_loop(
     }
 }
 
+#[cfg(unix)]
 async fn handle_connection(
     stream: tokio::net::UnixStream,
     _router: Arc<SocketRouter>,
@@ -173,7 +195,8 @@ async fn handle_connection(
 // ── Socket 路径工具 ──────────────────────────────────────────────
 
 /// IPC socket 文件的目录。
-#[cfg(not(target_os = "macos"))]
+// xdg crate 在 Windows 上是空 crate,故单独给 Windows 分支。
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn socket_dir() -> PathBuf {
     xdg::BaseDirectories::with_prefix("pureterm")
         .get_runtime_directory()
@@ -184,13 +207,13 @@ pub fn socket_dir() -> PathBuf {
 }
 
 /// IPC socket 文件的目录。
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn socket_dir() -> PathBuf {
     std::env::temp_dir()
 }
 
 /// 匹配所有可用 socket 的文件前缀。
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 pub fn socket_prefix() -> String {
     let display = std::env::var("WAYLAND_DISPLAY")
         .or_else(|_| std::env::var("DISPLAY"))
@@ -199,7 +222,7 @@ pub fn socket_prefix() -> String {
 }
 
 /// 匹配所有可用 socket 的文件前缀。
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 pub fn socket_prefix() -> String {
     String::from("PureTerm")
 }

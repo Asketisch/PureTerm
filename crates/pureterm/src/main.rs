@@ -491,13 +491,22 @@ fn pureterm_config_dir() -> std::path::PathBuf {
     dirs::home_dir().unwrap_or_default().join(".config/pureterm")
 }
 
-#[cfg(not(target_os = "macos"))]
+// xdg crate 自身是 `#![cfg(any(unix, target_os = "redox"))]`,
+// 在 Windows 上是空 crate,故 Windows 分支不能用它。
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn pureterm_config_dir() -> std::path::PathBuf {
     // xdg 3.0 的 get_config_home() 返回 Option<PathBuf>(不是 Result),
     // 故 unwrap_or_else 的闭包不带参数。
     xdg::BaseDirectories::with_prefix("pureterm")
         .get_config_home()
         .unwrap_or_else(|| std::path::PathBuf::from(".config/pureterm"))
+}
+
+#[cfg(target_os = "windows")]
+fn pureterm_config_dir() -> std::path::PathBuf {
+    dirs::config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("pureterm")
 }
 
 #[cfg(target_os = "macos")]
@@ -509,9 +518,16 @@ fn alacritty_config_exists() -> bool {
         || home.join(".alacritty.yml").exists()
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 fn alacritty_config_exists() -> bool {
     xdg::BaseDirectories::with_prefix("alacritty")
         .find_config_file("alacritty.toml")
         .is_some()
+}
+
+#[cfg(target_os = "windows")]
+fn alacritty_config_exists() -> bool {
+    let base = dirs::config_dir().unwrap_or_default();
+    base.join("alacritty/alacritty.toml").exists()
+        || dirs::home_dir().unwrap_or_default().join(".alacritty.toml").exists()
 }

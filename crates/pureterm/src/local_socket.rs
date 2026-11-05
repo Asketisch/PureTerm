@@ -26,9 +26,61 @@ pub type LocalStream = std::os::unix::net::UnixStream;
 
 /// Windows v1 存根。v2:替换为包装了
 /// `NamedPipeClient` 的 `std::io` 兼容类型。
+///
+/// 为让 IPC 客户端(`ipc::client` / `tmux_cli::handlers`)的
+/// `write_all` / `shutdown` / `BufReader` 代码在所有平台都能编译,
+/// 这里实现 `Read` / `Write`(一律返回 Unsupported)并提供
+/// 与 `UnixStream::shutdown` 同名同签名的方法。真正的连接由
+/// `connect()` 在 v1 就拒绝,故这些 IO 方法在 Windows 上永不会被
+/// 成功调用 —— 它们只承担「让类型系统闭合」的职责。
 #[cfg(not(unix))]
 pub struct LocalStream {
     _phantom: std::marker::PhantomData<()>,
+}
+
+#[cfg(not(unix))]
+fn unsupported() -> io::Error {
+    io::Error::new(
+        io::ErrorKind::Unsupported,
+        "LocalStream IO is Unix-only in v1; the Windows named-pipe port lives in v2",
+    )
+}
+
+#[cfg(not(unix))]
+impl LocalStream {
+    /// 与 `std::os::unix::net::UnixStream::shutdown` 对齐的桩。
+    #[allow(clippy::unused_self)]
+    pub fn shutdown(&self, _how: std::net::Shutdown) -> io::Result<()> {
+        Err(unsupported())
+    }
+}
+
+#[cfg(not(unix))]
+impl std::io::Read for LocalStream {
+    fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+        Err(unsupported())
+    }
+}
+
+#[cfg(not(unix))]
+impl std::io::Write for LocalStream {
+    fn write(&mut self, _buf: &[u8]) -> io::Result<usize> {
+        Err(unsupported())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(unsupported())
+    }
+}
+
+// `BufReader::new(&stream)` 需要 `&LocalStream: Read`。
+// std 已为 `&T where T: Read + ?Sized` 之外的类型未自动派生;
+// 这里给引用类型补一份,使客户端的阻塞读代码在 Windows 上闭合。
+#[cfg(not(unix))]
+impl std::io::Read for &LocalStream {
+    fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+        Err(unsupported())
+    }
 }
 
 /// 连接到本地域套接字监听端。`path` 参数是
