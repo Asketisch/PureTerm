@@ -39,6 +39,10 @@ dirs = "6.0.0"
 iced = { version = "0.14", features = ["advanced", "canvas", "tokio"] }
 # GAP-7.1:agent-hook matcher / deny_pattern 正则求值。
 regex = "1"
+# GAP-7.8 截图:PNG 字节 → base64 data URL。`computer_use.rs` 的
+# 编码是跨平台纯逻辑,依赖必须对所有 target 可见(此前误放在
+# macOS-only 段,导致 Linux/Windows 上 unresolved import `base64`)。
+base64 = "0.22"
 iced_wgpu = "0.14"
 wgpu = { version = "27", features = ["webgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
@@ -204,8 +208,6 @@ objc2-user-notifications = { version = "0.3.2", default-features = false, featur
     "UNNotificationSound",
     "block2",
 ] }
-# GAP-7.8 截图:NSImage PNG → base64 data URL。
-base64 = "0.22"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 xdg = "3.0.0"

@@ -10,16 +10,20 @@
 //!
 //! 子进程侧仅限 Unix。
 
+// `command` 是纯数据/字符串拼接(端口转发标志、ssh 命令行),
+// 不含任何 Unix API,所有平台都要能编译:PureTerm GUI 的配置、
+// CLI 参数与状态栏等模块无条件引用 `SshForwards`。此前把它
+// 和 PTY 模块一起 `#[cfg(unix)]` 门控,导致 Windows 上
+// `pureterm_ssh::SshForwards` 无法解析。
+pub mod command;
+
 #[cfg(unix)]
 pub mod agent_sock;
-#[cfg(unix)]
-pub mod command;
 #[cfg(unix)]
 pub mod pty;
 #[cfg(unix)]
 pub mod session;
 
-#[cfg(unix)]
 pub use command::{SshCommandBuilder, SshForwards};
 #[cfg(unix)]
 pub use pty::SshPty;

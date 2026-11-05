@@ -493,9 +493,11 @@ fn pureterm_config_dir() -> std::path::PathBuf {
 
 #[cfg(not(target_os = "macos"))]
 fn pureterm_config_dir() -> std::path::PathBuf {
+    // xdg 3.0 的 get_config_home() 返回 Option<PathBuf>(不是 Result),
+    // 故 unwrap_or_else 的闭包不带参数。
     xdg::BaseDirectories::with_prefix("pureterm")
         .get_config_home()
-        .unwrap_or_else(|_| std::path::PathBuf::from(".config/pureterm"))
+        .unwrap_or_else(|| std::path::PathBuf::from(".config/pureterm"))
 }
 
 #[cfg(target_os = "macos")]

@@ -101,6 +101,13 @@ jobs:
   clippy:
     name: Clippy (advisory)
     runs-on: ubuntu-22.04
+    env:
+      # 必须是非空值。Cargo 把空字符串 RUSTFLAGS 视为「未设置」,
+      # 于是 .cargo/config.toml 的 target.*.rustflags
+      # (-fuse-ld=mold) 会照常生效,而 runner 没有 mold →
+      # 链接 build script 时 "cannot find 'ld'"。用显式的 lld
+      # 覆盖掉它(clippy 会编译 build script,所以真的会链接)。
+      RUSTFLAGS: "-C link-arg=-fuse-ld=lld"
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust toolchain
@@ -109,6 +116,7 @@ jobs:
           components: clippy
           # 关键:别让 action 注入默认的 -D warnings,否则
           # clippy lint 被提升为 error,advisory job 永远红。
+          # RUSTFLAGS 已由 job env 设定,action 不会覆盖。
           rustflags: ""
       - name: Install Linux system deps
         run: |
@@ -116,6 +124,6 @@ jobs:
           sudo apt-get install -y \
             libfreetype6-dev libfontconfig1-dev \
             libssl-dev pkg-config \
-            libgtk-3-dev libwebkit2gtk-4.1-dev
+            libgtk-3-dev libwebkit2gtk-4.1-dev lld
       - name: Clippy (report only)
         run: cargo clippy --workspace --all-targets

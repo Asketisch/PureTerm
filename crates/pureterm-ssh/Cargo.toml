@@ -7,7 +7,11 @@ publish = false
 [lib]
 path = "src/lib.rs"
 
-[dependencies]
+# 全部依赖都只服务于 Unix PTY 子进程(pty/session/agent_sock)。
+# `command` 模块是纯 std 实现、所有平台都编译,若把 Unix-only
+# 依赖留在通用 [dependencies],Windows target 仍会尝试编译
+# rustix-openpty 等 crate 并因 libc::termios / openpty 缺失而失败。
+[target.'cfg(unix)'.dependencies]
 alacritty_terminal = { path = "../alacritty_terminal" }
 polling = "3"
 rustix-openpty = "0.2"
