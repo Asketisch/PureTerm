@@ -22,10 +22,9 @@
 *.so
 *.dylib
 dist
+# Large assets (loaded at runtime, not embedded)
+crates/pureterm-gui/src/fonts/AppleColorEmoji.ttc
 
-# 测试参考网格的明文形态(仓库只存 grid.json.gz)
-# 用 crates/alacritty_terminal/tools/grid_json unpack 生成,不要提交
-crates/alacritty_terminal/tests/ref/*/grid.json
 
 # graphify — 机器特定 & 可重新生成的文件
 graphify-out/.graphify_python
