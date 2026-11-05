@@ -1,32 +1,38 @@
 # PureTerm Release — tag 推送自动构建 + 发布全平台产物。
 #
 # 触发:
-#   - push tag `v*`      → 5 个 target 全量构建,汇总后直接发布 GitHub Release
+#   - push tag `v*`      → 5 个 target 全量构建,汇总后发布 GitHub Release
 #   - workflow_dispatch  → 只构建并上传 artifact,不发布(上线前试跑)
 #
 # 矩阵(自 build.sh 的 8-target 静态矩阵裁剪):
 #   - macos-14         × aarch64-apple-darwin
-#   - macos-14         × x86_64-apple-darwin(macOS 同 SDK 交叉编译,无需额外工具链)
-#   - ubuntu-22.04     × x86_64-unknown-linux-gnu(glibc 2.35,兼容更老发行版)
+#   - macos-14         × x86_64-apple-darwin(同 SDK 交叉编译)
+#   - ubuntu-22.04     × x86_64-unknown-linux-gnu(glibc 2.35)
 #   - ubuntu-24.04-arm × aarch64-unknown-linux-gnu(公开仓库免费 ARM runner)
 #   - windows-2022     × x86_64-pc-windows-msvc
 #
-# 明确不做:musl ×2(wry 硬依赖 WebKitGTK,静态链接不可行)、
+# 明确不做:musl ×2(wry 依赖 WebKitGTK,静态链接不可行)、
 # aarch64-pc-windows-msvc(用户极少且交叉编译链未验证)。
 #
-# 打包复用根目录 build.sh 的 `app` 模式(release profile:thin LTO +
-# strip),版本号唯一真源是 crates/pureterm/Cargo.toml
-# (build.sh extract_version);prepare job 校验 tag 名与之匹配,
-# 避免产物文件名与 tag 错位。`app` 模式不执行 cargo test —
-# 测试由 CI 工作流负责,release 构建不重复跑。
+# 打包复用根目录 build.sh 的 `app` 模式(release:thin LTO + strip)。
+# 版本号唯一真源是 crates/pureterm/Cargo.toml(build.sh
+# extract_version);prepare job 校验 tag 名与之匹配,避免产物
+# 文件名与 tag 错位。`app` 模式不跑 cargo test — 测试由 CI 负责。
 #
 # 产物(以 v0.1.0 为例):
-#   macOS   PureTerm-0.1.0-aarch64.app.zip / .dmg
+#   macOS   PureTerm-0.1.0-arm64.app.zip / .dmg
 #           PureTerm-0.1.0-x64.app.zip / .dmg
-#   Linux   pureterm-0.1.0-x64-gnu.tar.gz
-#           pureterm-0.1.0-arm64-gnu.tar.gz
+#   Linux   pureterm-0.1.0-x64-gnu-gnu.tar.gz
+#           pureterm-0.1.0-arm64-gnu-gnu.tar.gz
 #   Windows pureterm-0.1.0-x64.zip
 #   另附 SHA256SUMS(全部产物的 sha256)。
+#
+# CI 里的三个环境坑,已在本工作流处理:
+#   1. .cargo/config.toml 给 Linux target 硬编码 -fuse-ld=mold,
+#      runner 无 mold → 用 RUSTFLAGS 覆盖为 lld;
+#   2. aws-lc-rs 在 MSVC 上需要 NASM → choco 安装并加 PATH;
+#   3. build.sh 的 binary_path 按 triple 补 .exe,否则 Windows
+#      找不到二进制、产不出 .zip。
 
 name: Release
 
@@ -89,7 +95,6 @@ jobs:
 
       # 不传 toolchain → 自动读取 rust-toolchain.toml 钉住的版本。
       # rustflags 置空:release 构建不叠加 -D warnings。
-      # 内置 Swatinem/rust-cache,经 cache-key 区分矩阵条目。
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
@@ -99,6 +104,7 @@ jobs:
 
       # wry(Linux)链接期需要 GTK3 + WebKitGTK 4.1;
       # 其余为 crossfont(freetype/fontconfig)与 rustls 的常规依赖。
+      # lld 供下面 RUSTFLAGS 覆盖 mold 时使用。
       - name: Install Linux system deps
         if: runner.os == 'Linux'
         run: |
@@ -106,11 +112,25 @@ jobs:
           sudo apt-get install -y \
             libfreetype6-dev libfontconfig1-dev \
             libssl-dev pkg-config \
-            libgtk-3-dev libwebkit2gtk-4.1-dev
+            libgtk-3-dev libwebkit2gtk-4.1-dev lld
+
+      - name: Install NASM (Windows / aws-lc-rs)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install nasm --no-progress -y
+          "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Build + package
         shell: bash
         run: |
+          # 覆盖 .cargo/config.toml 里 Linux target 的
+          # -fuse-ld=mold / lld(runner 无 mold)。macOS / Windows
+          # 不设,config 里没有对应条目,保持默认链接器。
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            export RUSTFLAGS="-C link-arg=-fuse-ld=lld"
+          fi
+
           extra=()
           # Linux 上只出 tar.gz:runner 有 zstd 时 build.sh 默认还会
           # 产出 .tar.zst,发布页保持单一格式。
@@ -118,6 +138,20 @@ jobs:
             extra+=(--bundle tar)
           fi
           bash build.sh app --target "${{ matrix.target }}" "${extra[@]}"
+
+      # 打包脚本若某一步失败但没让 shell 退出,这里兜底:
+      # dist/ 下必须至少有一个压缩包,否则直接判失败。
+      - name: Verify artifacts
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(dist/*.tar.gz dist/*.zip dist/*.dmg)
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::dist/ 下没有任何打包产物"
+            exit 1
+          fi
+          echo "产物清单:"
+          ls -lh "${files[@]}"
 
       # 只上传压缩包;dist/ 里还会残留打包暂存目录
       # (pureterm-<v>-<arch>/、PureTerm.app/),一并上传纯属浪费。
@@ -131,10 +165,11 @@ jobs:
             dist/*.dmg
           if-no-files-found: error
 
+  # 汇总 job 总是运行:workflow_dispatch 试跑时也能验证
+  # SHA256SUMS 生成逻辑(只是不创建 Release)。
   release:
-    name: Publish GitHub Release
+    name: Collect + Publish Release
     needs: [prepare, build]
-    if: needs.prepare.outputs.is-release == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -144,20 +179,36 @@ jobs:
           merge-multiple: true
           path: dist
 
+      # 用 nullglob 收集真实存在的文件再交给 sha256sum,
+      # 避免 "*.dmg" 之类不匹配的 glob 被当成字面文件名导致
+      # "No such file or directory" 并把 job 判失败。
       - name: Generate SHA256SUMS
+        shell: bash
         run: |
           cd dist
-          sha256sum -- *.tar.gz *.zip *.dmg > SHA256SUMS
+          shopt -s nullglob
+          files=(*.tar.gz *.zip *.dmg)
+          if (( ${#files[@]} == 0 )); then
+            echo "::error::没有可发布的产物"
+            exit 1
+          fi
+          sha256sum -- "${files[@]}" > SHA256SUMS
           cat SHA256SUMS
 
+      # dispatch 试跑时也能把 SHA256SUMS 取回来核验。
+      - name: Upload SHA256SUMS
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256sums
+          path: dist/SHA256SUMS
+          if-no-files-found: error
+
       - name: Create GitHub Release
+        if: needs.prepare.outputs.is-release == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/*.dmg
-            dist/SHA256SUMS
+          # dist/* 同时带上压缩包与刚生成的 SHA256SUMS。
+          files: dist/*
           generate_release_notes: true
           # v0.1.0-rc1 之类带连字符的 tag 自动标为预发布。
           prerelease: ${{ contains(github.ref_name, '-') }}

@@ -365,10 +365,17 @@ target_dir() {
 # 解析给定 triple + profile 已构建二进制的磁盘路径。
 binary_path() {
     local name="$1" profile="$2" triple="${3:-${HOST_TRIPLE:-}}"
+    # Windows(MSVC)的 cargo 产物带 .exe。此前无条件拼无后缀路径,
+    # 导致 cargo_build_one 的产物校验与 bundle_windows 的 cp 在
+    # Windows 上都找不到二进制、产不出 .zip。按 triple 补后缀。
+    local suffix=""
+    case "$triple" in
+        *-windows-*) suffix=".exe" ;;
+    esac
     if [ -n "$triple" ]; then
-        echo "target/${triple}/${profile}/${name}"
+        echo "target/${triple}/${profile}/${name}${suffix}"
     else
-        echo "target/${profile}/${name}"
+        echo "target/${profile}/${name}${suffix}"
     fi
 }
 

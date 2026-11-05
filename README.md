@@ -348,8 +348,19 @@ macOS `.app` + `.dmg`、Linux `.tar.gz`、Windows `.zip`。
 
 ### CI
 
-- [`ci.yml`](.github/workflows/ci.yml) — 三平台构建 + 测试 + clippy(push / PR 触发)
-- [`release.yml`](.github/workflows/release.yml) — 推送 `v*` tag 自动构建 5 个 target 并发布 GitHub Release(附 `SHA256SUMS`);tag 名须与 `crates/pureterm/Cargo.toml` 版本一致
+- [`ci.yml`](.github/workflows/ci.yml) — push / PR 到 `main` 时,在 `ubuntu-22.04`、
+  `macos-14`、`windows-2022` 三个 runner 上跑 `cargo build` + `cargo test`。
+  clippy 另设 advisory job,只报告不阻断(仓库有历史 lint 积压,
+  且 vendored 的 `alacritty_*` 不做无关改动)。
+- [`release.yml`](.github/workflows/release.yml) — 推送 `v*` tag 自动构建 5 个
+  target(macOS arm64/x64、Linux x64/arm64、Windows x64)并发布 GitHub Release
+  (附 `SHA256SUMS`);tag 名须与 `crates/pureterm/Cargo.toml` 版本一致。
+  也可在 Actions 页手动 `workflow_dispatch` 试跑:只构建并上传 5 平台产物与
+  校验和,**不创建 Release**,适合上线前验证。
+
+两个工作流都自行处理 CI 环境差异:Windows 安装 NASM(`aws-lc-rs` 需要)、
+Linux 用 `RUSTFLAGS` 把 `.cargo/config.toml` 的 `-fuse-ld=mold` 覆盖为 runner
+自带的 `lld`。
 
 ### 未实现的打包格式
 

@@ -45,6 +45,27 @@
   平台向二进制打上 `VERSION` 与 `BUILD_TARGET`**,使打包期的
   版本覆盖能传递到 `--version` / 关于框。同时记录
   针对未来 `windows/pureterm.rc` 的 `cargo:rerun-if-changed` 钩子。
+- **GitHub Actions CI / Release 工作流修复,打通跨平台自动打包。**
+  两个工作流此前已入库但从未跑通(唯一一次 CI 运行三平台 +
+  clippy 全部失败):
+  - **Windows**:`aws-lc-rs` 在 MSVC 上需要 NASM 汇编器,runner
+    默认没有,构建以 `NASM command not found` panic;现在两个
+    工作流的 Windows job 都安装 NASM 并写入 `GITHUB_PATH`。
+  - **Linux**:`.cargo/config.toml` 给 Linux target 硬编码
+    `-fuse-ld=mold`,runner 只有 lld;用 `RUSTFLAGS` 覆盖为
+    `lld`(环境变量优先于 `target.*.rustflags`)。
+  - **移除 `-D warnings` 硬门禁**:仓库有 500+ 条 clippy 债与
+    170+ 处测试目标的 rustc `dead_code`,且 vendored 的
+    `alacritty_*` 按维护规则不做无关改动;在积压清零前该门禁
+    只会让 CI 永远红。改为保证"能编译 / 能测试 / 能链接",
+    clippy 另设 advisory job 只报告、不阻断。
+  - **`build.sh` 的 `binary_path()` 现在按 triple 补 `.exe`**,
+    否则 Windows 上产物校验与 `bundle_windows` 的 `cp` 都找不到
+    二进制,`.zip` 永远产不出。
+  - **Release**:5 个 target(macOS arm64/x64、Linux x64/arm64、
+    Windows x64)打包,新增产物齐全校验与 `nullglob` 安全的
+    `SHA256SUMS`;汇总 job 改为总是运行,故 `workflow_dispatch`
+    试跑也能取回校验和,只有 `push tag v*` 才创建 Release。
 
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。
