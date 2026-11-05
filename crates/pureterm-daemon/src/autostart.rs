@@ -201,8 +201,42 @@ pub use self::macos::{install, is_installed, is_loaded, uninstall};
 #[cfg(target_os = "linux")]
 pub use self::linux::{install, is_installed, is_loaded, uninstall};
 
+/// Windows 上的自启动桩。
+///
+/// 守护进程本身在 Windows 上是 Unsupported(见 `runtime_windows.rs`),
+/// 因此没有可注册的自启动项。这里给出完整签名而非
+/// `compile_error!`,使 `cargo build --workspace` 能在 Windows 通过;
+/// `install` / `uninstall` 明确返回 Unsupported,`is_installed` /
+/// `is_loaded` 恒为 false。
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-compile_error!("puretermd autostart is only implemented for macOS and Linux");
+mod windows_stub {
+    use std::io;
+
+    pub fn is_installed() -> bool {
+        false
+    }
+
+    pub fn is_loaded() -> bool {
+        false
+    }
+
+    pub fn install() -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "puretermd autostart is not supported on Windows",
+        ))
+    }
+
+    pub fn uninstall() -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "puretermd autostart is not supported on Windows",
+        ))
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+pub use self::windows_stub::{install, is_installed, is_loaded, uninstall};
 
 #[cfg(test)]
 mod tests {
