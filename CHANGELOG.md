@@ -106,6 +106,19 @@
       `create_new` 原子创建替代 `flock`;`puretermd` 二进制仍
       产出,但 `runtime::run()` 明确返回 Unsupported,提示
       Windows 上会话由 GUI 直连(ConPTY)管理。
+    - `autostart.rs` 末尾的 `compile_error!("only implemented for
+      macOS and Linux")` 改为 Windows 桩(`install` / `uninstall`
+      返回 Unsupported,`is_installed` / `is_loaded` 恒 false)。
+    - **已知限制(第五轮云端实跑确认)**:`pureterm-daemon` 与
+      `pureterm-ssh` 已能在 Windows 编译,但主 GUI crate
+      `pureterm` 仍有约 89 处 Windows 编译错误,分布在 18 个文件
+      (主集中在 `iced_app.rs` 28 处)。根因是 `main.rs` 把
+      `feed_client` / `feed_panel` / `daemon_client` / `daemon_cli` /
+      `daemon_pty` / `hibernate_panel` / `detect_panel` 等模块设为
+      `#[cfg(unix)]`,而引用它们的模块未做对应门控;多数错误是
+      少数根因的连带(如 `column!` 宏失去类型上下文)。
+      **Windows 打包目前仍不可用**,需要一轮独立的 GUI 平台门控
+      工作;macOS ×2 + Linux ×2 四个 target 的打包与产物已验证。
 
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。
