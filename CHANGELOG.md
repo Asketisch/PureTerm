@@ -109,16 +109,41 @@
     - `autostart.rs` 末尾的 `compile_error!("only implemented for
       macOS and Linux")` 改为 Windows 桩(`install` / `uninstall`
       返回 Unsupported,`is_installed` / `is_loaded` 恒 false)。
-    - **已知限制(第五轮云端实跑确认)**:`pureterm-daemon` 与
-      `pureterm-ssh` 已能在 Windows 编译,但主 GUI crate
-      `pureterm` 仍有约 89 处 Windows 编译错误,分布在 18 个文件
-      (主集中在 `iced_app.rs` 28 处)。根因是 `main.rs` 把
-      `feed_client` / `feed_panel` / `daemon_client` / `daemon_cli` /
-      `daemon_pty` / `hibernate_panel` / `detect_panel` 等模块设为
-      `#[cfg(unix)]`,而引用它们的模块未做对应门控;多数错误是
-      少数根因的连带(如 `column!` 宏失去类型上下文)。
-      **Windows 打包目前仍不可用**,需要一轮独立的 GUI 平台门控
-      工作;macOS ×2 + Linux ×2 四个 target 的打包与产物已验证。
+    - **已知限制(第六轮云端实跑,收敛至 23 处后逐一修复)**:
+      主 GUI crate `pureterm` 的 Windows 平台门控在第六/七轮
+      云端实跑中分批收敛——先由 89 处降至 23 处,23 处漏网点
+      已全部修复并提交,等待 Release 42214459533 的 5 平台
+      全绿验证。修复明细:
+      - `main.rs`: `feed_client` / `feed_panel` / `hibernate_panel` /
+        `detect_panel` / `daemon_client` / `daemon_cli` / `resume_bindings`
+        七模块由 `#[cfg(unix)]` 放开为全平台编译(socket IO 已走
+        `local_socket` 跨平台抽象,内部 Unix 行各自 cfg 隔离);
+        仅 `daemon_pty`(裸 fd/`socketpair`)保持 Unix-only。
+      - `daemon_client/rpc.rs` + `feed_client.rs`: `CommandExt`
+        import、`libc::kill`、`LocalStream` 的 `set_read/write_timeout`
+        调用均包 `#[cfg(unix)]`;Windows 分支跳过。
+      - `session_restore/`: `RestoredPane`/`RestoredTab`/
+        `RestoredWorkspace`/`RestoreOutcome` 结构体全平台保留
+        (仅编译不实例化);`use attach_pane`/`use restore_one_tab`
+        等 Unix-only 导入加 `#[cfg(unix)]`。
+      - `cli/subs/`: `SshSub`/`AgentSub`/`ResumeSub` 定义全平台
+        保留,handler 在 `dispatch.rs` 走 `cfg(not(unix))` 桩。
+      - `iced_app.rs`: `trigger_ssh_reconnect`/`handle_ssh_quick_exit`
+        调用点、`Pane.terminal_ctx` 死代码块、`try_restore_layout`
+        函数体、`A::SendText`/`PaletteMode::Profiles` match 臂、
+        `ssh_dialog`/`ssh_settings` 字段引用均补 `#[cfg]` 隔离或
+        `cfg(not(unix))` 兜底分支。
+      - `terminal_context/construct.rs`: `new_local` 的 `child_pid`
+        取值按平台隔离(Unix: `Pty::child().id()`;
+        Windows: `child_watcher().pid()` 转 u32)。
+      - `hover_preview.rs`: `open_url`/`open_path` 由
+        `#[cfg(target_os)]` 双赋值改为 `cfg!` 运行时分支,
+        修复 Windows 下 `cmd` 变量不存在的 E0425。
+      - `sidebar/right/view_feed.rs` + `sidebar/right.rs`:
+        `mod view_feed` 与 `use view_feed` 加 `#[cfg(unix)]`;
+        Windows 的 `RightMode::Feed` 兜底分支补 `dim` 定义。
+      Windows 打包在 5 平台 CI/Release 全绿前仍不可用;
+      macOS ×2 + Linux ×2 四个 target 的打包与产物已验证。
 
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。
