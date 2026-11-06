@@ -207,6 +207,18 @@
       `macos-latest`,避免未来 Apple 发新版时自动漂移)。CI 与
       Release 两个矩阵的所有 `macos-14` 均已替换。
 
+    **云端最终验证(全绿)**:
+    - **CI `42237583891` = success**:Clippy(advisory)+
+      Linux x64 + macOS(macos-15) + Windows,三平台构建与
+      全部单元测试通过。
+    - **Release `42235449454` = success**:Prepare +
+      **5 个 build target 全部 success**(macOS arm64/x64、
+      Linux x64/arm64、Windows x64)+ `Collect + Publish Release`
+      success。产出 5 个 `dist-*` artifact 与 `sha256sums`,
+      `SHA256SUMS` 含全部 7 个产物(macOS 各 .app.zip + .dmg、
+      Linux 各 .tar.gz、Windows .zip)的校验和 —— 5 平台打包与
+      SHA256SUMS 云端汇总首次完整跑通。
+
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。
