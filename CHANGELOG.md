@@ -109,41 +109,68 @@
     - `autostart.rs` 末尾的 `compile_error!("only implemented for
       macOS and Linux")` 改为 Windows 桩(`install` / `uninstall`
       返回 Unsupported,`is_installed` / `is_loaded` 恒 false)。
-    - **已知限制(第六轮云端实跑,收敛至 23 处后逐一修复)**:
-      主 GUI crate `pureterm` 的 Windows 平台门控在第六/七轮
-      云端实跑中分批收敛——先由 89 处降至 23 处,23 处漏网点
-      已全部修复并提交,等待 Release 42214459533 的 5 平台
-      全绿验证。修复明细:
+    - **Windows GUI 平台门控完成(多轮云端实跑收敛 89 → 0)**:
+      主 GUI crate `pureterm` 的 Windows Rust 编译在第七/八轮
+      云端 Release 中确认**完全通过**(`Finished release profile`,
+      无 error,仅 warning)。错误数按轮收敛 89 → 23 → 19 → 0:
       - `main.rs`: `feed_client` / `feed_panel` / `hibernate_panel` /
-        `detect_panel` / `daemon_client` / `daemon_cli` / `resume_bindings`
-        七模块由 `#[cfg(unix)]` 放开为全平台编译(socket IO 已走
-        `local_socket` 跨平台抽象,内部 Unix 行各自 cfg 隔离);
-        仅 `daemon_pty`(裸 fd/`socketpair`)保持 Unix-only。
+        `detect_panel` / `daemon_client` / `daemon_cli` /
+        `resume_bindings` / `ssh` 等模块由 `#[cfg(unix)]` 放开为
+        全平台编译(socket IO 走 `local_socket` 跨平台抽象,
+        ssh 的 pty/session/reconnect 仍在该模块内各自 cfg(unix),
+        内部 Unix 行各自隔离);仅 `daemon_pty`(裸 fd/`socketpair`)
+        保持 Unix-only。放开 `mod ssh` 让 `crate::ssh::config::
+        SshProfile` 在 Windows 可解析(3 处 E0433 级联)。
+      - `Cargo.toml`: `aes-gcm`/`argon2`/`zeroize`/`rand`/`hmac`/
+        `sha2`/`hex` 七个纯 Rust 跨平台 crate 从
+        `[target.'cfg(unix)'.dependencies]` 移到通用
+        `[dependencies]`(与 `base64` 同类问题),供
+        `resume_bindings`(HMAC-SHA256 令牌)与 `ssh::credential`
+        在 Windows 使用;libc/polling/signal-hook/rustix-openpty
+        保留 Unix-only。
       - `daemon_client/rpc.rs` + `feed_client.rs`: `CommandExt`
-        import、`libc::kill`、`LocalStream` 的 `set_read/write_timeout`
-        调用均包 `#[cfg(unix)]`;Windows 分支跳过。
+        import、`libc::kill`、所有 `LocalStream` 的
+        `set_read/write_timeout` 调用均包 `#[cfg(unix)]`;
+        Windows 兜底分支只借用 `stream`(不 move,修 E0382)。
       - `session_restore/`: `RestoredPane`/`RestoredTab`/
         `RestoredWorkspace`/`RestoreOutcome` 结构体全平台保留
-        (仅编译不实例化);`use attach_pane`/`use restore_one_tab`
-        等 Unix-only 导入加 `#[cfg(unix)]`。
+        (仅编译不实例化);Unix-only 导入加 `#[cfg(unix)]`。
       - `cli/subs/`: `SshSub`/`AgentSub`/`ResumeSub` 定义全平台
         保留,handler 在 `dispatch.rs` 走 `cfg(not(unix))` 桩。
       - `iced_app.rs`: `trigger_ssh_reconnect`/`handle_ssh_quick_exit`
         调用点、`Pane.terminal_ctx` 死代码块、`try_restore_layout`
         函数体、`A::SendText`/`PaletteMode::Profiles` match 臂、
-        `ssh_dialog`/`ssh_settings` 字段引用均补 `#[cfg]` 隔离或
+        `ssh_dialog`/`ssh_settings` 字段引用(handle_keyboard 的
+        `||` 链抽成中间 bool)均补 `#[cfg]` 隔离或
         `cfg(not(unix))` 兜底分支。
       - `terminal_context/construct.rs`: `new_local` 的 `child_pid`
         取值按平台隔离(Unix: `Pty::child().id()`;
         Windows: `child_watcher().pid()` 转 u32)。
       - `hover_preview.rs`: `open_url`/`open_path` 由
-        `#[cfg(target_os)]` 双赋值改为 `cfg!` 运行时分支,
-        修复 Windows 下 `cmd` 变量不存在的 E0425。
-      - `sidebar/right/view_feed.rs` + `sidebar/right.rs`:
-        `mod view_feed` 与 `use view_feed` 加 `#[cfg(unix)]`;
-        Windows 的 `RightMode::Feed` 兜底分支补 `dim` 定义。
-      Windows 打包在 5 平台 CI/Release 全绿前仍不可用;
-      macOS ×2 + Linux ×2 四个 target 的打包与产物已验证。
+        `#[cfg(target_os)]` 双赋值改为 `cfg!` 运行时分支。
+      - `sidebar/right/`: `mod view_feed` 与 `use view_feed` 加
+        `#[cfg(unix)]`;Windows 兜底分支补 `dim` 定义。
+    - **`build.sh` Windows 打包路径修复**:`bundle_windows` 的
+      `Compress-Archive` 分支此前把 Git Bash 的 `pwd`
+      (`/d/a/PureTerm/...`)直接拼进 `-DestinationPath`,PowerShell
+      将其误解析为 `D:\d\a\...` 而报 "path does not exist"。
+      改为在 PowerShell 内部用 `(Join-Path (Get-Location).Path ...)`
+      自己算 Windows 原生绝对路径。
+    - **`release.yml` 汇总 job 补 `if: always()`**:`Collect +
+      Publish Release` 只有 `needs: [prepare, build]` 时,build
+      matrix 任一 job 失败/取消就会把它判 skipped,SHA256SUMS
+      永远跑不到(历轮 "Collect skipped" 根因)。现为
+      `always() && (build 全绿 || workflow_dispatch 试跑)`:
+      全绿时无条件汇总;试跑即使部分 job 失败也能拿回校验和;
+      tag push 且 build 部分失败时仍 skip,避免发布残缺产物。
+    - **已知限制(账户 runner 侧,非代码问题)**:近期 GitHub
+      账户的 `macos-14` job 连续被判 `cancelled`(0 steps、
+      启动 1 秒即取消,CI 与 Release 皆然),疑为个人账户 macOS
+      runner 配额/可用性所致;Linux ×2 与 Windows 的编译打包
+      不受影响。CI 另有 5 个平台/环境相关的既有测试断言失败
+      (字体族泛型名、⌘1-9 键位在 Linux 的 COMMAND/CTRL 映射、
+      agent hook 超时 flaky、daemon 路径/env 竞争),均与
+      Windows 门控及 Release 打包无关(Release 不跑测试)。
 
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。
