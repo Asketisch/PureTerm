@@ -38,7 +38,6 @@ use crate::ui_theme::{ShellTokens, ThemePreset, UiPalette};
 #[cfg(unix)]
 use crate::ssh::config::{SshProfile, SshSettings};
 #[cfg(unix)]
-#[cfg(unix)]
 use crate::ssh::session::SshSessionManager;
 use pureterm_settings::app::{Message as SettingsMessage, SettingsState};
 use pureterm_settings::i18n::I18n;
@@ -9523,12 +9522,16 @@ impl PureTermApp {
                 // 仍会收到全局 Enter;它们的确认走 widget on_submit,
                 // 这里必须吞掉,否则确认的同时把 \r 写进终端,
                 // 执行掉 shell 里的半截命令。
+                #[cfg(unix)]
+                let ssh_settings_open = self.ssh_settings.is_some();
+                #[cfg(not(unix))]
+                let ssh_settings_open = false;
                 if !modifiers.command()
                     && (self.surface_search.is_some()
                         || self.dir_search.is_some()
                         || self.address_bar.is_some()
                         || self.ai_chat_panel.open
-                        || self.ssh_settings.is_some()
+                        || ssh_settings_open
                         || self.tab_list.is_some()
                         || self.color_picker_tab.is_some())
                 {
@@ -9565,9 +9568,12 @@ impl PureTermApp {
                 // 浮层激活时阻止按键到达 PTY。
                 // 下方的 Cmd+ 快捷键仍被处理,使用户能在
                 // 别的浮层开着时仍用 ⌘⇧S / ⌘⇧P 切换浮层。
+                #[cfg(unix)]
+                let ssh_overlay_open = self.ssh_dialog.is_some() || self.ssh_settings.is_some();
+                #[cfg(not(unix))]
+                let ssh_overlay_open = false;
                 if !modifiers.command()
-                    && (self.ssh_dialog.is_some()
-                        || self.ssh_settings.is_some()
+                    && (ssh_overlay_open
                         || self.command_palette.is_some()
                         || self.context_menu.is_some()
                         || self.hover_preview.context_menu.is_some()

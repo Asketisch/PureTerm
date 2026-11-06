@@ -35,6 +35,17 @@ pureterm-codeindex = { workspace = true }
 pureterm-lsp = { workspace = true }
 pureterm-computer-use = { workspace = true }
 alacritty_terminal = { path = "../alacritty_terminal" }
+# 密码学 / 编码 crate —— 纯 Rust 实现, 跨平台可用。此前误放在
+# [target.'cfg(unix)'.dependencies] 段, 导致 resume_bindings(HMAC-SHA256
+# 令牌)与 ssh::credential(加密凭据)在 Windows 上 unresolved import。
+# 与 base64 同类问题(见 CHANGELOG): 依赖必须对所有 target 可见。
+aes-gcm = "0.10"
+argon2 = "0.5"
+zeroize = { version = "1", features = ["zeroize_derive"] }
+rand = "0.8"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 dirs = "6.0.0"
 iced = { version = "0.14", features = ["advanced", "canvas", "tokio"] }
 # GAP-7.1:agent-hook matcher / deny_pattern 正则求值。
@@ -133,15 +144,7 @@ wasmtime = { version = "30", optional = true, default-features = false, features
 libc = "0.2"
 polling = "3"
 signal-hook = "0.3"
-aes-gcm = "0.10"
-argon2 = "0.5"
-zeroize = { version = "1", features = ["zeroize_derive"] }
-rand = "0.8"
 rustix-openpty = "0.2"
-# GAP-7.7:自定义恢复绑定的 HMAC-SHA256 签名审批令牌。
-hmac = "0.12"
-sha2 = "0.10"
-hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

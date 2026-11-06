@@ -160,7 +160,10 @@ mod macos_dock_menu;
 mod macos_notifications;
 #[cfg(target_os = "macos")]
 mod macos_eyedropper;
-#[cfg(unix)]
+// ssh 模块的配置 / 凭据 / ssh_config_reader 层本应全平台编译
+// (见 ssh/mod.rs 顶部注释);只有 pty/session/reconnect 是 Unix-only,
+// 已在该模块内各自 cfg(unix)。此前整模块 #[cfg(unix)] 会让
+// crate::ssh::config::SshProfile 在 Windows 无法解析。
 mod ssh;
 #[cfg(unix)]
 mod ssh_cli;

@@ -148,7 +148,8 @@ fn rpc_approval(
     }
     #[cfg(not(unix))]
     {
-        let _ = (stream, timeout);
+        // 只借用, 不 move —— 下面仍要 write_all/read_line。
+        let _ = (&stream, &timeout);
     }
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
@@ -217,6 +218,8 @@ pub fn notify_session_end(session_id: &str) {
         Ok(s) => s,
         Err(_) => return,
     };
+    // Windows LocalStream 存根无 set_write_timeout, 跳过。
+    #[cfg(unix)]
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
     static NEXT_NOTIFY_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_NOTIFY_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -245,6 +248,8 @@ pub fn notify_session_started(session_id: &str, kind: Option<&str>, cwd: Option<
         Ok(s) => s,
         Err(_) => return,
     };
+    // Windows LocalStream 存根无 set_write_timeout, 跳过。
+    #[cfg(unix)]
     let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
     static NEXT_STARTED_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_STARTED_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

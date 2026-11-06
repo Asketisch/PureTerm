@@ -39,7 +39,8 @@ fn rpc_with_timeout(
     }
     #[cfg(not(unix))]
     {
-        let _ = (stream, timeout);
+        // 只借用, 不 move —— 下面仍要使用 stream。
+        let _ = (&stream, &timeout);
     }
 
     static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -95,7 +96,10 @@ fn ping_outcome(socket: &Path, timeout: Duration) -> PingOutcome {
         Ok(s) => s,
         Err(_) => return PingOutcome::ConnectRefused,
     };
+    // Windows LocalStream 存根无 set_*_timeout, 跳过。
+    #[cfg(unix)]
     let _ = stream.set_write_timeout(Some(timeout));
+    #[cfg(unix)]
     let _ = stream.set_read_timeout(Some(timeout));
 
     static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
