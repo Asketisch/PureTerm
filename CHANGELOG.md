@@ -163,14 +163,41 @@
       `always() && (build 全绿 || workflow_dispatch 试跑)`:
       全绿时无条件汇总;试跑即使部分 job 失败也能拿回校验和;
       tag push 且 build 部分失败时仍 skip,避免发布残缺产物。
-    - **已知限制(账户 runner 侧,非代码问题)**:近期 GitHub
-      账户的 `macos-14` job 连续被判 `cancelled`(0 steps、
-      启动 1 秒即取消,CI 与 Release 皆然),疑为个人账户 macOS
-      runner 配额/可用性所致;Linux ×2 与 Windows 的编译打包
-      不受影响。CI 另有 5 个平台/环境相关的既有测试断言失败
-      (字体族泛型名、⌘1-9 键位在 Linux 的 COMMAND/CTRL 映射、
-      agent hook 超时 flaky、daemon 路径/env 竞争),均与
-      Windows 门控及 Release 打包无关(Release 不跑测试)。
+    - **CI 三平台测试整绿**(Linux / macOS / Windows)。此前 CI 的
+      Linux job 有 5 个平台/环境相关的测试断言失败,逐个修正(全部
+      只改测试代码,不动产品行为):
+      - `font_family`:Linux/fontconfig 原生理解泛型名,
+        `resolve("monospace")` 保持 `"monospace"` 是设计意图;
+        断言改为按平台分支(macOS/Windows 解析为真实族名)。
+      - `keymap`:`⌘1..9` 是 macOS 语义;iced 的
+        `Modifiers::COMMAND` 在非 macOS 上等于 `CTRL`,与
+        `⌃1..9` 工作区绑定 key 冲突,该测试加
+        `#[cfg(target_os = "macos")]`。
+      - `agent_hooks`:1s 超时后 kill 子进程并 join drain 线程,
+        繁忙 runner 上可能 >5s;放宽到 <20s(仍远小于被测
+        30s sleep,能捕获未 kill 回归)。
+      - `discovery`:`IsolatedDataDir` 的 `set_var` 污染并行
+        测试的进程级 env,加 `ENV_LOCK` 串行化所有读写
+        `PURETERM_DAEMON_DATA_DIR` 的测试。
+      - `shell_integration`:Linux 上 `temp_dir() == /tmp`,
+        "不以 `/tmp/` 开头"断言只在 `temp_dir() != /tmp` 的
+        平台成立;字面量断言改为条件执行。
+    - **CI / Release 加 `concurrency` 组 +
+      `cancel-in-progress: false`**:限制同一 workflow+ref 只保留
+      一个在跑的 run、新触发的排队且绝不取消在跑的 run,避免连续
+      push / dispatch 时重复占用数量有限的 macOS runner。
+    - **macOS runner label 从 `macos-14` 迁移到 `macos-15`(根因)**:
+      check-run annotation 显示 11-06 起所有 `macos-14` job 都被判
+      `cancelled`(`runner_id=0`、0 steps)并报
+      `"The configuration 'macos-14-arm64-us-default' is not
+      supported"`。GitHub 官方 Changelog(2026-10-01)宣布
+      `macos-14` / `macos-14-large` / `macos-14-xlarge` 镜像于
+      **2026-11-02 正式退役**,此后无论何时都不可用 —— 与账户配额、
+      并发 run、workflow 配置均无关,是写死的 label 已被停用。
+      11-05(退役前)macOS job 尚可运行,11-06 起全部取消,时间线
+      完全吻合。改用官方推荐的固定 arm64 label `macos-15`(不用
+      `macos-latest`,避免未来 Apple 发新版时自动漂移)。CI 与
+      Release 两个矩阵的所有 `macos-14` 均已替换。
 
 ### 新增
 - **跨平台构建与打包流水线**(`./build.sh` 重写)。

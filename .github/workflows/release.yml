@@ -5,11 +5,16 @@
 #   - workflow_dispatch  → 只构建并上传 artifact,不发布(上线前试跑)
 #
 # 矩阵(自 build.sh 的 8-target 静态矩阵裁剪):
-#   - macos-14         × aarch64-apple-darwin
-#   - macos-14         × x86_64-apple-darwin(同 SDK 交叉编译)
+#   - macos-15         × aarch64-apple-darwin
+#   - macos-15         × x86_64-apple-darwin(同 SDK 交叉编译)
 #   - ubuntu-22.04     × x86_64-unknown-linux-gnu(glibc 2.35)
 #   - ubuntu-24.04-arm × aarch64-unknown-linux-gnu(公开仓库免费 ARM runner)
 #   - windows-2022     × x86_64-pc-windows-msvc
+#
+# 注意:不要改回 macos-14。GitHub 已于 2026-11-02 正式退役
+# macos-14 系列镜像(见 github.blog/changelog/2026-10-01),之后
+# 使用该 label 的 job 会直接被判 cancelled 并报
+# "The configuration 'macos-14-arm64-us-default' is not supported"。
 #
 # 明确不做:musl ×2(wry 依赖 WebKitGTK,静态链接不可行)、
 # aarch64-pc-windows-msvc(用户极少且交叉编译链未验证)。
@@ -46,7 +51,7 @@ permissions:
   contents: write
 
 # 同 CI:限制并发 run 且绝不取消在跑的 run,避免连续 dispatch/tag
-# 推送时 macOS job 在排队阶段被判 cancelled(0 steps、runner_id=0)。
+# 推送时重复占用数量有限的 macOS runner。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -85,9 +90,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
-          - os: macos-14
+          - os: macos-15
             target: x86_64-apple-darwin
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu

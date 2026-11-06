@@ -31,11 +31,9 @@ on:
   pull_request:
     branches: [main]
 
-# 同一 workflow + 同一 ref 只保留一个在跑的 run,新触发的排队。
-# cancel-in-progress: false 是关键:连续 push / dispatch 时,GitHub
-# 默认可能把旧 run 中尚未拿到 runner 的 queued job(实测总是排队
-# 最久的 macos-14)判 cancelled,导致 macOS 打包永远缺位。显式关闭
-# 取消后,旧 run 会完整跑完,新 run 排队等待。
+# 同一 workflow + 同一 ref 只保留一个在跑的 run,新触发的排队,
+# 且绝不取消在跑的 run —— 避免连续 push / dispatch 时重复占用
+# runner(尤其是数量有限的 macOS job)。
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -53,7 +51,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
           - os: windows-2022
             target: x86_64-pc-windows-msvc
