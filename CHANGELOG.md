@@ -293,12 +293,16 @@
          删除后重建)。
       4. **轮转检测在 Windows 上恒失效**:`events_log::inode_of` 在
          非 Unix 恒返回 0,于是「替换式轮转」(新旧文件等长)永远
-         检测不到。改用 Windows 的 `MetadataExt::creation_time()`
-         当文件身份代理(原子替换必然新建文件 → 创建时间不同;
-         同一文件追加/重写 → 创建时间不变)。
-         注:`file_index()` / `volume_serial_number()` 在 std 里
-         至今仍是 unstable 的 `windows_by_handle` 特性,stable
-         上不可用 —— 这是云端编译才暴露的。
+         检测不到。改为按平台取**真正的文件身份**:
+         Unix 仍用 `metadata().ino()`;Windows 用 `same-file`
+         crate(volume serial + file index)。
+         两次弯路都记在这里:① `MetadataExt::file_index()` /
+         `volume_serial_number()` / `number_of_links()` 在 std 里
+         至今仍是 unstable 的 `windows_by_handle` 特性,stable 上
+         不可用(云端 Windows 编译报 E0658 + E0308 才暴露);
+         ② 退而用 `creation_time()` 也不可靠 —— 系统时钟默认粒度
+         约 15.6ms,「替换式轮转」的新旧文件常在同一刻创建,
+         创建时间相同 → 轮转照样漏检。
       其余 29 个失败是测试侧的平台假设,已按平台收敛:
       - `resume_bindings` 6 个:测试拿**仍被打开**的 `NamedTempFile`
         当目标,而写盘是 rename 替换 → Windows ACCESS_DENIED;

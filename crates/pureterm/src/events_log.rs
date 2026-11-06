@@ -111,22 +111,33 @@ pub fn read_recent(filter: &TypeFilter, limit: usize, since_seq: Option<u64>) ->
     read_recent_from_path(&events_path(), filter, limit, since_seq)
 }
 
-/// 用于轮转检测的平台 inode（不可用时为 0——通过文件缩水检测仍能发现轮转）。
+/// 文件身份（轮转检测用）。取不到时返回 `None`——此时退回
+/// 「文件缩水」检测。
 #[cfg(unix)]
-fn inode_of(meta: &std::fs::Metadata) -> u64 {
+fn file_ident(path: &Path) -> Option<u64> {
     use std::os::unix::fs::MetadataExt;
-    meta.ino()
+    // Unix 直接用 metadata 的 inode（便宜，一次 stat）。
+    std::fs::metadata(path).ok().map(|m| m.ino())
 }
+
+/// 文件身份（轮转检测用）。取不到时返回 `None`——此时退回
+/// 「文件缩水」检测。
+///
+/// Windows 的 std 没有稳定的文件身份 API：`file_index()` /
+/// `volume_serial_number()` / `number_of_links()` 至今仍是
+/// unstable 的 `windows_by_handle` 特性，stable 上不可用。而
+/// `creation_time()` 同样不可靠 —— 系统时钟默认粒度约 15.6ms，
+/// 「替换式轮转」的新旧文件常在同一刻创建，创建时间相同 →
+/// 轮转漏检。这里用 `same-file` crate 取真正身份（Windows 上是
+/// volume serial + file index），哈希成 u64 便于在状态里传递
+/// （同一文件恒等、替换后必变；哈希碰撞概率约 2^-64）。
 #[cfg(not(unix))]
-fn inode_of(meta: &std::fs::Metadata) -> u64 {
-    use std::os::windows::fs::MetadataExt;
-    // Windows 没有稳定的「文件身份」API:std 的 file_index /
-    // volume_serial_number / number_of_links 至今仍是 unstable 的
-    // `windows_by_handle` 特性,stable 上不可用。这里用**创建时间**
-    // 当身份代理:「原子替换式轮转」必然新建文件 → 创建时间不同;
-    // 同一文件被追加/重写 → 创建时间不变 —— 正好符合「变化即轮转」
-    // 的语义。恒返回 0 会让等长替换的轮转永远检测不到。
-    meta.creation_time()
+fn file_ident(path: &Path) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let handle = same_file::Handle::from_path(path).ok()?;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    handle.hash(&mut hasher);
+    Some(hasher.finish())
 }
 
 /// [`tail_follow`] 的轮询间隔。将 tail 延迟限制在 ≤ 该值。
@@ -156,9 +167,16 @@ fn drain_once(
 ) -> bool {
     let mut progress = false;
 
-    // 轮转检测：inode 变化，或文件缩水到游标之下。
+    // 轮转检测：文件身份变化，或文件缩水到游标之下。
     let rotated = match std::fs::metadata(path) {
-        Ok(m) => inode_of(&m) != *inode || m.len() < *last_pos,
+        Ok(m) => {
+            let shrunk = m.len() < *last_pos;
+            match file_ident(path) {
+                Some(id) => id != *inode || shrunk,
+                // 取不到身份（文件已消失/无权限）→ 只靠缩水检测。
+                None => shrunk,
+            }
+        }
         Err(_) => false,
     };
     if rotated {
@@ -170,7 +188,7 @@ fn drain_once(
         let _ = file.seek(SeekFrom::Start(0));
         leftover.clear();
         *last_pos = 0;
-        *inode = std::fs::metadata(path).map(|m| inode_of(&m)).unwrap_or(*inode);
+        *inode = file_ident(path).unwrap_or(*inode);
     }
 
     // 排空自游标以来追加的内容。
@@ -212,7 +230,7 @@ pub fn tail_follow(path: &Path, filter: &TypeFilter, mut on_event: impl FnMut(&A
     let (mut file, mut last_pos, mut inode) = loop {
         if let Ok(f) = std::fs::File::open(path) {
             let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-            let ino = f.metadata().map(|m| inode_of(&m)).unwrap_or(0);
+            let ino = file_ident(path).unwrap_or(0);
             let _ = (&f).seek(SeekFrom::Start(len));
             break (f, len, ino);
         }
@@ -366,7 +384,7 @@ mod tests {
     fn open_at_eof(path: &Path) -> (std::fs::File, u64, u64) {
         let mut file = std::fs::File::open(path).unwrap();
         let len = file.metadata().unwrap().len();
-        let ino = inode_of(&file.metadata().unwrap());
+        let ino = file_ident(path).unwrap_or(0);
         let _ = (&file).seek(SeekFrom::Start(len));
         (file, len, ino)
     }

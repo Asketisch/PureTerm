@@ -5910,6 +5910,7 @@ dependencies = [
  "rmcp",
  "rmcp-macros",
  "rustix-openpty",
+ "same-file",
  "serde",
  "serde_json",
  "sha2 0.10.9",

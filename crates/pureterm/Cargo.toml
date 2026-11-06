@@ -26,6 +26,7 @@ mcp-server = [
 wasm-runtime = ["dep:wasmtime"]
 
 [dependencies]
+same-file = "1.0"
 pureterm-alacritty-runtime = { workspace = true }
 pureterm-settings = { path = "../pureterm-settings" }
 pureterm-jsonrpc = { workspace = true }
