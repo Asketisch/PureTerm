@@ -167,9 +167,16 @@ jobs:
 
   # 汇总 job 总是运行:workflow_dispatch 试跑时也能验证
   # SHA256SUMS 生成逻辑(只是不创建 Release)。
+  # 关键:needs 里有任一 job 失败/取消时,GitHub 默认会把本 job
+  # 判 skipped —— 不加 always() 的话,只要 Windows/macOS 任一
+  # 打包失败,试跑就永远拿不到 SHA256SUMS(历轮 "Collect skipped"
+  # 的根因)。build 全绿时无条件跑;dispatch 试跑即使部分 job
+  # 失败也跑(只生成校验和,is-release=false 故不发布);tag push
+  # 且 build 部分失败时仍 skip,避免发布残缺产物。
   release:
     name: Collect + Publish Release
     needs: [prepare, build]
+    if: ${{ always() && (needs.build.result == 'success' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
