@@ -3,6 +3,7 @@ use iced::{Background, Border, Color, Element, Length, Shadow, Theme};
 
 use super::data::{BlocksTabData, DirFindData, GitTabData, PortScannerTabData, RemoteFilesTabData, SurfaceFindData, ToolbeltTabData};
 use super::view_blocks::view_blocks;
+#[cfg(unix)]
 use super::view_feed::view_feed;
 use super::view_files::view_files;
 use super::view_find::view_find;

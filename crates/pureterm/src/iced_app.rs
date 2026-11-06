@@ -38,6 +38,7 @@ use crate::ui_theme::{ShellTokens, ThemePreset, UiPalette};
 #[cfg(unix)]
 use crate::ssh::config::{SshProfile, SshSettings};
 #[cfg(unix)]
+#[cfg(unix)]
 use crate::ssh::session::SshSessionManager;
 use pureterm_settings::app::{Message as SettingsMessage, SettingsState};
 use pureterm_settings::i18n::I18n;
@@ -2590,6 +2591,14 @@ impl PureTermApp {
     ) -> bool {
         use crate::session_restore::{LayoutSnapshot, ViewportSnapshot, SNAPSHOT_VERSION};
 
+        // Windows 上无真实 PTY 后端,session_restore::restore 不实例化,
+        // 跳过布局恢复直接返回 false(调用方走 fresh start)。
+        #[cfg(not(unix))]
+        {
+            let _ = snapshot;
+            return false;
+        }
+
         // 无持久化布局——仍尝试回收孤儿守护会话
         //(如该功能上线前的会话,或状态
         // 文件被删后)。空快照使 `restore` 跳过标签页
@@ -2860,7 +2869,12 @@ impl PureTermApp {
         }
         let change_at_before = self.last_layout_change_at;
         let snapshot = self.capture_layout();
-        crate::session_restore::save_atomic(&snapshot);
+        #[cfg(unix)]
+        {
+            crate::session_restore::save_atomic(&snapshot);
+        }
+        #[cfg(not(unix))]
+        let _ = snapshot;
         // GAP-2.1 评审(BUG-C):仅当捕获/写入期间没有布局变更
         // 落地时才清除 dirty;否则保持 dirty,让下一个 tick 重刷
         // 更新的状态。防御性——iced `update()` 单线程且
@@ -3528,7 +3542,6 @@ impl PureTermApp {
     /// 返回克隆的 `Arc`(同 `active_terminal_ctx`),使调用方
     /// 能经内部可变性修改上下文而不持有 `self` 的
     /// 借用。
-    #[cfg(unix)]
     /// GAP-56:查找光标点下的窗格 id。光标位于非窗格区域、
     /// 鼠标跟随聚焦被禁用、或活动窗口没有拆分树时返回 `None`。
     /// 禁用、或活动窗口没有拆分树时返回 `None`。
@@ -3536,6 +3549,7 @@ impl PureTermApp {
     /// 大矩形 (0, 0, +inf, +inf) 处理,落在其中必命中。
     /// 多窗口拆分解析留给单独跟踪的布局
     /// 工作。
+    #[cfg(unix)]
     fn pane_under_point(&self, pos: Point) -> Option<PaneId> {
         if !self.focus_follows_mouse_cfg.enabled {
             return None;
@@ -3858,7 +3872,12 @@ impl PureTermApp {
                 })
             }
             A::SendText { text, pane_id } => {
-                self.execute_ipc_side_effect(Fx::SendText { pane_id, text })
+                #[cfg(unix)]
+                {
+                    self.execute_ipc_side_effect(Fx::SendText { pane_id, text })
+                }
+                #[cfg(not(unix))]
+                let _ = (text, pane_id);
             }
             #[cfg(unix)]
             A::SshOpen { target, port } => {
@@ -5749,7 +5768,10 @@ impl PureTermApp {
                     let is_reconnect_candidate = false;
 
                     if is_reconnect_candidate {
+                        #[cfg(unix)]
                         self.trigger_ssh_reconnect(tab_id, pane_id);
+                        #[cfg(not(unix))]
+                        let _ = (tab_id, pane_id);
                         handled_exit = true;
                         continue;
                     }
@@ -5757,7 +5779,10 @@ impl PureTermApp {
                     if is_quick_exit && pane_count <= 1 {
                         // 单 pane tab 的 SSH 快速失败(<5s,几乎肯定是连接/认证失败):
                         // 读 stderr 分类,释放连接池,移除 tab,弹错误对话框。首个生效。
+                        #[cfg(unix)]
                         self.handle_ssh_quick_exit(tab_id, pane_id);
+                        #[cfg(not(unix))]
+                        let _ = (tab_id, pane_id);
                         handled_exit = true;
                         break 'exit;
                     }
@@ -8050,6 +8075,7 @@ impl PureTermApp {
                 // GAP-56:鼠标跟随聚焦——记录光标下的窗格并
                 // 重置悬停计时。实际的焦点切换发生在
                 // `delay_ms` 到期后(见 TerminalWakeup)。
+                #[cfg(unix)]
                 if self.focus_follows_mouse_cfg.enabled {
                     if let Some(pane_id) = self.pane_under_point(pos) {
                         if self.last_hovered_pane != Some(pane_id) {
@@ -12684,19 +12710,7 @@ impl PureTermApp {
                     }
                 }
             }
-            #[cfg(not(unix))]
-            {
-                if let Some(tab) = self.active_tab_ref() {
-                    if let Some(pane) = tab.panes.get(&tab.active_pane) {
-                        if pane.terminal_ctx.is_ssh() {
-                            break 'ssh Some((
-                                "  SSH".to_string(),
-                                self.palette.app.danger,
-                            ));
-                        }
-                    }
-                }
-            }
+            // Windows 上无真实 SSH 后端,此分支整体省略。
             None
         };
 

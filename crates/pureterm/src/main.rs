@@ -99,21 +99,23 @@ mod graphics_e2e;
 #[cfg(all(test, unix))]
 mod tmux_cc_e2e;
 
-#[cfg(unix)]
+// 这些模块原先统一挂 #[cfg(unix)],但 GUI 侧(iced_app / sidebar /
+// remote_files / cli 等)无条件引用它们,导致 Windows 上 89 处
+// unresolved import 与连带的类型推导失败。核查后除 daemon_pty
+// 外都无 Unix 专属 API(feed_client / daemon_client 的 socket IO
+// 已走跨平台 local_socket 抽象),故改为全平台编译,模块内部
+// 真正的 Unix 行各自 cfg 隔离。
 mod feed_client;
 /// GAP-7.6：只读 feed 审计日志查看器（`pureterm feed list`）。
 mod feed_log;
-#[cfg(unix)]
 mod feed_panel;
-#[cfg(unix)]
 mod hibernate_panel;
 /// GAP-7.6：探测-恢复提示面板状态机（GUI 侧）。
-#[cfg(unix)]
 mod detect_panel;
-#[cfg(unix)]
 mod daemon_client;
-#[cfg(unix)]
 mod daemon_cli;
+// daemon_pty 依赖 Unix fd(FromRawFd/IntoRawFd)与 socketpair,
+// Windows 无对应实现,且无外部引用,故保持 Unix-only。
 #[cfg(unix)]
 mod daemon_pty;
 mod iced_app;

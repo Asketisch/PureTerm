@@ -97,7 +97,8 @@ pub enum EventsSub {
 /// GAP-7.3：通过守护进程控制面休眠/恢复 agent 会话
 /// （`agent.hibernate` / `agent.resume`）。直接访问 `puretermd`
 /// （不经 GUI IPC socket）。
-#[cfg(unix)]
+/// Windows 上无真实 agent 检测后端, 此子命令组保留定义
+/// 但 handler 在 dispatch.rs 走 cfg(not(unix)) 桩。
 #[derive(Subcommand)]
 pub enum AgentSub {
     /// SIGSTOP 一个活动会话（休眠以释放资源）
@@ -118,7 +119,8 @@ pub enum AgentSub {
 /// （给命名、模板化的 shell 命令，用于在冷恢复时重新附加到外部持久
 /// 会话，如 tmux/screen）。本地配置 CRUD；不走 IPC。
 /// 仅 Unix（恢复执行经由 `puretermd`）。
-#[cfg(unix)]
+/// Windows 上无真实 agent 检测后端, 此子命令组保留定义
+/// 但 handler 在 dispatch.rs 走 cfg(not(unix)) 桩。
 #[derive(Subcommand, Clone)]
 pub enum ResumeSub {
     /// 添加或替换以 (kind, checkpoint) 为键的恢复绑定。

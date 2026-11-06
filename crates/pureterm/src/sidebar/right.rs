@@ -3,6 +3,7 @@
 mod data;
 mod main;
 mod view_find;
+#[cfg(unix)]
 mod view_feed;
 mod view_toolbelt;
 mod view_files;

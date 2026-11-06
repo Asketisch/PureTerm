@@ -155,7 +155,15 @@ impl TerminalContext {
 
         let pty = tty::new(&pty_options, window_size, 0)?;
 
+        // Unix: Pty::child() 返回 std::process::Child; Windows:
+        // child_watcher().pid() 返回 Option<NonZeroU32>。
+        #[cfg(unix)]
         let child_pid = pty.child().id();
+        #[cfg(not(unix))]
+        let child_pid = pty.child_watcher()
+            .pid()
+            .map(u32::from)
+            .unwrap_or(0);
 
         let pty_loop = PtyEventLoop::new(
             Arc::clone(&terminal),

@@ -6,7 +6,8 @@
 use clap::Subcommand;
 use serde_json::{json, Value};
 
-#[cfg(unix)]
+/// Windows 上 SSH 子命令组保留定义但 handler 走 cfg(not(unix)) 桩
+/// (无真实 PTY 后端), 保证 clap 解析与跨平台代码引用闭合。
 #[derive(Subcommand)]
 pub enum SshSub {
     /// 列出已配置的 SSH 会话档案

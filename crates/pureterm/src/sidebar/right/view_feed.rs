@@ -1,4 +1,4 @@
-#[cfg(unix)]
+// iced widget 跨平台可用(Windows 上同样编译), 无需 cfg(unix) 门控
 use iced::widget::{button, column, row, space, text};
 use iced::{Alignment, Color, Element, Length, Theme};
 

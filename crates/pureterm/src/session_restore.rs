@@ -19,7 +19,9 @@ mod restore;
 mod snapshot;
 mod tab;
 
+#[cfg(unix)]
 pub use restore::restore;
+#[cfg(unix)]
 pub use snapshot::save_atomic;
 
 /// 一个持久化的窗格,按与该 tab 的 `split_tree` 对齐的 DFS 叶子顺序排列。
@@ -170,7 +172,7 @@ fn migrate_v1_to_v2() -> Option<LayoutSnapshot> {
 // ── 恢复结果类型(Unix only — 恢复涉及 spawn PTY/SSH) ──────────────────────
 
 /// 恢复出的窗格:内容载体(终端或 web,GAP-3.5)+ 显示标题。
-#[cfg(unix)]
+/// Windows 上无真实 PTY 后端,此结构仅编译不实例化。
 pub struct RestoredPane {
     pub content: crate::split_tree::Surface,
     pub title: String,
@@ -178,7 +180,7 @@ pub struct RestoredPane {
 
 /// 恢复出的 tab:已重映射为全新 `PaneId` 的 split tree,外加
 /// 按 DFS 叶子顺序排列的窗格(与 `split_tree.pane_ids()` 对齐)。
-#[cfg(unix)]
+/// Windows 上无真实 PTY 后端,此结构仅编译不实例化。
 pub struct RestoredTab {
     pub title: String,
     pub split_tree: SplitNode,
@@ -187,14 +189,14 @@ pub struct RestoredTab {
 }
 
 /// GAP-2.1: 恢复出的一个 workspace(若干 tab + 活跃 tab 索引)。
-#[cfg(unix)]
+/// Windows 上无真实 PTY 后端,此结构仅编译不实例化。
 pub struct RestoredWorkspace {
     pub name: String,
     pub tabs: Vec<RestoredTab>,
     pub active_tab: usize,
 }
 
-#[cfg(unix)]
+/// Windows 上无真实 PTY 后端,此结构仅编译不实例化。
 pub struct RestoreOutcome {
     /// 折叠进主窗的 workspace 列表(主窗自身的在前,detached 的追加在后;
     /// 孤儿 daemon 会话进末尾 "Recovered" workspace)。窗口拓扑不跨重启(折叠),

@@ -479,26 +479,26 @@ pub fn open_semantic_text(text: &str, cwd: Option<&Path>, config_editor: &str) {
 }
 
 fn open_url(url: &str) {
-    #[cfg(target_os = "macos")]
-    let cmd = "open";
-    #[cfg(target_os = "linux")]
-    let cmd = "xdg-open";
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    return;
-    if let Err(e) = std::process::Command::new(cmd).arg(url).spawn() {
-        log::warn!("hover_preview: could not open url '{url}': {e}");
+    if cfg!(target_os = "macos") {
+        if let Err(e) = std::process::Command::new("open").arg(url).spawn() {
+            log::warn!("hover_preview: could not open url '{url}': {e}");
+        }
+    } else if cfg!(target_os = "linux") {
+        if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
+            log::warn!("hover_preview: could not open url '{url}': {e}");
+        }
     }
 }
 
 fn open_path(path: &Path) {
-    #[cfg(target_os = "macos")]
-    let cmd = "open";
-    #[cfg(target_os = "linux")]
-    let cmd = "xdg-open";
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    return;
-    if let Err(e) = std::process::Command::new(cmd).arg(path).spawn() {
-        log::warn!("hover_preview: could not open path '{}': {e}", path.display());
+    if cfg!(target_os = "macos") {
+        if let Err(e) = std::process::Command::new("open").arg(path).spawn() {
+            log::warn!("hover_preview: could not open path '{}': {e}", path.display());
+        }
+    } else if cfg!(target_os = "linux") {
+        if let Err(e) = std::process::Command::new("xdg-open").arg(path).spawn() {
+            log::warn!("hover_preview: could not open path '{}': {e}", path.display());
+        }
     }
 }
 

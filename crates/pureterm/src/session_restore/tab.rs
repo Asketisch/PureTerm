@@ -2,6 +2,7 @@
 
 
 use super::{RestoredPane, RestoredTab, TabSnapshot};
+#[cfg(unix)]
 use super::restore::{attach_pane, cold_resume_agent};
 use crate::ssh::config::SshProfile;
 use crate::split_tree::PaneId;

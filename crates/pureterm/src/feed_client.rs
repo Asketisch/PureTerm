@@ -255,7 +255,9 @@ pub fn notify_session_started(session_id: &str, kind: Option<&str>, cwd: Option<
     // 故意不读回复(fire-and-forget)。
 }
 
-#[cfg(test)]
+// 测试用例用 UnixListener 搭本地 socket 回环,Windows 无该类型。
+// 生产代码已走跨平台 local_socket 抽象,故只隔离测试模块。
+#[cfg(all(test, unix))]
 mod tests {
     #![allow(clippy::redundant_closure_call)]
 

@@ -1,6 +1,7 @@
 //! 核心 RPC 原语 + 守护进程启动逻辑（ensure_daemon、spawn、staleness）。
 
 use std::io::{self, BufRead, BufReader, Write};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -293,7 +294,14 @@ fn restart_if_stale(socket: &Path) -> io::Result<()> {
 fn terminate_and_respawn(socket: &Path, pid: Option<u64>) -> io::Result<()> {
     if let Some(pid) = pid {
         // SIGTERM → 守护进程退出 → flock 释放 → 新守护进程可获取它。
-        unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        // Windows 无 SIGTERM;守护进程本身在 Windows 是 Unsupported,
+        // 故这里直接跳过(后续轮询会超时并返回明确错误)。
+        #[cfg(unix)]
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+        #[cfg(not(unix))]
+        let _ = pid;
     }
 
     // 等待旧守护进程释放 socket/锁（最多约 5s）。
@@ -330,7 +338,8 @@ fn find_puretermd() -> PathBuf {
     PathBuf::from("puretermd")
 }
 
-#[cfg(test)]
+// 该测试模块用 UnixListener 搭本地 socket 回环,Windows 无该类型。
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::net::UnixListener;
