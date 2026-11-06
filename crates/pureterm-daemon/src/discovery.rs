@@ -219,7 +219,12 @@ pub fn acquire_instance_lock_at(path: &std::path::Path) -> io::Result<Option<Fil
             // 陈旧锁判定:锁文件存在,但当前没有任何进程持有它。
             // Windows 没有 flock,锁不会随进程退出自动释放,若不清
             // 理陈旧锁,守护进程**永远**无法第二次启动。
-            if exclusive_probe(path).is_ok() {
+            let probe = exclusive_probe(path);
+            if probe.is_ok() {
+                // 必须先关闭探测句柄:Windows 上「打开中的文件」被
+                // 删除后处于 delete-pending 状态,此刻 create_new
+                // 仍会失败。
+                drop(probe);
                 let _ = std::fs::remove_file(path);
                 return match OpenOptions::new().create_new(true).write(true).open(path) {
                     Ok(file) => Ok(Some(file)),

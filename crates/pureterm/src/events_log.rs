@@ -120,10 +120,13 @@ fn inode_of(meta: &std::fs::Metadata) -> u64 {
 #[cfg(not(unix))]
 fn inode_of(meta: &std::fs::Metadata) -> u64 {
     use std::os::windows::fs::MetadataExt;
-    // Windows 的 file_index 等价于 Unix 的 inode(卷内唯一,文件被
-    // 替换后变化)——用它做轮转检测。恒返回 0 会让「替换式轮转」
-    // 永远检测不到(只能靠文件缩水兜底,等长替换会漏)。
-    meta.file_index()
+    // Windows 没有稳定的「文件身份」API:std 的 file_index /
+    // volume_serial_number / number_of_links 至今仍是 unstable 的
+    // `windows_by_handle` 特性,stable 上不可用。这里用**创建时间**
+    // 当身份代理:「原子替换式轮转」必然新建文件 → 创建时间不同;
+    // 同一文件被追加/重写 → 创建时间不变 —— 正好符合「变化即轮转」
+    // 的语义。恒返回 0 会让等长替换的轮转永远检测不到。
+    meta.creation_time()
 }
 
 /// [`tail_follow`] 的轮询间隔。将 tail 延迟限制在 ≤ 该值。

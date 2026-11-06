@@ -293,8 +293,12 @@
          删除后重建)。
       4. **轮转检测在 Windows 上恒失效**:`events_log::inode_of` 在
          非 Unix 恒返回 0,于是「替换式轮转」(新旧文件等长)永远
-         检测不到。改用 Windows 的 `MetadataExt::file_index()`
-         (等价于 inode)。
+         检测不到。改用 Windows 的 `MetadataExt::creation_time()`
+         当文件身份代理(原子替换必然新建文件 → 创建时间不同;
+         同一文件追加/重写 → 创建时间不变)。
+         注:`file_index()` / `volume_serial_number()` 在 std 里
+         至今仍是 unstable 的 `windows_by_handle` 特性,stable
+         上不可用 —— 这是云端编译才暴露的。
       其余 29 个失败是测试侧的平台假设,已按平台收敛:
       - `resume_bindings` 6 个:测试拿**仍被打开**的 `NamedTempFile`
         当目标,而写盘是 rename 替换 → Windows ACCESS_DENIED;
