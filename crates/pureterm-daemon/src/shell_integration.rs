@@ -803,10 +803,14 @@ mod tests {
         // 健全性:路径的组件是 `.pureterm-zdotdir-test`(而不是
         // `/tmp/.pureterm-zdotdir-test`).
         assert!(p.file_name().unwrap().to_string_lossy().contains("pureterm-zdotdir-test"));
-        // 而且即使在 macOS(/tmp 存在)上也不是字面的 `/tmp/...`。
-        // `std::env::temp_dir()`.
+        // 而且即使在 macOS(/tmp 存在)上也不是字面的 `/tmp/...`
+        // —— 仅当 temp_dir() 本身不是 /tmp 时该断言才成立;Linux 上
+        // temp_dir() == /tmp,此时"不硬编码 /tmp"已由上面的
+        // p.starts_with(&sys_tmp) 覆盖,跳过字面量断言。
         let path_str = p.to_string_lossy();
-        assert!(!path_str.starts_with("/tmp/"));
+        if sys_tmp != std::path::Path::new("/tmp") {
+            assert!(!path_str.starts_with("/tmp/"));
+        }
     }
 
     #[cfg(unix)]

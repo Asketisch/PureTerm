@@ -87,10 +87,17 @@ mod tests {
 
     #[test]
     fn generic_names_resolve_to_real_families() {
-        // 解析后不应再是泛型名(在不支持泛型名的平台上)。
+        // 解析后不应再是泛型名 —— 但仅限不认识泛型名的平台
+        // (macOS/CoreText、Windows/DirectWrite)。Linux/fontconfig
+        // 原生理解 "monospace",platform_default_monospace() 在
+        // Linux 上刻意保持原样,故此处按平台分别断言。
         let mono = resolve("monospace");
         assert!(!mono.is_empty());
-        assert_ne!(mono.to_ascii_lowercase(), "monospace", "macOS/Windows 应解析为真实族名");
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            assert_ne!(mono.to_ascii_lowercase(), "monospace", "macOS/Windows 应解析为真实族名");
+        } else {
+            assert_eq!(mono.to_ascii_lowercase(), "monospace", "fontconfig 保持泛型名");
+        }
     }
 
     #[test]

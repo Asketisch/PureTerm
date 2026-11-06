@@ -224,20 +224,30 @@ pub fn acquire_instance_lock_at(path: &std::path::Path) -> io::Result<Option<Fil
     }
 }
 
+/// 串行化所有读写 `PURETERM_DAEMON_DATA_DIR` 的测试。Rust 测试默认
+/// 并行,而该 env 是进程级全局:`IsolatedDataDir` 的 set_var 会污染
+/// 同时读取 `data_dir()` 的其它测试(导致 "no pureterm in path")。
+#[cfg(test)]
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// RAII 守卫:把守护进程数据路径导入隔离的临时目录(单元测试)。
+/// 持锁直到 Drop 完成(自定义 Drop 先恢复 env,再由字段析构释放 guard)。
 #[cfg(test)]
 pub(crate) struct IsolatedDataDir {
     _dir: tempfile::TempDir,
     prev: Option<String>,
+    _guard: std::sync::MutexGuard<'static, ()>,
 }
 
 #[cfg(test)]
 impl IsolatedDataDir {
     pub fn new() -> Self {
+        // 一个测试 panic 不该让锁永久 poisoned 而拖垮后续测试。
+        let guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let prev = std::env::var("PURETERM_DAEMON_DATA_DIR").ok();
         std::env::set_var("PURETERM_DAEMON_DATA_DIR", dir.path());
-        Self { _dir: dir, prev }
+        Self { _dir: dir, prev, _guard: guard }
     }
 }
 
@@ -308,6 +318,7 @@ mod tests {
 
     #[test]
     fn data_and_sessions_dirs_under_pureterm() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let d = data_dir();
         assert!(d.ends_with("pureterm") || d.to_string_lossy().contains("pureterm"));
         assert!(sessions_dir().starts_with(&d));
@@ -316,6 +327,7 @@ mod tests {
 
     #[test]
     fn ensure_dirs_creates_paths() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // 使用真实的(每用户)目录;创建幂等且安全。
         ensure_dirs().expect("ensure_dirs");
         assert!(data_dir().is_dir());

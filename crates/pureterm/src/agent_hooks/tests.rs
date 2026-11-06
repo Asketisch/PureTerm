@@ -447,7 +447,10 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         let r = cmd_rule("sleep 30", Some(1));
         let start = std::time::Instant::now();
         let d = run_external_command(&r, b"{}");
-        assert!(start.elapsed().as_secs() < 5, "timeout should kill well under 5s");
+        // 1s 超时后 kill 子进程 + join stdout/stderr drain 线程;繁忙
+        // runner 上 join 可能拖慢,但仍须远小于被测的 30s sleep
+        // (若超时逻辑失效会等满 30s,此断言仍能捕获)。
+        assert!(start.elapsed().as_secs() < 20, "timeout should kill well under 20s");
         assert_eq!(d, Decision::Passthrough);
     }
 

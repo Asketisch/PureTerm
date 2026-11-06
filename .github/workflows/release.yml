@@ -45,6 +45,12 @@ on:
 permissions:
   contents: write
 
+# 同 CI:限制并发 run 且绝不取消在跑的 run,避免连续 dispatch/tag
+# 推送时 macOS job 在排队阶段被判 cancelled(0 steps、runner_id=0)。
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   CARGO_TERM_COLOR: always
 
