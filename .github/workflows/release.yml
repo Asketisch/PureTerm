@@ -116,29 +116,61 @@ jobs:
       # wry(Linux)链接期需要 GTK3 + WebKitGTK 4.1;
       # 其余为 crossfont(freetype/fontconfig)与 rustls 的常规依赖。
       # lld 供下面 RUSTFLAGS 覆盖 mold 时使用。
-      # apt-get 在 GitHub runner 上会偶发"硬挂":TCP 建连卡在 SYN
-      # 阶段,既不报错也不退出。apt 自带的 http 超时只管读超时、
-      # 管不到建连,于是整个 step 静默挂住,默认要等 job 6 小时超时
-      # 才被杀(2026-11-06 CI run 42240085099 的 Clippy job 卡死在此,
-      # 同 VM 的 Linux build-test job 同步骤却秒过 → 纯 runner 侧抖动)。
-      # 护栏:
-      #   1. 外层 timeout 兜住建连阶段的硬挂 —— GNU timeout 让子进程
-      #      独立进程组,到期 SIGTERM 整个组,--kill-after=30 再补
-      #      SIGKILL,彻底不出现"静默挂 6 小时";
-      #   2. Acquire::Retries=3 —— 瞬时抖动自动重试而不是直接失败;
-      #   3. DEBIAN_FRONTEND=noninteractive —— 杜绝任何交互式提问卡住。
+      # apt-get 在 GitHub runner 上会偶发"下载期硬挂",两次实证:
+      #   - CI run 42240085099(Clippy job)
+      #   - Release run 42243444351(ubuntu-22.04 target)
+      # 日志证据(42243444351):apt-get update 16s 内正常抓完 30MB;
+      # apt-get install 逐包下载到 Get:49(速率从 1s/包劣化到 5s/包)
+      # 后,某个连接的 TCP 建连卡在 SYN 阶段 —— apt 自带的 http 超时
+      # 只覆盖读超时、管不到建连,于是既不报错也不退出,静默挂死
+      # (实测 20 分钟被外层 timeout 以 exit 124 杀掉)。
+      # 护栏(逐层收敛):
+      #   1. Acquire::http/https::Timeout=120 — 单个请求 120s 无响应
+      #      就放弃(覆盖读;建连由第 5 条兜底);
+      #   2. Acquire::Retries=3 — 瞬时抖动自动重试而不是直接失败;
+      #   3. Acquire::ForceIPv4=true — 排除 IPv6 黑洞这一类;
+      #   4. Acquire::http::Pipeline-Depth=0 — 关掉 HTTP pipelining
+      #      (个别边缘节点上 pipeline 会僵死,且卡住会影响整批);
+      #   5. 外层 timeout --kill-after=30 — 兜底:把"静默挂 6 小时"
+      #      变成"有界失败"(实测 exit 124,该层护栏本身有效);
+      #   6. 整步重试 3 轮 — 有界失败不直接判红,重试通常就过去了
+      #      (正常耗时:update 16s + install 约 2min,单轮上限
+      #      300s/900s 远大于正常值,不会误杀);
+      #   7. DEBIAN_FRONTEND=noninteractive — 杜绝交互式提问卡住。
       - name: Install Linux system deps
         if: runner.os == 'Linux'
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo timeout --kill-after=30 900 apt-get \
-            -o Acquire::Retries=3 update
-          sudo timeout --kill-after=30 1200 apt-get install -y \
-            -o Acquire::Retries=3 \
-            libfreetype6-dev libfontconfig1-dev \
-            libssl-dev pkg-config \
+          APT_OPTS=(
+            -o Acquire::Retries=3
+            -o Acquire::ForceIPv4=true
+            -o Acquire::http::Timeout=120
+            -o Acquire::https::Timeout=120
+            -o Acquire::http::Pipeline-Depth=0
+          )
+          PKGS=(
+            libfreetype6-dev libfontconfig1-dev
+            libssl-dev pkg-config
             libgtk-3-dev libwebkit2gtk-4.1-dev lld
+          )
+          rc=1
+          for attempt in 1 2 3; do
+            echo "::group::apt attempt ${attempt}/3"
+            rc=0
+            sudo timeout --kill-after=30 300 apt-get "${APT_OPTS[@]}" update \
+              && sudo timeout --kill-after=30 900 apt-get "${APT_OPTS[@]}" install -y "${PKGS[@]}" \
+              || rc=$?
+            echo "::endgroup::"
+            if [[ "${rc}" -eq 0 ]]; then
+              echo "apt 成功(第 ${attempt} 轮)"
+              exit 0
+            fi
+            echo "::warning::apt 第 ${attempt} 轮失败(rc=${rc}),20s 后重试"
+            sleep 20
+          done
+          echo "::error::apt-get 三轮重试后仍失败"
+          exit 1
 
       - name: Install NASM (Windows / aws-lc-rs)
         if: runner.os == 'Windows'

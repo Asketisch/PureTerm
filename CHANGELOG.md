@@ -206,25 +206,43 @@
       完全吻合。改用官方推荐的固定 arm64 label `macos-15`(不用
       `macos-latest`,避免未来 Apple 发新版时自动漂移)。CI 与
       Release 两个矩阵的所有 `macos-14` 均已替换。
-    - **apt 步骤加"硬挂兜底"**(`ci.yml` 两处 + `release.yml` 一处):
-      2026-11-06 CI run `42240085099` 的 Clippy(advisory)job 在
-      `Install Linux system deps` 静默挂住 18 分钟以上 —— 既不报错
-      也不退出,日志尚未生成(BlobNotFound);同一次 run 里 Linux
-      build-test job 的同一步骤却正常通过,判定为 runner 侧偶发抖动
-      (TCP 建连卡在 SYN 阶段:apt 自带的 http 超时只管读超时,
-      管不到建连,于是既不超时也不重试,只能等 job 6 小时超时
-      才被杀)。三处 apt 调用统一改为
-      `sudo timeout --kill-after=30 <900|1200> apt-get -o Acquire::Retries=3 ...`:
-      GNU `timeout` 让子进程独立进程组,到期 SIGTERM 整组、
-      `--kill-after=30` 再补 SIGKILL,把"静默挂 6 小时"变成
-      "15 分钟内明确失败";`Acquire::Retries=3` 让瞬时抖动自动重试
-      而不是直接判红;另加 `DEBIAN_FRONTEND=noninteractive`
-      杜绝任何交互式提问卡住。
+    - **apt 步骤加"下载期硬挂"全套护栏**(`ci.yml` 两处 +
+      `release.yml` 一处)。两次实证:
+      - CI run `42240085099` 的 Clippy(advisory)job 卡在
+        `Install Linux system deps` 静默挂住 18 分钟以上,既不报错
+        也不退出,日志尚未生成(BlobNotFound);
+      - Release run `42243444351` 的 ubuntu-22.04 target 同样卡死,
+        本轮日志给出了**铁证**:`apt-get update` 16s 内正常抓完
+        30MB;`apt-get install` 逐包下载到 `Get:49`(速率从 1s/包
+        劣化到 5s/包)后,**某个连接的 TCP 建连卡在 SYN 阶段** ——
+        apt 自带的 http 超时只覆盖读超时、**管不到建连**,于是既不
+        报错也不重试,静默挂死 20 分钟。
+      护栏逐层收敛(正常耗时 update 16s + install 约 2min,单轮
+      上限 300s/900s 远大于正常值,不会误杀):
+      1. `Acquire::http/https::Timeout=120` — 单个请求 120s 无响应
+         就放弃(覆盖读;建连由第 5 条兜底);
+      2. `Acquire::Retries=3` — 瞬时抖动自动重试而不是直接失败;
+      3. `Acquire::ForceIPv4=true` — 排除 IPv6 黑洞这一类;
+      4. `Acquire::http::Pipeline-Depth=0` — 关掉 HTTP pipelining
+         (个别边缘节点上 pipeline 会僵死,且卡住会影响整批下载);
+      5. 外层 `timeout --kill-after=30` — 兜底:把"静默挂 6 小时"
+         变成"有界失败"(**已实证**:Release run `42243444351` 的
+         apt 步骤在 1217s 被杀、`exit code 124`,与 1200s 上限 +
+         30s SIGKILL 升级完全吻合);
+      6. **整步重试 3 轮** — 有界失败不直接判红,重试通常就过去了;
+      7. `DEBIAN_FRONTEND=noninteractive` — 杜绝交互式提问卡住。
+      重试循环的三条路径(首轮成功 / 次轮成功 / 三轮全败)已用桩
+      `sudo` 在本地模拟验证:分别得到 `exit 0` / `exit 0`(第 3 轮
+      成功)/ `exit 1` + `::error::` 注解。
 
     **云端最终验证(全绿)**:
     - **CI `42237583891` = success**:Clippy(advisory)+
       Linux x64 + macOS(macos-15) + Windows,三平台构建与
       全部单元测试通过。
+    - **CI `42243429793` = success**(基于 `1479cbc`,含 apt 护栏):
+      Clippy(advisory)+ Linux x64 + macOS(macos-15) + Windows
+      **4 个 job 全部 success**;Clippy job 的 apt 步骤在 runner 上
+      10 秒完成,证明新调用形态真实可用。
     - **Release `42235449454` = success**:Prepare +
       **5 个 build target 全部 success**(macOS arm64/x64、
       Linux x64/arm64、Windows x64)+ `Collect + Publish Release`
