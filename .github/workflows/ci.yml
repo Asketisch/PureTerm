@@ -71,11 +71,26 @@ jobs:
           # 不用 action 默认的 -D warnings(见文件头说明)。
           rustflags: ""
 
+      # apt-get 在 GitHub runner 上会偶发"硬挂":TCP 建连卡在 SYN
+      # 阶段,既不报错也不退出。apt 自带的 http 超时只管读超时、
+      # 管不到建连,于是整个 step 静默挂住,默认要等 job 6 小时超时
+      # 才被杀(2026-11-06 CI run 42240085099 的 Clippy job 卡死在此,
+      # 同 VM 的 Linux build-test job 同步骤却秒过 → 纯 runner 侧抖动)。
+      # 护栏:
+      #   1. 外层 timeout 兜住建连阶段的硬挂 —— GNU timeout 让子进程
+      #      独立进程组,到期 SIGTERM 整个组,--kill-after=30 再补
+      #      SIGKILL,彻底不出现"静默挂 6 小时";
+      #   2. Acquire::Retries=3 —— 瞬时抖动自动重试而不是直接失败;
+      #   3. DEBIAN_FRONTEND=noninteractive —— 杜绝任何交互式提问卡住。
       - name: Install Linux system deps
         if: runner.os == 'Linux'
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo timeout --kill-after=30 900 apt-get \
+            -o Acquire::Retries=3 update
+          sudo timeout --kill-after=30 1200 apt-get install -y \
+            -o Acquire::Retries=3 \
             libfreetype6-dev libfontconfig1-dev \
             libssl-dev pkg-config \
             libgtk-3-dev libwebkit2gtk-4.1-dev lld
@@ -132,10 +147,25 @@ jobs:
           # clippy lint 被提升为 error,advisory job 永远红。
           # RUSTFLAGS 已由 job env 设定,action 不会覆盖。
           rustflags: ""
+      # apt-get 在 GitHub runner 上会偶发"硬挂":TCP 建连卡在 SYN
+      # 阶段,既不报错也不退出。apt 自带的 http 超时只管读超时、
+      # 管不到建连,于是整个 step 静默挂住,默认要等 job 6 小时超时
+      # 才被杀(2026-11-06 CI run 42240085099 的 Clippy job 卡死在此,
+      # 同 VM 的 Linux build-test job 同步骤却秒过 → 纯 runner 侧抖动)。
+      # 护栏:
+      #   1. 外层 timeout 兜住建连阶段的硬挂 —— GNU timeout 让子进程
+      #      独立进程组,到期 SIGTERM 整个组,--kill-after=30 再补
+      #      SIGKILL,彻底不出现"静默挂 6 小时";
+      #   2. Acquire::Retries=3 —— 瞬时抖动自动重试而不是直接失败;
+      #   3. DEBIAN_FRONTEND=noninteractive —— 杜绝任何交互式提问卡住。
       - name: Install Linux system deps
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          sudo timeout --kill-after=30 900 apt-get \
+            -o Acquire::Retries=3 update
+          sudo timeout --kill-after=30 1200 apt-get install -y \
+            -o Acquire::Retries=3 \
             libfreetype6-dev libfontconfig1-dev \
             libssl-dev pkg-config \
             libgtk-3-dev libwebkit2gtk-4.1-dev lld

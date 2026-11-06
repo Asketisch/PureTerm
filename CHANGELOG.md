@@ -206,6 +206,20 @@
       完全吻合。改用官方推荐的固定 arm64 label `macos-15`(不用
       `macos-latest`,避免未来 Apple 发新版时自动漂移)。CI 与
       Release 两个矩阵的所有 `macos-14` 均已替换。
+    - **apt 步骤加"硬挂兜底"**(`ci.yml` 两处 + `release.yml` 一处):
+      2026-11-06 CI run `42240085099` 的 Clippy(advisory)job 在
+      `Install Linux system deps` 静默挂住 18 分钟以上 —— 既不报错
+      也不退出,日志尚未生成(BlobNotFound);同一次 run 里 Linux
+      build-test job 的同一步骤却正常通过,判定为 runner 侧偶发抖动
+      (TCP 建连卡在 SYN 阶段:apt 自带的 http 超时只管读超时,
+      管不到建连,于是既不超时也不重试,只能等 job 6 小时超时
+      才被杀)。三处 apt 调用统一改为
+      `sudo timeout --kill-after=30 <900|1200> apt-get -o Acquire::Retries=3 ...`:
+      GNU `timeout` 让子进程独立进程组,到期 SIGTERM 整组、
+      `--kill-after=30` 再补 SIGKILL,把"静默挂 6 小时"变成
+      "15 分钟内明确失败";`Acquire::Retries=3` 让瞬时抖动自动重试
+      而不是直接判红;另加 `DEBIAN_FRONTEND=noninteractive`
+      杜绝任何交互式提问卡住。
 
     **云端最终验证(全绿)**:
     - **CI `42237583891` = success**:Clippy(advisory)+
