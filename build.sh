@@ -950,12 +950,15 @@ WINREADME
             local pwsh_cmd="powershell"
             [ -n "${TOOL_PWSH_CORE}" ] && pwsh_cmd="pwsh"
             step "打包 .zip (Compress-Archive): ${out}"
-            # PowerShell Compress-Archive 需要绝对目标路径。
-            local abs_out
-            abs_out="$(cd "$DIST_DIR" && pwd)/$(basename "$out")"
+            # DestinationPath 必须是 Windows 原生绝对路径,但不能把
+            # Git Bash 的 `pwd`(/d/a/PureTerm/...) 直接拼进去 --
+            # PowerShell 会把 /d/a/... 当成 D:\d\a\... 而报
+            # "path does not exist"。改为让 PowerShell 用
+            # (Get-Location).Path 自己算绝对路径(子 shell 已 cd 到
+            # $DIST_DIR,Get-Location 返回的就是 Windows 原生 dist 路径)。
             (cd "$DIST_DIR" && \
                 "$pwsh_cmd" -NoProfile -Command \
-                "Compress-Archive -Path '${stage_name}/*' -DestinationPath '${abs_out}' -Force")
+                "Compress-Archive -Path '${stage_name}/*' -DestinationPath (Join-Path (Get-Location).Path '${out_name}') -Force")
         else
             error "找不到 zip 或 PowerShell,无法打包 Windows .zip"
             return 1
