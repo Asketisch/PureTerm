@@ -3877,7 +3877,10 @@ impl PureTermApp {
                     self.execute_ipc_side_effect(Fx::SendText { pane_id, text })
                 }
                 #[cfg(not(unix))]
-                let _ = (text, pane_id);
+                {
+                    let _ = (text, pane_id);
+                    iced::Task::none()
+                }
             }
             #[cfg(unix)]
             A::SshOpen { target, port } => {
@@ -8974,18 +8977,16 @@ impl PureTermApp {
                 // 同步。
                 let mode = self.command_palette.as_ref().map(|s| s.mode);
                 match mode {
+                    #[cfg(unix)]
                     Some(PaletteMode::Profiles) => {
-                        #[cfg(unix)]
-                        {
-                            self.command_palette = None;
-                            return self.update(Message::SshConnect(idx));
-                        }
-                        #[cfg(not(unix))]
-                        {
-                            let _ = idx;
-                            return Task::none();
-                        }
-                    },
+                        self.command_palette = None;
+                        return self.update(Message::SshConnect(idx));
+                    }
+                    #[cfg(not(unix))]
+                    Some(_) => {
+                        let _ = idx;
+                        return Task::none();
+                    }
                     Some(PaletteMode::Actions) | None => {
                         // 快照要分派的条目(调用
                         // `run_palette_entry` 前需要释放
@@ -9319,17 +9320,25 @@ impl PureTermApp {
                     self.hover_preview.dismiss();
                     return Task::none();
                 }
+                #[cfg(unix)]
+                let ssh_fields_open = self.ssh_dialog.is_some() || self.ssh_settings.is_some();
+                #[cfg(not(unix))]
+                let ssh_fields_open = false;
                 if self.context_menu.is_some()
                     || self.renaming_tab.is_some()
                     || self.color_picker_tab.is_some()
                     || self.tab_list.is_some()
-                    || self.ssh_dialog.is_some()
-                    || self.ssh_settings.is_some()
+                    || ssh_fields_open
                     || self.command_palette.is_some()
                 {
                     self.context_menu = None;
                     self.renaming_tab = None;
                     self.color_picker_tab = None;
+                    #[cfg(unix)]
+                    {
+                        self.ssh_dialog = None;
+                        self.ssh_settings = None;
+                    }
                     self.tab_list = None;
                     #[cfg(unix)]
                     {
@@ -15113,6 +15122,11 @@ impl PureTermApp {
                     .into()
             };
 
+        #[cfg(unix)]
+        let ssh_overlay = self.ssh_dialog.is_some() || self.ssh_settings.is_some();
+        #[cfg(not(unix))]
+        let ssh_overlay = false;
+
         let has_overlay = self.context_menu.is_some()
             || self.renaming_tab.is_some()
             || self.color_picker_tab.is_some()
@@ -15124,8 +15138,7 @@ impl PureTermApp {
             // 激活,`has_overlay` 会是 false,
             // 对话框/面板永不进 `layers`
             // 栈。此处枚举所有浮层状态。
-            || self.ssh_dialog.is_some()
-            || self.ssh_settings.is_some()
+            || ssh_overlay
             || self.command_palette.is_some()
             || self.vi_search.is_some()
             || self.surface_search.is_some()

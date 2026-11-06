@@ -94,7 +94,10 @@ pub fn view<'a>(
             feed_ipc_id,
         ),
         #[cfg(not(unix))]
-        RightMode::Feed => text("Feed (unix only)").size(11).color(dim).into(),
+        RightMode::Feed => {
+            let dim = tokens.text_secondary;
+            text("Feed (unix only)").size(11).color(dim).into()
+        }
         RightMode::Git => view_git(tokens, git),
         RightMode::Ports => view_ports(tokens, ports),
         RightMode::Files => view_files(tokens, files),

@@ -32,8 +32,15 @@ fn rpc_with_timeout(
     timeout: Duration,
 ) -> io::Result<JsonRpcResponse> {
     let stream = local_connect(socket)?;
-    stream.set_write_timeout(Some(timeout))?;
-    stream.set_read_timeout(Some(timeout))?;
+    #[cfg(unix)]
+    {
+        stream.set_write_timeout(Some(timeout))?;
+        stream.set_read_timeout(Some(timeout))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (stream, timeout);
+    }
 
     static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

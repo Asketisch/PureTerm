@@ -6,6 +6,7 @@ use super::{
     LayoutSnapshot, RestoredPane, RestoredTab, RestoredWorkspace, RestoreOutcome,
     WindowSnapshot,
 };
+#[cfg(unix)]
 use super::tab::restore_one_tab;
 use crate::ssh::config::SshProfile;
 use crate::split_tree::{PaneId, SplitNode};

@@ -168,7 +168,8 @@ mod ssh_cli;
 #[cfg(unix)]
 mod tunnel_cli;
 /// GAP-7.7：自定义恢复绑定（`pureterm surface resume ...`）。
-#[cfg(unix)]
+/// 跨平台保留定义;内部 Unix 专属行(OpenOptionsExt/set_mode 等)
+/// 已各自 cfg 隔离,Windows 上仅编译不实例化。
 mod resume_bindings;
 /// GAP-6.6：`pureterm tmux …`——与 tmux 兼容的命令子集。
 mod tmux_cli;

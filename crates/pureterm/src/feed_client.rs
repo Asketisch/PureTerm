@@ -140,8 +140,16 @@ fn rpc_approval(
         Err(_) => return FeedOutcome::NoGui,
     };
     // 读写超时:read 在 GUI 不回时按 `timeout` 触发 TimedOut。
-    let _ = stream.set_read_timeout(Some(timeout));
-    let _ = stream.set_write_timeout(Some(timeout));
+    // Windows 上 LocalStream 是 Named-Pipe 存根,无 set_*_timeout, 跳过。
+    #[cfg(unix)]
+    {
+        let _ = stream.set_read_timeout(Some(timeout));
+        let _ = stream.set_write_timeout(Some(timeout));
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (stream, timeout);
+    }
 
     static NEXT_ID: AtomicU64 = AtomicU64::new(1);
     let id = NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
