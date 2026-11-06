@@ -267,13 +267,20 @@ where
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    // 开(或建)文件拿锁句柄;实际读取另走 fs::read。create(true) 让首跑也享受锁。
+    // 锁**哨兵文件**而不是目标文件。两种原因:
+    //   1. 语义:persist 是 rename 替换,目标文件的 inode 会变 ——
+    //      锁在目标上等于没锁(后到的进程会锁到旧 inode,互斥失效)。
+    //   2. 平台:Windows 不允许替换**仍被打开**的文件,锁着目标
+    //      时 persist 必然 ACCESS_DENIED(5)。
+    // 哨兵文件永不 rename,inode 稳定,才能跨 "persist = rename
+    // 替换" 真正互斥(与 pureterm-settings/config_io.rs 同策略)。
+    let lock_path = path.with_extension("json.lock");
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(path)?;
+        .open(&lock_path)?;
     lock_file.lock_exclusive()?;
 
     let res = (|| {

@@ -266,6 +266,47 @@
         枚举变体,逐一确认测试代码里的引用点是否已门控 ——
         结论是除上面 8 处外无遗漏,避免"修完这轮又冒下一轮"的
         多轮云端往返。
+    - **修 Windows 上「首次真正跑测试」暴露的 4 个真实产品 bug** ——
+      CI 的 shell 语义修好后,Windows 测试第一次真正执行(此前 0 个),
+      立刻暴露 33 个失败。其中 4 个是**产品 bug**(不是断言问题),
+      会让 Windows 版实际不可用:
+      1. **锁目标文件 + rename 覆盖 → ACCESS_DENIED**:
+         `agent_adapters::locked_json_rmw` 与 `mcp::locked_toml_rmw`
+         用 fs2 锁住**目标文件本身**,而写盘是「写临时文件 + rename
+         替换」。Unix 允许 rename 覆盖已打开文件,Windows 不允许
+         (`MoveFileEx` → ERROR_ACCESS_DENIED)→ **Windows 上装 agent
+         hook、装 MCP server 全部失败**。顺带发现该锁在 Unix 上也是
+         错的:rename 后目标 inode 已变,后到的进程会锁到旧 inode,
+         互斥本就失效。改锁**哨兵文件**(`<path>.json.lock` /
+         `<path>.toml.lock`,永不 rename、inode 稳定)——仓库里
+         `pureterm-settings/config_io.rs` 已是同一策略。
+      2. **只读句柄 `sync_all()` → ACCESS_DENIED**:
+         `config_io.rs` 用 `fs::File::open(tmp)`(只读)再 `sync_all()`;
+         Windows 的 `FlushFileBuffers` 要求句柄具备 GENERIC_WRITE,
+         只读句柄直接返回 ERROR_ACCESS_DENIED(5)→ **Windows 上
+         设置 UI 改任何配置都写不进去**。改为以写方式打开。
+      3. **Windows 实例锁不释放 → 守护进程永远无法重启**:
+         `pureterm-daemon` 的 Windows 版单实例锁用 `create_new` 建
+         锁文件,但**进程退出后锁文件仍在**,下次启动 `create_new`
+         永远失败 → 守护进程**只能启动一次**。补陈旧锁判定
+         (以 `share_mode(0)` 独占打开:成功 = 无人持锁 = 陈旧 →
+         删除后重建)。
+      4. **轮转检测在 Windows 上恒失效**:`events_log::inode_of` 在
+         非 Unix 恒返回 0,于是「替换式轮转」(新旧文件等长)永远
+         检测不到。改用 Windows 的 `MetadataExt::file_index()`
+         (等价于 inode)。
+      其余 29 个失败是测试侧的平台假设,已按平台收敛:
+      - `resume_bindings` 6 个:测试拿**仍被打开**的 `NamedTempFile`
+        当目标,而写盘是 rename 替换 → Windows ACCESS_DENIED;
+        改用临时目录 + 目录内文件。
+      - `notebooks` 2 个(执行走 `/bin/sh`)、`agent_hooks` 3 个
+        (POSIX shell 语法)、`agent_detect` 1 个(依赖宿主 `ps`/`/proc`
+        与 `sleep`)、daemon `shell_integration` 1 个、ipc `ssh.*` 3 个
+        (Windows 上是 noop 桩)→ 各加 `#[cfg(unix)]`。
+      - `ssh_config_reader` 2 个(依赖 `HOME` 且真写 `/tmp`)→ 模块加
+        `#[cfg(all(test, unix))]`。
+      - `conpty_smoke` 2 个:`todo!()` 占位(真实 ConPTY 尚未接通)→
+        标 `#[ignore]`,让矩阵如实反映缺口但不把流水线打红。
 
     **云端最终验证(全绿)**:
     - **CI `42237583891` = success**:Clippy(advisory)+

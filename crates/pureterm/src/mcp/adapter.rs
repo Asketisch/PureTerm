@@ -135,12 +135,17 @@ where
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // 锁**哨兵文件**而不是目标文件(同 agent_adapters::locked_json_rmw):
+    //   1. 语义:persist 是 rename 替换,目标 inode 会变,锁目标等于没锁;
+    //   2. 平台:Windows 不允许替换仍被打开的文件,锁着目标时
+    //      persist 必然 ACCESS_DENIED(5)。
+    let lock_path = path.with_extension("toml.lock");
     let lock_file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(path)?;
+        .open(&lock_path)?;
     lock_file.lock_exclusive()?;
 
     let res = (|| {

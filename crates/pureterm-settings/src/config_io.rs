@@ -115,7 +115,9 @@ where
     fs::write(tmp.path(), doc.to_string())?;
     // rename(原子替换)不保证数据已落盘;掉电时可能出现
     // "新名字 + 空/部分内容"。持久化前显式 fsync。
-    fs::File::open(tmp.path())?.sync_all()?;
+    // 必须以**可写**方式打开:Windows 的 FlushFileBuffers 要求句柄
+    // 具备 GENERIC_WRITE,只读句柄会返回 ACCESS_DENIED(5)。
+    fs::OpenOptions::new().write(true).open(tmp.path())?.sync_all()?;
     tmp.persist(path)?;
 
     // 回读 mtime,使 notify 触发监视器时调用方能识别自己的写入。

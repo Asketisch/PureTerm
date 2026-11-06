@@ -193,6 +193,8 @@ mod tests {
         assert_eq!(j, 1);
     }
 
+    // 执行单元格走 /bin/sh(Unix-only),Windows 上不可用。
+    #[cfg(unix)]
     #[test]
     fn execute_runs_simple_command() {
         let mut nb = Notebook::new("exec");
@@ -205,6 +207,7 @@ mod tests {
         assert!(text.contains("hello"), "got: {text:?}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn execute_captures_stderr() {
         let mut nb = Notebook::new("err");

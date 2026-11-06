@@ -598,6 +598,9 @@ fn config_set_rejects_malformed_key_and_missing_value() {
 }
 
 // ── ssh.* 命名空间 ────────────────────────────────────────────────────
+// Windows 上 ssh.* 全部注册为 noop 桩(见 register_config.rs),
+// 这里断言的是 Unix 实现的行为。
+#[cfg(unix)]
 #[test]
 fn ssh_list_profiles() {
     let router = SocketRouter::new();
@@ -621,6 +624,9 @@ fn ssh_connect() {
     assert!(matches!(fx, Some(IpcSideEffect::SshConnect { profile_index: 0 })));
 }
 
+// Windows 上 ssh.* 全部注册为 noop 桩(见 register_config.rs),
+// 这里断言的是 Unix 实现的行为。
+#[cfg(unix)]
 #[test]
 fn ssh_connect_out_of_range() {
     let router = SocketRouter::new();
@@ -662,6 +668,9 @@ fn ssh_disconnect_with_pane_id() {
     );
 }
 
+// Windows 上 ssh.* 全部注册为 noop 桩(见 register_config.rs),
+// 这里断言的是 Unix 实现的行为。
+#[cfg(unix)]
 #[test]
 fn ssh_state_returns_pane_states() {
     // GAP-5.6:`ssh.state` 是 SSH 连接状态的只读 Socket API 表面,

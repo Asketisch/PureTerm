@@ -70,7 +70,10 @@ pub fn parse_ssh_config() -> std::io::Result<HashMap<String, SshConfigHost>> {
     Ok(hosts)
 }
 
-#[cfg(test)]
+// 这些用例依赖 Unix 的 HOME 约定 + 真往 /tmp 写文件:
+// Windows 上 HOME 不存在(读的是 %USERPROFILE%),/tmp 也不是
+// 可写目录,断言必然失败,故整个模块只在 Unix 编译。
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

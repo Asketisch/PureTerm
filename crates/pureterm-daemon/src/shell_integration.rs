@@ -619,6 +619,8 @@ mod tests {
     }
 
     /// 清扫必须删掉「宿主进程已死」的残留目录。
+    /// 依赖 Unix 的进程存活判定与 /proc 语义,仅 Unix 适用。
+    #[cfg(unix)]
     #[test]
     fn sweep_removes_dirs_of_dead_processes() {
         // 这个 pid 几乎不可能还活着 → 判定为残留。

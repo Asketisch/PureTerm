@@ -66,6 +66,9 @@ fn wait_for_output_contains(
     false
 }
 
+// 真实 ConPTY 尚未接通,测试体是 `todo!()` 占位 —— 标记为
+// #[ignore],让 CI 矩阵如实反映缺口但不把流水线打红。
+#[ignore = "real ConPTY spawn pending windows::open_conpty v3+1"]
 #[test]
 fn cmd_exe_smoke() {
     // 标记由 cmd 回显。预期 ConPTY 把 stdout
@@ -89,6 +92,7 @@ fn cmd_exe_smoke() {
     todo!("real ConPTY spawn pending windows::open_conpty v3+1");
 }
 
+#[ignore = "real ConPTY spawn pending windows::open_conpty v3+1"]
 #[test]
 fn powershell_smoke() {
     const MARKER: &str = "CONPTY-PS-SMOKE";

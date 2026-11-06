@@ -118,8 +118,12 @@ fn inode_of(meta: &std::fs::Metadata) -> u64 {
     meta.ino()
 }
 #[cfg(not(unix))]
-fn inode_of(_meta: &std::fs::Metadata) -> u64 {
-    0
+fn inode_of(meta: &std::fs::Metadata) -> u64 {
+    use std::os::windows::fs::MetadataExt;
+    // Windows 的 file_index 等价于 Unix 的 inode(卷内唯一,文件被
+    // 替换后变化)——用它做轮转检测。恒返回 0 会让「替换式轮转」
+    // 永远检测不到(只能靠文件缩水兜底,等长替换会漏)。
+    meta.file_index()
 }
 
 /// [`tail_follow`] 的轮询间隔。将 tail 延迟限制在 ≤ 该值。

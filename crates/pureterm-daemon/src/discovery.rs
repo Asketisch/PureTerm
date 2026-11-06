@@ -216,12 +216,36 @@ pub fn acquire_instance_lock_at(path: &std::path::Path) -> io::Result<Option<Fil
     match OpenOptions::new().create_new(true).write(true).open(path) {
         Ok(file) => Ok(Some(file)),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-            // 陈旧锁:若已无进程持有(Windows 上打开会失败),尝试清理一次。
-            // 保守起见这里仍报告「另一实例在运行」,由 GUI 侧按需拉起处理。
+            // 陈旧锁判定:锁文件存在,但当前没有任何进程持有它。
+            // Windows 没有 flock,锁不会随进程退出自动释放,若不清
+            // 理陈旧锁,守护进程**永远**无法第二次启动。
+            if exclusive_probe(path).is_ok() {
+                let _ = std::fs::remove_file(path);
+                return match OpenOptions::new().create_new(true).write(true).open(path) {
+                    Ok(file) => Ok(Some(file)),
+                    Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(None),
+                    Err(e) => Err(e),
+                };
+            }
+            // 确实有别的实例持锁 → 报告「另一实例在运行」。
             Ok(None)
         }
         Err(e) => Err(e),
     }
+}
+
+/// 以**独占**方式打开锁文件:成功 = 没有任何进程持有它(陈旧锁);
+/// 失败(SharingViolation)= 有别的实例正持锁。
+#[cfg(not(unix))]
+fn exclusive_probe(path: &std::path::Path) -> io::Result<File> {
+    use std::os::windows::fs::OpenOptionsExt;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        // 不允许任何共享:已存在的持有者(GENERIC_READ|GENERIC_WRITE)
+        // 会与本句柄的共享模式冲突 → SharingViolation。
+        .share_mode(0)
+        .open(path)
 }
 
 /// 串行化所有读写 `PURETERM_DAEMON_DATA_DIR` 的测试。Rust 测试默认

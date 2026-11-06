@@ -410,6 +410,8 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         }
     }
 
+    // 命令是 POSIX shell 语法(`>&2`、`exit 2`),Windows 上不适用。
+    #[cfg(unix)]
     #[test]
     fn external_exit_2_denies() {
         // exit 2 + stderr → Deny(裁剪后的 stderr)。
@@ -420,12 +422,16 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         }
     }
 
+    // 命令是 POSIX shell 语法(`>&2`、`exit 2`),Windows 上不适用。
+    #[cfg(unix)]
     #[test]
     fn external_stdout_block_json_denies() {
         let r = cmd_rule(r#"printf '%s' '{"decision":"block","reason":"no"}'"#, None);
         assert_eq!(run_external_command(&r, b"{}"), Decision::Deny("no".into()));
     }
 
+    // 命令是 POSIX shell 语法(`>&2`、`exit 2`),Windows 上不适用。
+    #[cfg(unix)]
     #[test]
     fn external_stdout_permission_deny_denies() {
         let r = cmd_rule(

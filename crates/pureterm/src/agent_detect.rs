@@ -298,6 +298,8 @@ mod tests {
     /// 集成测试:启动一个已知的长生命周期进程,确认 `scan` 能找到
     /// 它。最多轮询约 2 秒(宿主 `ps`/`/proc` 快照可能滞后于启动)
     /// 并通过 Drop 守卫回收子进程,panic 也不会留下孤儿进程。
+    // 依赖宿主 `ps`/`/proc` 快照与 `sleep` 命令,仅 Unix 适用。
+    #[cfg(unix)]
     #[test]
     fn scan_finds_spawned_sleep() {
         use std::time::{Duration, Instant};

@@ -120,14 +120,20 @@ mod tests {
 
     /// `tempfile::NamedTempFile` 提供隔离且自动清理的路径,
     /// 用于往返测试配置的增删改查,不触碰用户的真实配置。
-    fn empty_temp_config() -> tempfile::NamedTempFile {
-        tempfile::NamedTempFile::new().unwrap()
+    fn empty_temp_config() -> tempfile::TempDir {
+        // 不能用 `NamedTempFile`:它会一直持有目标文件的句柄,
+        // 而写盘是 "写临时文件 + rename 替换" —— Windows 不允许
+        // 替换仍被打开的文件,rename 会 ACCESS_DENIED。
+        // 改用临时目录 + 目录内的目标文件(句柄不长期持有)。
+        tempfile::tempdir().unwrap()
     }
 
     #[test]
     fn set_then_list_round_trips_all_fields() {
         let tmp = empty_temp_config();
-        let path = tmp.path();
+        let path = tmp.path().join("pureterm.toml");
+        // 影子成 &Path:下面所有 API 都收 &Path,原 PathBuf 仍存活。
+        let path = path.as_path();
         set_binding(
             path,
             "tmux",
@@ -147,7 +153,9 @@ mod tests {
     #[test]
     fn set_auto_false_round_trips() {
         let tmp = empty_temp_config();
-        let path = tmp.path();
+        let path = tmp.path().join("pureterm.toml");
+        // 影子成 &Path:下面所有 API 都收 &Path,原 PathBuf 仍存活。
+        let path = path.as_path();
         set_binding(path, "screen", "main", &["screen".into(), "-r".into()], false).unwrap();
         let bs = list_bindings(path);
         assert_eq!(bs.len(), 1);
@@ -157,7 +165,9 @@ mod tests {
     #[test]
     fn set_same_key_updates_in_place() {
         let tmp = empty_temp_config();
-        let path = tmp.path();
+        let path = tmp.path().join("pureterm.toml");
+        // 影子成 &Path:下面所有 API 都收 &Path,原 PathBuf 仍存活。
+        let path = path.as_path();
         set_binding(path, "tmux", "work", &["old".into()], false).unwrap();
         set_binding(path, "tmux", "work", &["new".into()], true).unwrap();
         let bs = list_bindings(path);
@@ -169,7 +179,9 @@ mod tests {
     #[test]
     fn set_distinct_keys_coexist() {
         let tmp = empty_temp_config();
-        let path = tmp.path();
+        let path = tmp.path().join("pureterm.toml");
+        // 影子成 &Path:下面所有 API 都收 &Path,原 PathBuf 仍存活。
+        let path = path.as_path();
         set_binding(path, "tmux", "work", &["a".into()], false).unwrap();
         set_binding(path, "tmux", "side", &["b".into()], false).unwrap();
         set_binding(path, "screen", "main", &["c".into()], false).unwrap();
@@ -180,7 +192,9 @@ mod tests {
     #[test]
     fn remove_binding_deletes_and_reports() {
         let tmp = empty_temp_config();
-        let path = tmp.path();
+        let path = tmp.path().join("pureterm.toml");
+        // 影子成 &Path:下面所有 API 都收 &Path,原 PathBuf 仍存活。
+        let path = path.as_path();
         set_binding(path, "tmux", "work", &["x".into()], false).unwrap();
         set_binding(path, "tmux", "side", &["y".into()], false).unwrap();
         assert_eq!(list_bindings(path).len(), 2);
@@ -200,7 +214,9 @@ mod tests {
         // mutate_config 的局部写入保证:写入 [[resume.bindings]]
         // 不得改动其他 TOML 段(vault.agents、标量)。
         let tmp = empty_temp_config();
-        let path = tmp.path();
+        let path = tmp.path().join("pureterm.toml");
+        // 影子成 &Path:下面所有 API 都收 &Path,原 PathBuf 仍存活。
+        let path = path.as_path();
         let original = r#"
 [[vault.agents]]
 kind = "claude-code"
