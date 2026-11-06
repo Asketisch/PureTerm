@@ -447,10 +447,11 @@ use super::shim::{evaluate_shim, infer_agent_kind};
         let r = cmd_rule("sleep 30", Some(1));
         let start = std::time::Instant::now();
         let d = run_external_command(&r, b"{}");
-        // 1s 超时后 kill 子进程 + join stdout/stderr drain 线程;繁忙
-        // runner 上 join 可能拖慢,但仍须远小于被测的 30s sleep
-        // (若超时逻辑失效会等满 30s,此断言仍能捕获)。
-        assert!(start.elapsed().as_secs() < 20, "timeout should kill well under 20s");
+        // 1s 超时后 kill shell 并 detach drain 线程,主流程应立即
+        // 返回(约 1s)。若旧实现仍 join 被孙进程占住的管道,会拖到
+        // 30s sleep 结束 —— 10s 阈值能捕获该回归,又给繁忙 runner
+        // 留足调度余量。
+        assert!(start.elapsed().as_secs() < 10, "timeout should return promptly");
         assert_eq!(d, Decision::Passthrough);
     }
 

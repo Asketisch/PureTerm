@@ -173,15 +173,23 @@
         `Modifiers::COMMAND` 在非 macOS 上等于 `CTRL`,与
         `⌃1..9` 工作区绑定 key 冲突,该测试加
         `#[cfg(target_os = "macos")]`。
-      - `agent_hooks`:1s 超时后 kill 子进程并 join drain 线程,
-        繁忙 runner 上可能 >5s;放宽到 <20s(仍远小于被测
-        30s sleep,能捕获未 kill 回归)。
       - `discovery`:`IsolatedDataDir` 的 `set_var` 污染并行
         测试的进程级 env,加 `ENV_LOCK` 串行化所有读写
         `PURETERM_DAEMON_DATA_DIR` 的测试。
       - `shell_integration`:Linux 上 `temp_dir() == /tmp`,
         "不以 `/tmp/` 开头"断言只在 `temp_dir() != /tmp` 的
         平台成立;字面量断言改为条件执行。
+    - **修复 agent hook 超时的真实产品 bug**(`agent_hooks/command.rs`):
+      `run_external_command` 超时后 kill 的是 shell 本身,但
+      `sh -c "sleep 30"` 派生出的**孙进程仍继承 stdout/stderr
+      管道写端**;原实现无条件 `join()` drain 线程,
+      会一直阻塞到孙进程自然结束(管道才 EOF),把 1s 超时拖成
+      30s —— 超时形同虚设(CI 实测 `finished in 30.43s` 暴露)。
+      改为:超时分支不需要解析输出(直接 Passthrough),
+      `drop()` 掉 out/err 线程的 JoinHandle 即 detach,主流程
+      立即返回;仅正常结束分支才 join 拿 stdout/stderr 解析决策。
+      配套把测试阈值收紧为 <10s(修复后实测 1.02s,旧实现
+      30s 会被捕获),而不是靠放宽阈值掩盖问题。
     - **CI / Release 加 `concurrency` 组 +
       `cancel-in-progress: false`**:限制同一 workflow+ref 只保留
       一个在跑的 run、新触发的排队且绝不取消在跑的 run,避免连续

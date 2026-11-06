@@ -70,11 +70,18 @@ pub fn run_external_command(rule: &HookRule, input_json: &[u8]) -> Decision {
         }
     };
     let _ = stdin_thread.join();
-    let out = out_thread.join().unwrap_or_default();
-    let err = err_thread.join().unwrap_or_default();
 
     match status {
         None => {
+            // 超时:kill 的是 shell 本身,但 `sh -c "sleep 30"` 派生出的
+            // 孙进程仍继承 stdout/stderr 管道写端。此时若 join() drain
+            // 线程,会一直阻塞到孙进程自然结束(管道才 EOF),把 1s
+            // 超时拖成 30s —— 超时形同虚设。超时分支不需要解析输出
+            // (直接 Passthrough),故 detach 这两个线程(JoinHandle
+            // drop = detach),让主流程立即返回;线程随管道 EOF 自行
+            // 收尾,进程退出时被清理。
+            drop(out_thread);
+            drop(err_thread);
             log::warn!(
                 "agent hook: command {:?} timed out after {}s (non-blocking)",
                 cmd_str,
@@ -83,6 +90,9 @@ pub fn run_external_command(rule: &HookRule, input_json: &[u8]) -> Decision {
             Decision::Passthrough
         }
         Some(status) => {
+            // 正常结束:管道已 EOF,可以安全 join 拿输出。
+            let out = out_thread.join().unwrap_or_default();
+            let err = err_thread.join().unwrap_or_default();
             // exit 2 → 阻断,理由取 stderr(CC 协议:exit 2 的 stderr 反馈给 agent)。
             if status.code() == Some(2) {
                 let reason = String::from_utf8_lossy(&err).trim().to_string();
