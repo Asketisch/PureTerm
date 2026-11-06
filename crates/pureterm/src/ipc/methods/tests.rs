@@ -609,6 +609,8 @@ fn ssh_list_profiles() {
     assert_eq!(profiles[0]["name"], "production");
 }
 
+// IpcSideEffect::SshConnect 是 #[cfg(unix)] 变体,Windows 上不存在。
+#[cfg(unix)]
 #[test]
 fn ssh_connect() {
     let router = SocketRouter::new();

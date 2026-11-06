@@ -227,6 +227,8 @@ size = 14
         assert!(rewritten.contains("size = 14"));
     }
 
+    // SurfaceSub::Resume 是 #[cfg(unix)] 变体,Windows 上不存在。
+    #[cfg(unix)]
     #[test]
     fn cli_parses_resume_set_variadic_shell_with_hyphen_value() {
         // `--shell` 是可变的且启用 allow_hyphen_values,因此 argv 中

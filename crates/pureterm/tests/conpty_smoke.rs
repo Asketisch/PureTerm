@@ -34,6 +34,12 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 /// 排空 conout,直到出现 `marker` 或 `timeout` 超时。
+///
+/// 真实 ConPTY 接通前没有调用点,故显式 allow(dead_code)。
+/// 早期用 `let _ = wait_for_output_contains;` 压制告警,那行
+/// 会让泛型参数 `impl Read` 无法推导(E0283),Windows 上直接
+/// 编译失败 —— 故改为在定义处标注。
+#[allow(dead_code)]
 fn wait_for_output_contains(
     out: &mut impl std::io::Read,
     marker: &str,
@@ -89,7 +95,6 @@ fn powershell_smoke() {
     let _ = Command::new("powershell.exe")
         .args(["-NoProfile", "-Command", &format!("Write-Output '{MARKER}'")])
         .output();
-    let _ = wait_for_output_contains;
     // TODO(t-core-windows-conpty v3+1):等 `windows::open_conpty` 接通后,
     // 替换为真实 ConPTY 启动。
     todo!("real ConPTY spawn pending windows::open_conpty v3+1");

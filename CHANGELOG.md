@@ -234,6 +234,38 @@
       重试循环的三条路径(首轮成功 / 次轮成功 / 三轮全败)已用桩
       `sudo` 在本地模拟验证:分别得到 `exit 0` / `exit 0`(第 3 轮
       成功)/ `exit 1` + `::error::` 注解。
+    - **修复 Windows CI「空跑全绿」**——本轮最隐蔽的一个坑:
+      Windows runner 的默认 shell 是 **pwsh**,而 PowerShell 里
+      原生命令失败**不会**中止脚本。于是 `Test` step 的第一条
+      `cargo test --workspace --exclude alacritty_terminal`
+      编译失败(7 个错误)被静默吞掉,第二条
+      `cargo test -p alacritty_terminal --lib` 成功后整个 step
+      判绿 —— Windows job 报告 success,但 workspace 测试
+      **一个都没编译通过、零测试执行**(日志里唯一的 `Running`
+      是 alacritty_terminal 的 227 个)。CI run `42243429793`
+      就是这么"绿"的。
+      - `Test` step 显式 `shell: bash`(bash -e 语义),并显式
+        收集两条命令的退出码(`cmd || rc=$?` + `exit $rc`):
+        两条都跑完,任一失败即 step 失败。
+      - 修掉被掩盖的 8 个 Windows 编译错误(全是本轮 Windows
+        平台门控的连带效应,**只改测试代码,不动产品行为**):
+        - `session_restore/tests.rs`:整个模块依赖 Unix-only 的
+          `cold_resume_agent` / `migrate_v1_to_v2_in` → 模块加
+          `#[cfg(all(test, unix))]`(修 E0432 ×2);
+        - `port_scanner.rs`:3 个 lsof 用例 → 各加 `#[cfg(unix)]`
+          (修 E0425 ×3);
+        - `ipc/methods/tests.rs::ssh_connect` 断言 Unix-only 的
+          `IpcSideEffect::SshConnect` → 加 `#[cfg(unix)]`(修 E0599);
+        - `resume_bindings/tests.rs` 断言 Unix-only 的
+          `SurfaceSub::Resume` → 加 `#[cfg(unix)]`(修 E0599);
+        - `tests/conpty_smoke.rs`:用 `let _ = wait_for_output_contains;`
+          压制 dead_code 告警,那行让泛型 `impl Read` 无法推导
+          (E0283)→ 改为在定义处 `#[allow(dead_code)]` 并删掉该行。
+      - 配套做了 **scope-aware 静态审计**:扫出全 crate 32 个
+        「仅 `#[cfg(unix)]` 定义」的模块级符号 + 52 个 Unix-only
+        枚举变体,逐一确认测试代码里的引用点是否已门控 ——
+        结论是除上面 8 处外无遗漏,避免"修完这轮又冒下一轮"的
+        多轮云端往返。
 
     **云端最终验证(全绿)**:
     - **CI `42237583891` = success**:Clippy(advisory)+

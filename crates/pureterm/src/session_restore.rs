@@ -205,6 +205,9 @@ pub struct RestoreOutcome {
     pub active_workspace: usize,
 }
 
-#[cfg(test)]
+// 这些用例覆盖 restore/snapshot 两个 Unix-only 模块
+// (cold_resume_agent / migrate_v1_to_v2_in 都是 #[cfg(unix)])。
+// Windows 上整个模块不编译,否则报 E0432 unresolved import。
+#[cfg(all(test, unix))]
 #[path = "session_restore/tests.rs"]
 mod tests;

@@ -145,6 +145,12 @@ jobs:
         run: cargo build --workspace --target ${{ matrix.target }}
 
       - name: Test
+        # 必须显式声明 bash:Windows runner 的默认 shell 是 pwsh,
+        # 而 PowerShell 里原生命令失败**不会**中止脚本 —— 第一条
+        # cargo test 编译失败会被静默吞掉,第二条成功后整个 step
+        # 判绿。2026-11-06 的 CI run 42243429793 就是这么"绿"的:
+        # Windows job 带着 7 个编译错误、workspace 测试零执行。
+        shell: bash
         env:
           RUSTFLAGS: ${{ runner.os == 'Linux' && '-C link-arg=-fuse-ld=lld' || '' }}
         # #[ignore] 的 E2E 测试(graphics/tmux-cc/shell-integ/
@@ -155,9 +161,13 @@ jobs:
         # 8 个 debug_assert 越界失败(本地单独跑 45/45 通过),且按
         # 维护规则不改 vendored 源码,故该 crate 只跑 lib 单元测试
         # (1000+ 个),其余 11 个 crate 的所有测试照常跑。
+        # 两条命令都跑完,任一失败即整个 step 失败
+        # (bash -e 下 `cmd || rc=$?` 不会被提前中止)。
         run: |
-          cargo test --workspace --exclude alacritty_terminal --target ${{ matrix.target }} --no-fail-fast
-          cargo test -p alacritty_terminal --lib --target ${{ matrix.target }} --no-fail-fast
+          rc=0
+          cargo test --workspace --exclude alacritty_terminal --target ${{ matrix.target }} --no-fail-fast || rc=$?
+          cargo test -p alacritty_terminal --lib --target ${{ matrix.target }} --no-fail-fast || rc=$?
+          exit $rc
 
   clippy:
     name: Clippy (advisory)

@@ -129,6 +129,9 @@ fn port_scanner_stream(
 mod tests {
     use super::*;
 
+    // lsof 只在 Unix 上存在(parse_lsof_line / parse_lsof_output
+    // 都是 #[cfg(unix)]),Windows 上这些用例不编译。
+    #[cfg(unix)]
     #[test]
     fn parse_lsof_line_extracts_port_pid_process() {
         let line = "node    12345 admin   23u  IPv4 0xdeadbeef      0t0  TCP *:3000 (LISTEN)";
@@ -138,6 +141,7 @@ mod tests {
         assert_eq!(row.process, "node");
     }
 
+    #[cfg(unix)]
     #[test]
     fn parse_lsof_line_ipv6() {
         let line = "python3 99 user  4u  IPv6 0x0      0t0  TCP [::1]:5173 (LISTEN)";
@@ -146,6 +150,7 @@ mod tests {
         assert_eq!(row.pid, 99);
     }
 
+    #[cfg(unix)]
     #[test]
     fn min_port_filter() {
         let cfg = PortScannerConfig {
