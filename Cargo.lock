@@ -5857,7 +5857,7 @@ dependencies = [
 
 [[package]]
 name = "pureterm"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "aes-gcm 0.10.3",
  "alacritty_config",
@@ -5930,7 +5930,7 @@ dependencies = [
 
 [[package]]
 name = "pureterm-alacritty-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "crossfont",
  "embed-resource",
@@ -5942,7 +5942,7 @@ dependencies = [
 
 [[package]]
 name = "pureterm-codeindex"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "rusqlite",
  "serde",
@@ -5959,11 +5959,11 @@ dependencies = [
 
 [[package]]
 name = "pureterm-computer-use"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "pureterm-daemon"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "alacritty_terminal",
  "dirs",
@@ -5982,7 +5982,7 @@ dependencies = [
 
 [[package]]
 name = "pureterm-jsonrpc"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5990,7 +5990,7 @@ dependencies = [
 
 [[package]]
 name = "pureterm-lsp"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "log",
  "parking_lot",
@@ -6003,7 +6003,7 @@ dependencies = [
 
 [[package]]
 name = "pureterm-settings"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "clap",
  "dirs",
@@ -6020,7 +6020,7 @@ dependencies = [
 
 [[package]]
 name = "pureterm-ssh"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "alacritty_terminal",
  "libc",

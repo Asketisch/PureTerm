@@ -2,6 +2,22 @@
 
 本文件记录本项目的所有重要变更。
 
+## [0.2.1] - 2026-11-07
+
+补丁版:**修复三个二进制都问不出版本号**(0.2.0 的产物里缺这个能力)。
+
+- `pureterm --version` / `-V` → `pureterm 0.2.1`。此前 clap 未配置
+  `version`,`build.rs` 注入的 `cargo:rustc-env=VERSION` 又全库无人
+  引用(被优化成死代码),于是直接报 `unexpected argument`。现改为
+  `version = env!("VERSION")`,让注入真正生效(取注入值而非 clap
+  默认的 `crate_version`,以免漏掉打包时注入的版本后缀)。
+- `puretermd --version` / `-V` → `puretermd 0.2.1`。此前守护进程
+  **完全不解析参数**:传 `--version` 会被静默忽略并**直接启动后台
+  守护进程** —— 用户以为在问版本,实际起了服务。现补最小参数处理,
+  另加 `--help`,未知参数 `exit 2`。
+- `pureterm-settings --version` → `pureterm-settings 0.2.1`(补 clap
+  的 `version`)。
+
 ## [0.2.0] - 2026-11-07
 
 首个正式发布的跨平台版本。相较 0.1.0 基线,本版最重要的是
