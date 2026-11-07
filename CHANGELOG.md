@@ -324,6 +324,19 @@
       Clippy(advisory)+ Linux x64 + macOS(macos-15) + Windows
       **4 个 job 全部 success**;Clippy job 的 apt 步骤在 runner 上
       10 秒完成,证明新调用形态真实可用。
+    - **CI `42255064600` = success**(基于 `b9bc235`,最终态):
+      Clippy(advisory)+ Linux x64 + macOS(macos-15) + Windows x64
+      **4 个 job 全部 success**。这一轮 Windows 是**第一次真正
+      执行 workspace 测试**(此前 pwsh 吞掉编译失败 → "空跑全绿",
+      Windows 侧零测试执行)。实测 Windows 上跑了 **18 个测试
+      二进制**:pureterm bin **951 passed / 0 failed**、
+      pureterm-daemon 31、pureterm-settings 37、alacritty_terminal
+      227、conpty-smoke 2 个 #[ignore],其余 crate 全绿。
+    - **Release `42314388144` = success**(基于 `b9bc235`):Prepare +
+      **5 个 build target 全部 success**(macOS arm64/x64、
+      Linux x64/arm64、Windows x64)+ `Collect + Publish Release`
+      success,产出 5 个 `dist-*` artifact 与 `sha256sums`
+      (SHA256SUMS 含全部 7 个产物)。
     - **Release `42235449454` = success**:Prepare +
       **5 个 build target 全部 success**(macOS arm64/x64、
       Linux x64/arm64、Windows x64)+ `Collect + Publish Release`
