@@ -11,7 +11,13 @@ mod theme;
 mod widgets;
 
 #[derive(Parser)]
-#[command(name = "pureterm-settings", about = "PureTerm Settings UI")]
+#[command(
+    name = "pureterm-settings",
+    // 支持 `--version`:设置进程虽无 build.rs 注入,但同属发布产物,
+    // 排查用户环境时需要能问出版本。
+    version,
+    about = "PureTerm Settings UI"
+)]
 struct Cli {
     #[arg(long, short)]
     config: Option<PathBuf>,

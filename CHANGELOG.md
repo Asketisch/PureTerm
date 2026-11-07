@@ -10,6 +10,21 @@ Release 五平台打包与 SHA256SUMS 汇总跑通;过程中顺带挖出并修�
 4 个 Windows 上真实会导致功能不可用的产品 bug(原子写盘、实例锁、
 日志轮转、CI 测试假绿)。
 
+### 修复(CLI)
+- **发布版三个二进制此前都问不出版本号** —— 发布后核验时发现:
+  - `pureterm --version` → `error: unexpected argument '--version' found`。
+    clap 的 `#[command(...)]` 从未配置 `version`;而 `build.rs` 虽然
+    一直在注入 `cargo:rustc-env=VERSION=...`,**全库没有任何地方读取
+    这个常量**,于是它被编译器优化掉,成了纯死代码。现补上
+    `version = env!("VERSION")`,让注入真正生效(取注入值而非 clap
+    默认的 `crate_version`,以免漏掉打包时注入的版本后缀)。
+    实测:`pureterm --version` / `-V` → `pureterm 0.2.0`,`--help`
+    也正确列出 `-V, --version`。
+  - `puretermd --version` 更严重:守护进程**完全不解析参数**,
+    传 `--version` 会被静默忽略并**直接启动后台守护进程** ——
+    用户以为在问版本,实际起了服务。现补最小的 `--version` /
+    `-V` / `--help` / `-h` 处理,未知参数以 `exit 2` 明确报错。
+  - `pureterm-settings --version` 同样缺失,补 clap 的 `version`。
 ### 修复(构建/打包)
 - **`build.sh` 重写,支持 Win/Linux/macOS 多架构构建。**
   v0.2 重写了 macOS 打包流程,现在可以正确做到:

@@ -18,6 +18,16 @@ use super::subs::{
 #[derive(Parser)]
 #[command(
     name = "pureterm",
+    // 让 `pureterm --version` / `-V` 可用。
+    // 取 build.rs 经 `cargo:rustc-env` 注入的 `VERSION`(默认等于
+    // CARGO_PKG_VERSION,可被 PURETERM_VERSION_OVERRIDE 覆盖),
+    // 而不是 clap 默认的 `crate_version` —— 后者会漏掉打包时注入的
+    // 版本后缀。
+    //
+    // 修复前提:此前 build.rs 注入了 VERSION 但全库无人引用,
+    // 常量被优化掉,且 clap 未配置 version,导致 `--version`
+    // 直接报 "unexpected argument"(发布版连版本都问不出来)。
+    version = env!("VERSION"),
     about = "PureTerm - GPU-accelerated terminal emulator",
     long_about = "PureTerm - GPU-accelerated terminal emulator\n\n\
                   Run with no arguments to launch the GUI.\n\
